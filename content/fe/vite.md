@@ -65,7 +65,7 @@ Loader 和 Plugin 的区别:
 
 ### esbuild 和 Rollup 在 Vite 中各自承担什么角色? 为什么生产构建不直接用 esbuild?
 
-先说现状: 这道题在 Vite 8 起已成为历史. Vite 8 用 Rust 编写的 Rolldown 作为统一打包器, dev 预构建与生产打包都由它完成; TS/JSX 转译与产物压缩默认改用 oxc (`build.minify` 默认值即 `'oxc'`, terser/esbuild 仍可显式选用). 本机安装的 vite@8.3.0 中 rollup 已不在依赖列表, 官方迁移指南的表述是 "Vite 8 uses Rolldown and Oxc based tools instead of esbuild and Rollup".
+先说现状: 这道题在 Vite 8 起已成为历史. Vite 8 用 Rust 编写的 Rolldown 作为统一打包器, dev 预构建与生产打包都由它完成; TS/JSX 转译与产物压缩默认改用 oxc (`build.minify` 默认值即 `'oxc'`, terser/esbuild 仍可显式选用). 本机安装的 vite@8.3.1 中 rollup 已不在依赖列表, 官方迁移指南的表述是 "Vite 8 uses Rolldown and Oxc based tools instead of esbuild and Rollup".
 
 Vite 7 及之前版本的分工:
 

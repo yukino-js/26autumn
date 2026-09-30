@@ -2,7 +2,7 @@
 title: "A2UI"
 ---
 
-仓库路径: git@github.com:a2ui-project/a2ui.git (本机克隆位于 $HOME/Downloads/a2ui)
+仓库路径: https://github.com/a2ui-project/a2ui (本机克隆位于 $HOME/Downloads/a2ui, 2026-10-01 pull 至 HEAD 8d75b7901dcbb78dded6449036a6f17bf52c62c1)
 本机器路径 (撰写时点): $HOME/github/a2ui/packages/shadcn (@yukino.js/a2ui monorepo, 本地 remote 为 git@github.com:hangtiancheng/a2ui.git)
 注: 本文为调研时点快照, 此后两处本地仓库状态已变——shadcn 包目录在本机已无法定位; yukino-agent 已拆为独立仓库 ($HOME/github/yukino-agent), 移除了 @yukino.js/a2ui-shadcn npm 依赖, shadcn prompt 改为内联 vendored 在 @/lib/a2ui/prompt (server-safe), 其当前 A2UI 依赖为 @a2ui/web_core ^0.10.7、@a2ui/react ^0.10.2、@a2ui/markdown-it ^0.1.2. 正文保留调研时点描述.
 
@@ -290,7 +290,7 @@ Action 机制: 交互组件 (Button 等) 通过 action 属性声明行为, 二�
 - 模板内部可混用绝对路径访问根作用域
 - 渐进渲染期间路径可能解析为 undefined, 渲染器应优雅处理 (空串或 loading)
 
-类型转换规则 (非字符串值插值时): 数字/布尔转标准字符串表示, null/undefined 转空串, 对象/数组转 JSON 字符串.
+类型转换规则 (非字符串值插值时): 数字/布尔转标准字符串表示, null/undefined 转空串, 对象/数组转 JSON 字符串. Swift BasicCatalog 的 formatString 实现原先直接跳过对象/数组, #2780 (2026-09-30 合入) 已修复为按该规则序列化输出.
 
 updateDataModel 的 upsert 语义:
 
@@ -369,7 +369,7 @@ theme 正式支持三个属性: primaryColor (主色), iconUrl 和 agentDisplayN
 - 对比 OpenAI ChatKit: 设计哲学相近 (基础组件 + 可配置声明式抽象层) , 但 A2UI 平台无关, 面向跨 web/移动/桌面自建 agentic 界面, 以及需要跨信任边界渲染的多 Agent 系统
 - 采用案例: Google 内部团队、AG2 多 Agent 框架 (A2UIAgent, 可经 A2A 服务 Flutter GenUI 客户端) 、CopilotKit 生态应用等
 
-渲染器生态: 官方实现覆盖 React、Lit、Angular、Flutter (GenUI SDK) 、Markdown; 社区有基于 shadcn 的 React 渲染器 (如 @xpert-ai/a2ui-react、本文的 @yukino.js/a2ui-shadcn) 及实验性 3D 渲染器. 配套工具: A2UI Composer (可视化编辑器, 无需安装即可生成 A2UI JSON) 、A2UI Theater (预置流式场景的演示场) .
+渲染器生态: 官方渲染器覆盖 React、Lit、Angular、Markdown (仓库 renderers/ 目录) 与 Flutter (GenUI SDK, 独立仓库 flutter/genui); 仓库内另有面向 Apple 平台的 Swift SDK (swift/core 的 A2UICore + BasicCatalog, swift/swiftui 的 SwiftUI 适配层与示例 App, 对齐 v0.9.1 规范) 与 Dart SDK (模型层 dart/a2ui_core、agent 层 dart/a2ui_agent; dart/a2ui_flutter 目前是占位包, 官方 Flutter 渲染器仍指向 GenUI SDK), kotlin/ 目录只剩 agent_sdk_legacy; 社区有基于 shadcn 的 React 渲染器 (如 @xpert-ai/a2ui-react、本文的 @yukino.js/a2ui-shadcn) 及实验性 3D 渲染器. 配套工具: A2UI Composer (可视化编辑器, 无需安装即可生成 A2UI JSON) 、A2UI Theater (预置流式场景的演示场) .
 
 ## 完整流程 (React + v0.9)
 
@@ -1090,6 +1090,8 @@ export const A2uiSurface = ({ surface }) => {
 (1) NodeResolver -- 把组件模型解析为响应式 ComponentNode 树
 
 NodeResolver (typescript/web_core/src/resolution/node-resolver.ts) 把 SurfaceModel 中的每个 ComponentModel 解析为 ComponentNode (typescript/web_core/src/resolution/component-node.ts): 节点 props 是 Signal 驱动的已解析值——动态绑定为 ResolvedBinding, action 属性为可直接调用的闭包, child 属性为活的 ComponentNode 引用 (或其数组). 组件尚未到达时生成 isPlaceholder 占位节点, 到达后原位替换, 渐进渲染由 node layer 统一承担; 属性绑定由 GenericBinder (resolution/generic-binder.ts) 按 catalog schema 刮取的行为 (DYNAMIC / ACTION / STRUCTURAL / CHECKABLE / STATIC, 见阶段 11 分类) 建立订阅.
+
+该 node layer 是框架无关的契约, 并且正在跨语言复制: 2026-10-01 的克隆快照中, Dart 的 a2ui_core 已实现同构的 resolution 层 (#2669, dart/a2ui_core/lib/src/resolution/ 下的 component_node / node_resolver / ref_fields / resolved_binding), 仓库 conformance 套件同步新增 core/node_resolution.yaml 用例, Dart 与 TypeScript web_core 对各自的 NodeResolver 跑同一套用例; Dart 侧随之做了破坏性收敛——GenericBinder / Behavior / BehaviorNode / ComponentContext 不再导出, 渲染器一律经 NodeResolver / ComponentNode 读组件, 动态属性以 ResolvedBinding 承载 (可写绑定是 WritableBinding, 写入走 WritableBinding.set), SurfaceModel.dispatchAction 只对 event 载荷派发动作, functionCall 由节点的 action 自行执行.
 
 要点: 组件树解析、存在性与数据作用域 (dataPath) 管理不再由 React 组件逐层订阅事件完成, 而是集中在 NodeResolver 内; 节点仅在自身已解析属性变化时发出信号 (子节点内部属性变化不触发父节点), 更新范围被限制在单个组件粒度, 避免整棵树重渲染.
 

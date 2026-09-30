@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { TreeContextProvider } from "@fumadocs/base-ui/contexts/tree";
 import { NextProvider } from "fumadocs-core/framework/next";
 import { Provider } from "@/components/provider";
-import { siteUrl } from "@/lib/shared";
+import { appName, siteUrl } from "@/lib/shared";
 import { source } from "@/lib/source";
 import "./global.css";
 
@@ -16,6 +16,12 @@ export const metadata: Metadata = {
   icons: {
     // icon URLs bypass metadataBase resolution, prefix /26autumn manually
     icon: "/26autumn/favicon.svg",
+  },
+  openGraph: {
+    siteName: appName,
+    type: "website",
+    locale: "zh_CN",
+    url: siteUrl,
   },
 };
 

@@ -1153,7 +1153,7 @@ WaitGroup: state 是一个 64 位字 (高 32 位 counter, 低 32 位 waiter 数)
 - WaitGroup 含 noCopy, 必须传指针, 值拷贝后 vet 会报 copylocks.
 - Go 1.25+ 新增 `wg.Go(func())`, 把 Add(1)/defer Done 封装掉, 消除一类计数错误.
 
-Once: `done atomic.Uint32` + Mutex 双检查. 快路径原子读 done==1 直接返回; 慢路径加锁再检查、执行 f、defer 置 done=1 (f panic 也算"执行过", 后续调用不再执行且拿不到结果——所以初始化可能失败时用 `sync.OnceValue`/`OnceValues` (1.21+) 或自己带 error 缓存的实现). 关键保证: Once.Do 返回时 f 已 happens-before 所有观察者. 真实用例 (yukino.go): yukino_cache 的 `lruStore.closeOnce sync.Once` 保证 Close 幂等 (只关一次 closeCh/Ticker); yukino_rpc 的 `observedStream` 用 `once.Do` 保证一次流式调用只向熔断器记录一次成功/失败. 而 yukino_cache 的 Group 按名注册用的是另一种模式: 全局 `map[string]*Group` + `sync.RWMutex`, 重复注册直接 panic——注册表 (可增删查) 与单例 (只初始化一次) 要选对工具.
+Once: `done atomic.Bool` + Mutex 双检查. 快路径原子读 done 为 true 直接返回; 慢路径加锁再检查、执行 f、defer 置 done=true (f panic 也算"执行过", 后续调用不再执行且拿不到结果——所以初始化可能失败时用 `sync.OnceValue`/`OnceValues` (1.21+) 或自己带 error 缓存的实现). 关键保证: Once.Do 返回时 f 已 happens-before 所有观察者. 真实用例 (yukino.go): yukino_cache 的 `lruStore.closeOnce sync.Once` 保证 Close 幂等 (只关一次 closeCh/Ticker); yukino_rpc 的 `observedStream` 用 `once.Do` 保证一次流式调用只向熔断器记录一次成功/失败. 而 yukino_cache 的 Group 按名注册用的是另一种模式: 全局 `map[string]*Group` + `sync.RWMutex`, 重复注册直接 panic——注册表 (可增删查) 与单例 (只初始化一次) 要选对工具.
 
 Cond: `Wait` 必须在持锁下调用且用 for 循环重检条件 (虚假唤醒与竞态). 工程上 90% 的 Cond 场景可以用 channel 或减小粒度的锁替代, Cond 无法与 select/ctx 组合是其硬伤.
 

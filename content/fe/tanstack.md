@@ -1,9 +1,9 @@
 ---
-title: "TanStack Query、TanStack Form、TanStack Virtual、TanStack Start、TanStack DB 技术笔记"
-description: "基于 yukino-chatbot 与 yukino-codegen 真实源码, 梳理 TanStack Query v5 的缓存模型、queryKey 设计、失效策略, 以及与 Jotai、TanStack Form、TanStack Virtual、TanStack Start、TanStack DB 的职责分工"
+title: "TanStack Query、TanStack Form、TanStack Virtual 技术笔记"
+description: "基于 yukino-chatbot 与 yukino-codegen 真实源码, 梳理 TanStack Query v5 的缓存模型、queryKey 设计、失效策略, 以及与 Jotai、TanStack Form、TanStack Virtual 的职责分工 (leetcode 的 TanStack Start/DB 生态依赖仅作声明参考)"
 ---
 
-> 本文所有"真实项目用法"均来自本机三个仓库: `$HOME/github/yukino-chatbot` (Jotai + TanStack Query v5 的 LLM 聊天应用) 与 `$HOME/github/yukino-codegen` (TanStack Query + Form + Virtual 的代码生成平台) `$HOME/github/leetcode`. 通用机制论断均对照本机 `node_modules` 内 @tanstack/query-core 5.104.0 与 @tanstack/react-query 5.104.0 的真实 TypeScript 源码核实, 出处以相对路径标注.
+> 本文所有"真实项目用法"均来自本机仓库 `$HOME/github/yukino-chatbot` (Jotai + TanStack Query v5 的 LLM 聊天应用) 与 `$HOME/github/yukino-codegen` (TanStack Query + Form + Virtual 的代码生成平台), 另参考 `$HOME/github/leetcode` (其 package.json 声明了全套 TanStack 生态依赖, 见下文). 通用机制论断均对照本机 `node_modules` 内 @tanstack/query-core 5.104.0 与 @tanstack/react-query 5.104.0 的真实 TypeScript 源码核实, 出处以相对路径标注.
 
 ## 一、定位: 服务端状态 vs 客户端状态
 
@@ -32,6 +32,8 @@ TanStack Query 解决的是服务端状态 (Server State) 问题, 而不是传�
 | @tanstack/virtual-core  | 3.17.11  | yukino-chatbot, yukino-codegen |
 | jotai                   | 2.20.3   | yukino-chatbot                 |
 | react                   | 19.3.0   | yukino-chatbot, yukino-codegen |
+
+以下为 `$HOME/github/leetcode/package.json` 中声明的 TanStack 生态依赖 (版本均写作 latest, 仅展示生态面貌, 与上表的实际安装版本无关):
 
     "@tanstack/match-sorter-utils": "latest",
     "@tanstack/query-db-collection": "latest",

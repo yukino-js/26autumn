@@ -51,7 +51,7 @@ Yukino 是一个**终端 AI 编码代理**（terminal-based AI coding agent）�
 | `file-history/` | 文件快照（rewind 检查点）                                                                      |
 | `worktree/`     | Git worktree 隔离                                                                              |
 | `mcp/`          | MCP 客户端 / 管理 / 延迟加载策略                                                               |
-| `ui/`           | Ink TUI（`app.tsx` 2600+ 行，组装一切）                                                        |
+| `ui/`           | Ink TUI（`app.tsx` 3100+ 行，组装一切）                                                        |
 | `remote/`       | Koa + WebSocket 浏览器模式                                                                     |
 | `acp/`          | Agent Client Protocol                                                                          |
 | `telemetry/`    | OpenTelemetry / Langfuse / Sentry                                                              |
@@ -279,33 +279,33 @@ interface Tool {
 
 ### 4.1 命令系统（`commands/commands.ts` + `loader.ts`）
 
-`CommandRegistry` 支持 name/aliases、冲突检测、前缀补全。命令类型：`local`（本地返回文本）、`local_ui`（触发 UI 动作）、`prompt`（展开成发给模型的 prompt）、`skill_fork`（fork 模式技能）。
+`CommandRegistry` 支持 name、冲突检测（重名注册抛错）、前缀补全（`complete(prefix)`）。当前代码中命令没有别名字段（补全管道里的 `aliases` 权重槽恒为空数组）。命令类型：`local`（本地返回文本）、`local_ui`（触发 UI 动作）、`prompt`（展开成发给模型的 prompt）、`skill_fork`（fork 模式技能）。
 
 **内置命令：**
 
-| 命令           | 别名       | 类型     | 说明                                                               |
-| -------------- | ---------- | -------- | ------------------------------------------------------------------ |
-| `/login`       | —          | local_ui | 配置/保存/激活 Provider                                            |
-| `/help`        | `h` `?`    | local    | 列出命令，`/help <cmd>` 看详情                                     |
-| `/clear`       | —          | local_ui | 清空会话历史                                                       |
-| `/compact`     | `c`        | local_ui | 强制上下文压缩                                                     |
-| `/status`      | `s`        | local    | 显示模式/token/工具数/记忆数/模型/目录                             |
-| `/session`     | —          | local    | 会话信息                                                           |
-| `/plan`        | `p`        | local_ui | 进入 plan 模式                                                     |
-| `/resume`      | `r`        | local_ui | 恢复历史会话                                                       |
-| `/quit`        | `exit` `q` | local_ui | 退出                                                               |
-| `/memory`      | —          | local    | 记忆状态（`/memory clear` 清空）                                   |
-| `/skills`      | —          | local_ui | 列出技能（`/skills reload` 热重载）                                |
-| `/worktree`    | `wt`       | local_ui | 管理 git worktree                                                  |
-| `/code-review` | `cr`       | local    | 管理代码评审团队（create/add/remove/list/status/request/comment…） |
-| `/review`      | —          | prompt   | 评审未提交改动（展开成 prompt）                                    |
-| `/rewind`      | —          | local_ui | 打开检查点回退对话框                                               |
-| `/mcp`         | —          | local    | MCP 状态；`/mcp reload` 重连                                       |
-| `/sandbox`     | `sb`       | local_ui | 切换 OS 沙箱模式                                                   |
-| `/thinking`    | `think`    | local    | 查看/设置思考强度（并持久化）                                      |
-| `/provider`    | —          | local_ui | 切换 Provider（UI 里额外注册）                                     |
+| 命令           | 类型     | 说明                                           |
+| -------------- | -------- | ---------------------------------------------- |
+| `/login`       | local_ui | 配置/保存/激活 Provider                        |
+| `/model`       | local_ui | 切换当前 Provider 的模型                       |
+| `/help`        | local    | 列出命令，`/help <cmd>` 看详情                 |
+| `/clear`       | local_ui | 清空会话历史                                   |
+| `/compact`     | local_ui | 强制上下文压缩                                 |
+| `/status`      | local    | 显示模式/token/工具数/记忆数/模型/目录         |
+| `/session`     | local    | 会话信息                                       |
+| `/plan`        | local_ui | 进入 plan 模式                                 |
+| `/resume`      | local_ui | 恢复历史会话                                   |
+| `/quit`        | local_ui | 退出                                           |
+| `/memory`      | local    | 记忆状态（`/memory clear` 清空）               |
+| `/skills`      | local_ui | 列出技能（`/skills reload` 热重载）            |
+| `/worktree`    | local_ui | 管理 git worktree                              |
+| `/code-review` | local_ui | 打开代码评审配置对话框（带参数时返回用法提示） |
+| `/rewind`      | local_ui | 打开检查点回退对话框                           |
+| `/mcp`         | local    | MCP 状态；`/mcp reload` 重连                   |
+| `/sandbox`     | local_ui | 切换 OS 沙箱模式                               |
+| `/thinking`    | local    | 查看/设置思考强度（并持久化）                  |
+| `/provider`    | local_ui | 切换 Provider（UI 里额外注册，`ui/app.tsx`）   |
 
-**用户自定义命令**：`~/.yukino/commands/` 与 `<workDir>/.yukino/commands/` 下的 `*.md`（项目优先）。子目录命名空间化（`sub/dir/foo.md` → `sub:dir:foo`）。frontmatter 支持 `description` / `argument-hint` / `aliases`；正文用 `$ARGUMENTS` 占位。
+**用户自定义命令**：`~/.yukino/commands/` 与 `<workDir>/.yukino/commands/` 下的 `*.md`（项目优先）。子目录命名空间化（`sub/dir/foo.md` → `sub:dir:foo`）。frontmatter 支持 `description` / `argument-hint`；正文用 `$ARGUMENTS` 占位。
 
 **命令使用统计**：`commands/usage-tracker.ts` 记录到 `.yukino/command_usage.json`。
 
@@ -483,7 +483,7 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 ### 8.3 提取 Extractor（后台写记忆）
 
 - 触发：Agent `onLoopComplete`（每轮收尾，fire-and-forget）。`ui/app.tsx` 取最近 40 条消息拼成 summary，交给 `MemoryExtractor.extract`。
-- **节流与合并**：`turnsSinceLastExtraction` 节流；`inProgress` 时把新上下文塞进 `pendingContext`，当前跑完再补跑一次（trailing run）。
+- **节流与合并**：调用方（`onLoopComplete`）以消息游标节流——距上次提取新增不足 2 条消息则跳过；`MemoryExtractor` 内部 `inProgress` 时把新上下文塞进 `pendingContext`，当前跑完再补跑一次（trailing run）。
 - **实现**：起一个**子 Agent**（只给 ReadFile/WriteFile/EditFile/Glob/Grep + `MemoryPermissionChecker`，`maxIterations=5`），prompt 要求「只提取持久记忆、更新已有主题而非新建重复、别保存机密/图像/未证实断言、省略可从代码推导的模式」。
   - **快路径**：子代理直接用 WriteFile/EditFile 写记忆文件（`extractWrittenPaths` 提取写过的路径）。
   - **兜底路径**：子代理没调工具、而是输出 `MEMORY_NAME/MEMORY_TYPE/MEMORY_DESC/MEMORY_BODY` 结构化文本块，则本地解析落盘。
@@ -539,7 +539,7 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 
 `spawnSubagent` 决定子代理的运行参数：
 
-- **模型**：调用级 `model` 覆盖 > 定义级 `definition.model` > 父代理模型（`resolveModelId`）。
+- **模型**：调用级 `model` 覆盖 > 定义级 `definition.model` > 父代理模型（`spawn.ts` 的 `modelOverride ?? definition.model` 展开逻辑；旧版 `resolveModelId` 别名层已移除）。
 - **思考强度**：继承 `parentClient.getThinkingLevel() ?? parentProvider.thinking`。
 - **上下文窗口 / 输出上限**：`getContextWindow(provider)` / `getMaxOutputTokens(provider)`——即**沿用父代理同一 Provider 的配置**，所以窗口大小与父一致。
 - **系统提示词**：`definition.systemPromptOverride ?? buildSystemPrompt(env)`。
@@ -570,7 +570,7 @@ fork 用 `cloneRegistryForFork`：只剥 `MAIN_AGENT_ONLY_TOOLS`，保留 Agent�
 
 ## 10. Agent Team 团队与成员通信
 
-核心在 `teams/`：`index.ts`（Team/TeamManager）、`file-mailbox.ts`（文件邮箱）、`protocol.ts`（结构化消息）、`shared-task.ts`（共享任务板）、`tools.ts`/`task-tools.ts`（工具）、`backend.ts`（进程后端）、`coordinator.ts`、`task-stop.ts`、`transcript.ts`。
+核心在 `teams/`：`index.ts`（Team/TeamManager）、`file-mailbox.ts`（文件邮箱）、`file-lock.ts`（同步文件锁）、`protocol.ts`（结构化消息）、`shared-task.ts`（共享任务板）、`tools.ts`/`task-tools.ts`（工具）、`backend.ts`（进程后端）、`coordinator.ts`、`task-stop.ts`、`progress.ts`（teammate UI 状态）、`team-file.ts`（团队目录/命名空间）、`registry.ts`（成员名注册表）。
 
 ### 10.1 团队模型
 
@@ -595,11 +595,11 @@ fork 用 `cloneRegistryForFork`：只剥 `MAIN_AGENT_ONLY_TOOLS`，保留 Agent�
 
 ### 10.3 通信机制：文件邮箱（`file-mailbox.ts`）
 
-- 每个收件人一个 JSON 数组文件：`<team-dir>/inboxes/<name>.json`；Lead 是 `lead.json`。
-- **文件锁**：`withLock` 用 `openSync(lockFile, "wx")`（O_CREAT|O_EXCL）独占创建 `.lock`；拿不到就指数退避+抖动重试，总超时 5s；超 10s 的锁视为陈旧可抢占。
+- 每个收件人一个 JSON 数组文件：`<team-dir>/inboxes/<name>.json`（team-dir 位于 `~/.yukino/teams/<namespace>/<team>`，namespace 为项目规范路径的 sha256）；Lead 是 `lead.json`。
+- **文件锁**（`file-lock.ts` 的 `withFileSyncLock`）：Lamport 票据式锁目录——`{file}.lock` 是目录，竞争者以 `wx`（O_CREAT|O_EXCL）独占创建 `choosing-`/`ticket-` 条目，无人在 choosing 且自己票据最小时获锁；总超时 5s，条目仅在「龄超 10s 且持有进程已死」时清理；指数退避+抖动（5ms→80ms），`Atomics.wait` 同步睡眠。邮箱写入用 write-then-rename（临时文件 + renameSync），已读消息超 500 条按最旧修剪（未读不丢）。
 - 消息字段：`from / text / timestamp / read / type / requestId / approve`。
 - `receiveSync()`：取未读并原地标记已读（读-改-写整个数组）。
-- **Lead 排空**：`TeamManager.drainLeads()` 把 Lead 邮箱未读格式化成 `<task-notification team="...">from=X: text</task-notification>`，经 Agent 的 `notificationFn` 注入成 system-reminder。teammate 完成一轮会向 Lead 发 `[idle] <name> (reason: ...)`。
+- **Lead 排空**：`TeamManager.drainLeaderMailbox()` 把 Lead 邮箱未读格式化成 `<task-notification team="...">from=X: text</task-notification>`，经 Agent 的 `notificationFn` 注入成 system-reminder。teammate 完成一轮会向 Lead 发 `[idle] <name> (reason: ...)`。
 
 ### 10.4 结构化协议（`protocol.ts`）
 
@@ -620,8 +620,8 @@ while active:
       nextPrompt = "You have new messages from your team: ..."
 ```
 
-- **plan-mode teammate**（`plan_mode_required=true`）：以 `PermissionChecker(mode:"plan")` 起步，只能读；一轮结束（即写了计划并 ExitPlanMode）后把计划经 `planApprovalRequest` 发给 Lead，**无限期阻塞**等审批（只读无害，宁可不超时）；Lead 用 `SendMessage type=plan_approval_response + approve` 回复，批准则原地把 `checker.mode="default"` 放行执行，拒绝则带 feedback 让其修订。
-- teammate 退出时 `saveTranscript` 持久化其对话转录（调试用）。
+- **plan-mode teammate**（`plan_mode_required=true`）：以 `PermissionChecker(mode:"plan")` 起步，只能读；teammate 没有 ExitPlanMode 工具——**结束一轮即提交信号**（此时计划应已写入计划文件），随后把计划经 `planApprovalRequest` 发给 Lead，**无限期阻塞**等审批（只读无害，宁可不超时）；Lead 用 `SendMessage type=plan_approval_response + approve` 回复，批准则原地把 `checker.mode="default"` 放行执行，拒绝则带 feedback 让其修订。
+- teammate 状态经 `progress.ts` 的 uiState 暴露给 lead 侧 UI（status/progress），旧版的对话转录持久化（transcript.ts）已移除。
 
 ### 10.6 共享任务板（`shared-task.ts` + `task-tools.ts`）
 
@@ -692,7 +692,7 @@ while active:
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 系统提示词在哪    | `src/prompt/sections.ts` + `builder.ts`，`buildSystemPrompt()`，建客户端时绑定；只含项目无关内容                                                                                                                                                                                            |
 | 工具清单          | 文件(ReadFile/EditFile/WriteFile/Glob/Grep)、命令(Bash/PowerShell/ComputerUse)、流程(AskUserQuestion/ExitPlanMode/Enter&ExitWorktree/WebFetch)、委派(Agent/Team*/SendMessage/TaskStop)、任务(TaskCreate/Get/List/Update)、元工具(ToolSearch/McpCall/LoadSkill/InstallSkill/SyntheticOutput) |
-| Slash 命令        | `/login /help /clear /compact /status /session /plan /resume /quit /memory /skills /worktree /code-review /review /rewind /mcp /sandbox /thinking /provider` + 用户自定义 + 技能命令                                                                                                        |
+| Slash 命令        | `/login /model /help /clear /compact /status /session /plan /resume /quit /memory /skills /worktree /code-review /rewind /mcp /sandbox /thinking /provider` + 用户自定义 + 技能命令（当前无命令别名；旧版 `/review` 已移除）                                                                |
 | 内置 skills       | 包本身不附带 SKILL.md；从 `~/.agents/skills` 与 `.agents/skills` 发现，支持 inline/fork 与热重载                                                                                                                                                                                            |
 | Thinking          | 7 级 off→max，默认 high；Anthropic 用 budget/adaptive，OpenAI 用 reasoning.effort；`/thinking` 运行时切换并持久化；只降不升                                                                                                                                                                 |
 | 自动压缩          | token 预算阈值触发；保留尾部 10k token/5 条(≤40k)；结构化摘要提示词(Goal/Constraints/Progress/Decisions/NextSteps/CriticalContext)；缓存共享调用；PTL 重试；recovery 附件                                                                                                                   |

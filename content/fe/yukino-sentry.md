@@ -10,7 +10,7 @@ description: "@yukino.js/sentry 框架无关浏览器端监控 SDK 的问答式�
 @yukino.js/sentry 是一个框架无关的浏览器端监控与分析 SDK, 采用分层架构设计, 核心模块如下:
 
 ```
-┌───------──┐
+┌───------------------------------------------------------──┐
 │                   Public API Layer                        │
 │  init / destroy / isInitialized / enablePlugin            │
 │  + traceError / tracePerformance / traceCustomEvent       │
@@ -18,26 +18,26 @@ description: "@yukino.js/sentry 框架无关浏览器端监控 SDK 的问答式�
 │  + setUserId / setVisitorId / getIdentity                 │
 │  + beforeSend / beforeSendBatch / afterSend               │
 │  + flushOfflineCache  (以及全部类型/枚举 re-export)       │
-├───------──┤
+├───------------------------------------------------------──┤
 │                   Core Layer                              │
 │  sdk-lifecycle / setup / bus / decorates / handlers       │
 │  + pv-lifecycle / white-screen / identity                 │
-├───------──┤
+├───------------------------------------------------------──┤
 │                  Reporter Layer                           │
 │  DataReporter / transports / offline-cache /              │
 │  server-recovery / flush-scheduler / send-preflight       │
-├------─┤
+├----------------------------------------------------------─┤
 │                  Plugin Layer                             │
 │  PerformancePlugin / ScreenRecordPlugin / ExposurePlugin  │
-├──------───┤
+├──------------------------------------------------------───┤
 │                  Framework / Node Layer                   │
 │  react.ts / vue.ts / vite.ts / webpack.ts                 │
 │  + node/dev-endpoint / source-map  (Node-only)            │
-├──------───┤
+├──------------------------------------------------------───┤
 │                  Utils Layer                              │
 │  data-structures / session / uuid / throttle /            │
 │  click-data / dom2str / logger                            │
-└──------───┘
+└──------------------------------------------------------───┘
 ```
 
 核心模块职责:
@@ -263,7 +263,7 @@ const cleanup = decorateProp(globalThis, "fetch", (oldFetch) => {
 共同设计要点:
 
 1. 自身请求过滤: `shouldIgnoreRequest()` 过滤发往 DSN 的 POST 上报请求, 避免死循环
-2. excludeApis 配置: 支持用户配置排除特定 API 路径 (字符串严格相等, 正则 test)
+2. excludeAPIs 配置: 支持用户配置排除特定 API 路径 (字符串严格相等, 正则 test)
 3. Server-Timing 解析: 从响应头提取服务端性能数据
 4. 错误才带 body: `requestData` (`{ body }`) 与 `responseData` 仅在 statusCode 为 0 或 >= 400 时捕获, 字符串响应截断到 8KB, 单个错误不会撑爆上报载荷
 5. 状态归一化: `transformHttpData()` 按状态码段生成 status (OK/Error) 与 message, 返回新对象不改入参; 默认只有 Status.Error 的请求会被上报, `enableHttpPerformance: true` 时成功请求额外转为 Performance 事件
@@ -1102,9 +1102,9 @@ function shouldQueuePayload(payload: TReportPayload): boolean {
 2. API 排除 (is-excluded-api.ts) :
 
 ```typescript
-// 配置: excludeApis: ["/api/health", /^https:\/\/analytics/]
+// 配置: excludeAPIs: ["/api/health", /^https:\/\/analytics/]
 function isExcludedApi(api: string): boolean {
-  for (const excludedApi of sentry.options.excludeApis) {
+  for (const excludedApi of sentry.options.excludeAPIs) {
     if (typeof excludedApi === "string") {
       if (api === excludedApi) return true; // 字符串: 严格相等匹配
     } else {
@@ -1146,7 +1146,7 @@ init({
 过滤层级总结:
 
 ```
-事件产生 → excludeApis/ignoreErrors (采集层过滤)
+事件产生 → excludeAPIs/ignoreErrors (采集层过滤)
          → BoundedSet 去重 (去重层过滤)
          → tracesSampleRate (采样层过滤)
          → beforeSend (用户钩子过滤)

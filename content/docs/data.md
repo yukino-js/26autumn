@@ -20,7 +20,7 @@ Tiktok 搜索推荐平台是一个 React SPA, 页面报错后排查链路长: �
 对应 yukino-sentry ScreenRecordPlugin 的三步实现:
 
 1. 常态录制, 内存缓冲: rrweb 的 record() 启动后, 每产生一个事件 (DOM 增量、点击、滚动) 就通过 emit 回调推进一个数组. rrweb 录的是结构化增量事件而非视频, 开销很小, 所以「全程录」是可行的
-2. 滚动淘汰, 只留最近 3 秒: 每次 emit 时调用 getRollingWindow(), 按 event.timestamp - screenRecordDurationMs 作为截止线, 把更早的事件从数组里丢掉. 内存占用恒定, 也不会记录用户完整操作历史 (隐私 + 体积)
+2. 滚动淘汰, 只留最近 3 秒: 每次 emit 时在 recorder 内部执行 pruneWindow(event.timestamp), 按 event.timestamp - screenRecordDurationMs 作为截止线, 把数组头部更早的事件 shift 掉. 内存占用恒定, 也不会记录用户完整操作历史 (隐私 + 体积)
 3. 错误触发, 取快照上报: 上报事件命中触发类型 (Error/Xhr/Fetch/Resource/UnhandledRejection) 时置 shouldScreenRecord = true, 插件把当前窗口内的事件 JSON -> gzip -> base64 附在错误数据里. 错误发生的那一刻, 窗口里装的恰好就是「错误前 3 秒」的事件流
 
 配套细节: rrweb 的 checkoutEveryNms 按窗口长度定期生成新的全量 DOM 快照. 回放必须从一个全量快照开始重建 DOM, 如果不做 checkout, 滚动窗口裁掉旧事件后可能把唯一的全量快照也裁掉, 窗口就无法独立回放.
@@ -907,7 +907,7 @@ return {
 
 此外还有两个工程化细节:
 
-1. 错误去重: 用 base64 编码的 `type-message-filename-line-column` 作为错误签名, 放入容量 1000 的 LRU Set, 相同错误只上报一次, 防止循环报错打爆上报通道
+1. 错误去重: 用 `type-message-filename-line-column` 以连字符拼接的字符串作为错误签名, 放入容量 1000 的 BoundedSet (超出容量淘汰最早记录, LRU 语义), 相同错误只上报一次, 防止循环报错打爆上报通道
 2. 批量聚合: 每条错误入队都会重置 2000ms 的防抖窗口, 窗口内无新错误后批量 flush; 按 type-name-message 分组的同一错误达到 5 次及以上时, 折叠为一条带 batchErrorLength 和最后发生时间的聚合记录
 
 ### rrweb 是什么? 有什么作用?
@@ -939,13 +939,13 @@ const [{ record }, pako] = await Promise.all([
   import("pako"),
 ]);
 
-// 2. 滚动窗口: 每次 emit 只保留最近 screenRecordDurationMs (默认 3s) 内的事件
-recordWindow = getRollingWindow([...recordWindow, event], event.timestamp);
-
+// 2. 滚动窗口: 每次 emit 调用 pruneWindow(event.timestamp), 把 recordWindow
+//    数组头部早于 screenRecordDurationMs (默认 3s) 的事件 shift 掉
 // 3. 触发: 上报的事件类型命中 screenRecordEventTypes
 //    (默认 Error/Xhr/Fetch/Resource/UnhandledRejection) 时置 shouldScreenRecord = true
 // 4. 打包: 窗口内事件 JSON -> pako.gzip -> base64, 作为 ScreenRecord 事件上报
-// 5. checkoutEveryNms 按窗口长度做 checkout, 保证全量快照定期刷新, 窗口可独立回放
+// 5. record({ checkoutEveryNms: screenRecordDurationMs }) 按窗口长度做 checkout,
+//    保证全量快照定期刷新, 窗口可独立回放
 ```
 
 回放侧用 `unzipScreenRecord()` 逆过程还原: base64 -> Uint8Array -> pako.ungzip -> JSON.parse -> rrweb events, 交给 rrweb 的 Replayer 在监控平台里回放.
@@ -1079,7 +1079,7 @@ Access-Control-Allow-Origin: https://www.example.com
 init({ dsn: "/api/log", ignoreErrors: ["Script error."] });
 ```
 
-2. 区分处理未知来源错误: yukino-sentry 中 filename 为空或 unknown 的错误会跳过去重逻辑始终上报 (hasUnknownSource 分支), 因为这类错误没有可靠的签名, 去重键会误合并不同的错误
+2. 区分处理未知来源错误: yukino-sentry 中 filename 为空或 "unknown" 的错误会跳过去重逻辑始终上报 (handleCodeError 中 reportOncePerError 之前的分支), 因为这类错误没有可靠的签名, 去重键会误合并不同的错误
 
 3. 兜底定位手段 (CDN 不可控时的替代方案):
    - try-catch 包裹关键调用, 主动上报带堆栈的错误, 不依赖 window error
@@ -1333,18 +1333,19 @@ monaco 体积大 (几百 KB), 拆成独立 chunk 后跨多个编辑器页面共�
 
 ### SPA 首屏渲染时间 (FSP) 如何计算?
 
-真实业务场景: Tiktok 搜索推荐平台是 React SPA, 首屏内容由 JS 执行后动态渲染, 不是 HTML 直出的. 传统的 DOMContentLoaded 只表示 HTML 解析完成, load 事件表示所有资源 (包括非首屏图片、iframe) 加载完毕, 都不能准确反映用户看到首屏内容的时间. LCP (Largest Contentful Paint) 虽然更接近, 但浏览器按元素面积自动选“最大内容元素”, 候选元素仅限视口内 (视口外的大图不会成为候选), 仍可能选到骨架屏占位等不代表首屏真正完成的元素. yukino-sentry 用 MutationObserver 自行计算 FSP (First Screen Paint), 只关心首屏视口内可见元素的出现时间.
+真实业务场景: Tiktok 搜索推荐平台是 React SPA, 首屏内容由 JS 执行后动态渲染, 不是 HTML 直出的. 传统的 DOMContentLoaded 只表示 HTML 解析完成, load 事件表示所有资源 (包括非首屏图片、iframe) 加载完毕, 都不能准确反映用户看到首屏内容的时间. LCP (Largest Contentful Paint) 虽然更接近, 但浏览器按元素面积自动选“最大内容元素”, 候选元素仅限视口内 (视口外的大图不会成为候选), 仍可能选到骨架屏占位等不代表首屏真正完成的元素. yukino-sentry 用 MutationObserver 配合 IntersectionObserver 自行计算 FSP (First Screen Paint), 只关心首屏视口内可见元素的出现时间.
 
 #### FSP 的计算原理
 
-核心思路: 用 MutationObserver 监听 DOM 变化, 每次首屏视口内新增可见元素就记录一个时间戳 (performance.now()), 最终取最大的时间戳作为 FSP——因为只有最后一个首屏元素出现, 首屏才算“完整”.
+核心思路: 用 MutationObserver 监听 DOM 变化, 每个新增元素交给 IntersectionObserver 观察, 元素真正与首屏视口相交的那一刻记录其交叉时间戳, 最终取最新的时间戳作为 FSP——因为只有最后一个首屏元素出现, 首屏才算“完整”.
 
 #### 实现步骤
 
 对应 yukino-sentry first-screen-paint.ts 的实现:
 
 ```typescript
-// 1. 判断元素是否在首屏视口内: getBoundingClientRect 与视口有交集
+// 1. 兜底判定 (IntersectionObserver 不可用时的退化路径):
+//    getBoundingClientRect 与视口有交集
 function isInViewport(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
   return (
@@ -1355,86 +1356,84 @@ function isInViewport(element: HTMLElement): boolean {
   );
 }
 
-// 2. MutationObserver 监听 DOM 变化, 过滤并记录首屏可见元素
+// 2. MutationObserver 监听 DOM 变化, 新增的非 link/script/style 元素
+//    注册进 IntersectionObserver; 元素真正与视口相交时取其交叉时间戳
 const excludedElementNames = new Set(["link", "script", "style"]);
-const entries: RenderEntry[] = [];
+let latestRenderTime = 0;
 
-observer = new MutationObserver((mutationList) => {
-  checkDomChange(callback); // 每次变化都检查是否加载完成
-  const children: HTMLElement[] = [];
+const processIntersectionEntries = (
+  entries: readonly IntersectionObserverEntry[],
+) => {
+  for (const entry of entries) {
+    intersectionObserver.unobserve(entry.target);
+    if (entry.isIntersecting) {
+      latestRenderTime = Math.max(latestRenderTime, entry.time);
+    }
+  }
+};
+
+const processMutations = (mutationList: readonly MutationRecord[]) => {
   for (const mutation of mutationList) {
-    if (!isHTMLElement(mutation.target) || !isInViewport(mutation.target))
-      continue;
-    for (const node of Array.from(mutation.addedNodes)) {
-      // 过滤: 必须是 HTMLElement、不是 link/script/style、在视口内
+    for (const node of mutation.addedNodes) {
       if (
         isHTMLElement(node) &&
-        !excludedElementNames.has(node.tagName.toLowerCase()) &&
-        isInViewport(node)
+        !excludedElementNames.has(node.tagName.toLowerCase())
       ) {
-        children.push(node);
+        intersectionObserver.observe(node);
+        // IntersectionObserver 不可用时退化:
+        // isInViewport(node) 通过则 latestRenderTime = performance.now()
       }
     }
   }
-  if (children.length) {
-    // 记录这批元素 + 当前时间戳
-    entries.push({ children, startTime: performance.now() });
-  }
-});
-observer.observe(document, {
-  childList: true,
-  subtree: true,
-  characterData: true,
-  attributes: true,
-});
+};
 
-// 3. rAF 轮询检测页面加载完成, 取最后一批首屏元素的时间作为 FSP
-function checkDomChange(callback: Callback): void {
-  cancelAnimationFrame(requestId);
-  requestId = requestAnimationFrame(() => {
-    if (document.readyState === "complete") {
-      observer?.disconnect();
-      // 首屏完成 = 最后一批首屏元素出现的时间; entries 为空时返回 0
-      const fsp =
-        entries.length === 0 ? 0 : Math.max(...entries.map((e) => e.startTime));
-      callback(fsp);
+mutationObserver.observe(document, { childList: true, subtree: true });
+
+// 3. rAF 轮询 readyState, 页面加载完成时收尾, 取最新交叉时间戳作为 FSP
+const waitForPageReady = () => {
+  if (document.readyState === "complete") {
+    // disconnect 前先消费尚未派发的 MutationRecords
+    processMutations(mutationObserver.takeRecords());
+    mutationObserver.disconnect();
+    if (intersectionObserver && hasObservedTarget) {
+      // Intersection records 在动画帧回调之后才结算, 延后一帧收尾
+      requestId = requestAnimationFrame(finish);
       return;
     }
-    checkDomChange(callback); // 未完成, 下一帧继续
-  });
-}
-
-// 4. requestIdleCallback 延迟启动, 避免影响首屏性能本身
-export function getFirstScreenPaint(callback: Callback): void {
-  if ("requestIdleCallback" in globalThis) {
-    requestIdleCallback((deadline) => {
-      if (deadline.timeRemaining() > 0) observeFirstScreenPaint(callback);
-    });
+    finish();
     return;
   }
-  observeFirstScreenPaint(callback);
-}
+  requestId = requestAnimationFrame(waitForPageReady);
+};
+waitForPageReady();
+
+// finish: 先 takeRecords() 排空 IntersectionObserver 记录, 再断开两个 observer,
+// callback(latestRenderTime); latestRenderTime 初值为 0, 没有观察到首屏元素时返回 0
+
+// 4. getFirstScreenPaint(callback) 调用即开始观察并返回 cleanup 函数 (供插件销毁时取消观察);
+//    环境没有 MutationObserver 时直接 callback(0)
 ```
 
 #### 关键设计决策
 
-- 为什么取最大 startTime: entries 中每个 entry 的 startTime 是该批元素插入的时间, 首屏渲染完成 = 最后一批首屏元素出现的时间, 所以取 max. 比如 React 渲了三批元素 (骨架屏 -> 列表头部 -> 列表内容), FSP 取列表内容出现的时间
-- 为什么用 rAF 轮询而不是 onload 事件: onload 等待所有资源 (包括非首屏图片、iframe), 可能远晚于首屏完成; rAF 每帧检查 readyState, 能在 DOM 稳定后尽快得出 FSP
+- 为什么取最新时间戳: 每个元素记录的交叉时间戳是它进入视口的时刻, 首屏渲染完成 = 最后一个首屏元素出现, 所以取 max. 比如 React 渲了三批元素 (骨架屏 -> 列表头部 -> 列表内容), FSP 取列表内容出现的时间
+- 为什么用 IntersectionObserver 判定可见: MutationObserver 只能知道元素被加入 DOM, 不知道它是否在视口内; 把元素注册进 IntersectionObserver 由浏览器做真实交叉判定, entry.time 是浏览器给出的元素进入视口的时刻, 比手动取 performance.now() 更准; IntersectionObserver 不可用时退化为 getBoundingClientRect 交叉判定加 performance.now()
+- 为什么用 rAF 轮询而不是 onload 事件: onload 等待所有资源 (包括非首屏图片、iframe), 可能远晚于首屏完成; rAF 每帧检查 readyState, 能在 DOM 稳定后尽快得出 FSP; readyState 变为 complete 后还要先消费剩余 takeRecords()、再延后一帧排空 IntersectionObserver 记录, 才回调 FSP
 - 为什么排除 link/script/style: 这些元素在 head 中, 不产生视觉渲染, 不应计入首屏时间
-- 为什么用 requestIdleCallback 启动: MutationObserver 的 observe 调用和回调执行有开销, 在首屏关键渲染路径上启动会影响性能本身 (你正在测首屏性能, 不能让测试工具本身拖慢首屏). 延迟到空闲时启动, 代价是可能漏掉极早期的首屏元素, 但 SPA 首屏元素通常在 JS 执行后才出现, 时序上能覆盖
+- 为什么不做延迟启动: getFirstScreenPaint 调用即开始观察并返回 cleanup 函数, 没有 requestIdleCallback 延迟启动; MutationObserver 本身的观察开销很小, 且 SPA 首屏元素在 JS 执行后才出现, 立即启动在时序上就能覆盖; 环境没有 MutationObserver 时直接上报 0 并返回 noop cleanup
 
 #### FSP vs LCP
 
 - LCP: PerformanceObserver 监听浏览器自动选的“最大内容元素”的渲染时间, 实现简单 (浏览器内置) 但选择标准是面积, 候选虽仅限视口内元素, 仍可能选到不代表首屏完成的元素 (如大面积骨架屏占位)
-- FSP: MutationObserver 自行统计首屏视口内所有新增元素, 取最后一个出现的时间, 更贴近用户真实体验, 代价是实现复杂度更高
+- FSP: MutationObserver 配合 IntersectionObserver 检测首屏视口内新增元素的进入时刻, 取最后一个出现的时间, 更贴近用户真实体验, 代价是实现复杂度更高
 
 #### 边界与局限
 
 - 骨架屏干扰: 如果首屏先出现骨架屏再出现真实内容, FSP 会把骨架屏出现的时间计入, 导致 FSP 偏小. 这是所有 DOM 变化监听方案的通病, 缓解手段是结合 FCP (First Contentful Paint) 判断骨架屏 vs 真实内容
-- SSR 场景退化: 如果首屏元素由服务端直出, MutationObserver 在 readyState 变为 complete 前可能来不及观察到 (元素在 HTML 解析阶段就存在了), entries 为空返回 0. 缓解手段是在 SSR 场景 fallback 到 LCP 或直接用 DOMContentLoaded
+- SSR 场景退化: 如果首屏元素由服务端直出, 元素在 HTML 解析阶段就已存在, MutationObserver 只监听新增节点观察不到, latestRenderTime 停留在初值 0. 缓解手段是在 SSR 场景 fallback 到 LCP 或直接用 DOMContentLoaded
 - SPA 路由切换不算首屏: FSP 只计算 document 初始化阶段的首屏, 路由切换后的渲染不在观察范围内 (MutationObserver 在 readyState complete 后断开)
 
-总结: FSP 用 MutationObserver 自行统计首屏视口内元素的出现时间, 取最后一批元素出现的时间作为首屏完成时间, 比浏览器自动选的 LCP 更贴近用户真实体验. 代价是实现复杂度高, 且对 SSR 和骨架屏场景有局限. 核心取舍是“用更精确的统计换取更复杂的实现”.
+总结: FSP 用 MutationObserver 配合 IntersectionObserver 检测首屏视口内元素的出现时刻, 取最后一个出现的时间作为首屏完成时间, 比浏览器自动选的 LCP 更贴近用户真实体验. 代价是实现复杂度高, 且对 SSR 和骨架屏场景有局限. 核心取舍是“用更精确的统计换取更复杂的实现”.
 
 ### Sourcemap 反解与堆栈聚合策略是怎样的?
 
@@ -1488,7 +1487,7 @@ Slardar 参考 Sentry 的策略, 利用 stack 信息做更精确的聚合:
 
 相同 fingerprint 的上报归为同一异常. 相比 name + message, 利用 stacktrace 能区分不同文件下触发相同 message 的情况, 聚合精度显著提高.
 
-与 yukino-sentry 的对比: yukino-sentry 在 SDK 侧用 `type-message-filename-line-column` 的 base64 编码做错误签名 (「JSError 上报应该携带哪些错误信息?」中提到的 LRU 去重), 这是客户端侧的轻量去重; Slardar/Sentry 的 fingerprint 是服务端侧的聚合, 基于反解后的完整 Frame 信息, 粒度更细. 两者解决不同层面的问题: 客户端去重防止循环报错打爆上报通道, 服务端聚合把同类错误归组供人消费.
+与 yukino-sentry 的对比: yukino-sentry 在 SDK 侧用 `type-message-filename-line-column` 连字符拼接的字符串做错误签名 (「JSError 上报应该携带哪些错误信息?」中提到的容量 1000 有界 Set 去重), 这是客户端侧的轻量去重; Slardar/Sentry 的 fingerprint 是服务端侧的聚合, 基于反解后的完整 Frame 信息, 粒度更细. 两者解决不同层面的问题: 客户端去重防止循环报错打爆上报通道, 服务端聚合把同类错误归组供人消费.
 
 ### 异常报警机制如何设计?
 

@@ -7,9 +7,9 @@ description: "面向 TS/JS 开发者的 openai/codex 调研: 产品形态、Type
 
 > 本文面向 TS/JS 技术栈读者, 不要求 Rust 背景: 实现语言只在必要处提及, 重点放在产品形态、TypeScript SDK、进程间协议与工程规范上。
 
-## 一、项目快照 (本机克隆 2026-09-30)
+## 一、项目快照 (本机克隆 2026-10-01)
 
-本机克隆自 org-14957082@github.com:openai/codex.git (.git/config), 2026-09-29 clone 于 c248f6d4, 2026-09-30 两次 fast-forward pull (先到 92bc601a, 再到 7219fd7a), 分支 main。
+本机克隆自 org-14957082@github.com:openai/codex.git (.git/config), 2026-09-29 clone 于 c248f6d4, 2026-09-30 两次 fast-forward pull (先到 92bc601a, 再到 7219fd7), 2026-10-01 凌晨又两次 pull (先到 67727e7, 再到 fcbed04), 当前 HEAD fcbed044c8c6994c97c7387d21ff3077cf3a5812, 分支 main。7219fd7 之后的三个 commit 分别是 #49642 (允许托管 requirements 禁用 Windows MXC 沙箱)、#49675 (Responses 路由字段在大输入之前先序列化)、#49678 (恢复问题答复时对命令草稿做转义)。
 
 | 指标        | 数值                                                                                                                                             |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -24,7 +24,7 @@ description: "面向 TS/JS 开发者的 openai/codex 调研: 产品形态、Type
 
 产品形态是一个矩阵: 终端里的 Codex CLI (TUI)、非交互的 codex exec、编辑器扩展 (VS Code/Cursor/Windsurf)、桌面应用 (codex app)、云端 agent Codex Web (chatgpt.com/codex)。本仓库是 CLI 及其配套的开源部分。
 
-一个重要事实: 本机快照的工作树是不完整的部分检出。git 追踪的 8840 个文件里磁盘上只保留约 1115 个 (git status 显示 7725 个文件已从工作树删除)。仓库内的 AGENTS.md、justfile、docs/install.md 大量引用 codex-core、codex-tui、codex-cli、codex-mcp、app-server-protocol、codex-hooks 等 crate (例如 scripts/run_tui_with_exec_server.sh 里 cargo run -p codex-cli --bin codex), 其中 core/、codex-mcp/、app-server-protocol/、hooks/ 等目录在磁盘上整体缺失, tui/ 与 cli/ 只残留 pull 时恢复的少量文件, workspace 根 codex-rs/Cargo.toml 也不在磁盘上 (codex-rs/Cargo.lock 在)。下文凡涉及这些 crate 的描述, 事实来源都是仓库内的文档/脚本引用, 而非本机源码。
+一个重要事实: 本机快照的工作树是不完整的部分检出。git 追踪的 8841 个文件里磁盘上只保留约 1127 个 (git status 显示 7714 个文件已从工作树删除)。仓库内的 AGENTS.md、justfile、docs/install.md 大量引用 codex-core、codex-tui、codex-cli、codex-mcp、app-server-protocol、codex-hooks 等 crate (例如 scripts/run_tui_with_exec_server.sh 里 cargo run -p codex-cli --bin codex), 其中 codex-mcp/、app-server-protocol/、hooks/ 等目录在磁盘上整体缺失, core/、tui/、cli/、config/、app-server/ 只残留历次 pull 恢复的少量文件 (2026-10-01 pull 后: core 4 个、tui 7 个、cli 3 个、config 1 个、app-server 1 个), workspace 根 codex-rs/Cargo.toml 也不在磁盘上 (codex-rs/Cargo.lock 在)。下文凡涉及这些 crate 的描述, 事实来源都是仓库内的文档/脚本引用, 而非本机源码。
 
 ## 二、安装与运行 (docs/install.md)
 
@@ -54,24 +54,25 @@ curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_INSTALLER_USE_RELEASES_O
 | sdk/python                                             | openai-codex, Python SDK (uv 构建, pydantic v2)                                                                                                                                                     |
 | sdk/python-runtime                                     | Python SDK 的运行时伴生包                                                                                                                                                                           |
 | docs/                                                  | 15 个 md, 多为跳转存根; 实质内容是 install.md、config.md 的 hooks 段、contributing.md、CLA.md                                                                                                       |
-| bazel/ + MODULE.bazel + defs.bzl + .bazelrc + patches/ | Bazel 构建体系: rules_rust 定制、35 个第三方补丁 (rules_rust Windows MSVC/gnullvm、rusty_v8、llvm、webrtc-sys 等)                                                                                   |
+| bazel/ + MODULE.bazel + defs.bzl + .bazelrc + patches/ | Bazel 构建体系: rules_rust 定制、33 个第三方补丁 (rules_rust Windows MSVC/gnullvm、rusty_v8、llvm、webrtc-sys 等)                                                                                   |
 | justfile + scripts/                                    | Cargo 开发流 (just fmt/test/fix/bench) 与发布/打包/调试脚本                                                                                                                                         |
 | .codex/                                                | 仓库自用配置: environments/environment.toml + 11 个 skills (code-review 系列、babysit-pr、codex-pr-body、remote-tests、test-tui、update-v8-version 等) — 用自己的产品维护自己的仓库                 |
 | announcement_tip.toml                                  | TUI 公告机制: [[announcements]] 按序求值、最后一条命中者展示; 字段 content/version_regex/from_date/to_date/target_app (cli、vsce 等), version_regex 匹配 env!("CARGO_PKG_VERSION")                  |
 
 本机快照可见的 crate 按名字与仓内文档可归为几类 (仅列可确证用途的):
 
-| crate                                                                                                | 用途证据                                                                                                                                                        |
-| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| memories/read + memories/write                                                                       | 记忆管线读写路径 (详见第六节, memories/README.md 是仓库内最完整的架构文档之一)                                                                                  |
-| exec-server-protocol                                                                                 | exec-server 的协议定义 (配合 run_tui_with_exec_server.sh)                                                                                                       |
-| app-server-daemon                                                                                    | app-server 守护进程 (AGENTS.md 有 app-server JSON-RPC 开发规范)                                                                                                 |
-| code-mode-runtime                                                                                    | 内嵌 JS 运行时: 依赖 deno_core_icudata (Deno core, 即 V8 + ICU), 佐证是 patches/ 里成组的 rusty_v8/v8/libwebrtc 补丁与 BUILD.bazel 的 rusty_v8_from_source 开关 |
-| login / workload-identity                                                                            | 登录与 workload identity                                                                                                                                        |
-| mxc-sandbox / shell-escalation / shell-command                                                       | 沙箱与 shell 执行相关                                                                                                                                           |
-| thread-store / message-history / responses-api-proxy / websocket-client                              | 会话存储、消息历史、Responses API 代理、WebSocket 客户端                                                                                                        |
-| file-search / file-system / git-utils / terminal-detection                                           | 文件搜索、文件系统、git 工具、终端探测                                                                                                                          |
-| cloud-tasks / ollama / analytics / build-info / tcp-tunnel / stdio-to-uds / external-agent-migration | 云任务、Ollama 支持、分析、构建信息、TCP 隧道、stdio→Unix socket 转发、外部 agent 迁移                                                                          |
+| crate                                                                                                | 用途证据                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| memories/read + memories/write                                                                       | 记忆管线读写路径 (详见第六节, memories/README.md 是仓库内最完整的架构文档之一)                                                                                                                                           |
+| exec-server-protocol                                                                                 | exec-server 的协议定义 (配合 run_tui_with_exec_server.sh)                                                                                                                                                                |
+| codex-api                                                                                            | Responses API 与 Realtime WebSocket 客户端: endpoint/{responses, responses_websocket, realtime__}、SSE 解析 (sse/responses_.rs)、rate_limits、auth; 本轮 #49675 在其中调整了 Responses 路由字段的序列化顺序 (先于大输入) |
+| app-server-daemon                                                                                    | app-server 守护进程 (AGENTS.md 有 app-server JSON-RPC 开发规范)                                                                                                                                                          |
+| code-mode-runtime                                                                                    | 内嵌 JS 运行时: 依赖 deno_core_icudata (Deno core, 即 V8 + ICU), 佐证是 patches/ 里成组的 rusty_v8/v8/libwebrtc 补丁与 BUILD.bazel 的 rusty_v8_from_source 开关                                                          |
+| login / workload-identity                                                                            | 登录与 workload identity                                                                                                                                                                                                 |
+| mxc-sandbox / shell-escalation / shell-command                                                       | 沙箱与 shell 执行相关                                                                                                                                                                                                    |
+| thread-store / message-history / responses-api-proxy / websocket-client                              | 会话存储、消息历史、Responses API 代理、WebSocket 客户端                                                                                                                                                                 |
+| file-search / file-system / git-utils / terminal-detection                                           | 文件搜索、文件系统、git 工具、终端探测                                                                                                                                                                                   |
+| cloud-tasks / ollama / analytics / build-info / tcp-tunnel / stdio-to-uds / external-agent-migration | 云任务、Ollama 支持、分析、构建信息、TCP 隧道、stdio→Unix socket 转发、外部 agent 迁移                                                                                                                                   |
 
 根 package.json 几乎是空的 (只有 prettier), 印证 Node 工具链在这个仓库只承担维护性工作; 有意思的是它的 write-hooks-schema 脚本 cargo run -p codex-hooks — 引用了本机不存在的 crate, 且暗示产品支持 lifecycle hooks (docs/config.md: 管理员可在 requirements.toml 设 allow_managed_hooks_only = true, 忽略用户/项目/会话级 hook 配置, 只允许 managed hooks; 该设置只认 requirements.toml, 放 config.toml 无效)。
 
@@ -165,7 +166,7 @@ Phase 2 (Global Consolidation, 全局串行): 先拿全局锁, 再按选择规�
 
 ## 七、沙箱与安全
 
-本机可确证的事实: AGENTS.md 规定 agent 的 shell 工具运行在沙箱中, 沙箱内会设置 CODEX_SANDBOX_NETWORK_DISABLED=1; 经 Seatbelt (/usr/bin/sandbox-exec) 派生的子进程会带 CODEX_SANDBOX=seatbelt; 仓库规则明令禁止新增或修改与这两个环境变量相关的代码 (集成测试用它们判断能否在沙箱内自举运行)。crate 层面有 mxc-sandbox 与 shell-escalation; 执行策略 (execpolicy) 与沙箱/审批 (sandbox & approvals) 的产品文档都跳转 developers.openai.com/codex/security 与 /exec-policy, 仓库内不保留正文 — AGENTS.md 甚至明文规定"不要往 docs/ 添加产品或用户文档, 官方文档在别处"。
+本机可确证的事实: AGENTS.md 规定 agent 的 shell 工具运行在沙箱中, 沙箱内会设置 CODEX_SANDBOX_NETWORK_DISABLED=1; 经 Seatbelt (/usr/bin/sandbox-exec) 派生的子进程会带 CODEX_SANDBOX=seatbelt; 仓库规则明令禁止新增或修改与这两个环境变量相关的代码 (集成测试用它们判断能否在沙箱内自举运行)。crate 层面有 mxc-sandbox 与 shell-escalation; Windows 沙箱也纳入了托管要求 (managed requirements) 治理: #49642 (2026-09-30 合入) 在 codex-rs/config/src/config_requirements.rs 的 WindowsRequirementsToml 里新增可选项 windows.allow_mxc, 设为 false 时既禁止 prefer_mxc 自动选择 MXC, 也拒绝显式的 windows.sandbox = "mxc" 配置 (报 ConstraintError 并指明要求来源); 执行策略 (execpolicy) 与沙箱/审批 (sandbox & approvals) 的产品文档都跳转 developers.openai.com/codex/security 与 /exec-policy, 仓库内不保留正文 — AGENTS.md 甚至明文规定"不要往 docs/ 添加产品或用户文档, 官方文档在别处"。
 
 Windows 支持是个矛盾点: install.md 要求 Windows 11 走 WSL2, 但 patches/ 里有大量 Windows 原生工具链补丁 (rules_rust MSVC 直连参数、gnullvm、llvm windows arm64、rusty_v8 自定义 libcxx 等), AGENTS.md 也要求"测试与特性必须支持 Linux、macOS 和 Windows, 除非特性显式限定 OS" — 代码库在为原生 Windows 铺路, 安装文档暂时保守。
 
@@ -193,4 +194,4 @@ docs/contributing.md 明确: 不接受外部代码贡献与 PR, 社区贡献聚�
 3. app-server v2 规范是一份现成的跨语言 API 设计 checklist: camelCase 线上格式、判别联合显式 tag、String ID、Unix 秒 *_at 时间戳、默认游标分页、experimental 字段级门控、schema fixture 回归。
 4. 上下文注入的五条硬规则 (增量、防 cache miss、有界、10K 上限、1k 以上 P0 评审) 与 ContextualUserFragment 类型化约束, 是 agent 上下文工程的可移植经验。
 5. 记忆管线的两阶段设计 (并行提取 + 串行整合, DB lease + git 基线 + watermark) 展示了如何把"长期记忆"做成可审计的文件系统工件而非黑盒向量库。
-6. 使用本机快照做二次调研时注意: core/tui/cli 等主 crate 不在这份工作树里, 相关结论需以 AGENTS.md 与脚本引用为据, 或补齐完整克隆后复核。
+6. 使用本机快照做二次调研时注意: core/tui/cli 等主 crate 在这份工作树里只有历次 pull 恢复的零星文件, 相关结论需以 AGENTS.md 与脚本引用为据, 或补齐完整克隆后复核。

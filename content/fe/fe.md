@@ -1873,43 +1873,43 @@ class CircuitBreaker {
 
 ## 第十二部分 算法实现
 
-本部分基于本仓库相邻的手写源码库 (`$HOME/github/h/chucks/js` 目录, 35 个源码文件) 逐文件编排, 每题含源码解读、深入解析、进阶延伸.
+本部分基于本仓库相邻的手写源码库 (`$HOME/github/h/chucks/js` 目录, 共 35 个源码文件) 编排, 覆盖其中 32 个文件 (proto.js、promise-pool.js、downloader-sdk.ts 未单列), 每题含源码解读、深入解析、进阶延伸.
 
-| #   | 题目                                | 对应文件             | 核心要点                       |
-| --- | ----------------------------------- | -------------------- | ------------------------------ |
-| 1   | 手写 call / apply / bind            | apply-call-bind.js   | this 绑定、Symbol、new.target  |
-| 2   | 循环闭包输出与修复                  | closure.js           | 闭包、IIFE、let 块级作用域     |
-| 3   | 累加式柯里化                        | curry.js             | 柯里化、参数聚合、空参触发     |
-| 4   | 防抖与四种节流                      | debounce-throttle.js | 定时器、leading/trailing       |
-| 5   | 装饰器求值顺序                      | decorator.ts         | TS 装饰器四类、求值时序        |
-| 6   | 深拷贝 (循环引用)                   | deep-clone.js        | WeakMap、类型分支              |
-| 7   | 寄生组合式继承                      | extends.js           | 原型链、静态继承               |
-| 8   | 手写 Array.prototype.flat           | flat.js              | 递归/DFS、稀疏数组             |
-| 9   | 手写 instanceof                     | instanceof.js        | 原型链遍历、Symbol.hasInstance |
-| 10  | 让普通对象可迭代                    | iterator.js          | Symbol.iterator、生成器        |
-| 11  | 手写 map / reduce + 串行 Promise 链 | map-reduce.js        | 稀疏数组、reduce 链式 then     |
-| 12  | 类字段初始化顺序 (米哈游题)         | miHoYo.js            | 字段初始化时序、方法重写陷阱   |
-| 13  | 手写 new 操作符                     | new.js               | 构造函数返回值规则             |
-| 14  | 手写 Promise (A+ 规范)              | promise.js           | 状态机、回调队列、链式         |
-| 15  | 用 rAF 实现 setTimeout/setInterval  | timer.js             | 渲染帧、时间戳比对             |
-| 16  | 手写 requestAnimationFrame polyfill | polyfill/index.js    | 60fps 对齐、批量回调、取消     |
-| 17  | JSON 深比较                         | lc/lc2628.ts         | 递归、键序无关比较             |
-| 18  | 基于 fn.length 的柯里化             | lc/lc2632.js         | 函数 length 属性               |
-| 19  | 手写 JSON.stringify                 | lc/lc2633.js         | 递归序列化                     |
-| 20  | Promise 并发池 (4 种实现)           | lc/lc2636.js         | 并发控制、迭代器共享           |
-| 21  | 对齐语义的节流                      | lc/lc2676.js         | nextCallTime 调度              |
-| 22  | Proxy 无限对象                      | lc/lc2690.js         | Proxy get 陷阱                 |
-| 23  | 手写 Immer produce                  | lc/lc2691.js         | 写时复制、草稿代理             |
-| 24  | 深度不可变对象                      | lc/lc2692.js         | Proxy set/apply 拦截           |
-| 25  | 对象 Diff                           | lc/lc2700.js         | 递归差分                       |
-| 26  | 深合并 deepMerge                    | lc/lc2755.js         | 键并集递归                     |
-| 27  | 查询批处理器                        | lc/lc2756.ts         | 批量合并、节流窗口             |
-| 28  | 循环生成器                          | lc/lc2757.js         | generator 双向通信、负数取模   |
-| 29  | Date.prototype.nextDay              | lc/lc2758.js         | 日期进位、padStart             |
-| 30  | promisify                           | lc/lc2776.ts         | 回调转 Promise                 |
-| 31  | 手写 Promise.allSettled (找 Bug)    | lc/lc2795.js         | 计数器、缺陷分析               |
-| 32  | delayAll                            | lc/lc2821.js         | 高阶函数包装                   |
-| 33  | JSON 转矩阵                         | lc/lc3675.js         | 路径展开、列对齐               |
+| #   | 题目                                | 对应文件                 | 核心要点                       |
+| --- | ----------------------------------- | ------------------------ | ------------------------------ |
+| 1   | 手写 call / apply / bind            | apply-call-bind.js       | this 绑定、Symbol、new.target  |
+| 2   | 循环闭包输出与修复                  | closure.js               | 闭包、IIFE、let 块级作用域     |
+| 3   | 累加式柯里化                        | curry.js                 | 柯里化、参数聚合、空参触发     |
+| 4   | 防抖与四种节流                      | debounce-throttle.js     | 定时器、leading/trailing       |
+| 5   | 装饰器求值顺序                      | decorator.ts             | TS 装饰器四类、求值时序        |
+| 6   | 深拷贝 (循环引用)                   | deep-clone.js            | WeakMap、类型分支              |
+| 7   | 寄生组合式继承                      | extends.js               | 原型链、静态继承               |
+| 8   | 手写 Array.prototype.flat           | flat.js                  | 递归/DFS、稀疏数组             |
+| 9   | 手写 instanceof                     | instanceof.js            | 原型链遍历、Symbol.hasInstance |
+| 10  | 让普通对象可迭代                    | iterator.js              | Symbol.iterator、生成器        |
+| 11  | 手写 map / reduce + 串行 Promise 链 | map-reduce.js            | 稀疏数组、reduce 链式 then     |
+| 12  | 类字段初始化顺序 (米哈游题)         | miHoYo.js (已不在该目录) | 字段初始化时序、方法重写陷阱   |
+| 13  | 手写 new 操作符                     | new.js                   | 构造函数返回值规则             |
+| 14  | 手写 Promise (A+ 规范)              | promise.js               | 状态机、回调队列、链式         |
+| 15  | 用 rAF 实现 setTimeout/setInterval  | timer.js                 | 渲染帧、时间戳比对             |
+| 16  | 手写 requestAnimationFrame polyfill | polyfill/index.js        | 60fps 对齐、批量回调、取消     |
+| 17  | JSON 深比较                         | lc/lc2628.ts             | 递归、键序无关比较             |
+| 18  | 基于 fn.length 的柯里化             | lc/lc2632.js             | 函数 length 属性               |
+| 19  | 手写 JSON.stringify                 | lc/lc2633.js             | 递归序列化                     |
+| 20  | Promise 并发池 (4 种实现)           | lc/lc2636.js             | 并发控制、迭代器共享           |
+| 21  | 对齐语义的节流                      | lc/lc2676.js             | nextCallTime 调度              |
+| 22  | Proxy 无限对象                      | lc/lc2690.js             | Proxy get 陷阱                 |
+| 23  | 手写 Immer produce                  | lc/lc2691.js             | 写时复制、草稿代理             |
+| 24  | 深度不可变对象                      | lc/lc2692.js             | Proxy set/apply 拦截           |
+| 25  | 对象 Diff                           | lc/lc2700.js             | 递归差分                       |
+| 26  | 深合并 deepMerge                    | lc/lc2755.js             | 键并集递归                     |
+| 27  | 查询批处理器                        | lc/lc2756.ts             | 批量合并、节流窗口             |
+| 28  | 循环生成器                          | lc/lc2757.js             | generator 双向通信、负数取模   |
+| 29  | Date.prototype.nextDay              | lc/lc2758.js             | 日期进位、padStart             |
+| 30  | promisify                           | lc/lc2776.ts             | 回调转 Promise                 |
+| 31  | 手写 Promise.allSettled (找 Bug)    | lc/lc2795.js             | 计数器、缺陷分析               |
+| 32  | delayAll                            | lc/lc2821.js             | 高阶函数包装                   |
+| 33  | JSON 转矩阵                         | lc/lc3675.js             | 路径展开、列对齐               |
 
 ### 题目 1| 手写 call / apply / bind
 

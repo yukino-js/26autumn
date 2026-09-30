@@ -1,13 +1,13 @@
 ---
 title: "Pi Agent Harness 调研: 极简内核、可扩展资源体系与 TypeScript SDK"
-description: "pi-coding-agent 调研: 极简内核、树形会话模型与 TypeScript SDK"
+description: "pi-coding-agent 调研: 极简内核、树形会话模型、TypeScript SDK 与 durable 运行时 (Package 1-20, 含 compaction/overflow 现状)"
 ---
 
 本机克隆位于 $HOME/Downloads/pi, 调研重点为 packages/coding-agent
 
-## 一、项目快照 (本机克隆 2026-09-30)
+## 一、项目快照 (本机克隆 2026-10-01)
 
-本机克隆 2026-09-29 于 4259686d, 2026-09-30 fast-forward pull 到 c34f2d6a, 当晚又两次 pull 到 2bbfcca (新增 4 个 commit, 均为 ai/mcp/coding-agent 的修复), 分支 main。
+本机克隆 2026-09-29 于 4259686d, 2026-09-30 fast-forward pull 到 c34f2d6a, 当晚又两次 pull 到 2bbfcca (新增 4 个 commit, 均为 ai/mcp/coding-agent 的修复); 2026-10-01 凌晨再 pull 到 b29db89 (完整哈希 b29db895c5c1b30b560a39fb9e4664508f1683de), 新增 7 个 commit: 两个是 durable 的 compaction 与 overflow (Package 20, 规范 b72cf98 + 实现 ed0d6b9), 其余五个是 coding-agent 的 MCP/codemode 修复与增强 (e029c3e 首个 prompt 不再等待全部 MCP server、0582d9c codemode 与 MCP 结果预览限制为折行数、028c0ec system prompt 不列出 codemode 隐藏的工具、db6cc71 reload 时启用 defaultTools 新增的工具、b29db89 MCP 工具名与 codemode 标识符对齐), 分支 main。
 
 | 指标      | 数值                                                                                                                       |
 | --------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -39,12 +39,14 @@ packages/ 下 14 个目录, 构建顺序 (根 package.json 的 build 脚本链) 
 | packages/codemode                     | @earendil-works/pi-codemode     | 沙箱 JavaScript 执行, "唯一能力是调用注入的工具"               |
 | packages/mcp                          | @earendil-works/pi-mcp          | MCP 支持                                                       |
 | packages/ai                           | @earendil-works/pi-ai           | 统一多供应商 LLM API (OpenAI、Anthropic、Google 等)            |
-| packages/durable                      | @earendil-works/pi-durable      | 持久化会话、任务与文档运行时                                   |
+| packages/durable                      | @earendil-works/pi-durable      | 持久化会话、任务与文档运行时 (Experimental, 见下文)            |
 | packages/agent                        | @earendil-works/pi-agent-core   | Agent 运行时: 工具调用与状态管理                               |
 | packages/session-backends/sqlite-node | —                               | SQLite 会话后端                                                |
 | packages/protocol, client, server     | @earendil-works/pi-*            | RPC 协议、客户端、服务器                                       |
 | packages/coding-agent                 | @earendil-works/pi-coding-agent | 交互式 coding agent CLI (本文重点)                             |
 | packages/evals                        | @earendil-works/pi-evals        | 评测                                                           |
+
+durable 值得单独展开: packages/durable (自标 Experimental, API 随版本变动不另行通知) 是一个 durable agent harness — 会话、模型轮次、工具调用与自定义状态先落盘再展示, 进程在轮次中途死掉后重开存储即可从中断点续跑; 它构建在 pi-ai (模型访问) 与 chord (文档状态) 之上。实现按 docs/pico-v5.md (规范性) 与 pico-v5-handoff.md 的工作包清单推进, 截至 2026-10-01 克隆 (HEAD b29db89), Package 1~20 已全部落地 (Package 10 由 Chord 的结构 diff 实现天然满足)。最后补齐的 Package 20 是 compaction 与 overflow (b72cf98 规范 + ed0d6b9 实现, 2026-09-30 合入): 手动 compact() 以任务形态运行, 可附指令、可被 abort() 取消, 摘要是一条带头的 pi.compaction entry, "持有它保留的第一条 entry", 更老的 entry 仍留在存储里 — 与 coding-agent 一样, 压缩是视图不是存储; 自动压缩按会话用 setCompaction({ enabled, reserveTokens, keepRecentTokens, backgroundTokens }) 配置, 低于 backgroundTokens 阈值在后台启动, 超过 contextWindow - reserveTokens 时下一次请求同步等待压缩; provider 以"上下文过长"拒绝请求时触发 overflow 压缩并重试一次; 多个摘要并发时由 stale 规则裁决 — 会切到当前上下文开始之前的摘要在放置时落为 stale, 切得最远的生效; 运行中的压缩暴露在 docs["pi.live"].compactions (含原因、尝试次数与重试退避), agent 事件面新增 compaction_start / compaction_end 与快照的 compactions 字段, 摘要开销计入 pi.usage, beforeCompact hook 可拒绝或自供摘要。
 
 Slack/聊天自动化在另一个仓库 earendil-works/pi-chat。会话共享生态: badlogic/pi-share-hf 把 Pi 会话发布到 Hugging Face 数据集 (作者自己的 pi-mono 工作会话定期公开在 badlogicgames/pi-mono), 主张"真实 OSS 会话数据比玩具 benchmark 更能改进 coding agent"。
 
@@ -101,7 +103,7 @@ try {
 - prompt() 先处理扩展命令、展开基于文件的 prompt 模板, 再让普通用户消息进 agent; 对已接受的 run, promise 在 run (含自动重试) 结束后 resolve。会话流式期间再发 prompt 必须显式选择 steer 还是 follow-up, 不选直接 reject 而不是猜; steer()/followUp() 返回 "queued" 或 "handled" (被扩展消费)。abort() 停止并等 idle, waitForIdle() 只等不停。
 - 事件订阅: session.subscribe 收到 message_update (assistantMessageEvent.text_delta 增量)、message_end (权威的完整消息)、agent_end (一次底层 run 结束, 后面可能还有自动恢复或排队工作) 与 agent_settled (Pi 确定不再自动继续) 等。
 - 依赖注入面: createAgentSession 的每个默认件都可显式替换 — modelRuntime/model/thinkingLevel/scopedModels、settingsManager、sessionManager、resourceLoader、tools/noTools/excludeTools/customTools; DefaultResourceLoader 支持标准发现 + 定点覆盖, 完全自管资源则传自定义 ResourceLoader。
-- 内置扩展语义: CLI 默认加载 codemode、tool_search、MCP 三个 built-in 扩展, SDK 会话不加载, 需要时把 createCodemodeExtension() / createToolSearchExtension() / createMcpExtension() 加进 DefaultResourceLoader 的 extensionFactories; codemode 与 tool_search 注册为非活跃, 通过 defaultTools 设置 (["+codemode", "+tool_search"]) 或 MCP server 的 exposure (codemode / deferred) 激活; MCP 扩展在 session_start 时连接 server, 所以要调 session.bindExtensions()。命名 inline 扩展可标 replaceable: true — 当别的扩展注册了同名工具/命令/flag 时自动让位而非冲突。
+- 内置扩展语义: CLI 默认加载 codemode、tool_search、MCP 三个 built-in 扩展, SDK 会话不加载, 需要时把 createCodemodeExtension() / createToolSearchExtension() / createMcpExtension() 加进 DefaultResourceLoader 的 extensionFactories; codemode 与 tool_search 注册为非活跃, 通过 defaultTools 设置 (["+codemode", "+tool_search"]) 或 MCP server 的 exposure (codemode / deferred) 激活; MCP 扩展在 session_start 时连接 server, 所以要调 session.bindExtensions()。自 e029c3e 起这个连接不再阻塞首个 prompt: 只等待带 direct 工具的 server (默认上限 10 秒), 其余 server 后台连接, codemode 脚本、tool_search 与 resource 工具在真正用到时按需等待; MCP 工具注册名为 mcp__<server>__<tool>, 自 b29db89 起名字中的连字符统一为下划线以与 codemode 标识符对齐 (冲突时加哈希后缀, 仅连字符/下划线之差的 server 名会被拒绝)。命名 inline 扩展可标 replaceable: true — 当别的扩展注册了同名工具/命令/flag 时自动让位而非冲突。
 - examples/sdk/ 下 14 个示例 (01-minimal 到 14-codemode-mcp) 全部随仓库 typecheck。
 
 ## 六、扩展与资源生态

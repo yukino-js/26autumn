@@ -2,7 +2,7 @@
 title: "Formily 新手入门教程与原理解析"
 ---
 
-本机器路径: 请克隆 git clone git@github.com:alibaba/formily.git
+本机器路径: $HOME/Downloads/formily (上游仓库 git@github.com:alibaba/formily.git, 本文按 HEAD d9a4644, 2025-06-21 的源码核对)
 
 ## 〇、一个 JSON 看懂 Formily 所有 Schema 驱动能力
 

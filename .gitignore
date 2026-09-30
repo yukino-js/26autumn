@@ -213,4 +213,6 @@ target
 **/.source/
 
 # read-only mirrors of external source repos, used by doc teammates
-.research/
+# (the mirrors themselves stay local; REPO-FACTS.md is tracked)
+.research/*
+!.research/REPO-FACTS.md

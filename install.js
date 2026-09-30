@@ -129,7 +129,7 @@ function run(name, argv, cwd) {
       let rest = "";
       stream.on("data", (chunk) => {
         const lines = (rest + chunk).split("\n");
-        rest = lines.pop();
+        rest = lines.pop() ?? "";
         for (const line of lines) {
           if (line.trim()) console.log(`${label} ${line}`);
         }

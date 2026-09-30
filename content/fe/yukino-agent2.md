@@ -39,7 +39,7 @@ yukino-agent2/
 │   ├── server.ts         # Hono 应用装配与启动/关停生命周期
 │   ├── config.ts         # .env 配置读取 (settings 对象 + missingRuntimeConfig)
 │   ├── logger.ts         # pino 日志
-│   ├── api/              # 13 个路由模块 (chat/agent/kb/review/rageval/admin/jobs/...)
+│   ├── api/              # 12 个路由模块 (chat/agent/kb/review/rageval/admin/jobs/...)
 │   ├── core/             # llm/intent/coref/retrieval/rerank/confidence/memory/
 │   │                     # budget/summarizer/selfcheck/flywheel/observability/jobs/prompts
 │   ├── graph/            # LangGraph 图: build/state/nodes/routing/runtime
@@ -95,7 +95,7 @@ pnpm --filter fe dev        # 前端 Vite dev server (5173), /api/* 代理到后
 
 - 中间件只有一个: `pinoLogger({ pino: logger })` (`hono-pino`), 请求级结构化日志.
 - 健康检查 `GET /healthz` 返回 `{ ok: true }`.
-- 13 个路由模块全部挂载在根路径下 (`app.route("/", xxxRouter)`), 路由内部自带 `/api/*` 前缀.
+- 12 个路由模块全部挂载在根路径下 (`app.route("/", xxxRouter)`), 路由内部自带 `/api/*` 前缀.
 - `notFound` 返回 FastAPI 风格的 `{ detail }` 404; `onError` 区分 `HTTPException` (透传 status/message) 与未捕获错误 (500 + 通用文案, 真实错误只进日志).
 
 启动顺序 (`startServer`, `src/server.ts:109`): `assertDbReady()` (Prisma 连通性) -> `initObservability()` -> `checkContextBudget()` -> `warmupMilvus()` -> `runtime.initGraph()` (编译图 + checkpointer) -> `serve()`. SIGINT/SIGTERM 触发优雅关停: 关 server, 依次 `closeGraph()`、`shutdownObservability()`、`closeDb()`, 最后 `flushLogs()`.
@@ -205,7 +205,7 @@ log -> END
 
 ### Checkpointer 持久化
 
-- `initGraph()` (`src/graph/runtime.ts:85`) 先 `ensureCheckpointerDatabase()`: 连到维护库 `/postgres` 执行 `CREATE DATABASE`, 库名先做 `^[A-Za-z0-9_]+$` 白名单校验 (防注入), 竞争失败时容忍 `42P04 duplicate_database` (`src/graph/runtime.ts:49-83`).
+- `initGraph()` (`src/graph/runtime.ts:85`) 先 `ensureCheckpointerDatabase()`: 连到维护库 `/postgres` 执行 `CREATE DATABASE`, 库名先做 `^[A-Za-z0-9_]+$` 白名单校验 (防注入), 竞争失败时容忍 `42P04 duplicate_database` (`src/graph/runtime.ts:61-83`).
 - 随后 `PostgresSaver.fromConnString(CHECKPOINTER_DB_URL)` + `setup()` (saver 自建表/迁移), 图编译时注入 checkpointer.
 - 会话线程键就是会话 id: `graphConfig()` 里 `thread_id: String(conversationId)`, 同时把 `langfuse_session_id` 写进 metadata、挂 Langfuse callbacks (`src/graph/runtime.ts:109-115`).
 - interrupt 恢复: `POST /api/actions/resume` 携带 `conversation_id` 与 `order_id`/`confirmed` (`src/api/schemas.ts:36 resumeRequestSchema`), 由 runtime 把恢复值喂回图; `fetchOrder` 节点注释强调 interrupt 前只做只读工作, 恢复后节点从头重跑 (`src/graph/nodes.ts:91-92`).

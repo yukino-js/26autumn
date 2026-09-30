@@ -78,7 +78,7 @@ CCB 是社区对 Anthropic 官方 Claude Code CLI 的逆向复原项目 (CLAUDE.
 - --tmux + --worktree 组合
 - 默认路径: 加载 src/main.tsx 启动完整 CLI
 
-src/main.tsx 约 5674 行, 用 Commander.js 注册大量子命令: mcp (serve/add/remove/list)、server、ssh、open、auth、plugin、agents、auto-mode、doctor、update 等; 主 .action() 负责权限、MCP、会话恢复与 REPL/Headless 模式分发。REPL 内部另有约 150 个斜杠命令入口 (src/commands/), 覆盖 goal、artifacts、workflows、pipes、buddy、bughunter、thinkback、torch、ultraplan、rewind、teleport、stickers 等长尾功能。
+src/main.tsx 约 5640 行, 用 Commander.js 注册大量子命令: mcp (serve/add/remove/list)、server、ssh、open、auth、plugin、agents、auto-mode、doctor、update 等; 主 .action() 负责权限、MCP、会话恢复与 REPL/Headless 模式分发。REPL 内部另有约 150 个斜杠命令入口 (src/commands/), 覆盖 goal、artifacts、workflows、pipes、buddy、bughunter、thinkback、torch、ultraplan、rewind、teleport、stickers 等长尾功能。
 
 ## 五、核心循环与 API 层
 
@@ -106,8 +106,8 @@ API 客户端 src/services/api/claude.ts 组装请求参数 (system prompt、mes
 
 - src/Tool.ts: Tool 接口定义与 findToolByName / toolMatchesName 等工具函数。
 - src/tools.ts: 工具注册表, 从 @claude-code-best/builtin-tools 包导入组装; 部分工具按 feature() 或 process.env.USER_TYPE 条件加载。
-- src/constants/tools.ts: CORE_TOOLS 白名单 (38 个核心工具名), 供 isDeferredTool 白名单判定 — 不在白名单里的工具走"延迟加载", 按需发现。
-- packages/builtin-tools/src/tools/: 60 个工具目录 (含 shared/testing), 主要分类:
+- src/constants/tools.ts: CORE_TOOLS 白名单 (29 个核心工具名, 其中 SHELL_TOOL_NAMES 展开为 Bash/PowerShell 两项), 供 isDeferredTool 白名单判定 — 不在白名单里的工具走"延迟加载", 按需发现。
+- packages/builtin-tools/src/tools/: 60 个工具目录 (另有 shared/、testing/、src/ 与 utils.ts 等非工具项), 主要分类:
   - 文件操作: FileEditTool、FileReadTool、FileWriteTool、GlobTool、GrepTool
   - Shell/执行: BashTool、PowerShellTool、REPLTool
   - Agent 系统: AgentTool、TaskCreateTool、TaskUpdateTool、TaskListTool、TaskGetTool

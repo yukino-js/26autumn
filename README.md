@@ -24,7 +24,7 @@ study, internships, and work. It covers three broad areas:
 
 - **Frontend** (`content/fe`) — React, Next.js, CSS, Vite, TanStack Query, Formily,
   plus source-level walkthroughs of the Yukino frontend family
-  (Coding Agent CLI, agent2, chatbot, sentry).
+  (Coding Agent CLI & source, agent, agent2, chatbot, chat, sentry).
 - **Backend** (`content/be`) — Go, MySQL, Redis, ClickHouse, Kafka, middleware,
   plus the Yukino Go series (http, rpc, cache, codegen).
 - **Work notes & research** (`content/docs`) — TikTok/IEG/data engineering retrospectives,
@@ -58,7 +58,8 @@ pnpm dev       # start the dev server with HMR (http://localhost:3000/26autumn)
 ```
 26autumn/
 ├── app/           # routes: home, docs catch-all, search API,
-│                  #         llms.txt / llms-full.txt / llms.mdx, sitemap
+│                  #         llms.txt / llms-full.txt / llms.mdx,
+│                  #         sitemap, robots.txt
 ├── components/    # provider, search dialog, MDX components
 ├── content/       # Markdown content, served from the site root
 │   ├── fe/        # frontend / full-stack / agent notes
@@ -66,6 +67,9 @@ pnpm dev       # start the dev server with HMR (http://localhost:3000/26autumn)
 │   └── docs/      # work notes & open-source project research
 ├── lib/           # source loader, shared config & layout options
 ├── public/        # static assets
+├── .research/     # local read-only mirrors of the researched repositories
+│                  # (git-ignored); REPO-FACTS.md records their HEAD commits,
+│                  # remotes and mirror mapping, and is tracked
 └── install.js     # provisions the research repositories under $HOME/Downloads
                    # (clone or pull, install deps, index with CodeGraph)
 ```

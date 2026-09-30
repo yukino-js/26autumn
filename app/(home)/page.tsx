@@ -90,8 +90,10 @@ export default function HomePage() {
       <div className="grid grid-cols-1 gap-4 mt-12 px-6 mx-auto w-full max-w-300 md:px-12 md:grid-cols-3 lg:mt-20">
         {sectionCards.map((section) => {
           const Icon = section.icon;
+          // section index pages (slugs === [key]) are navigation overviews,
+          // only count real articles
           const count = pages.filter(
-            (page) => page.slugs[0] === section.key,
+            (page) => page.slugs[0] === section.key && page.slugs.length > 1,
           ).length;
 
           return (
