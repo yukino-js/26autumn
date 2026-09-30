@@ -1,0 +1,22 @@
+{
+  "root": true,
+  "title": "前端",
+  "pages": [
+    "index",
+    "react",
+    "next",
+    "css",
+    "vite",
+    "formily",
+    "openspec",
+    "priority-hint",
+    "tanstack",
+    "fe",
+    "yukino",
+    "yukino-source",
+    "yukino-agent",
+    "yukino-agent2",
+    "yukino-chatbot",
+    "yukino-sentry"
+  ]
+}

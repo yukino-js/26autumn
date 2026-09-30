@@ -1,0 +1,18 @@
+{
+  "root": true,
+  "title": "工作笔记",
+  "pages": [
+    "index",
+    "tiktok",
+    "ieg",
+    "a2ui",
+    "a2ui-express",
+    "mcp-app",
+    "webc",
+    "codegraph",
+    "claude-code",
+    "codex",
+    "pi",
+    "data"
+  ]
+}
