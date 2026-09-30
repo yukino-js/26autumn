@@ -48,7 +48,7 @@ const sectionCards = [
   },
   {
     key: "docs",
-    title: "工作笔记",
+    title: "工作文档",
     description: "实习与工作期间的技术记录、项目复盘与源码解析",
     icon: NotebookPen,
   },

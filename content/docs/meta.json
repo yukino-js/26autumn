@@ -1,6 +1,6 @@
 {
   "root": true,
-  "title": "工作笔记",
+  "title": "工作文档",
   "pages": [
     "index",
     "tiktok",
@@ -13,6 +13,10 @@
     "claude-code",
     "codex",
     "pi",
+    "open-code-review",
+    "insforge",
+    "langchain",
+    "langgraph",
     "data"
   ]
 }

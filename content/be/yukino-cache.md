@@ -1,5 +1,6 @@
 ---
 title: "yukino-cache 分布式缓存 -- 技术笔记"
+description: "yukino-cache 分布式缓存 TypeScript 与 Go 双实现的源码级解析: 架构分层、一致性哈希、分桶双层 LRU、etcd 服务发现、并发模型与容错机制"
 ---
 
 > 本机器路径: `$HOME/github/yukino.js/packages/cache`
@@ -17,11 +18,11 @@ yukino-cache 是一个仿 Google groupcache 的分布式缓存框架 (TypeScript
 | 层次   | 组件                                | 职责                                  |
 | ------ | ----------------------------------- | ------------------------------------- |
 | 接口层 | `Group`                             | 命名空间隔离, 对外暴露 get/set/delete |
-| 缓存层 | `Cache` -> `LruStore`               | 分桶双层 LRU, 字节预算淘汰            |
+| 缓存层 | `Cache -> LruStore`                 | 分桶双层 LRU, 字节预算淘汰            |
 | 路由层 | `ClientPicker` + `ConHashMap`       | 一致性哈希选节点, etcd 动态发现       |
 | 传输层 | `Server` / `Client` (@grpc/grpc-js) | 节点间 RPC 通信                       |
 
-```
+```text
   调用方
     |
     v
@@ -61,7 +62,7 @@ yukino-cache 是一个仿 Google groupcache 的分布式缓存框架 (TypeScript
 
 详细描述一次 Get 请求的完整链路.
 
-```
+```text
   调用方          Group           Cache        SingleFlight        ConHashMap      远端节点/数据源
     |               |               |               |               |               |
     |-- get(key) -->|               |               |               |               |
@@ -86,7 +87,7 @@ yukino-cache 是一个仿 Google groupcache 的分布式缓存框架 (TypeScript
     |<-- 返回值 ----|               |               |               |               |
 ```
 
-完整链路 (对应 `group.ts` 中 `Group.get` -> `load` -> `loadData`):
+完整链路 (对应 `group.ts` 中 `Group.get -> load -> loadData`):
 
 1. 参数校验: 检查 Group 是否已关闭 (`closed` 标记)、key 是否为空
 2. 本地缓存查询: `mainCache.get(key)` 返回 `[ByteView | null, boolean]`, 命中则直接返回
@@ -289,7 +290,7 @@ class ConHashMap {
 查找过程:
 
 1. 对 key 计算 `config.hashFunc(key)` 哈希
-2. 在排序的 `keys` 数组上手写二分查找, 找到第一个 >= hash 的虚拟节点
+2. 在排序的 `keys` 数组上手写二分查找, 找到第一个哈希值大于等于目标 hash 的虚拟节点
 3. 环形语义: 二分结果等于 `keys.length` 时回绕到 `keys[0]`
 4. 通过 `hashMap.get(keys[idx])` 得到物理节点, 同时累加该节点的命中计数
 
@@ -386,7 +387,7 @@ Client 侧 (`client.ts`):
 解决方案: 通过 gRPC metadata 标记 + 环归属判定双重保证.
 
 ```ts
-// client-picker.ts:121-124 创建 Client 时固定 peerRequest: true; client.ts:55-61 将标记写入 gRPC metadata
+// client-picker.ts:99-102 创建 Client 时固定 peerRequest: true; client.ts:33-39 将标记写入 gRPC metadata
 private callMetadata(): grpc.Metadata {
   const metadata = new grpc.Metadata();
   if (this.peerRequest) metadata.set("x-peer-request", "true");

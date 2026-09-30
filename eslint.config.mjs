@@ -14,6 +14,7 @@ export default defineConfig(
       ".next/**",
       "out/**",
       ".source/**",
+      ".research/**",
       "next-env.d.ts",
     ],
   },

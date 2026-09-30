@@ -3,9 +3,9 @@ title: "A2UI Express DSL"
 ---
 
 本机路径: $HOME/Downloads/a2ui/specification/proposals/express (上游: github.com/a2ui-project/a2ui)
-实现位置: a2ui/agent_sdks/python/a2ui_agent/src/a2ui/inference_formats/experimental/express/
+实现位置: a2ui/python/a2ui_agent/src/a2ui/inference_formats/experimental/express/
 状态: 实验性提案 (proposal), 非正式规范; 编译目标为 A2UI v1.0 wire protocol
-主要来源: 本地规范 a2ui_express.md / create_surface_design.md / README.md / express_dsl_examples.md / scripts, 以及 AGenUI 团队评测文章 "更低成本地生成A2UI协议: Express DSL 的功能特性" (InfoQ 写作社区, 2026-07-14, https://xie.infoq.cn/article/ed8ed745dc5e9fb22f9a26637)
+主要来源: 本地规范 a2ui_express.md / create_surface_design.md / README.md / express_dsl_examples.md / scripts, 以及 AGenUI 团队评测文章 "更低成本地生成A2UI协议: Express DSL 的功能特性"
 
 ## 1. 背景与定位
 
@@ -72,8 +72,6 @@ varname = ComponentName(arg1, arg2, param=value)
 - 保留变量 root 是界面树的唯一入口, 与标准协议的 root 组件要求一致
 - 变量名遵循 Unicode 标识符标准 UAX #31: 字母或下划线开头, 后续为字母、数字、下划线
 - 支持混合嵌套: 子组件既可以赋值给顶层变量再按名引用 (header = Text("Hello") 然后 root = Card(child=header)), 也可以直接内联 (Card(child=Text("Hello")))
-
-勘误: InfoQ 评测文章称 "禁止内联嵌套, 组件构造只能出现在赋值语句右侧", 但规范原文 (a2ui_express.md 变量与嵌套一节) 与 create_surface_design.md 的示例 (metric_card = Card(Text("$12,450"))) 都明确支持内联。以本地规范为准, 文章该点已过时或不准确。
 
 ### 3.3 参数传递 (省 token 的核心机制)
 
@@ -155,15 +153,18 @@ $/user = {firstName: "Alice", age: 30}
 
 - surface(surfaceId) 或 surface(surfaceId, catalogId): 声明后续组件定义的目标 Surface; 省略时编译器回退到默认 "default_surface"
 - deleteSurface("dashboard-surface-1"): 独立命令, 编译为标准 deleteSurface 消息
-- 其他独立函数调用行: 编译为 callFunction RPC 消息, 自动生成 functionCallId:
+- 其他独立函数调用行: 编译为 callRendererFunction RPC 消息, 自动生成 functionCallId; functionCallId 与 callFunction 都包在 callRendererFunction 信封内, 且 callFunction 必须携带 catalogId:
 
 ```json
 {
   "version": "v1.0",
-  "functionCallId": "call_1",
-  "callFunction": {
-    "call": "openUrl",
-    "args": { "url": "https://example.com" }
+  "callRendererFunction": {
+    "functionCallId": "call_1",
+    "callFunction": {
+      "catalogId": "https://a2ui.org/catalog.json",
+      "call": "openUrl",
+      "args": { "url": "https://example.com" }
+    }
   }
 }
 ```
@@ -196,7 +197,7 @@ $/user = {firstName: "Alice", age: 30}
 
 ## 5. 编译产物与 v1.0 信封形态
 
-设计文档规定编译结果是单个 createSurface 消息, 内嵌 components、dataModel 与 surfaceParams 字段 (下方 JSON 即提案文档 a2ui_express.md 中的信封示例)。需要注意两处与现状的出入: (1) 已认证的 v1.0 schema (specification/v1_0/json/agent_to_renderer.json) 中 CreateSurfaceMessage 并不内嵌这些字段, 而是期待渲染端随后接收独立的 updateComponents / updateDataModel 消息, schema 中也不存在 surfaceParams; (2) express compiler.py 的实际编译产物同样不含 surfaceParams。也就是说, "内嵌单 createSurface 信封"目前是 Express 提案层面的编译约定, 尚未与认证 schema 对齐:
+设计文档规定编译结果是单个 createSurface 消息, 内嵌 components、dataModel 与 surfaceParams 字段 (下方 JSON 即提案文档 a2ui_express.md 中的信封示例)。需要注意两处与现状的出入: (1) 已认证的 v1.0 schema (specification/v1_0/json/agent_to_renderer.json) 中 CreateSurfaceMessage 的 createSurface 现已含可选内嵌 components ($ref ComponentsList) 与 dataModel 属性, 这部分与提案一致 (schema 描述仍期待渲染端随后接收同 surfaceId 的 updateComponents / updateDataModel 消息来定义组件树), 但 schema 中不存在 surfaceParams; (2) express compiler.py 的实际编译产物同样不含 surfaceParams。也就是说, "内嵌单 createSurface 信封"约定中 components / dataModel 已被认证 schema 接纳, 仅 surfaceParams 一处仍停留在 Express 提案层面:
 
 ```json
 {
@@ -297,14 +298,14 @@ Button(child (static), variant? (static), action (static), weight? (static), che
 
 ```bash
 cd specification/proposals/express
-A2UI_EXPRESS_ENABLED=true uv run --project ../../../agent_sdks/python/a2ui_agent \
-  scripts/run_prompt_generator.py --catalog ../../v1_0/catalogs/basic/catalog.json
+A2UI_EXPRESS_ENABLED=true uv run --project ../../../python/a2ui_agent \
+  scripts/run_prompt_generator.py --catalog ../../../catalogs/basic/v1/catalog.json
 ```
 
 ### 6.4 推理与验证脚本 (run_inference.py 实际流程)
 
 1. 加载标准 A2UI JSON 示例, 提取其中 updateComponents 的 components 列表作为翻译目标 (评测路线是 "标准 JSON -> Express -> 标准 JSON" 的往返对照)
-2. 用 ExpressFormat(catalog).prompt_generator.generate(role_description, include_schema=True) 生成 system instruction (catalog 经 Catalog.from_json 加载, 脚本内 spec_version 传 0.9.1)
+2. 用 ExpressFormat(catalog).prompt_generator.generate(role_description, include_schema=True) 生成 system instruction (catalog 经 Catalog.from_json 加载, 脚本内 protocol_version 传 0.9.1)
 3. 构造翻译任务 user prompt: "You are an advanced UI compiler agent... 按位置签名逐行输出变量赋值, 不输出 createSurface 信封"
 4. 三种模式提交 (temperature 0.1):
    - Gemini API: GEMINI_API_KEY, 评测模型经参数指定 (run_inference.py 的 argparse 默认值为 gemma-4-31b-it, 并按 local/mlx 模式动态改写; gemini-3.1-flash-lite 只是 README 中的示例)
@@ -323,7 +324,7 @@ A2UI_EXPRESS_ENABLED=true uv run --project ../../../agent_sdks/python/a2ui_agent
 
 ## 7. 工具链与实现位置
 
-CLI 脚本 (specification/proposals/express/scripts/, 全部需 A2UI_EXPRESS_ENABLED=true, 用 uv --project ../../../agent_sdks/python/a2ui_agent 运行):
+CLI 脚本 (specification/proposals/express/scripts/, 全部需 A2UI_EXPRESS_ENABLED=true, 用 uv --project ../../../python/a2ui_agent 运行):
 
 | 脚本                     | 用途                                                            |
 | :----------------------- | :-------------------------------------------------------------- |
@@ -333,13 +334,13 @@ CLI 脚本 (specification/proposals/express/scripts/, 全部需 A2UI_EXPRESS_ENA
 | run_decompiler.py        | 反向: 标准 A2UI v1.0 JSON 信封转回 Express DSL                  |
 | recreate_dsl_examples.py | 从当前代码再生成 express_dsl_examples.md 文档                   |
 
-Python SDK 实现: agent_sdks/python/a2ui_agent/src/a2ui/inference_formats/experimental/express/, 含 ANTLR 生成的 express_parser / express_lexer / express_visitor, 以及 compiler.py、decompiler.py、prompt_generator.py、parser.py、visitor.py、format.py、schema_helper.py、errors.py、constants.py。测试位于 agent_sdks/python/a2ui_agent/tests/express/ (test_compiler、test_parser_decompile、test_integration、test_prompt_generator、test_cli_tools、test_version_compliance)。
+Python SDK 实现: python/a2ui_agent/src/a2ui/inference_formats/experimental/express/, 含 ANTLR 生成的 express_parser / express_lexer / express_visitor, 以及 compiler.py、decompiler.py、prompt_generator.py、parser.py、visitor.py、format.py、schema_helper.py、errors.py、constants.py。测试位于 python/a2ui_agent/tests/express/ (test_compiler、test_parser_decompile、test_integration、test_prompt_generator、test_cli_tools、test_version_compliance)。
 
 反编译器 (JSON -> Express) 的一个实用价值: 可以把存量标准 A2UI JSON (如 few-shot 示例、历史会话) 机械转换为 Express DSL, 作为迁移或构造示例的基座。
 
 ## 8. 实测数据
 
-官方提案评测数据 (AGenUI 评测文章引用): 轻量模型 gemini-3.1-flash-lite, 47 个样本, 对比 "标准 A2UI" 与 "Express DSL" 两种策略:
+官方提案评测数据 (AGenUI 评测): 轻量模型 gemini-3.1-flash-lite, 47 个样本, 对比 "标准 A2UI" 与 "Express DSL" 两种策略:
 
 | 策略        | 语法准确率 | 语义准确率 | 平均延迟       | 输出 token     | 总 token         |
 | :---------- | :--------- | :--------- | :------------- | :------------- | :--------------- |
@@ -399,4 +400,4 @@ Express DSL 是 A2UI 官方在 "生成式 UI 的成本优化、业务落地友�
 - specification/proposals/express/create_surface_design.md: surface() 指令设计子提案
 - specification/proposals/express/express_dsl_examples.md: 完整 prompt contract 与编译对照示例
 - specification/proposals/express/examples/: 36 个 .a2ui 示例 (flight-status、child-list-template、incremental-dashboard、advanced-form-validator 等)
-- AGenUI 评测文章: 更低成本地生成A2UI协议: Express DSL 的功能特性, InfoQ 写作社区, 2026-07-14
+- AGenUI 评测: 更低成本地生成A2UI协议: Express DSL 的功能特性

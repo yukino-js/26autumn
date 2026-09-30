@@ -5,10 +5,10 @@
 
 @theme {
   --font-sans:
-    "Geist Mono", "Maple Mono", Menlo, "Cascadia Code", "Sarasa Gothic SC",
+    "Geist Mono", "Maple Mono", Menlo, "Cascadia Code", "LXGW WenKai",
     "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono:
-    "Geist Mono", "Maple Mono", Menlo, "Cascadia Code", "Sarasa Gothic SC",
+    "Geist Mono", "Maple Mono", Menlo, "Cascadia Code", "LXGW WenKai",
     "PingFang SC", "Microsoft YaHei", monospace;
 
   /* lavender brand palette, taken from public/favicon.svg */

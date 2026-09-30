@@ -5,7 +5,6 @@ title: "A2UI"
 仓库路径: git@github.com:a2ui-project/a2ui.git (本机克隆位于 $HOME/Downloads/a2ui)
 本机器路径 (撰写时点): $HOME/github/a2ui/packages/shadcn (@yukino.js/a2ui monorepo, 本地 remote 为 git@github.com:hangtiancheng/a2ui.git)
 注: 本文为调研时点快照, 此后两处本地仓库状态已变——shadcn 包目录在本机已无法定位; yukino-agent 已拆为独立仓库 ($HOME/github/yukino-agent), 移除了 @yukino.js/a2ui-shadcn npm 依赖, shadcn prompt 改为内联 vendored 在 @/lib/a2ui/prompt (server-safe), 其当前 A2UI 依赖为 @a2ui/web_core ^0.10.7、@a2ui/react ^0.10.2、@a2ui/markdown-it ^0.1.2. 正文保留调研时点描述.
-本机器文档库: $HOME/.yukino/docs
 
 ## 背景与动机
 
@@ -42,7 +41,7 @@ A2UI (Agent-to-User Interface) 是 Google 开源的开放标准: 让 Agent "说 
 
 Keywords: 流式传输 JSON、声明式 UI (抽象组件树/邻接表)、数据绑定 (JSON Pointer)、catalog 白名单、传输无关 (A2A / AG-UI / MCP / SSE)
 
-本文以 React 渲染器 (@a2ui/react) + v0.9 协议为主线, 参考实现为 ~/Documents/a2ui/samples/client/react/shell (餐厅预订 demo), 并在末尾与 Lit 实现做对比. 在此之上补充两部分实践内容: @yukino.js/a2ui-shadcn 组件库 (用 shadcn/ui 重实现并扩展 catalog 的三合一包) 与 yukino-agent (一个不依赖 CopilotKit 的生产级 A2UI 应用案例).
+本文以 React 渲染器 (@a2ui/react) + v0.9 协议为主线, 参考实现为 ~/Downloads/a2ui/samples/client/react/shell (餐厅预订 demo), 并在末尾与 Lit 实现做对比. 在此之上补充两部分实践内容: @yukino.js/a2ui-shadcn 组件库 (用 shadcn/ui 重实现并扩展 catalog 的三合一包) 与 yukino-agent (一个不依赖 CopilotKit 的生产级 A2UI 应用案例).
 
 ## 概念
 
@@ -175,7 +174,7 @@ A2A 支持通过扩展 URI 协商可选能力. A2UI 扩展的 URI 显式编码�
 - JSON-RPC over HTTP: 请求头 `X-A2A-Extensions: <扩展 URI>` (本仓库两个 shell 都采用此方式)
 - gRPC: `sendMessageParams.metadata["X-A2A-Extensions"]`
 
-Server 端解析逻辑见 agent_sdks/python/a2ui_agent/src/a2ui/a2a/extension.py: 读取客户端请求的版本与自身支持版本取交集, 匹配则激活 A2UI 扩展 (system prompt 注入 A2UI schema), 不匹配则按普通文本对话处理.
+Server 端解析逻辑见 python/a2ui_agent/src/a2ui/a2a/extension.py: 读取客户端请求的版本与自身支持版本取交集, 匹配则激活 A2UI 扩展 (system prompt 注入 A2UI schema), 不匹配则按普通文本对话处理.
 
 补充两个规范细节:
 
@@ -432,7 +431,7 @@ MessageProcessor 内部持有:
 - 全局 action 订阅: `this.model.onAction.subscribe(actionHandler)`
 
 ```ts
-// MessageProcessor 伪代码 (web_core/v0_9/processing/message-processor.ts)
+// MessageProcessor 伪代码 (typescript/web_core/src/processing/message-processor.ts)
 class MessageProcessor<T extends ComponentApi> {
   readonly model: SurfaceGroupModel<T>;
 
@@ -443,14 +442,29 @@ class MessageProcessor<T extends ComponentApi> {
     }
   }
 
-  // 生成 Client 能力声明 (supportedCatalogIds, 可选 inlineCatalogs)
-  getClientCapabilities(options?: CapabilitiesOptions): A2uiClientCapabilities {
-    return {
-      "v0.9": {
+  // 生成渲染端能力声明 (supportedCatalogIds, 可选 inlineCatalogs)
+  // 必须显式传非空 options.versions, 否则抛 A2uiValidationError;
+  // 返回的能力键由入参 versions 逐个生成, 而非硬编码某个版本
+  getRendererCapabilities(options: CapabilitiesOptions): RendererCapabilities {
+    if (!options?.versions || options.versions.length === 0) {
+      throw new A2uiValidationError(
+        "At least one protocol version must be provided...",
+      );
+    }
+    const result = {};
+    for (const ver of options.versions) {
+      result[ver] = {
         supportedCatalogIds: this.catalogs.map((c) => c.id),
         // => ["https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"]
-      },
-    };
+        // includeInlineCatalogs: true 时再附加 inlineCatalogs
+      };
+    }
+    return result;
+  }
+
+  // @deprecated getRendererCapabilities 的别名
+  getClientCapabilities(options: CapabilitiesOptions): RendererCapabilities {
+    return this.getRendererCapabilities(options);
   }
 
   // 消息分发
@@ -584,7 +598,7 @@ action 消息的结构 (v0.9 client_to_server):
 catalog 协商有两种模式:
 
 - pre-shared catalog: Client 只通过 supportedCatalogIds 声明支持哪些 catalog (catalogId 字符串), Server 预先已知其内容. Restaurant Finder 示例使用此模式
-- inlineCatalogs: Client 通过 `processor.getClientCapabilities({ includeInlineCatalogs: true })` 导出本地注册组件的完整 JSON Schema, 放入消息 metadata 的 a2uiClientCapabilities 中发送给 Server, Server 注入 system prompt. 适合自定义组件场景
+- inlineCatalogs: Client 通过 `processor.getClientCapabilities({ versions: ["v0.9"], includeInlineCatalogs: true })` 导出本地注册组件的完整 JSON Schema, 放入消息 metadata 的 a2uiClientCapabilities 中发送给 Server, Server 注入 system prompt. 适合自定义组件场景
 
 ### 阶段 5: Vite 中间件代理 (HTTP -> A2A, SSE 流式)
 
@@ -766,7 +780,7 @@ LLM 最终输出的文本示例:
 Server 从 LLM 输出中提取 `<a2ui-json>` 标签内的 JSON, 进行 Schema 校验:
 
 ```js
-// 伪代码 (对应 agent_sdks/python 的 parser + schema/validator)
+// 伪代码 (对应 python/ 目录 a2ui_agent 的 parser + schema/validator)
 function extractAndValidate(llmOutput) {
   // 1. 正则提取 <a2ui-json>...</a2ui-json> 内容
   const jsonStr = llmOutput.match(/<a2ui-json>([\s\S]*?)<\/a2ui-json>/)[1];
@@ -1036,83 +1050,83 @@ GenericBinder 绑定属性时读取组件的 Zod schema, 将属性分类处理:
 
 ### 阶段 12: React 渲染器内部机制
 
-@a2ui/react/v0_9 把 web_core 的模型层桥接到 React, 核心是 A2uiSurface / DeferredChild / ResolvedChild 三层组件 (renderers/react/src/v0_9/A2uiSurface.tsx):
+@a2ui/react/v0_9 把 web_core 的模型层桥接到 React, 核心是 NodeResolver / NodeView 的 node layer 架构 (renderers/react/src/v0_9/A2uiSurface.tsx:119-167): A2uiSurface 构造一个 NodeResolver (由 @a2ui/web_core/v0_9 导出, 实现在 typescript/web_core/src/resolution/node-resolver.ts), 渲染它维护的已解析 ComponentNode 树. 组件解析、数据作用域与属性绑定全部下沉到 web_core 的 node layer, React 侧只做分发渲染:
 
 ```tsx
-// A2uiSurface: 入口, 从 root 组件开始渲染
+// A2uiSurface: 入口, 用 useSyncExternalStore 订阅 NodeResolver 的 rootNode
 export const A2uiSurface = ({ surface }) => {
-  return <DeferredChild surface={surface} id="root" basePath="/" />;
+  // resolver 在 subscribe 内创建: React 只对已提交的渲染调用它,
+  // 被丢弃的渲染 (并发模式 / Suspense) 不会构造 resolver, unsubscribe 负责 dispose
+  const subscribe = useCallback(
+    (onChange) => {
+      const resolver = new NodeResolver(surface, surface.defaultCatalog);
+      box.resolver = resolver;
+      const stopEffect = effect(() => {
+        getValue(resolver.rootNode);
+        onChange();
+      });
+      return () => {
+        stopEffect();
+        resolver.dispose();
+      };
+    },
+    [surface, box],
+  );
+  const getSnapshot = useCallback(
+    () => (box.resolver ? peekValue(box.resolver.rootNode) : undefined),
+    [box],
+  );
+  const root = useSyncExternalStore(subscribe, getSnapshot);
+
+  if (!root) return <LoadingPlaceholder componentId="root" />;
+  return (
+    <NodeSurfaceContext.Provider value={surface}>
+      <NodeView surface={surface} node={root} />
+    </NodeSurfaceContext.Provider>
+  );
 };
 ```
 
-(1) DeferredChild -- 订阅单个组件的存在性
+(1) NodeResolver -- 把组件模型解析为响应式 ComponentNode 树
+
+NodeResolver (typescript/web_core/src/resolution/node-resolver.ts) 把 SurfaceModel 中的每个 ComponentModel 解析为 ComponentNode (typescript/web_core/src/resolution/component-node.ts): 节点 props 是 Signal 驱动的已解析值——动态绑定为 ResolvedBinding, action 属性为可直接调用的闭包, child 属性为活的 ComponentNode 引用 (或其数组). 组件尚未到达时生成 isPlaceholder 占位节点, 到达后原位替换, 渐进渲染由 node layer 统一承担; 属性绑定由 GenericBinder (resolution/generic-binder.ts) 按 catalog schema 刮取的行为 (DYNAMIC / ACTION / STRUCTURAL / CHECKABLE / STATIC, 见阶段 11 分类) 建立订阅.
+
+要点: 组件树解析、存在性与数据作用域 (dataPath) 管理不再由 React 组件逐层订阅事件完成, 而是集中在 NodeResolver 内; 节点仅在自身已解析属性变化时发出信号 (子节点内部属性变化不触发父节点), 更新范围被限制在单个组件粒度, 避免整棵树重渲染.
+
+(2) NodeView -- 按节点状态分发渲染, 递归构建子节点
 
 ```tsx
-// 每个 DeferredChild 只订阅 "自己这个 id 的组件" 的创建/删除事件
-const store = useMemo(
-  () => ({
-    subscribe: (cb) => {
-      const unsub1 = surface.componentsModel.onCreated.subscribe((comp) => {
-        if (comp.id === id) cb();
-      });
-      const unsub2 = surface.componentsModel.onDeleted.subscribe((delId) => {
-        if (delId === id) cb();
-      });
-      return () => {
-        unsub1.unsubscribe();
-        unsub2.unsubscribe();
-      };
+// renderers/react/src/v0_9/A2uiSurface.tsx
+const NodeView = memo(({ surface, node }) => {
+  // buildChild: 已解析的子节点递归渲染; 解析器未能归类的 id 报告具体原因
+  const buildChild = useCallback(
+    (child, basePath) => {
+      if (isComponentNode(child)) {
+        return (
+          <NodeView key={child.instanceId} surface={surface} node={child} />
+        );
+      }
+      return (
+        <UnresolvedChildReference surface={surface} id={child} /* ... */ />
+      );
     },
-    // snapshot = 组件类型 + 版本号, 保证类型替换 (Button -> Text) 也能触发重渲染
-    getSnapshot: () => {
-      const comp = surface.componentsModel.get(id);
-      return comp ? `${comp.type}-${version}` : `missing-${version}`;
-    },
-  }),
-  [surface, id],
-);
+    [surface, node],
+  );
 
-useSyncExternalStore(store.subscribe, store.getSnapshot);
-
-const componentModel = surface.componentsModel.get(id);
-if (!componentModel) return <div>[Loading {id}...]</div>; // 渐进渲染占位
-
-// 按组件类型从 catalog 查找 React 实现
-const compImpl = surface.catalog.components.get(componentModel.type);
-if (!compImpl) return <div>Unknown component: {componentModel.type}</div>;
+  if (node.state === "unknown-type")
+    return <div>Unknown component type: ...</div>;
+  if (node.isPlaceholder)
+    return <LoadingPlaceholder componentId={node.componentId} />; // 渐进渲染占位
+  const View = node.impl?.view;
+  if (!View)
+    return (
+      <RenderFallback node={node} impl={node.impl} buildChild={buildChild} />
+    );
+  return <View node={node} buildChild={buildChild} />;
+});
 ```
 
-要点: 通过 useSyncExternalStore 把 web_core 的事件系统接入 React 18 的外部存储模型; 每个节点只订阅自己的 id, 更新范围被限制在单个组件粒度, 避免整棵树重渲染.
-
-(2) ResolvedChild -- 创建 ComponentContext 并递归构建子节点
-
-```tsx
-const ResolvedChild = memo(
-  ({ surface, id, basePath, componentModel, compImpl }) => {
-    // ComponentContext = surface + componentId + basePath(数据作用域)
-    const context = useMemo(
-      () => new ComponentContext(surface, id, basePath),
-      [surface, id, basePath, componentModel],
-    );
-
-    // buildChild 供具体组件渲染子节点; 列表模板在这里传入每项的 specificPath
-    const buildChild = useCallback(
-      (childId: string, specificPath?: string) => (
-        <DeferredChild
-          key={`${childId}-${specificPath || context.dataContext.path}`}
-          surface={surface}
-          id={childId}
-          basePath={specificPath || context.dataContext.path}
-        />
-      ),
-      [surface, context.dataContext.path],
-    );
-
-    const ComponentToRender = compImpl.render;
-    return <ComponentToRender context={context} buildChild={buildChild} />;
-  },
-);
-```
+要点: surface 只做分发——把每个实现的 view 拿到自己的 node 与渲染已解析子节点的 buildChild. node-view.tsx 中的 useNodeView (renderers/react/src/v0_9/node-view.tsx:236) 通过 useSignalValue 订阅 node.props (仍以 useSyncExternalStore 把 web_core 的信号系统接入 React 18 的外部存储模型), 把解析后的 props 适配回现有视图实现的 ReactA2uiComponentProps 形状, 并构造 ComponentContext 与字符串 id 的 buildChild, 数据变化只重渲染受影响的组件.
 
 (3) createComponentImplementation -- GenericBinder 接入 useSyncExternalStore
 
@@ -1153,9 +1167,9 @@ const ReactWrapper = ({ context, buildChild }) => {
 A2UI 消息流
   -> MessageProcessor.processMessages
   -> SurfaceModel (DataModel + ComponentsModel, 信号/事件驱动)
-  -> DeferredChild: useSyncExternalStore 订阅组件增删
+  -> NodeResolver: 解析为响应式 ComponentNode 树, 未到达组件生成 isPlaceholder 占位
   -> GenericBinder: 按 schema 解析属性, 订阅 DataModel 路径
-  -> useSyncExternalStore 拿到解析后的 props snapshot
+  -> A2uiSurface / NodeView: useSyncExternalStore 订阅 rootNode, 按节点分发渲染
   -> 具体 React 组件 (memo) 渲染
 ```
 
@@ -1237,15 +1251,15 @@ Server 端的 ADK Session 通过 contextId 关联, 确保 LLM 在后续轮次中
 
 ## 组件加载时的 Loading (骨架) 实现
 
-A2UI 协议本身没有 loading 语义 (四类消息中没有任何 loading 状态字段) , 渐进渲染期间的占位完全是渲染器/宿主侧的实现问题。协议现状已提供的基础: DeferredChild 对未到达组件渲染 `[Loading {id}...]` 纯文本占位 (snapshot 形如 missing-$\{version\}) ; root 未到达前其余组件更新被缓冲, 不产生可见效果; 绑定路径解析为 undefined 时规范建议按空串或 loading 优雅处理。据此可以把 loading 分为三层, 分别对应三类消息的到达状态:
+A2UI 协议本身没有 loading 语义 (四类消息中没有任何 loading 状态字段) , 渐进渲染期间的占位完全是渲染器/宿主侧的实现问题。协议现状已提供的基础: node layer 对未到达组件以 LoadingPlaceholder (renderers/react/src/v0_9/node-view.tsx:59-61) 渲染 `[Loading {id}...]` 纯文本占位; root 未到达前其余组件更新被缓冲, 不产生可见效果; 绑定路径解析为 undefined 时规范建议按空串或 loading 优雅处理。据此可以把 loading 分为三层, 分别对应三类消息的到达状态:
 
 ### 第一层: Surface 级 (createSurface 已到, 组件与数据未到)
 
-createSurface 到达即触发 onSurfaceCreated, 宿主立即挂载该 Surface 并渲染整体骨架卡 (标题条 + 文本条 + 图块的 Skeleton 组合) ; root 组件到达后由 DeferredChild 链自动接管, 骨架消失。yukino-agent 链路中 a2ui 块校验后一次性下发, message 事件与 a2ui 事件之间的等待窗口即对应这一层。
+createSurface 到达即触发 onSurfaceCreated, 宿主立即挂载该 Surface 并渲染整体骨架卡 (标题条 + 文本条 + 图块的 Skeleton 组合) ; root 组件到达后由 NodeResolver 原位替换占位节点、NodeView 接管渲染, 骨架消失。yukino-agent 链路中 a2ui 块校验后一次性下发, message 事件与 a2ui 事件之间的等待窗口即对应这一层。
 
 ### 第二层: 组件级 (updateComponents 部分到达)
 
-组件乱序/流式到达时, 父组件已挂载而子组件 id 尚未到达。DeferredChild 的 missing 分支是天然挂载点, 把官方的纯文本占位替换为骨架块:
+组件乱序/流式到达时, 父组件已挂载而子组件 id 尚未到达。LoadingPlaceholder 是天然挂载点, 把官方的纯文本占位替换为骨架块:
 
 ```tsx
 if (!componentModel) return <Skeleton className="h-4 w-full animate-pulse" />;
@@ -1431,11 +1445,11 @@ L3 与协议的最小要求对齐 (逐条处理、单条原子) , 是从 "整批
 
 Lit shell (samples/client/lit/shell) 与 React shell 跑同一个协议, 差异集中在三处:
 
-| 维度         | React shell                                            | Lit shell                                                                    |
-| :----------- | :----------------------------------------------------- | :--------------------------------------------------------------------------- |
-| 传输层       | 浏览器 fetch /a2a, Vite 中间件做协议转换 + SSE 流式    | 浏览器内直接用 @a2a-js/sdk 的 A2AClient 连 Server, 非流式 sendMessage        |
-| 响应式       | useSyncExternalStore 订阅 web_core 事件/快照           | SignalWatcher(LitElement) 混入 @lit-labs/signals, 信号驱动细粒度更新         |
-| Surface 渲染 | A2uiSurface + DeferredChild 递归, React state 同步增删 | `<a2ui-surface .surface=${surface}>` 自定义元素, repeat 指令遍历 surfacesMap |
+| 维度         | React shell                                                                     | Lit shell                                                                    |
+| :----------- | :------------------------------------------------------------------------------ | :--------------------------------------------------------------------------- |
+| 传输层       | 浏览器 fetch /a2a, Vite 中间件做协议转换 + SSE 流式                             | 浏览器内直接用 @a2a-js/sdk 的 A2AClient 连 Server, 非流式 sendMessage        |
+| 响应式       | useSyncExternalStore 订阅 web_core 事件/快照                                    | SignalWatcher(LitElement) 混入 @lit-labs/signals, 信号驱动细粒度更新         |
+| Surface 渲染 | A2uiSurface + NodeResolver/NodeView node layer, useSyncExternalStore 同步节点树 | `<a2ui-surface .surface=${surface}>` 自定义元素, repeat 指令遍历 surfacesMap |
 
 Lit 侧关键代码:
 
@@ -2233,7 +2247,7 @@ src/prompt/ (./prompt 导出) 把 A2UI Python agent SDK 的四种推理格式提
 技术栈 (package.json) :
 
 - 框架: Next.js 16.2.9 (App Router) + React 19.2.4 + TypeScript 6; 入口 app/layout.tsx、app/page.tsx (主聊天界面) 、app/gallery/page.tsx (A2UI 组件画廊)
-- AI SDK: Vercel AI SDK v7 (ai ^7.0.43) , streamText/generateText + tools + stopWhen: isStepCount (n) ; provider 为 @ai-sdk/openai 与 @ai-sdk/anthropic, lib/ai/models.ts 按 LLM_PROVIDER 切换, 区分 thinkModel/quickModel
+- AI SDK: Vercel AI SDK v7 (ai ^7.0.122) , streamText/generateText + tools + stopWhen: isStepCount (n) ; provider 为 @ai-sdk/openai 与 @ai-sdk/anthropic, lib/ai/models.ts 按 LLM_PROVIDER 切换, 区分 thinkModel/quickModel
 - A2UI 依赖: @a2ui/web_core ^0.10.6、@a2ui/react ^0.10.2、@a2ui/markdown-it, 以及 "@yukino.js/a2ui-shadcn": "latest" (npm 安装 0.0.1; 调研时为 file:../../../a2ui/packages/shadcn 本地链接, 2026-08-24 起改为 npm 依赖) ——两个仓库由此耦合 (现状: yukino-agent 独立仓库已移除该 npm 依赖, prompt 内联 vendored, A2UI 依赖升至 @a2ui/web_core ^0.10.7)
 - 其他: Redis Stack 向量检索 (RAG) 、knex+mysql2、MCP SDK (日志工具) 、prom-client、Tailwind v4、streamdown
 

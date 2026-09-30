@@ -1,5 +1,6 @@
 ---
 title: "Redis 技术笔记"
+description: "Redis 核心笔记: 数据结构与底层编码、线程模型、持久化、过期与淘汰、高可用架构、缓存设计与分布式锁两种实现"
 ---
 
 > 本文覆盖 Redis 数据结构与底层编码、线程模型、持久化、过期删除与内存淘汰、高可用架构、缓存一致性、分布式锁 (Redis 主动轮询、Redis + etcd 监听回调两种实现) 等核心知识点.
@@ -63,7 +64,7 @@ struct sdshdr8 {
 
 ### list 的底层结构 quicklist 是怎么设计的? 为什么要用 listpack 替换 ziplist?
 
-quicklist = 双向链表 + 每个节点是一个 listpack, 是链表和紧凑数组的折中:
+quicklist = 双向链表 + 每个节点是一个紧凑数组, 是链表和紧凑数组的折中 (节点内部 Redis 7.0 起为 listpack, 7.0 之前为 ziplist):
 
 - 纯双向链表: 每个节点都有 prev/next 指针, 内存碎片多、指针开销大
 - 纯紧凑数组 (listpack): 插入/删除需要整体挪动内存, 数据量大时性能差
@@ -82,10 +83,11 @@ listpack 替换 ziplist 的原因 (级联更新问题):
 | set  | intset (全整数时) / listpack | 全整数且成员数 <= 512 (`set-max-intset-entries`); 非全整数时成员数 <= 128 且成员 <= 64 字节 | hashtable            |
 | zset | listpack                     | 成员数量 <= 128 (`zset-max-listpack-entries`) 且每个成员 <= 64 字节                         | skiplist + hashtable |
 
-注意两点:
+注意三点:
 
 1. 编码转换是单向的, 转成通用编码后即使数据变少也不会转回紧凑编码
 2. zset 的通用编码是双结构: skiplist 按分数排序支撑范围查询 (`zrange`), hashtable 保存 member 到 score 的映射支撑 O(1) 的 `zscore`
+3. 参数命名与默认值随版本演进: Redis 7.0 将 ziplist 系参数更名为 listpack 系 (如 hash-max-ziplist-entries 更名为 hash-max-listpack-entries), 表中采用新名; 部分默认值在 7.0 同时调大 (如 hash 的 entries 阈值从 128 调至 512), set 的 listpack 编码也是 7.0 新增, 7.0 之前版本需按旧名旧值理解
 
 ### 跳表 (skiplist) 的原理是什么? zset 为什么用跳表而不用红黑树或 B+ 树?
 
@@ -124,7 +126,7 @@ Redis 的 dict 内部有两个哈希表 `ht[0]` 和 `ht[1]`:
 - string: 缓存对象 (JSON 序列化)、计数器 (`incr` 原子自增)、分布式锁 (`set key value nx px`)、共享 session
 - list: 消息队列 (`lpush + brpop` 保序阻塞消费; 用 `blmove` 把消息移入备份 list 保证可靠性; 缺点是不支持消费组, 需要消费组用 stream)
 - hash: 购物车 (用户 ID 为 key, 商品 ID 为 field, 数量为 value)、对象的部分字段更新
-- set: 点赞/收藏去重、共同关注 (`sinter` 交集)、抽奖 (`srandmember` 不放回用 `spop`)
+- set: 点赞/收藏去重、共同关注 (`sinter` 交集)、抽奖 (`srandmember` 随机取不移除, `spop` 随机取并移除)
 - zset: 排行榜 (`zincrby` 更新分数 + `zrange rev` 取 TopN)、延迟队列 (score 存执行时间戳)、滑动窗口限流
 
 ---
@@ -197,7 +199,7 @@ AOF (Append Only File): 每执行一条写命令, 将该命令追加到 AOF 缓�
 
 AOF 日志随写命令持续膨胀 (对同一 key 的 100 次 incr 会记录 100 条命令), 超过阈值 (`auto-aof-rewrite-min-size` + 增长百分比) 时触发重写: 不是修改旧文件, 而是根据当前内存数据生成等价的最小命令集写入新文件.
 
-```
+```text
   主进程                              子进程 (bgrewriteaof)
     |
     |-- fork ----------------------->  创建子进程
@@ -375,7 +377,7 @@ key -> CRC16(key) % 16384 (0x4000) -> 槽 -> 某个主节点
 ```
 
 - key 到槽的映射永远固定, 与节点数量无关; 节点变化时只需迁移部分槽及其数据
-- 例: 2 个分片时 M1 负责槽 0~~0x1fff, M2 负责 0x2000~~0x3fff; 扩到 3 个分片只需把 M1、M2 的部分槽迁给 M3, 迁移期间集群持续可用 (访问迁移中的槽会收到 ASK 重定向, 访问已迁走的槽收到 MOVED 重定向)
+- 例: 2 个分片时 M1 负责槽 0-0x1fff, M2 负责 0x2000-0x3fff; 扩到 3 个分片只需把 M1、M2 的部分槽迁给 M3, 迁移期间集群持续可用 (访问迁移中的槽会收到 ASK 重定向, 访问已迁走的槽收到 MOVED 重定向)
 - 若用传统 `hash % 节点数`, 节点数变化时几乎所有 key 都要重新分布
 
 为什么是 16384 而不是 65536:
@@ -425,7 +427,7 @@ Cache Aside (旁路缓存) 是最常用的策略, 适合读多写少:
 
 为什么不能先删缓存、后更新数据库 — 并发下必然不一致:
 
-```
+```text
   时间线    线程 A (写请求)              线程 B (读请求)
     |
     t1     删除缓存
@@ -573,7 +575,7 @@ func (l *RedisLock) Unlock(ctx context.Context) error {
 
 思路: 锁的状态仍存 Redis (`SET NX PX`, 保留 Redis 加锁的高性能和过期兜底能力), 但等锁不再轮询: 持锁者释放锁时向 etcd 写一个通知 key, 等锁者通过 etcd 的 Watch 机制阻塞监听该 key, 收到释放事件的回调后才发起下一次抢锁. 将 "忙轮询 (poll)" 变为 "事件驱动 (push)".
 
-```
+```text
   客户端 A (持锁方)          Redis                    etcd               客户端 B (等锁方)
       |                       |                        |                       |
       |-- SET key NX PX ----->|                        |                       |

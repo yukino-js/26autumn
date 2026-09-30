@@ -16,7 +16,7 @@ Yukino Agent 是一个 Next.js 16 App Router 全栈应用, 前后端同仓同进
 
 1. 接入层 (`app/api/*`): 七个 Route Handler, 核心四个为 `chat` (非流式对话) 、`chat_stream`(SSE 流式对话) 、`ai_ops`(Plan-Execute-Replan 运维分析) 、`upload` (知识库文件上传) ; 另有 `log` (接收 yukino-sentry 前端监控上报并转为 Prometheus 指标) 、`metrics` (暴露 Prometheus 抓取端点) 、`a2ui_action` (A2UI 界面动作原地更新) . 统一响应结构 `{ message, data }` (`app/api/chat/route.ts:23` 注释, 规范见 `AGENTS.md:39`).
 2. 编排层 (`lib/ai/pipelines/*`): 三条管线——`chat.ts`(RAG + ReAct agent)、`plan-execute-replan/` (规划-执行-重规划循环) 、`knowledge-index.ts` (知识库索引构建) .
-3. 能力层 (`lib/ai/*`、`lib/redis/*`): 模型工厂 (`models.ts` 双模型双 provider)、Embedding 封装 (`embedder.ts` 双 provider)、工具系统 (`tools/` 三层分离) 、A2UI 界面生成与纠错 (`a2ui/` 四文件) 、Redis Stack 向量存取 (`client.ts`/`indexer.ts`/`retriever.ts`)、会话记忆 (`memory.ts` 内存 LRU); 另有 `lib/metrics.ts` 把 yukino-sentry 上报桥接为 Prometheus 指标.
+3. 能力层 (`lib/ai/*`、`lib/redis/*`): 模型工厂 (`models.ts` 双模型双 provider)、Embedding 封装 (`embedder.ts` openai-compatible 单 provider)、工具系统 (`tools/` 三层分离) 、A2UI 界面生成与纠错 (`a2ui/` 四文件) 、Redis Stack 向量存取 (`client.ts`/`indexer.ts`/`retriever.ts`)、会话记忆 (`memory.ts` 内存 LRU); 另有 `lib/metrics.ts` 把 yukino-sentry 上报桥接为 Prometheus 指标.
 4. 配置层 (`lib/config.ts`): 集中读取 `.env`, 导出 `as const` 的 `config` 对象. 向量维度不做静态配置, 而在启动时通过 `embedText("dimension probe")` 运行时探测 (`client.ts:69`).
 5. 表现层 (`app/page.tsx`、`components/*`、`hooks/use-chat.ts`): React 19 客户端组件 + 单一 `useChat` 状态中枢 + localStorage 历史持久化, Tailwind v4 原子类样式, markdown 渲染用 Streamdown (流式原生 react-markdown 替代品).
 
@@ -201,13 +201,13 @@ LLM 调用的错误与传统 API 不同: 错误信息往往不在 `message` 里,
 
 ### Embedding 层如何做 provider 抽象? 维度管理有什么坑?
 
-抽象方式(`lib/ai/embedder.ts`): 无论是阿里 DashScope 还是本地 Ollama, 都通过 `@ai-sdk/openai-compatible` 适配——因为两者都暴露 OpenAI 兼容的 `/v1/embeddings` 端点. `createEmbeddingProvider()` 按 `EMBEDDING_PROVIDER` 选择配置, 返回统一的 `EmbeddingModel`, 上层只调 `embed()`/`embedMany()`. Ollama 不需要 key, 但适配器要求非空字符串, 故传 `"ollama"` 占位 (`embedder.ts:37`).
+抽象方式(`lib/ai/embedder.ts`): 现只有单一 provider —— openai-compatible embedding (`config.openaiEmbedding`, 默认模型 `text-embedding-v4`, baseURL 默认阿里云 OpenAI 兼容网关 `https://openai.aliyuncs.com/compatible-mode/v1`, `lib/config.ts:43-49`) . `createEmbeddingProvider()` 用 `@ai-sdk/openai-compatible` 的 `createOpenAICompatible({name: "openai", baseURL, apiKey})` 产出统一 `EmbeddingModel` (`embedder.ts:8-16`) , 上层只调 `embed()`/`embedMany()` —— 批量时按 `EMBED_BATCH_SIZE = 10` 分片 (兼容端点单次输入条数上限, SDK 默认 2048 会报 "batch size is invalid", `embedder.ts:26-41`) . 由于适配的是 OpenAI 兼容 `/v1/embeddings` 端点, 换服务只需改 baseURL/apiKey/model 三个环境变量. 旧版的 DashScope/Ollama 双 provider 分支已删除: `EMBEDDING_PROVIDER` 只保留 `"openai"` (`lib/config.ts:64-65`, 类型即 `"openai"`) , 不再有传 `"ollama"` 占位 key 的逻辑, Ollama 相关变量只在 `.env` 里留有注释.
 
 维度管理的坑与对策:
 
 1. 维度是索引的物理属性, 不是查询参数:RediSearch 建索引时 `DIM` 固定 (`client.ts:121`), 一旦写入 2048 维数据, 换成 768 维模型后所有检索会静默失败或报错——不会有任何类型系统帮你发现.
 2. 对策一: 运行时维度探测 (`client.ts:69`):`ensureIndex` 启动时调用 `embedText("dimension probe")`, 取返回向量的 `.length` 作为真实维度. 维度不做静态配置 (没有 `EMBEDDING_DIM` 常量), 因为实际模型输出才是权威来源——注释记录了一个真实踩坑: 模型返回 1024 维而配置假设 2048, 导致每次 HSET 静默失败, `num_docs` 始终为 0 而 `hash_indexing_failures` 攀升.
-3. 对策二: 启动时维度校验 (`client.ts:68-129`):`ensureIndex` 通过 `FT.INFO` 读取已存在索引的 vector DIM, 与探测到的维度不符则 warn 并 dropIndex 重建, 同时清理前缀下所有旧 hash (旧向量在维度变更后已无用). 这覆盖了 provider 切换 (openai ↔ ollama) 场景.
+3. 对策二: 启动时维度校验 (`client.ts:68-129`):`ensureIndex` 通过 `FT.INFO` 读取已存在索引的 vector DIM, 与探测到的维度不符则 warn 并 dropIndex 重建, 同时清理前缀下所有旧 hash (旧向量在维度变更后已无用). 这覆盖了 embedding 模型切换场景 (换 baseURL/model 后不同模型输出维度可能不同).
 
 教训可推广: 凡是"物理 schema 与配置分离"的系统 (向量维度、分词器、索引版本) , 启动时自检比文档约定可靠.
 

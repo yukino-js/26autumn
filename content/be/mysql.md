@@ -1,5 +1,6 @@
 ---
 title: "MySQL 技术笔记"
+description: "MySQL 8.0 与 InnoDB 核心笔记: 架构与执行流程、索引、事务 MVCC、锁、日志、复制、分库分表与缓存一致性"
 ---
 
 > 覆盖架构、InnoDB 存储引擎、索引、事务、锁、日志、主从复制、分库分表、性能优化与 MySQL/Redis 数据一致性.
@@ -145,7 +146,7 @@ MySQL 规定一行记录除 TEXT/BLOB 外的所有列总字节数不能超过 65
 - 页内用户记录按主键升序组成单向链表——但链表查找是 O(n), 因此引入页目录
 - 页目录由多个槽 (slot) 组成, 相当于记录的稀疏索引:
   - 记录被划分为若干组, 每个槽指向该组最后一条 (最大) 记录; 该记录的头信息中记录组内记录数
-  - 分组规则: 最小记录独占一组; 最大记录所在组 1~~8 条; 其余组 4~~8 条
+  - 分组规则: 最小记录独占一组; 最大记录所在组 1-8 条; 其余组 4-8 条
   - 划分时包含 Infimum/Supremum, 不包含 delete_mask = 1 的已删除记录
 - 页内查找: 先对槽做二分查找定位到组, 再在组内沿单向链表遍历 (最多 8 条), 整体接近 O(log n)
 
@@ -192,7 +193,7 @@ B+ 树 vs 跳表: 跳表 (Redis zset 使用) 是链表 + 多级索引, 层高不
 聚簇索引键的选择规则 (建表时自动确定):
 
 1. 有主键, 用主键
-2. 无主键, 选第一个 not null 的唯一列
+2. 无主键, 选第一个所有列均 not null 的唯一索引
 3. 都没有, InnoDB 生成隐藏自增 row_id
 
 ```sql
@@ -234,8 +235,9 @@ select * from users where name = 'Alice';             -- 需要回表查其余�
 
 范围查询停止匹配:
 
-- 遇到 `>`、`<` 严格范围查询时停止匹配: `where a > 1 and b = 2` 中只有 a 走索引定位, 因为满足 a > 1 的记录内部 b 是无序的
-- `>=`、`<=`、`between`、`like 'xx%'` 前缀匹配不会停止匹配: 以 `where a >= 1 and b = 2` 为例, 存在 a = 1 的等值边界, 在 a = 1 的分组内 b 是有序的, 可以继续用 b 缩小扫描起点
+- 范围列之后的列停止匹配: `where a > 1 and b = 2` 中索引遍历范围只由 a 决定, 因为满足 a > 1 的记录内部 b 是无序的, b 不再参与索引定位, 只能靠索引下推在二级索引上过滤
+- 范围条件本身所在列仍参与索引遍历: `where a >= 1 and b = 2` 与上同理, 遍历范围由 a >= 1 确定; 而 `where a = 1 and b >= 2` 中 a 是等值条件, b 继续参与索引遍历缩小范围
+- `between`、`like 'xx%'` 前缀匹配本质也是范围条件, 规则同上
 
 延伸: order by 也遵循最左匹配吗? 是. `where a = 1 order by b, c` 可利用索引免排序; `order by b` 单独出现则需要 filesort.
 
@@ -432,7 +434,7 @@ MVCC (Multi-Version Concurrency Control): 通过 undo log 版本链 + Read View 
 
 可见性判断 (对版本链上每个版本依次判断, 直到找到可见版本):
 
-```
+```text
   对版本链上每个版本, 取其 trx_id 判断:
 
   trx_id == creator_trx_id ?
@@ -804,7 +806,7 @@ binlog 刷盘: 事务执行中先写线程私有的 binlog cache (保证一个�
 
 解决: 把 redo log 的写入拆成 prepare 与 commit 两个阶段, binlog 夹在中间, 以 binlog 是否完整作为事务是否提交的统一判据 (内部使用 XA 事务, 两份日志通过 XID 关联):
 
-```
+```text
   redo log (InnoDB)              binlog (Server)
        |                              |
        v                              |
@@ -878,7 +880,7 @@ binlog 是追加写的全量逻辑日志, 恢复方案:
 
 主从复制基于 binlog, 涉及三个线程:
 
-```
+```text
   主库 (Master)                              从库 (Slave)
 +---------------------+                +---------------------------+
 | 事务执行            |                |                           |
@@ -1113,12 +1115,13 @@ const sql = `SELECT username, email FROM member WHERE id = '${id}'`;
 
 ```sql
 -- 1. CRUD 频率画像 (判断读多写多)
-show global status like 'Com_______';   -- Com_select / Com_insert / ...
+show global status like 'Com_%';        -- Com_select / Com_insert / ...
 
 -- 2. 慢查询日志 (配置 /etc/my.cnf)
 -- slow_query_log=1, long_query_time=2, 日志: localhost-slow.log
 
--- 3. profiling: 单条 SQL 各阶段耗时
+-- 3. profiling: 单条 SQL 各阶段耗时 (MySQL 5.7 起废弃, 8.0 已移除;
+--    8.0 请改用 performance_schema.events_statements_history 等表)
 select @@have_profiling;
 set session profiling = 1;
 show profiles;                        -- 各 SQL 的 queryID 与总耗时
@@ -1164,7 +1167,7 @@ select * from t ignore index(idx_a) where ...;  -- 忽略
 
 组合一: 先删缓存, 再更新数据库 —— 并发读会把旧值回填:
 
-```
+```text
   时间线    线程 A (写请求)                线程 B (读请求)
     t1     删除缓存
     t2                                  缓存未命中
@@ -1180,7 +1183,7 @@ select * from t ignore index(idx_a) where ...;  -- 忽略
 
 组合四: 先更新数据库, 再更新缓存 —— 两个并发写会产生回填乱序:
 
-```
+```text
   时间线    线程 A (写 v1)                 线程 B (写 v2)
     t1     更新数据库为 v1
     t2                                  更新数据库为 v2   (数据库最终值 v2)
@@ -1206,7 +1209,7 @@ select * from t ignore index(idx_a) where ...;  -- 忽略
 
 延迟双删 (delay double deletion):
 
-```
+```text
   1. 删除缓存            (清掉当前值)
   2. 更新数据库
   3. 延迟 N 毫秒          (绝不能在业务线程里 sleep)
@@ -1226,7 +1229,7 @@ select * from t ignore index(idx_a) where ...;  -- 忽略
 
 "更新数据库成功、删除缓存失败"是 Cache Aside 下长期不一致的最常见来源 (网络抖动、Redis 主从切换、连接池耗尽). 重试分层:
 
-```
+```text
   更新 MySQL ---> 删除 Redis ---> 成功? ---是---> 结束
                                     |
                                    否 (同步重试 1~3 次)
@@ -1245,7 +1248,7 @@ select * from t ignore index(idx_a) where ...;  -- 忽略
 
 动机: 应用层删除有三个盲区——代码漏写删除、其他服务/脚本/DBA 绕过应用直连数据库、重试消息丢失. binlog 订阅兜底的正是"数据库层实际发生的一切写入".
 
-```
+```text
   MySQL (binlog, row 格式)
       |
       v  伪装 slave, 发送 dump 请求

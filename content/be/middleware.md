@@ -1,5 +1,6 @@
 ---
 title: "后端中间件技术笔记"
+description: "后端中间件笔记: etcd、Kafka、groupcache、gRPC、Prometheus、Grafana、OpenTelemetry 与 Redis Stack 向量存储的原理与生产实践"
 ---
 
 > 覆盖 etcd、Kafka、groupcache、gRPC、Prometheus、Grafana、OpenTelemetry、Redis Stack 向量存储八大中间件的底层原理、生产实践与故障排查. 基于 Go 技术栈, 结合分布式系统理论与真实生产场景.
@@ -12,7 +13,7 @@ etcd 使用 Raft 共识算法保证集群数据强一致性, 其核心机制分�
 
 Leader 选举
 
-```
+```text
 节点状态机: Follower -> Candidate -> Leader
 
 选举触发条件:
@@ -67,7 +68,7 @@ etcd 的 MVCC 基于 BoltDB 实现, 为每个 key 维护多个版本, 支持历�
 
 核心数据结构
 
-```
+```text
 keyIndex (内存 B-tree, Google btree 实现):
   key -> {
     generations: [
@@ -83,7 +84,7 @@ BoltDB 存储:
 
 Revision 体系
 
-```
+```text
 Revision 是全局递增的逻辑时钟:
   main revision: 每次事务 +1 (集群全局唯一)
   sub revision:  同一事务内多个操作的序号 (从 0 开始)
@@ -112,7 +113,7 @@ func (s *store) Range(ctx context.Context, key, end []byte, ro RangeOptions) (*R
 
 Compaction 对 MVCC 的影响
 
-```
+```text
 Compact(rev) 会:
 1. 删除 BoltDB 中 revision <= rev 的所有历史 KeyValue
 2. 清理 keyIndex 中已无对应数据的旧 revision
@@ -126,7 +127,7 @@ etcd 的 Watch 是基于 gRPC 流式通信和 MVCC revision 的增量事件推�
 
 整体架构
 
-```
+```text
 Client (gRPC Watch Stream)
     |
     v
@@ -198,7 +199,7 @@ for resp := range keepAliveCh {
 
 服务发现完整流程
 
-```
+```text
 注册方:
   1. Grant Lease (TTL=10s)
   2. Put key with Lease: /services/{service}/{instance} = {addr, metadata}
@@ -221,7 +222,7 @@ for resp := range keepAliveCh {
 
 BoltDB 核心特点
 
-```
+```text
 存储结构:
   - 单文件存储, B+ tree 索引, 页大小默认 4096 bytes
   - 读写互斥: 同一时刻只有一个写事务, 多个只读事务可并发
@@ -241,7 +242,7 @@ BoltDB 核心特点
 
 BoltDB 的局限与应对
 
-```
+```text
 局限 1: 写放大 (COW 复制整路径) -> etcd 后端用批量事务 (默认约 100ms batch interval) 摊薄 BoltDB 提交/fsync 开销
 局限 2: 单写锁 -> 写入瓶颈在 Raft 共识, 非 BoltDB
 局限 3: 空间碎片 (文件只增不减) -> 定期 Defrag
@@ -279,7 +280,7 @@ resp, _ := client.Get(ctx, "key", clientv3.WithSerializable())
 
 关键性能指标
 
-```
+```text
 核心指标 (通过 /metrics 暴露):
   - etcd_disk_wal_fsync_duration_seconds: WAL fsync 延迟 (P99 < 10ms)
   - etcd_disk_backend_commit_duration_seconds: BoltDB commit 延迟 (P99 < 25ms)
@@ -299,7 +300,7 @@ resp, _ := client.Get(ctx, "key", clientv3.WithSerializable())
 
 容量规划
 
-```
+```text
 数据库大小: key_count * avg(key_size + value_size + 100B overhead)
 写入吞吐: 单集群 < 10k writes/s
 Watch 连接: 单节点 < 10k stream
@@ -326,7 +327,7 @@ etcdctl defrag --endpoints=https://node-1:2379  # 逐节点执行
 
 核心架构
 
-```
+```text
 Producer -> Broker Cluster (Partition Leader/Follower) -> Consumer Group
                          |
                   ZooKeeper / KRaft (元数据)
@@ -345,7 +346,7 @@ Producer -> Broker Cluster (Partition Leader/Follower) -> Consumer Group
 
 消息路由
 
-```
+```text
 - 指定 key: hash(key) % partition_count
 - 无 key: 粘性分区策略 (Sticky Partitioner)
 - 自定义 Partitioner: 实现 Partitioner 接口
@@ -355,11 +356,11 @@ Producer -> Broker Cluster (Partition Leader/Follower) -> Consumer Group
 
 三端配合
 
-| 端       | 关键配置                                                                   | 作用                      |
-| -------- | -------------------------------------------------------------------------- | ------------------------- |
-| Producer | acks=all, retries=MAX, idempotence=true                                    | 等待 ISR 确认, 重试不重复 |
-| Broker   | replication.factor=3, min.insync.replicas=2, unclean.leader.election=false | 多副本, 禁止不全副本当选  |
-| Consumer | enable.auto.commit=false, 手动 commitSync                                  | 处理完再提交              |
+| 端       | 关键配置                                                                   | 作用                       |
+| -------- | -------------------------------------------------------------------------- | -------------------------- |
+| Producer | acks=all, retries=MAX, idempotence=true                                    | 等待 ISR 确认, 重试不重复  |
+| Broker   | replication.factor=3, min.insync.replicas=2, unclean.leader.election=false | 多副本, 禁止未同步副本当选 |
+| Consumer | enable.auto.commit=false, 手动 commitSync                                  | 处理完再提交               |
 
 端到端保证矩阵
 
@@ -373,7 +374,7 @@ Producer -> Broker Cluster (Partition Leader/Follower) -> Consumer Group
 
 ISR (In-Sync Replicas)
 
-```
+```text
 ISR: 与 Leader 保持同步的副本集合
 HW (High Watermark): ISR 中所有副本的最小 LEO, Consumer 只能读到 HW 之前的消息
 LEO (Log End Offset): 每个副本下一条要写入的 offset
@@ -383,7 +384,7 @@ Follower 在 replica.lag.time.max.ms (默认 30s) 内未追上 Leader 则被踢�
 
 Leader 选举
 
-```
+```text
 1. Controller 检测到 Broker 下线
 2. 从 ISR 列表中选择第一个存活副本作为新 Leader
 3. ISR 为空时:
@@ -395,7 +396,7 @@ Leader 选举
 
 五大核心设计
 
-```
+```text
 1. 顺序写磁盘: append-only, 顺序写速度接近内存 (600MB/s)
 2. Page Cache: 写入 OS page cache, 读取热数据零磁盘 I/O
 3. 零拷贝 (sendfile): Disk -> Kernel -> NIC, 减少 2 次拷贝 + 2 次上下文切换
@@ -405,7 +406,7 @@ Leader 选举
 
 零拷贝对比
 
-```
+```text
 传统: Disk -> Kernel -> User -> Socket -> NIC (4 次拷贝, 4 次切换)
 Kafka: Disk -> Kernel -> NIC (2 次 DMA 拷贝, 2 次切换)
 ```
@@ -447,7 +448,7 @@ Consumer 配合: `isolation.level=read_committed`, 只读已提交事务的消�
 
 目录结构
 
-```
+```text
 topic-a-0/
   00000000000000000000.log        # 数据 (RecordBatch 序列)
   00000000000000000000.index      # 偏移量稀疏索引 (每 4KB 一条)
@@ -464,7 +465,7 @@ ZooKeeper 模式: Controller 通过 ZK 临时节点选举, 元数据存 ZK, 大�
 
 KRaft 模式 (3.3+): 去除 ZK, Controller Quorum 用 Raft 管理元数据, 存储在 `__cluster_metadata` Topic.
 
-```
+```text
 优势:
   - 元数据变更: 秒级 -> 毫秒级
   - 支持百万级 Partition
@@ -526,8 +527,9 @@ func (g *Group) Do(key string, fn func() (interface{}, error)) (v interface{}, e
 
 双缓存设计:
 
-- `mainCache`: 缓存本机负责的数据 (占 7/8)
-- `hotCache`: 缓存远程热点数据 (占 1/8), 减少 RPC 次数
+- `mainCache`: 缓存本机负责的数据
+- `hotCache`: 缓存本机频繁访问的其他节点数据, 减少 RPC 次数
+- 容量预算: 原版 groupcache 中两个缓存各占 cacheBytes 总预算 (默认 64MB) 的 1/8 (各 8MB); 教程中常见的 7/8 : 1/8 划分 (如 7days-golang 的 gee-cache) 是衍生实现的改动
 
 ### groupcache 与 Redis 等集中式缓存相比, 适用场景和优劣是什么?
 
@@ -557,7 +559,7 @@ func (g *Group) Do(key string, fn func() (interface{}, error)) (v interface{}, e
 
 ### HTTP/2 协议为 gRPC 带来了哪些关键能力?
 
-```
+```text
 1. 多路复用: 单连接并行多 stream, 避免队头阻塞
 2. 双向流: 支持四种通信模式
 3. HPACK 头部压缩: 元数据高效传输
@@ -593,7 +595,7 @@ etcd 集成: Resolver Watch etcd 前缀, 实时更新地址列表; 配合 round_
 
 ### gRPC 的 KeepAlive、超时和重试机制如何保证调用可靠性?
 
-```
+```text
 KeepAlive: HTTP/2 PING 帧检测死连接
 超时: context 传播, grpc-timeout header 跨服务传递剩余超时
 重试: Service Config 配置, 指数退避, 只重试幂等请求
@@ -611,7 +613,7 @@ KeepAlive: HTTP/2 PING 帧检测死连接
 
 ### Prometheus 的整体架构和数据流是怎样的?
 
-```
+```text
 Service Discovery -> Prometheus Server (Pull -> TSDB -> HTTP API) -> Alertmanager / Grafana
 Exporters (/metrics) -> Prometheus
 Pushgateway (短生命周期任务) -> Prometheus
@@ -639,7 +641,7 @@ absent(up{job="svc"})                                  # 存活检测
 
 ### Prometheus 的存储引擎(TSDB)是如何设计的?
 
-```
+```text
 写入: Samples -> WAL -> Head Block (内存, 2h) -> Persistent Block (磁盘)
 编码: Delta-of-Delta (时间戳) + XOR (值), 1-2 bytes/sample
 压缩: 2h -> 6h -> 18h -> 54h -> ... (严格 3 倍递增, 上限 min(31d, retention 的 10%))
@@ -649,7 +651,7 @@ absent(up{job="svc"})                                  # 存活检测
 
 抓取目标不写死在配置里, 而是 SD 机制动态生成 target 列表, 每个 scrape_interval 重新评估:
 
-```
+```text
 scrape_config (job)
   -> SD 机制 生成候选项 (每个带 __meta_* 标签)
   -> relabel_configs 过滤/重写 (丢弃不满足条件的候选项)
@@ -659,14 +661,14 @@ scrape_config (job)
 
 常见 SD 机制:
 
-| 机制          | 来源                              | 典型 \__meta_ 标签                        |
-| ------------- | --------------------------------- | ----------------------------------------- |
-| static        | 配置文件写死                      | 无                                        |
-| kubernetes_sd | kube-apiserver (Pod/Service/Node) | kubernetes*pod_name, pod_label*\*, pod_ip |
-| consul_sd     | Consul catalog                    | consul_address, consul_tags               |
-| etcd_sd       | etcd keys                         | etcd_key                                  |
-| dns_sd        | SRV/A 记录                        | dns_name                                  |
-| file_sd       | JSON/YAML 文件 (可热更新)         | 自定义 labels                             |
+| 机制          | 来源                              | 典型 `__meta_*` 标签                                                                                |
+| ------------- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| static        | 配置文件写死                      | 无                                                                                                  |
+| kubernetes_sd | kube-apiserver (Pod/Service/Node) | `__meta_kubernetes_pod_name`, `__meta_kubernetes_pod_label_<labelname>`, `__meta_kubernetes_pod_ip` |
+| consul_sd     | Consul catalog                    | `__meta_consul_address`, `__meta_consul_tags`                                                       |
+| etcd_sd       | etcd keys                         | `__meta_etcd_key`                                                                                   |
+| dns_sd        | SRV/A 记录                        | `__meta_dns_name`                                                                                   |
+| file_sd       | JSON/YAML 文件 (可热更新)         | 自定义 labels                                                                                       |
 
 Relabeling 是 SD 的核心配套, 发生在抓取前:
 
@@ -690,14 +692,14 @@ relabel_configs:
 
 ### Prometheus 的告警规则和 Alertmanager 是如何协作的?
 
-```
+```text
 告警状态: Inactive -> Pending (for 计时) -> Firing -> Resolved
 Alertmanager: 分组 -> 抑制 -> 静默 -> 路由 -> 通知 (Email/Slack/PagerDuty)
 ```
 
 ### Prometheus 在高基数场景下如何优化?
 
-```
+```text
 - Relabeling 丢弃高基数标签 (user_id, trace_id)
 - 聚合 URL 路径 (/api/users/123 -> /api/users/:id)
 - Recording Rules 预聚合
@@ -717,14 +719,14 @@ Alertmanager: 分组 -> 抑制 -> 静默 -> 路由 -> 通知 (Email/Slack/PagerD
 
 ### Grafana 的 Dashboard 数据查询和渲染流程是怎样的?
 
-```
+```text
 打开 Dashboard -> 解析 JSON Model -> 每个 Panel 替换变量 -> POST /api/ds/query
 -> Data Source Plugin 转换查询 -> 执行 -> 返回 DataFrame -> 前端渲染
 ```
 
 ### Grafana 的告警系统(Unified Alerting)是如何工作的?
 
-```
+```text
 Alert Rules -> Scheduler (定期评估) -> State Manager -> Notification -> Contact Points
 支持跨数据源查询, Reduce/Math/Threshold 表达式, for 持续时间
 ```
@@ -749,7 +751,7 @@ Alert Rules -> Scheduler (定期评估) -> State Manager -> Notification -> Cont
 
 数据模型: Trace (128-bit trace_id) -> Span (64-bit span_id, parent, attributes, events, status).
 
-上下文传播: W3C Trace Context (`traceparent` header), Go 通过 propagation.TraceContext\{\} 注入/提取.
+上下文传播: W3C Trace Context (`traceparent` header), Go 通过 `propagation.TraceContext{}` 注入/提取.
 
 ### OpenTelemetry Collector 的架构和 Pipeline 是怎样的?
 
@@ -759,7 +761,7 @@ Pipeline: Receiver (输入) -> Processor (处理: batch/filter/attributes) -> Ex
 
 ### OpenTelemetry 的采样策略有哪些? 生产环境如何选择?
 
-```
+```text
 Head Sampling: TraceIDRatioBased(0.1), ParentBased
 Tail Sampling: 错误全采 + 慢请求全采 + 正常 1-5%
 
@@ -778,7 +780,7 @@ Tail Sampling: 错误全采 + 慢请求全采 + 正常 1-5%
 
 ### OpenTelemetry 的 Metrics 和 Logs 信号是如何与 Trace 关联的?
 
-```
+```text
 Metrics -> Trace: Exemplar (Histogram 样本中嵌入 trace_id)
 Logs -> Trace: 日志中注入 trace_id/span_id
 统一 Resource: 所有信号共享 service.name, instance 标签
@@ -795,7 +797,7 @@ Redis Stack 在 Redis 核心之上集成了 RediSearch (全文搜索 + 向量搜
 
 向量搜索架构
 
-```
+```text
 数据层:
   - Redis Hash / JSON 存储原始文档和向量字段
   - 向量以 BLOB 格式存储 (FLOAT32/FLOAT64)
@@ -827,7 +829,7 @@ FT.CREATE idx:docs ON HASH PREFIX 1 "doc:" SCHEMA
 
 FLAT (暴力搜索)
 
-```
+```text
 原理: 逐一计算查询向量与所有文档向量的距离, 返回 Top-K
 时间复杂度: O(N * D), N=文档数, D=维度
 准确率: 100% (精确搜索)
@@ -837,7 +839,7 @@ FLAT (暴力搜索)
 
 HNSW (Hierarchical Navigable Small World)
 
-```
+```text
 原理: 多层跳表结构的图索引
   - 底层 (Layer 0): 包含所有节点, 每个节点与 M 个邻居连接
   - 高层: 稀疏节点, 用于快速定位搜索起点
@@ -889,7 +891,7 @@ FT.SEARCH idx:docs "(@title:redis)=>[KNN 5 @embedding $BLOB]"
 
 查询执行流程
 
-```
+```text
 1. 解析查询: 分离过滤条件和 KNN 子句
 2. 预过滤 (Pre-filter):
    - 先执行标签/全文过滤, 得到候选集
@@ -906,7 +908,7 @@ FT.SEARCH idx:docs "(@title:redis)=>[KNN 5 @embedding $BLOB]"
 
 距离度量
 
-```
+```text
 COSINE: 余弦相似度 (归一化后的内积), 适合文本语义
 L2: 欧氏距离, 适合图像特征
 IP: 内积 (Inner Product), 适合已归一化的向量
@@ -929,7 +931,7 @@ IP: 内积 (Inner Product), 适合已归一化的向量
 
 Redis 向量存储的优势
 
-```
+```text
 1. 极低延迟: 纯内存操作, P99 < 1ms
 2. 统一存储: 文档、缓存、向量在同一个 Redis 中
 3. 混合查询: 向量 + 全文 + 标签 + JSON 一次查询完成
@@ -939,7 +941,7 @@ Redis 向量存储的优势
 
 Redis 向量存储的劣势
 
-```
+```text
 1. 内存成本高: 所有数据和索引都在内存中
    - 100 万条 1536 维 FLOAT32 向量 = 约 6GB 内存
    - 加上 HNSW 图结构 (每向量约 150-250B, 与维度无关) 仅约 0.2GB, 总计约 6.2-6.5GB
@@ -950,7 +952,7 @@ Redis 向量存储的劣势
 
 选型建议
 
-```
+```text
 选 Redis Stack:
   - 数据量 < 500 万
   - 对延迟要求极高 (< 1ms)
@@ -974,7 +976,7 @@ Redis 向量存储的劣势
 
 RAG 系统架构
 
-```
+```text
 用户提问
     |
     v
@@ -1069,7 +1071,7 @@ func retrieve(ctx context.Context, question string, topK int) ([]Chunk, error) {
 
 生产优化要点
 
-```
+```text
 1. Embedding 缓存: 相同问题不重复调用 Embedding API
 2. 分块策略: 512 token 块 + 64 重叠, 平衡上下文和精度
 3. 混合检索: 向量搜索 + BM25 全文搜索, RRF 融合排序
@@ -1083,11 +1085,11 @@ func retrieve(ctx context.Context, question string, topK int) ([]Chunk, error) {
 
 内存优化
 
-```
+```text
 1. 量化 (Quantization):
    - FLOAT32 (4 bytes/dim) -> FLOAT16 (2 bytes/dim) -> INT8 (1 byte/dim)
    - 1536 维: 6KB -> 3KB -> 1.5KB per vector
-   - RediSearch 2.6+ 支持 FP16/BF16 向量类型 (文中 FLOAT16 即 FP16)
+   - RediSearch 2.6+ 支持 FP16/BF16 向量类型
 
 2. 降维:
    - PCA / 自编码器将 1536 维降到 256-512 维
@@ -1110,7 +1112,7 @@ func retrieve(ctx context.Context, question string, topK int) ([]Chunk, error) {
 
 性能调优
 
-```
+```text
 1. EF_RUNTIME 调优:
    - 默认 10, 增大到 50-200 提高准确率
    - 权衡: 延迟 vs 准确率
@@ -1142,7 +1144,7 @@ func retrieve(ctx context.Context, question string, topK int) ([]Chunk, error) {
 
 三大支柱统一架构
 
-```
+```text
 +------------------+     +-------------------+     +------------------+
 | Application      |     | OTel Collector    |     | Backends         |
 | - OTel SDK      |---->| - Agent (DS)     |---->| - Prometheus     |
@@ -1159,7 +1161,7 @@ Logs:    slog + Loki (日志聚合)
 
 落地步骤
 
-```
+```text
 Phase 1: 基础设施 (1-2 周)
   - 部署 Prometheus + Grafana + Alertmanager
   - 部署 OTel Collector (Agent + Gateway)
@@ -1198,7 +1200,7 @@ Phase 4: 持续优化
 
 选型决策
 
-```
+```text
 选 Kafka:
   - 需要消息持久化和回溯
   - 高吞吐 (万级/s 以上)
@@ -1225,7 +1227,7 @@ Phase 4: 持续优化
 
 基于 etcd 的方案
 
-```
+```text
 注册:
   1. 服务启动 -> Grant Lease (TTL=10s)
   2. Put /services/{name}/{instance} with Lease
@@ -1269,7 +1271,7 @@ func (sd *ServiceDiscovery) GetInstances(service string) []string {
 
 容量规划方法论
 
-```
+```text
 1. 基线测量:
    - 压测确定单节点/单集群的吞吐上限
    - 记录 P50/P95/P99 延迟 vs QPS 曲线
@@ -1294,7 +1296,7 @@ func (sd *ServiceDiscovery) GetInstances(service string) []string {
 
 故障演练 (Chaos Engineering)
 
-```
+```text
 演练层级:
   L1 - 单点故障:
     - Kill 单个 Broker/etcd 节点

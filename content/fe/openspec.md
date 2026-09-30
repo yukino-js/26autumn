@@ -236,13 +236,14 @@ AI CHAT    /opsx:archive              ← delta 合并进 specs, change 归档
 
 ### 4.5 不同 AI 工具的命令语法
 
-| 工具                           | 语法                    | 示例       |
-| ------------------------------ | ----------------------- | ---------- |
-| Claude Code, Gemini CLI        | /opsx:propose           | 冒号分隔   |
-| Cursor, Copilot, Devin Desktop | /opsx-propose           | 连字符分隔 |
-| Amazon Q                       | @opsx-propose           | @ 前缀     |
-| Codex                          | $openspec-propose       | $ 前缀     |
-| Kimi Code                      | /skill:openspec-propose | skill 前缀 |
+| 工具                           | 语法                    | 示例                                                |
+| ------------------------------ | ----------------------- | --------------------------------------------------- |
+| Claude Code, Gemini CLI        | /opsx:propose           | 冒号分隔                                            |
+| Cursor, Copilot, Devin Desktop | /opsx-propose           | 连字符分隔                                          |
+| Amazon Q                       | @opsx-propose           | @ 前缀                                              |
+| Codex                          | $openspec-propose       | $ 前缀                                              |
+| Kimi Code                      | /skill:openspec-propose | skill 前缀                                          |
+| Code Studio (Syncfusion)       | /opsx-propose           | prompt 文件 (.codestudio/prompts/opsx-\*.prompt.md) |
 
 ## 五、Schemas: 可定制的工作流
 

@@ -1,8 +1,9 @@
 ---
 title: "MCP App 全面解析：协议、安全模型，以及与 A2UI 的对比"
+description: "MCP Apps 扩展的协议机制、安全模型与工程实践, 以及与 A2UI 的详细对比"
 ---
 
-> 本文基于 `@modelcontextprotocol/ext-apps` v1.7.5（MCP Apps 规范草案 2026-01-26）与官方文档整理，协议仍在活跃开发中。
+> 本文基于 `@modelcontextprotocol/ext-apps` v1.7.5（MCP Apps 规范版本 2026-01-26, Stable）与官方文档整理，协议仍在活跃开发中。
 > 文中的工程实践均来自 `$HOME/github/yukino-code/apps/mcp` 的 MCP App 工具（一个已落地的 MCP App），可与代码对照阅读。
 > 注：撰写时该工具名为 `render_app`（`src/tools/render-app/`，UI 资源 `ui://render-app/mcp-app.html`）；当前仓库中已演进为 `create_app`（`src/tools/create-app/`，UI 资源 `ui://create-app/create-app.html`）。正文保留撰写时点的名称与结构，机制不变。
 > 对比对象 A2UI 的资料见 `a2ui.md`（Google 发起的声明式 UI 协议）。
@@ -104,7 +105,7 @@ registerAppResource(
 
 ### 2.2 一次调用的完整生命周期
 
-```
+```text
 用户: "给我看个图表"
   │
   V
@@ -258,7 +259,7 @@ MCP App HTML 没有同源服务器，所有外部来源都必须在资源的 `_m
 
 ### 4.1 结构与数据通道
 
-```
+```text
 src/tools/render-app/          # 现为 src/tools/create-app/
 ├── tool.ts                    # registerAppTool + registerAppResource（服务端）
 ├── mcp-app.html               # UI 入口（现为 create-app.html）
@@ -291,7 +292,7 @@ shell 本身已运行在宿主的沙箱 iframe（opaque origin）里，内层 if
 
 ### 4.3 构建管线
 
-```
+```text
 tsup（清空 dist，产出 dist/main.js）
   → vite + vite-plugin-singlefile（emptyOutDir: false，产出自包含的 dist/mcp-app.html）
 ```
@@ -316,7 +317,7 @@ tsup（清空 dist，产出 dist/main.js）
 
 ## 5. 宿主与生态现状
 
-MCP Apps 是核心 MCP 规范之外的扩展，宿主支持是可选的。当前支持矩阵：Claude（网页）、Claude Desktop、VS Code GitHub Copilot、Microsoft 365 Copilot、Goose、Postman、MCPJam、Archestra.AI。定位上最接近的同类物：
+MCP Apps 是核心 MCP 规范之外的扩展，宿主支持是可选的。当前支持矩阵（ext-apps README 的 Supported Clients 一节）：ChatGPT（OpenAI Apps SDK in ChatGPT）、Claude（网页）、Claude Desktop、VS Code GitHub Copilot、Goose、Postman、MCPJam、mcp-use inspector；Microsoft 365 Copilot 与 Archestra.AI 未见于本地 README，未能本地核实。定位上最接近的同类物：
 
 - Claude Artifacts：体验相似，但 Artifacts 是宿主内建功能、无法由第三方 Server 提供；MCP App 把这个能力开放给了整个 MCP 生态。
 - OpenAI Apps SDK：同为"工具返回 UI"，MCP Apps 走开放规范路线，社区已有从 `window.openai` / skybridge 迁移到 MCP Apps 的指南。
@@ -342,7 +343,7 @@ A2UI（Agent-to-User Interface，Google 发起、CopilotKit 共建）与 MCP App
 
 ### 6.2 架构对比
 
-```
+```text
 MCP Apps（代码沙箱路线）:
 Agent 产出完整 HTML/CSS/JS
   → MCP 宿主写入沙箱 iframe（独立 DOM / 样式 / JS 上下文）
@@ -405,7 +406,7 @@ Agent 产出声明式 JSON 消息流
    iframe 决定了 MCP Apps 只存在于 Web 宿主；A2UI 的一份 JSON 可以同时驱动 React 网页、Angular 控制台和 Flutter 移动端。若产品要跨端复用 Agent 的 UI 输出，A2UI 是唯一现成答案。
 
 8. 协议耦合与生态位。
-   MCP Apps 是 MCP 扩展，天然被"MCP 宿主是否实现了这个扩展"卡住；A2UI 传输无关，A2A（AgentCard 扩展协商）只是其最主流的传输层。两者还可以嵌套：按调研资料（yukino-mcp 的文档副本）的说法，A2UI 生态下的承载方式是——自定义组件用 smart wrapper 模式包装 MCP App 的 iframe，外层维持结构化 JSON-RPC 通道，内层严格排除 `allow-same-origin` 防沙箱逃逸（注意：A2UI 官方规范本身只声明了"A2UI 可经 MCP 传输"的绑定，并未规定 iframe 承载细节，上述描述属于生态实践转述）。也就是说在 A2UI 的世界观里，MCP App 是一种"需要双 iframe 隔离的富组件"；两者是互补而非互斥。
+   MCP Apps 是 MCP 扩展，天然被"MCP 宿主是否实现了这个扩展"卡住；A2UI 传输无关，A2A（AgentCard 扩展协商）只是其最主流的传输层。两者还可以嵌套：按调研资料（yukino-mcp 的文档副本）的说法，A2UI 生态下的承载方式是——自定义组件用 smart wrapper 模式包装 MCP App 的 iframe，外层维持结构化 JSON-RPC 通道，内层严格排除 `allow-same-origin` 防沙箱逃逸（注意：A2UI 官方规范本身只声明了"A2UI 可经 MCP 传输"的绑定，并未规定 iframe 承载细节，上述描述属于生态实践转述）。也就是说在 A2UI 的世界观里，MCP App 是一种"需要双 iframe 隔离的富组件"；两者是互补而非互斥。a2ui 仓库现有两个社区示例实证了这一互嵌关系：samples/community/agent/adk/mcp-apps-in-a2ui-sample/（在 A2UI 中承载 MCP App）与 samples/community/mcp/a2ui-in-mcpapps/（在 MCP Apps 中嵌入 A2UI，client 依赖 ext-apps ^1.7.4）。
 
 9. 上下文经济学：同一笔账，四种费率。
    两个协议的 UI 描述都"进上下文一次"——A2UI 的 `<a2ui-json>` 块是助手回复正文的一部分，MCP Apps 的 HTML 是 tool_use 入参，都是模型亲手写的输出并驻留历史，没有谁天然更省。分野在完整生命周期的四笔账上：
@@ -454,18 +455,18 @@ MCP Apps 用"工具 + `ui://` 资源 + 沙箱 iframe"这个极小的协议增量
 
 ### 8.1 第一圈：需求 → 首帧渲染
 
-```
+```text
 阶段一　生成与预加载（与工具执行并行推进）
 ────────────────────────────────────────────────────────────
 ①  用户 ── "画一个 QPS 柱状图" ──> 模型
 
 ②  模型 ── 流式生成 tool_use: render_app
             { html: "<!doctype html>…", title }
-            ★ HTML 唯一进入模型上下文的位置——它是模型自己的输出
+            HTML 唯一进入模型上下文的位置——它是模型自己的输出
 
 ③  宿主 ── resources/read "ui://render-app/mcp-app.html" ──> Server
             <── 自包含单文件 HTML（宿主已缓存时本步跳过）
-            ★ 触发源不是"调用发生"，而是会话建立时 tools/list 已带回映射
+            触发源不是"调用发生"，而是会话建立时 tools/list 已带回映射
               （render_app 的 _meta.ui.resourceUri）；流里刚出现工具名
               （name 字段先于参数生成），宿主查表即知该渲染哪个 UI，
               无需等 ② 完成。资源是静态声明的容器，与 html 参数内容无关。
@@ -484,10 +485,10 @@ MCP Apps 用"工具 + `ui://` 资源 + 沙箱 iframe"这个极小的协议增量
 ────────────────────────────────────────────────────────────
 ⑦  宿主 ── 一行文本回执（tool_result）──> 模型上下文
             只含 content："Rendered interactive app …"
-            ★ 模型由此只知道"渲染成功"，看不到也不需要看到 HTML
+            模型由此只知道"渲染成功"，看不到也不需要看到 HTML
 
 ⑧  宿主 ── ui/notifications/tool-result（含 _meta.html）──> shell
-            ★ HTML 走 UI 专用通道，模型不可见
+            HTML 走 UI 专用通道，模型不可见
 
 ⑨  shell ── frame.srcDoc = html ──> 内层沙箱执行 JS
 ⑩  UI 首帧呈现：柱状图出现在对话流中（用户可见）
@@ -504,7 +505,7 @@ MCP Apps 用"工具 + `ui://` 资源 + 沙箱 iframe"这个极小的协议增量
 
 用户接着说：_"改成折线图，加上环比。"_ 这条更新走的是对话正向链路：
 
-```
+```text
 用户 ──"改成折线图，加环比"──> 模型
 模型 ── 新的 tool_use: render_app { html: <新版整页 HTML> } ──> 宿主
 宿主：resourceUri 未变 → 不重拉资源、不重建 iframe
@@ -526,7 +527,7 @@ B1 — 本地交互（零回程，最常见）：排序、筛选、tab 切换、
 
 B2 — 回程取数（callServerTool 代理）：点击需要新数据的按钮（如"刷新"）。MCP App 的标准能力是 App 反向调 Server 工具：
 
-```
+```text
 内层 HTML 按钮 onclick
   ── window.parent.postMessage({type:"render_app:callTool", name, arguments}) ──> shell
 shell：校验 event.source === frame.contentWindow（opaque origin 下 origin 恒为 "null"，
@@ -548,7 +549,7 @@ B3 — 通知模型（让对话接续）：如果 App 内发生的事需要模�
 
 对话推进导致宿主卸载这块 UI，或 App 主动请求关闭时：
 
-```
+```text
 宿主 ── ui/resource-teardown ──> shell
 shell onteardown() { return {} }   ← 保存状态/关闭连接的机会
 宿主 ── 移除 iframe，释放渲染进程

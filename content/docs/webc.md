@@ -1,5 +1,6 @@
 ---
 title: "WebContainer 与浏览器内 Vite：原理与底层技术解析"
+description: "结合 yukino-codegen 客户端源码与 @webcontainer/api 1.6.4 发布产物, 解析 WebContainer 的运行原理、跨源隔离、浏览器并行化与浏览器内 Vite dev server"
 ---
 
 本文回答四个问题：WebContainer 是什么、怎么工作；WASM 共享内存（SharedArrayBuffer）与跨源隔离是什么关系；浏览器内的并行化是怎么做的；以及为什么一个完整的 Vite dev server 能够在浏览器标签页里跑起来。
@@ -7,8 +8,8 @@ title: "WebContainer 与浏览器内 Vite：原理与底层技术解析"
 文中引用的代码有三处来源，均为真实产物，非示意代码：
 
 - yukino-codegen 仓库（github.com/hangtiancheng/yukino-codegen）的 client 端源码，这是官方 WebContainer API 的一个完整生产级集成；
-- @webcontainer/api 1.6.4 的 npm 发布产物（dist/index.js 等），即 StackBlitz 官方 SDK 的实际实现；
-- yukino-codegen 仓库根目录的调研报告 yukino-codegen.md，其中包含对某同类产品自研 "webc" 运行时的线上实测证据（Service Worker 注册表、网络请求清单、控制台日志），用于对照官方方案与自研方案。
+- @webcontainer/api 1.6.4 的 npm 发布产物（dist/index.js 等），即 StackBlitz 官方 SDK 的实际实现（client/node_modules 下的安装版本即为 1.6.4）；
+- yukino-codegen 仓库曾随附一份根目录调研报告 yukino-codegen.md，其中包含对某同类产品自研 "webc" 运行时的线上实测证据（Service Worker 注册表、网络请求清单、控制台日志），用于对照官方方案与自研方案；该文件现已不在仓库中，下文引用的实测数据均来自这份归档报告。
 
 涉及实现细节但缺乏一手证据的地方，文中会明确标注"官方说法"或"推断"。
 
@@ -33,14 +34,14 @@ WebContainer 是 StackBlitz 推出的浏览器内 Node.js 运行时。官方博�
 隐藏 iframe（https://stackblitz.com/headless, 官方基础设施源）
   │  运行时宿主: 持有 WASM Node、Worker 群、容器虚拟 FS
   V
-预览 iframe（*.webcontainer.io 子域, allow="cross-origin-isolated"）
+预览 iframe（官方预览域子域: *.webcontainer.io 或 *.webcontainer-api.io）
   │  同源 Service Worker 拦截该源的所有 HTTP 请求,
   │  从容器虚拟 FS 应答 → 浏览器视角下这里有一台真的 dev server
   V
 容器内进程: npm install → npm run dev → Vite 监听容器内端口
 ```
 
-宿主页与容器分属不同源是刻意的：StackBlitz 的基础设施域（stackblitz.com / \*.webcontainer.io）自己配好了 COOP/COEP，宿主页只需要通过 MessageChannel 做 RPC；而容器的 HTTP 出口由运行在 \*.webcontainer.io 源上的 Service Worker 承接。第五节会对照一个反例：某产品把这一切塞回同源路径的自研方案。
+宿主页与容器分属不同源是刻意的：StackBlitz 的基础设施域（stackblitz.com / \*.webcontainer.io / \*.webcontainer-api.io）自己配好了 COOP/COEP，宿主页只需要通过 MessageChannel 做 RPC；而容器的 HTTP 出口由运行在预览域源上的 Service Worker 承接。第五节会对照一个反例：某产品把这一切塞回同源路径的自研方案。
 
 与"远程开发容器"（GitHub Codespaces 一类）的本质区别在于算力归属：Codespaces 的 dev server 跑在云主机上，浏览器只是一块屏幕；WebContainer 把编译、依赖安装、dev server 全部放进用户的标签页，服务器只下发静态资源，平台侧零构建成本、零并发压力。代价是后面各节要逐一处理的一系列浏览器沙箱限制。
 
@@ -63,14 +64,14 @@ yukino-codegen 的实际形态把官方拓扑嵌进了一个完整产品。下�
 │      PostgreSQL / Redis / MinIO / OpenAI 兼容模型端点
 │
 ├─ 隐藏 iframe：https://stackblitz.com/headless?coep=credentialless&version=1.6.4
-│    官方基础设施源，display:none，无 UI（"headless"即无头页面）
+│    官方基础设施源，display:none，allow="cross-origin-isolated"，无 UI（"headless"即无头页面）
 │    运行时宿主：WASM Node 用户态 + Worker 群 + 容器虚拟 FS + 进程调度
 │    运行时代码由 stackblitz.com 下发，version 参数对齐 SDK 版本
 │    │
 │    │ (2) 握手时下发 MessagePort，此后承载全部 RPC（mount/spawn/fs/teardown）
 │    │ (3) 与预览 iframe 同属官方运行时体系（内部实现未公开，见 5.2）
 │    V
-├─ 预览 iframe：https://<id>.webcontainer.io/（allow="cross-origin-isolated"）
+├─ 预览 iframe：https://<id>.local-credentialless.webcontainer-api.io/（credentialless 模式的子域形态）
 │    同源 Service Worker：拦截该源全部 HTTP → 容器虚拟 FS 应答（transferSize=0）
 │    容器内进程：npm install → npm run dev（Vite）→ 监听容器端口
 │    HMR WebSocket：经运行时桥接回容器（SW 拦不住 WS，见 5.5）
@@ -80,13 +81,13 @@ yukino-codegen 的实际形态把官方拓扑嵌进了一个完整产品。下�
 
 三个执行上下文的分工与通道：
 
-| 上下文      | 源（Origin）       | 职责                                          | 对外通道                                                          |
-| ----------- | ------------------ | --------------------------------------------- | ----------------------------------------------------------------- |
-| 宿主页面    | 你的应用域         | 产品 UI、RPC 发起方、预览 iframe 的持有者     | MessageChannel → headless；postMessage ↔ 预览；REST/WS → 业务后端 |
-| 隐藏 iframe | stackblitz.com     | 运行时宿主：WASM Node、Worker 群、容器虚拟 FS | init 消息下发 MessagePort；与预览 iframe 同属官方运行时体系       |
-| 预览 iframe | \*.webcontainer.io | 承载 Service Worker 与容器进程，展示生成应用  | SW fetch 拦截；HMR WS 桥接；预览脚本 postMessage 回宿主           |
+| 上下文      | 源（Origin）                                                                                               | 职责                                          | 对外通道                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
+| 宿主页面    | 你的应用域                                                                                                 | 产品 UI、RPC 发起方、预览 iframe 的持有者     | MessageChannel → headless；postMessage ↔ 预览；REST/WS → 业务后端 |
+| 隐藏 iframe | stackblitz.com                                                                                             | 运行时宿主：WASM Node、Worker 群、容器虚拟 FS | init 消息下发 MessagePort；与预览 iframe 同属官方运行时体系       |
+| 预览 iframe | \*.local-credentialless.webcontainer-api.io（credentialless 模式；require-corp 模式为 \*.webcontainer.io） | 承载 Service Worker 与容器进程，展示生成应用  | SW fetch 拦截；HMR WS 桥接；预览脚本 postMessage 回宿主           |
 
-需要强调的分界：三个上下文里只有宿主页面认识业务后端；headless 与预览两个 iframe 对 yukino-codegen 的服务器一无所知，只认识 stackblitz.com 与 webcontainer.io。反过来，业务后端也完全不知道 WebContainer 的存在——服务器只管往 tmp/code_output/\{appId\} 写文件，"怎么跑起来"纯粹是浏览器侧的事。这也是排障时的分界线：agent 不产出、文件树拉不到，查服务器；容器起不来、预览白屏，查 stackblitz.com 与 \*.webcontainer.io 的连通性。
+需要强调的分界：三个上下文里只有宿主页面认识业务后端；headless 与预览两个 iframe 对 yukino-codegen 的服务器一无所知，只认识 stackblitz.com 与官方预览域（webcontainer.io / webcontainer-api.io）。反过来，业务后端也完全不知道 WebContainer 的存在——服务器只管往 tmp/code_output/\{appId\} 写文件，"怎么跑起来"纯粹是浏览器侧的事。这也是排障时的分界线：agent 不产出、文件树拉不到，查服务器；容器起不来、预览白屏，查 stackblitz.com 与预览域（\*.local-credentialless.webcontainer-api.io）的连通性。
 
 ### 1.2 网络依赖清单
 
@@ -95,7 +96,7 @@ yukino-codegen 的实际形态把官方拓扑嵌进了一个完整产品。下�
 | 端点                                                                     | 何时访问                   | 承载内容                                  | 不可达时的表现                |
 | ------------------------------------------------------------------------ | -------------------------- | ----------------------------------------- | ----------------------------- |
 | https://stackblitz.com/headless                                          | WebContainer.boot() 启动时 | 运行时代码 bundle（WASM 包、Worker 脚本） | boot 失败，预览功能整体不可用 |
-| https://\<id\>.webcontainer.io                                           | server-ready 之后渲染预览  | 预览文档 + Service Worker 脚本            | 预览白屏                      |
+| https://\<id\>.local-credentialless.webcontainer-api.io                  | server-ready 之后渲染预览  | 预览文档 + Service Worker 脚本            | 预览白屏                      |
 | npm registry（经桥接出站）                                               | 容器内 npm install         | 依赖包与平台二进制                        | install 失败                  |
 | 业务后端（dev 下经 vite.config.ts 代理 /api → localhost:3000，ws: true） | 全程                       | 文件树 REST、agent WS、会话接口           | 页面无数据、agent 断线重连    |
 
@@ -112,7 +113,7 @@ yukino-codegen 的实际形态把官方拓扑嵌进了一个完整产品。下�
 5. 依赖指纹变化则 spawn("npm", ["install"])：包下载请求经运行时桥接出浏览器，经 StackBlitz 代理访问 registry。
 6. spawn("npm", ["run", "dev", "--", "--host", "0.0.0.0"]) → 容器内 Vite 监听端口 → 运行时经 Comlink 回调推送 server-ready(port, url)。
 7. 宿主页把预览 iframe.src 指向 url → 预览文档加载 → 该源 Service Worker 注册并接管后续全部请求 → /@vite/client、/src/\*.tsx 等由容器虚拟 FS 应答 → 页面渲染完成。
-8. 反馈回路：预览页运行时异常经 setPreviewScript 注入的脚本 postMessage 回宿主页（uncaught-exception 等，见 6.4）→ 作为下一轮 run 的 previewError 上下文；预览中点选元素同样经 postMessage 回传做可视化编辑；容器内 fs.watch 的变更反向回写服务器（见 6.3 第五阶段）。
+8. 反馈回路：预览页运行时异常经 boot 时开启的 forwardPreviewErrors 由 SDK 以 preview-message 事件回流宿主页（见 6.4）→ 作为下一轮 run 的 previewError 上下文；预览中点选元素经 setPreviewScript 注入的脚本 postMessage 回传做可视化编辑；容器内 fs.watch 的变更反向回写服务器（见 6.3 第五阶段）。
 
 ## 二、跨源隔离：SharedArrayBuffer 的准入条件
 
@@ -199,7 +200,7 @@ const url = iframeSettings.url; // https://stackblitz.com/headless?coep=credenti
 iframe.src = url.toString();
 ```
 
-`allow="cross-origin-isolated"` 是 W3C Feature Policy 体系里的标准开关，让官方源上的子框架继承宿主页的隔离状态，容器内部的 Worker 与 WASM 线程才拿得到 SAB。yukino-codegen.md 实测报告里，同类产品自研方案的预览 iframe 也带同样的属性，且主页面响应头完全一致（COOP same-origin + COEP credentialless）。
+`allow="cross-origin-isolated"` 是 W3C Feature Policy 体系里的标准开关，让官方源上的子框架继承宿主页的隔离状态，容器内部的 Worker 与 WASM 线程才拿得到 SAB。归档实测报告里，同类产品自研方案的预览 iframe 也带同样的属性，且主页面响应头完全一致（COOP same-origin + COEP credentialless）。
 
 ### 2.4 COEP 的工程代价
 
@@ -356,11 +357,11 @@ Service Worker 是浏览器在页面之外运行的一段脚本，注册时声�
 
 ### 5.2 官方方案：独立子域
 
-@webcontainer/api 的 server-ready 事件回调签名是 `(port, url)`，url 指向 `*.webcontainer.io` 子域。结构上是：预览 iframe 挂在 \*.webcontainer.io 源上，SW 注册并拦截该源的全部请求，URL 到容器端口的映射由该源的路径/子域约定完成。同源 iframe 才能被本源 SW 覆盖，因此容器"必须"拥有自己的源，这也是 WebContainer 对宿主页要求 COI 头、对子域做独立部署的根本原因。
+@webcontainer/api 的 server-ready 事件回调签名是 `(port, url)`，url 指向 StackBlitz 托管的预览子域（yukino-codegen 使用的 credentialless 模式下为 \*.local-credentialless.webcontainer-api.io，require-corp 模式下为 \*.webcontainer.io）。结构上是：预览 iframe 挂在官方预览域上，SW 注册并拦截该源的全部请求，URL 到容器端口的映射由该源的子域约定完成。同源 iframe 才能被本源 SW 覆盖，因此容器"必须"拥有自己的源，这也是 WebContainer 对宿主页要求 COI 头、对子域做独立部署的根本原因。
 
 ### 5.3 实测：自研同源方案
 
-yukino-codegen.md 报告记录了一个把整套运行时塞回同源的实现，URL 形态完全不同：
+归档实测报告记录了一个把整套运行时塞回同源的实现，URL 形态完全不同：
 
 ```text
 预览 iframe: https://站点域名/_i/<instanceId:7>/_p/3000/
@@ -555,7 +556,7 @@ watcherRef.current = container.fs.watch(
 
 ### 6.4 预览脚本注入与错误回传
 
-SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页面的 HTML 响应里。yukino-codegen 用它注入可视化编辑脚本（use-visual-editor.ts:20：`.then((container) => container.setPreviewScript(editScriptSource))`），预览里点选元素经 postMessage 回传宿主页，映射回源码位置交给 agent。boot 时开的 `forwardPreviewErrors: true` 则让预览页的运行时异常以 PreviewMessage（uncaught-exception / unhandled-rejection / console-error 三种，见 entities.d.ts）回流，作为下一轮对话的上下文喂给 agent。这条"预览报错 → agent 修复 → 文件变更 → 容器重载"的回路，是 AI 生成应用产品闭环的关键一环。
+SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页面的 HTML 响应里。yukino-codegen 用它注入可视化编辑脚本（use-visual-editor.ts:20：`.then((container) => container.setPreviewScript(editScriptSource))`），预览里点选元素经 postMessage 回传宿主页，映射回源码位置交给 agent。boot 时开的 `forwardPreviewErrors: true` 则让预览页的运行时异常以 PreviewMessage（UncaughtExceptionMessage / UnhandledRejectionMessage / ConsoleErrorMessage 三种，见 entities.d.ts）回流，作为下一轮对话的上下文喂给 agent。这条"预览报错 → agent 修复 → 文件变更 → 容器重载"的回路，是 AI 生成应用产品闭环的关键一环。
 
 ### 6.5 平台二进制：npm/cli#4828 的由来
 
@@ -565,7 +566,7 @@ SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页�
 
 - 全局单例。@webcontainer/api 的 boot 强制单实例（`Only a single WebContainer instance can be booted`，内部用 bootPromise 自旋锁等前一次 boot 结束），yukino-codegen 用模块级 bootPromise 缓存启动 Promise、失败时清空重试，组件随便重挂载 dev server 不重启。
 - 预览生命周期自成一代数系统。每次 startPreview 递增 generation，五个阶段每过一个 await 都断言"本代仍是最新的且宿主组件仍挂载"，取消、超时、新预览抢占统一走 cancelledOutcome 竞速，进程一律 safelyKill 兜底。这是浏览器单实例容器上多应用切换的正确写法。
-- 日志钳制。容器进程输出流进 xterm 前 clamp 到 12000 字符（MAX_LOG_LENGTH），防止长会话内存膨胀。
+- 日志钳制。容器进程输出在进入预览日志面板前 clamp 到 12000 字符（MAX_LOG_LENGTH），防止长会话内存膨胀。
 - 冷启动三板斧：node_modules 跨次保留、依赖指纹跳过安装、npm install 前删锁文件。对照实测报告，同类产品还有第四板斧（依赖外置 + CDN UMD）与列表页的服务端快照预览（/preview/snapshot），按需取用。
 - 服务端照常备份。容器的 FS 是内存文件系统，标签页一关就没了；yukino-codegen 在服务端维护真实项目目录（tmp/code_output/\{appId\}）与 git 快照，容器只是"预览执行环境"，权威数据永远在服务器侧。
 
@@ -575,7 +576,7 @@ SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页�
 - 单标签页单实例、算力受限。所有编译、安装、dev server 都消耗用户标签页的 CPU 与内存，复杂项目（大依赖树、全量打包构建）体验会明显衰减。
 - 网络面窄。没有真实 TCP socket，出站靠浏览器网络栈桥接（官方经其代理服务），WS 靠桥接，任何依赖原始 socket、本机二进制（非 npm 分发的平台包）、长驻守护进程的东西都跑不了。
 - COOP/COEP 的连带成本。宿主页自身也要隔离，第三方资源接入需逐个审查（第二、二.4 节）。
-- 官方 API 的商业边界。运行时托管在 StackBlitz 基础设施（stackblitz.com/headless + \*.webcontainer.io），官方文档对商用规模、水印与授权有单独条款，重度使用需要评估这一点；自研运行时（如实测报告的 webc）本质上是把这笔成本换成了自建 Worker/WASM/代理域的研发成本。
+- 官方 API 的商业边界。运行时托管在 StackBlitz 基础设施（stackblitz.com/headless + \*.webcontainer.io / \*.webcontainer-api.io 预览子域），官方文档对商用规模、水印与授权有单独条款，重度使用需要评估这一点；自研运行时（如实测报告的 webc）本质上是把这笔成本换成了自建 Worker/WASM/代理域的研发成本。
 
 ## 九、参考资料
 
@@ -587,4 +588,4 @@ SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页�
 - MDN：Cross-Origin-Embedder-Policy（developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cross-Origin-Embedder-Policy）
 - Emscripten 文档：Pthreads support（emscripten.org/docs/porting/pthreads.html）
 - StackBlitz 博客：Cross-Browser support with Cross-Origin isolation（blog.stackblitz.com/posts/cross-browser-with-coop-coep/）
-- 本机源码：yukino-codegen 仓库 client/src（boot.ts、vite.config.ts、webcontainer-runtime.ts、webcontainer-fs.ts、use-workspace-controller.ts、use-visual-editor.ts）；@webcontainer/api 1.6.4 dist（index.js、entities.d.ts、internal/iframe-url.js、internal/constants.js）；yukino-codegen 仓库根目录调研报告 yukino-codegen.md（webc 运行时实测证据，第三、四、五节）
+- 本机源码：yukino-codegen 仓库 client/src（boot.ts、vite.config.ts、webcontainer-runtime.ts、webcontainer-fs.ts、use-workspace-controller.ts、use-visual-editor.ts）；@webcontainer/api 1.6.4 dist（index.js、entities.d.ts、preview-message-types.d.ts、internal/iframe-url.js、internal/constants.js）；曾存放于 yukino-codegen 仓库根目录的调研报告 yukino-codegen.md（webc 运行时实测证据，已从仓库移除，第三、四、五节转引其中数据）

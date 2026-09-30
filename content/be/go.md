@@ -1,10 +1,9 @@
 ---
 title: "Go 技术笔记"
+description: "Go 语言核心知识点与底层原理: slice/map/interface、GMP 调度、channel、context、sync、内存分配与 GC, 结合 yukino.go 中经核实的真实源码模式"
 ---
 
-> 本文由"Golang 知识点"与"底层原理专题"两份文档合并而成, 覆盖语言基础、slice/map/string/interface、GMP 调度、channel、context、sync、内存模型、内存分配与逃逸、GC、defer/panic/recover、跨平台编译、泛型、工程实践、死锁、工具链与高频编码题. 文中运行时行为以 Go 1.22+ 为基准, 并标注关键版本差异; 部分工程实践结合作者的 Go 项目 yukino.go (yukino_cache: groupcache 风格分布式缓存; yukino_rpc: TCP 自研 RPC 框架) 中经核实的真实源码模式说明.、
-> 本机器路径: `$HOME/github/yukino.go/yukino_cache`
-> 本机器路径: `$HOME/github/yukino.go/yukino_rpc`
+> 本文由"Golang 知识点"与"底层原理专题"两份文档合并而成, 覆盖语言基础、slice/map/string/interface、GMP 调度、channel、context、sync、内存模型、内存分配与逃逸、GC、defer/panic/recover、跨平台编译、泛型、工程实践、死锁、工具链与高频编码题. 文中运行时行为以 Go 1.22+ 为基准, 并标注关键版本差异
 
 ## 1. Go 语言基础
 
@@ -131,11 +130,11 @@ fmt.Printf("%+v\n", a) // &{id:1 name:tom}
 fmt.Printf("%#v\n", a) // &main.student{id:1, name:"tom"}
 ```
 
-### 1.12 空 struct\{\} 占用空间吗
+### 1.12 空 `struct{}` 占用空间吗
 
 不占用. `unsafe.Sizeof(struct{}{})` 为 0, 所有零长对象共享同一地址 (`runtime.zerobase`).
 
-### 1.13 空 struct\{\} 有什么用
+### 1.13 空 `struct{}` 有什么用
 
 1. map 模拟 set: `map[string]struct{}`, 值不占内存.
 2. channel 传信号: `ch <- struct{}{}`, 纯信号不传数据, 零内存开销 (第 8 节信号量限流正是此用法).
@@ -219,7 +218,7 @@ type slice struct {
 }
 ```
 
-```
+```text
   slice header (24 bytes)              底层数组 (堆上)
 +--------+--------+--------+
 | array  | len=3  | cap=5  |         +---+---+---+---+---+
@@ -268,8 +267,8 @@ if newLen > doublecap {
 }
 ```
 
-- Go 1.17 及以前阈值是 1024 且是硬切换 (<1024 翻倍, >=1024 乘 1.25); 1.18 改为 256 并平滑过渡, 减少大 slice 的突变.
-- 第二步 `roundupsize`: 期望容量乘元素大小后, 会向上取整到 malloc 的 size class (如 48、64、80、96、112 字节……), 所以 `append([]int{1,2,3}, 4)` 得到的 cap 是 6 (oldCap=3 < 256 走翻倍, newcap=6, 6\*8=48B 正好是 size class), 而某些元素类型会出现 cap 比翻倍值更大的"怪异"结果. 能讲出 roundupsize 这一步是区分度所在.
+- Go 1.17 及以前阈值是 1024 且是硬切换 (小于 1024 翻倍, 1024 及以上乘 1.25); 1.18 改为 256 并平滑过渡, 减少大 slice 的突变.
+- 第二步 `roundupsize`: 期望容量乘元素大小后, 会向上取整到 malloc 的 size class (如 48、64、80、96、112 字节……), 所以 `append([]int{1,2,3}, 4)` 得到的 cap 是 6 (oldCap=3 小于 256 走翻倍, newcap=6, `6*8=48B` 正好是 size class), 而某些元素类型会出现 cap 比翻倍值更大的"怪异"结果. 能讲出 roundupsize 这一步是区分度所在.
 - 扩容必然发生 `mallocgc` 分配新数组 + `memmove` 拷贝 + 旧数组等待 GC, 因此已知规模时必须 `make([]T, 0, n)` 预分配. 基准测试中, 预分配对热点路径 (如 RPC 编解码缓冲) 常有数倍收益.
 
 ### 2.3 共享底层数组的经典陷阱
@@ -647,7 +646,7 @@ A: 成本有三层:
 
 A:
 
-```
+```text
   全局队列 (GRQ)
 +---+---+---+---+
 | G | G | G | G |
@@ -686,7 +685,7 @@ A:
 2. mcache 从 M 挪到 P, 内存分配无锁 (M 可能有 1 万个而 P 只有核数个);
 3. M 阻塞时把 P 整体交接 (handoff) 给别的 M, 运行队列随 P 走, 不丢调度能力.
 
-延伸: GMP 能不能去掉 P": 去掉即退回 GM 模型, 所有 M 争抢全局队列的全局锁, 高并发下 CPU 大量耗在等锁上; P 的价值正是无锁的本地调度.
+延伸 ("GMP 能不能去掉 P"): 去掉即退回 GM 模型, 所有 M 争抢全局队列的全局锁, 高并发下 CPU 大量耗在等锁上; P 的价值正是无锁的本地调度.
 
 ### 7.2 一次完整的调度循环
 
@@ -790,7 +789,7 @@ G 的状态机 (`runtime/runtime2.go`):
 | `_Gdead`      | 已退出或未使用, 可被 gFree 池复用       | 函数返回 → goexit → `_Gdead`                                     |
 | `_Gcopystack` | 栈正在扩容/收缩拷贝                     | morestack/shrinkstack 期间的临时态                               |
 
-常见延伸: goroutine 什么时候让出 CPU", 完整答案是六类: channel/select/锁阻塞 (gopark)、系统调用、网络 IO (netpoller)、`runtime.Gosched()` 主动让出、被 sysmon 信号抢占、GC 安全点 (含栈扫描请求). `_Gwaiting` 与 `_Gsyscall` 的本质区别: 前者是用户态阻塞, M 立即释放去跑别的 G (零线程成本); 后者 M 被内核占住, 需要 handoff 补充线程.
+常见延伸 ("goroutine 什么时候让出 CPU"): 完整答案是六类: channel/select/锁阻塞 (gopark)、系统调用、网络 IO (netpoller)、`runtime.Gosched()` 主动让出、被 sysmon 信号抢占、GC 安全点 (含栈扫描请求). `_Gwaiting` 与 `_Gsyscall` 的本质区别: 前者是用户态阻塞, M 立即释放去跑别的 G (零线程成本); 后者 M 被内核占住, 需要 handoff 补充线程.
 
 ### 7.9 m0 与 g0: 调度器自身的引导
 
@@ -812,7 +811,7 @@ P 与 M 的创建时机: P 在 `schedinit()` 调 `procresize(GOMAXPROCS)` 时一
 
 A: `make(chan T, n)` 在堆上分配一个 `runtime.hchan` (channel 用于跨 goroutine 通信, 生命周期不可能局限在单个函数内, 所以一律堆分配):
 
-```
+```text
   hchan 结构
 +-----------------------------------------------+
 | qcount=3    dataqsiz=5    elemsize=8          |
@@ -862,7 +861,7 @@ send (`ch <- v`, 即 `runtime.chansend`) 按优先级走三条路:
 
 recv 完全对称, 另有一个特殊分支: 缓冲区满且 sendq 有等待者时, 接收方从 `buf[recvx]` 取走队头, 并把 sendq 队头 sudog 的元素填到刚腾出的槽位——保证 FIFO.
 
-性能认知: channel 内部是"一把大锁 + 两个等待队列 + 环形缓冲", 收发本身是加锁操作. 高竞争纯计数场景 atomic > mutex > channel; channel 的价值在于所有权转移的语义表达和与 select 的组合能力, 不在裸吞吐.
+性能认知: channel 内部是"一把大锁 + 两个等待队列 + 环形缓冲", 收发本身是加锁操作. 高竞争纯计数场景 `atomic > mutex > channel`; channel 的价值在于所有权转移的语义表达和与 select 的组合能力, 不在裸吞吐.
 
 ### 8.2 各种边界状态速查表
 
@@ -978,7 +977,7 @@ func merge[T any](chs ...<-chan T) <-chan T {
 }
 ```
 
-3. 信号量限流 (chan struct\{\}):
+3. 信号量限流 (`chan struct{}`):
 
 ```go
 sem := make(chan struct{}, 10) // 最多 10 个并发
@@ -1046,7 +1045,7 @@ cancel 是怎么传播的? 为什么取消只影响子树?
 
 A:
 
-```
+```text
   Background / TODO (根)
         |
         v
@@ -1122,14 +1121,14 @@ sync.Mutex 的实现原理? 什么是饥饿模式?
 A: Mutex 是 8 字节: `state int32` (锁定位/唤醒位/饥饿位/等待者计数复用一个字) + `sema uint32` (信号量). 加锁路径分层:
 
 1. Fast path: CAS 把 state 从 0 改 1, 一条原子指令成功即返回 (无竞争时的成本就这么多).
-2. 自旋: 竞争时, 若多核、P 的本地队列空、自旋次数 < 4, 则执行 `PAUSE` 指令自旋等待——赌持有者马上释放, 避免 gopark 的调度成本. 自旋有严格限制 (几十纳秒级), 只在低竞争场景下用极小 CPU 开销避免一次昂贵的上下文切换, 不会造成资源浪费.
+2. 自旋: 竞争时, 若多核、P 的本地队列空、自旋次数小于 4, 则执行 `PAUSE` 指令自旋等待——赌持有者马上释放, 避免 gopark 的调度成本. 自旋有严格限制 (几十纳秒级), 只在低竞争场景下用极小 CPU 开销避免一次昂贵的上下文切换, 不会造成资源浪费.
 3. 排队: 自旋失败, 等待者计数 +1, `runtime_SemacquireMutex` 挂起, 进入 sema 的等待队列 (treap 结构).
 
 正常模式: 唤醒的等待者要与新来的 (正在自旋的) goroutine 竞争锁——新来的正持有 CPU, 大概率赢. 吞吐好, 但队首可能反复抢不到.
 
-饥饿模式 (Go 1.9 引入): 某等待者等待超过 1ms, state 置饥饿位, 锁改为直接移交 (handoff) 给队首等待者, 新来的不抢、直接排队尾. 队列清空或队首等待时间 < 1ms 时切回正常模式. 这是吞吐与尾延迟公平性的权衡, 解决了极端场景下等待者被饿死数十秒的问题.
+饥饿模式 (Go 1.9 引入): 某等待者等待超过 1ms, state 置饥饿位, 锁改为直接移交 (handoff) 给队首等待者, 新来的不抢、直接排队尾. 队列清空或队首等待时间小于 1ms 时切回正常模式. 这是吞吐与尾延迟公平性的权衡, 解决了极端场景下等待者被饿死数十秒的问题.
 
-延伸: 锁释放后谁先拿到锁": 正常模式下被唤醒的队首要与自旋中的新来者竞争 (不公平但高吞吐); 饥饿模式下直接移交队首 (绝对公平).
+延伸 ("锁释放后谁先拿到锁"): 正常模式下被唤醒的队首要与自旋中的新来者竞争 (不公平但高吞吐); 饥饿模式下直接移交队首 (绝对公平).
 
 其他要点: Mutex 不可重入 (同一 goroutine 二次 Lock 直接死锁, 见 19.2 形态三); 零值可用; unlock 未锁定的 mutex 会 fatal.
 
@@ -1139,7 +1138,7 @@ RWMutex 怎么避免写者饿死? 什么时候 RWMutex 反而比 Mutex 慢?
 
 A: 内部为 `w Mutex` (写者互斥) + `readerCount atomic.Int32` + `readerWait` + 两个信号量. 写锁到来时把 readerCount 原子减去 `1<<30` (rwmutexMaxReaders), 使其变为负值——后续新读者看到负值即排队, 写者等存量读者 (readerWait) 清零后获锁. 即写请求会阻断后续读请求, 避免读多场景写者永远插不进去.
 
-性能真相: 每次 RLock/RUnlock 都要原子修改共享的 readerCount, 多核下该缓存行在核间弹跳 (cache line bouncing). 临界区极短时, RWMutex 的读扩展性反而不如普通 Mutex, 也远不如分片或 copy-on-write (atomic.Pointer 换整个只读快照). 经验法则: 临界区长 (>百 ns) 且读写比高才用 RWMutex.
+性能真相: 每次 RLock/RUnlock 都要原子修改共享的 readerCount, 多核下该缓存行在核间弹跳 (cache line bouncing). 临界区极短时, RWMutex 的读扩展性反而不如普通 Mutex, 也远不如分片或 copy-on-write (atomic.Pointer 换整个只读快照). 经验法则: 临界区长 (超过百 ns) 且读写比高才用 RWMutex.
 
 ### 10.3 WaitGroup、Once、Cond 的正确用法
 
@@ -1202,7 +1201,7 @@ A:
 4. 典型模式:
    - 计数器/指标: atomic.Int64.Add, 远快于 mutex. 伪共享注意: 多个热点计数器放在一个 struct 里会共享缓存行, 需 padding.
    - 配置热更新 / COW: `atomic.Pointer[Config]`, 写者构造全新对象后 Store, 读者 Load 拿到不可变快照, 读侧零锁.
-   - 状态门闩: CAS 保证"只有一个 goroutine 执行关闭逻辑". 真实用例: yukino_cache 的 `Group.Close` 用类型化原子 `closed atomic.Int32` 的 `CompareAndSwap(0, 1)` 实现幂等关闭 (group.go:259), Get/Set 入口用 `closed.Load()` 快速拒绝; 统计字段 (gets/loads/peerHits 等) 全部是 `atomic.Int64` 类型走 `.Add(1)`, 读写热路径零锁.
+   - 状态门闩: CAS 保证"只有一个 goroutine 执行关闭逻辑". 真实用例: yukino_cache 的 `Group.Close` 用类型化原子 `closed atomic.Int32` 的 `CompareAndSwap(0, 1)` 实现幂等关闭 (group.go:239), Get/Set 入口用 `closed.Load()` 快速拒绝; 统计字段 (gets/loads/peerHits 等) 全部是 `atomic.Int64` 类型走 `.Add(1)`, 读写热路径零锁.
 5. 选择标准: 单变量读改写 → atomic; 多个变量需要保持一致的复合不变式 → mutex. 不要用多个 atomic 变量拼装事务语义, 那是数据竞争的温床.
 
 ### 10.6 singleflight: 防缓存击穿的标准武器
@@ -1245,7 +1244,7 @@ if err := g.Wait(); err != nil { // 返回第一个非 nil 错误
 1. WithContext 返回派生 ctx: 任一任务返回 error, errgroup 内部 `sync.Once` 保证只记录第一个错误并调用 cancel——其余任务通过监听这个 ctx 尽快退出. 注意: errgroup 不会杀掉 goroutine, 只是取消 ctx, 任务不检查 ctx 就会白跑到底 (协作式取消, 与 9.3 一致).
 2. SetLimit(n) 内部就是容量 n 的 `chan token` 信号量 (8.6 模式 3 的封装); `g.Go` 在达到上限时阻塞, `TryGo` 返回 false.
 3. Wait 语义 = 所有已启动任务结束 + 返回首错. 需要收集全部错误时不要用 errgroup 的返回值, 各任务把 error 写入自己的下标槽位 `errs[i]` (无竞争), 最后 `errors.Join(errs...)` (1.20+).
-4. 与裸方案对比: `WaitGroup` 只有"等全部完成"; `errgroup` = WaitGroup + 首错 + 取消 + 限流, 是结构化并发在标准扩展库中的落地. 真实案例: yukino_rpc 客户端对一次调用的"限流 → 熔断 → 连接池获取 → 发送"各环节都在 ctx 预算内完成, 任一环节失败即快速返回并向熔断器记账——同样的"失败快速传播"思想.
+4. 与裸方案对比: `WaitGroup` 只有"等全部完成"; `errgroup` = WaitGroup + 首错 + 取消 + 限流, 是结构化并发在标准扩展库中的落地. 真实案例: yukino_rpc 客户端对一次调用按"限流 → 熔断 → 连接池获取 → 发送"的管线推进, 连接池获取环节带 ctx 超时预算, 任一环节失败即快速返回并向熔断器记账——同样的"失败快速传播"思想.
 
 补充一个高频陷阱: `g.Go` 里再嵌套启动裸 goroutine, 其生命周期就脱离了 errgroup 的管辖, Wait 不会等它——嵌套并发要么继续用子 errgroup, 要么显式 WaitGroup 兜住.
 
@@ -1277,9 +1276,9 @@ new/make 一个对象时, 内存从哪来?
 
 A: Go 分配器脱胎于 tcmalloc, 按大小三条路:
 
-1. 微对象 (<16B 且不含指针): tiny allocator, 多个微对象合并进一个 16B 块 (如小字符串、独立的 bool), 极致省内存.
+1. 微对象 (小于 16B 且不含指针): tiny allocator, 多个微对象合并进一个 16B 块 (如小字符串、独立的 bool), 极致省内存.
 2. 小对象 (16B ~ 32KB): 映射到约 68 个 size class, 从当前 P 的 mcache (每 P 私有, 无锁) 对应 class 的 mspan 分配; mcache 空了找 mcentral (全局、按 class 分桶、有锁但锁粒度细) 换一个 span; mcentral 也没了找 mheap (页堆) 切新 span; mheap 不够向 OS `mmap` (按 heapArena 64MB 粒度管理).
-3. 大对象 (>32KB): 绕过 cache/central, 直接从 mheap 分配整数页.
+3. 大对象 (大于 32KB): 绕过 cache/central, 直接从 mheap 分配整数页.
 
 其他要点: span 内空闲槽位用 bitmap + `allocCache` (64 位缓存, CTZ 指令找空位) 加速; 每个 span 关联 GC 标记位. 分配路径无锁化 (mcache per-P) 是 Go 高并发分配吞吐的根基, 与 GMP 的 P 设计一体两面.
 
@@ -1312,7 +1311,7 @@ A: Go 使用并发三色标记-清除 (非分代、非压缩、非移动). 常�
 
 并发标记的经典难题是"对象消失": 黑色对象 C 新指向白色对象 B, 同时灰色对象 A 删除了对 B 的引用, B 就永远不会被扫到而被错误回收. Go 用混合写屏障解决:
 
-混合写屏障 (Go 1.8+, Yuasa 删除屏障 + Dijkstra 插入屏障): `*slot = ptr` 时把旧值和新值都标灰 (shade(\*slot); shade(ptr)). 配合"栈上新分配对象直接标黑", 消除了 1.7 及以前 mark termination 阶段重扫全部栈的需求, 把 STW 从百 ms 级压到 sub-ms (栈操作频繁且开销敏感, 不插写屏障; 每个 goroutine 的栈只在标记开始时扫一次, 终结阶段不再重扫). 代价: 写指针多一次屏障调用 (仅 GC 期间启用), 以及浮动垃圾 (本轮多留一些到下轮回收).
+混合写屏障 (Go 1.8+, Yuasa 删除屏障 + Dijkstra 插入屏障): `*slot = ptr` 时把旧值和新值都标灰 (`shade(*slot)`; `shade(ptr)`). 配合"栈上新分配对象直接标黑", 消除了 1.7 及以前 mark termination 阶段重扫全部栈的需求, 把 STW 从百 ms 级压到 sub-ms (栈操作频繁且开销敏感, 不插写屏障; 每个 goroutine 的栈只在标记开始时扫一次, 终结阶段不再重扫). 代价: 写指针多一次屏障调用 (仅 GC 期间启用), 以及浮动垃圾 (本轮多留一些到下轮回收).
 
 流程 (GOGC 触发, pacer 控制):
 
@@ -1395,14 +1394,14 @@ gc 行字段含义:
 | @0.001s 2%                   | 程序启动后时刻; 该周期 GC 的 CPU 占比                                                       |
 | 0.018+1.1+0.029 ms clock     | 标记开始 STW + 并发标记 + 标记终止 STW 的实际耗时                                           |
 | 0.22+.../.../...+0.34 ms cpu | 各阶段的 CPU 时间 (中间三段为 标记辅助/并发标记/GC 空闲)                                    |
-| 4->7->3 MB                   | 标记开始堆大小 → 标记结束堆大小 → 存活对象大小                                              |
+| `4->7->3 MB`                 | 标记开始堆大小 → 标记结束堆大小 → 存活对象大小                                              |
 | 3 MB stacks, 1 MB globals    | 栈内存与全局变量内存 (Go 1.22+ 输出)                                                        |
 | 5 MB goal                    | 本轮 GC 的堆目标 (heap goal), 约为上轮存活堆 x (1+GOGC/100), 下一轮目标在本轮结束时重新计算 |
 | 12 P                         | P 的数量                                                                                    |
 
 scvg 行是 scavenger 归还 OS 的统计: inuse (在用)、idle (空闲待归还)、sys (从 OS 取得)、released (已归还)、consumed (净消耗), 单位 MB.
 
-> wall clock 与 cpu time 的关系: wall < cpu 说明充分利用多核; wall ≈ cpu 说明未并行; wall > cpu 说明多核优势不明显.
+> wall clock 与 cpu time 的关系: `wall < cpu` 说明充分利用多核; `wall ≈ cpu` 说明未并行; `wall > cpu` 说明多核优势不明显.
 
 方式二: `go tool trace` 可视化 goroutine 调度与 GC 事件. 方式三: `debug.ReadGCStats` 代码内读取 NumGC/PauseTotal. 方式四: `runtime.ReadMemStats` 周期性采样 NextGC 等指标.
 
@@ -2166,24 +2165,24 @@ func main() {
 
 ## 附: 速答卡片 (30 秒版本)
 
-| 问题             | 30 秒答案骨架                                                                             |
-| ---------------- | ----------------------------------------------------------------------------------------- |
-| slice 扩容       | 期望容量 (<256 翻倍, 否则 ~1.25x 平滑) → roundupsize 对齐 size class → mallocgc + memmove |
-| map 并发写       | hashWriting 标志位检测 → fatal 不可 recover → RWMutex / sync.Map / 分片锁                 |
-| GMP 为什么要 P   | 无锁本地队列 + per-P mcache + 阻塞时 handoff 整体交接                                     |
-| 抢占             | 1.14 前协作式 (函数序言检查), 1.14+ SIGURG 信号异步抢占                                   |
-| channel send     | 有等待接收者直传栈 → 缓冲有空写 buf → 挂 sendq gopark                                     |
-| context 取消     | close(done) 广播 + 递归 cancel children, 只向下传播, defer cancel 防泄漏                  |
-| Mutex 饥饿       | 等待超 1ms 转饥饿模式, 锁直接移交队首, 牺牲吞吐换尾延迟公平                               |
-| GC               | 并发三色标记 + 混合写屏障 (旧值新值都标灰) 免重扫栈, STW 亚毫秒; 调 GOGC/GOMEMLIMIT       |
-| 逃逸             | 返回指针 / interface 装箱 / 闭包捕获 / 编译期大小未知; -gcflags=-m 观测                   |
-| 交叉编译         | GOOS/GOARCH 一条命令; CGO_ENABLED=0 得纯静态二进制进 scratch 镜像                         |
-| sync.Map 结构    | read 只读层无锁读 + dirty 加锁层, misses 达阈值 dirty 晋升; 读多写少或 key 不相交         |
-| 分片锁 map       | 2 的幂分片 + hash&mask 定位, 每片独立锁; Len/Range 无一致性视图                           |
-| sysmon           | 不绑 P 的监控线程: retake 抢占、netpoll 兜底、2min 强制 GC                                |
-| 死锁检测         | 仅全体 G 休眠才 fatal; 部分死锁不报 → goroutine dump 按栈聚类找互等环                     |
-| RWMutex 读锁重入 | 持 RLock 再 RLock, 写者在中间插队 → 死锁; 递归读锁被文档明令禁止                          |
-| GC 不分代原因    | 逃逸分析把短命对象留在栈上, 分代收益低; 不压缩换免读屏障 + cgo 指针稳定                   |
-| errgroup         | WaitGroup + 首错记录 + ctx 取消 + SetLimit 限流; 不杀 goroutine 只取消 ctx                |
-| go mod MVS       | 取所有 require 的最小满足版本, 算法即确定性; go.sum 是哈希校验不是锁文件                  |
-| benchmark 防坑   | b.N 循环体与 N 无关 + sink 防 DCE (1.24 用 b.Loop) + benchstat -count=10 看显著性         |
+| 问题             | 30 秒答案骨架                                                                                 |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| slice 扩容       | 期望容量 (小于 256 翻倍, 否则 ~1.25x 平滑) → roundupsize 对齐 size class → mallocgc + memmove |
+| map 并发写       | hashWriting 标志位检测 → fatal 不可 recover → RWMutex / sync.Map / 分片锁                     |
+| GMP 为什么要 P   | 无锁本地队列 + per-P mcache + 阻塞时 handoff 整体交接                                         |
+| 抢占             | 1.14 前协作式 (函数序言检查), 1.14+ SIGURG 信号异步抢占                                       |
+| channel send     | 有等待接收者直传栈 → 缓冲有空写 buf → 挂 sendq gopark                                         |
+| context 取消     | close(done) 广播 + 递归 cancel children, 只向下传播, defer cancel 防泄漏                      |
+| Mutex 饥饿       | 等待超 1ms 转饥饿模式, 锁直接移交队首, 牺牲吞吐换尾延迟公平                                   |
+| GC               | 并发三色标记 + 混合写屏障 (旧值新值都标灰) 免重扫栈, STW 亚毫秒; 调 GOGC/GOMEMLIMIT           |
+| 逃逸             | 返回指针 / interface 装箱 / 闭包捕获 / 编译期大小未知; -gcflags=-m 观测                       |
+| 交叉编译         | GOOS/GOARCH 一条命令; CGO_ENABLED=0 得纯静态二进制进 scratch 镜像                             |
+| sync.Map 结构    | read 只读层无锁读 + dirty 加锁层, misses 达阈值 dirty 晋升; 读多写少或 key 不相交             |
+| 分片锁 map       | 2 的幂分片 + hash&mask 定位, 每片独立锁; Len/Range 无一致性视图                               |
+| sysmon           | 不绑 P 的监控线程: retake 抢占、netpoll 兜底、2min 强制 GC                                    |
+| 死锁检测         | 仅全体 G 休眠才 fatal; 部分死锁不报 → goroutine dump 按栈聚类找互等环                         |
+| RWMutex 读锁重入 | 持 RLock 再 RLock, 写者在中间插队 → 死锁; 递归读锁被文档明令禁止                              |
+| GC 不分代原因    | 逃逸分析把短命对象留在栈上, 分代收益低; 不压缩换免读屏障 + cgo 指针稳定                       |
+| errgroup         | WaitGroup + 首错记录 + ctx 取消 + SetLimit 限流; 不杀 goroutine 只取消 ctx                    |
+| go mod MVS       | 取所有 require 的最小满足版本, 算法即确定性; go.sum 是哈希校验不是锁文件                      |
+| benchmark 防坑   | b.N 循环体与 N 无关 + sink 防 DCE (1.24 用 b.Loop) + benchstat -count=10 看显著性             |

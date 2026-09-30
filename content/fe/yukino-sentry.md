@@ -1,5 +1,6 @@
 ---
 title: "@yukino.js/sentry 前端监控 SDK 技术笔记"
+description: "@yukino.js/sentry 框架无关浏览器端监控 SDK 的问答式技术笔记"
 ---
 
 > 本机器路径 `$HOME/github/yukino-sentry/sentry`, 基于 `@yukino.js/sentry` 0.0.1 源码
@@ -9,7 +10,7 @@ title: "@yukino.js/sentry 前端监控 SDK 技术笔记"
 @yukino.js/sentry 是一个框架无关的浏览器端监控与分析 SDK, 采用分层架构设计, 核心模块如下:
 
 ```
-┌───────────────────────────────────────────────------──────┐
+┌───------──┐
 │                   Public API Layer                        │
 │  init / destroy / isInitialized / enablePlugin            │
 │  + traceError / tracePerformance / traceCustomEvent       │
@@ -17,26 +18,26 @@ title: "@yukino.js/sentry 前端监控 SDK 技术笔记"
 │  + setUserId / setVisitorId / getIdentity                 │
 │  + beforeSend / beforeSendBatch / afterSend               │
 │  + flushOfflineCache  (以及全部类型/枚举 re-export)       │
-├───────────────────────────────────────────────────------──┤
+├───------──┤
 │                   Core Layer                              │
 │  sdk-lifecycle / setup / bus / decorates / handlers       │
 │  + pv-lifecycle / white-screen / identity                 │
-├───────────────────────────────────────────────────------──┤
+├───------──┤
 │                  Reporter Layer                           │
 │  DataReporter / transports / offline-cache /              │
 │  server-recovery / flush-scheduler / send-preflight       │
-├────────────────────────────────────────────────────------─┤
+├------─┤
 │                  Plugin Layer                             │
 │  PerformancePlugin / ScreenRecordPlugin / ExposurePlugin  │
-├──────────────────────────────────────────────────------───┤
+├──------───┤
 │                  Framework / Node Layer                   │
 │  react.ts / vue.ts / vite.ts / webpack.ts                 │
 │  + node/dev-endpoint / source-map  (Node-only)            │
-├──────────────────────────────────────────────────------───┤
+├──------───┤
 │                  Utils Layer                              │
 │  data-structures / session / uuid / throttle /            │
 │  click-data / dom2str / logger                            │
-└──────────────────────────────────────────────────------───┘
+└──------───┘
 ```
 
 核心模块职责:
@@ -490,6 +491,16 @@ globalThis.addEventListener("online", () => {
 3. 服务端故障恢复 (server-recovery.ts) :
 
 ```typescript
+const BASE_RETRY_MS = 1000;
+
+// 下一次探测的延迟; 每失败一次翻倍, 封顶为配置的 retryIntervalMilliseconds (默认 60s)
+// 恢复或 reporter 销毁时重置
+let nextRetryDelayMs = BASE_RETRY_MS;
+
+export function resetServerRecovery(): void {
+  nextRetryDelayMs = BASE_RETRY_MS;
+}
+
 export function scheduleServerRecovery(
   retryTimer: ReturnType<typeof setTimeout> | undefined,
   callbacks: ServerRecoveryCallbacks,
@@ -497,9 +508,12 @@ export function scheduleServerRecovery(
   callbacks.setOnline(false);
   if (retryTimer) clearTimeout(retryTimer);
   // setTimeout 单次调度, 失败后递归重新安排下一轮; 定时器 unref, 不阻止 Node 进程退出
-  const nextRetryTimer = setTimeout(() => {
-    testServerAvailable(callbacks);
-  }, sentry.options.retryIntervalMilliseconds); // 默认 60s
+  const nextRetryTimer = setTimeout(
+    () => {
+      testServerAvailable(callbacks);
+    },
+    Math.min(nextRetryDelayMs, sentry.options.retryIntervalMilliseconds),
+  );
   unrefTimer(nextRetryTimer);
   callbacks.setRetryTimer(nextRetryTimer);
   return nextRetryTimer;
@@ -509,15 +523,26 @@ function testServerAvailable(callbacks: ServerRecoveryCallbacks): void {
   fetch(sentry.options.dsn, { method: "HEAD" })
     .then((res) => {
       if (!res.ok) {
-        scheduleServerRecovery(undefined, callbacks); // 不可用: 递归安排重试
+        escalateRetryDelay(); // 不可用: 延迟翻倍后递归安排重试
+        scheduleServerRecovery(undefined, callbacks);
         return;
       }
+      resetServerRecovery(); // 恢复: 退避计数归零
       callbacks.setOnline(true);
+      sentryLogger.info("Server is back available, flushing cache");
       void callbacks.flush(); // 恢复后直接冲刷内存队列
     })
     .catch(() => {
-      scheduleServerRecovery(undefined, callbacks); // 异常: 递归安排重试
+      escalateRetryDelay(); // 异常: 延迟翻倍后递归安排重试
+      scheduleServerRecovery(undefined, callbacks);
     });
+}
+
+function escalateRetryDelay(): void {
+  nextRetryDelayMs = Math.min(
+    nextRetryDelayMs * 2,
+    sentry.options.retryIntervalMilliseconds,
+  );
 }
 ```
 
@@ -540,7 +565,7 @@ offline 事件 ──> isOnline = false
   │                                        V
   │                                   清除 localStorage 镜像
   │
-  └── 或 上报失败 (fetch 拒绝/非 2xx) ──> scheduleServerRecovery() ──> 60s HEAD 探测
+  └── 或 上报失败 (fetch 拒绝/非 2xx) ──> scheduleServerRecovery() ──> 指数退避 HEAD 探测 (1s 起步, 每次失败翻倍, 封顶 60s)
                                                        │
                                                        V (200 OK)
                                                    flush() 内存队列
@@ -1690,7 +1715,6 @@ globalThis.addEventListener("pagehide", () => {
 2. 可靠性优化:
 
 - Service Worker 离线队列: localStorage 有 5MB 限制且同步阻塞, Service Worker + Cache API 可以存储更大的离线队列
-- 指数退避重试: 当前 server-recovery 使用固定 60s 间隔, 可以改为指数退避 (1s -> 2s -> 4s -> ... -> 60s)
 - 数据完整性校验: 离线缓存写入时添加 checksum, 防止 localStorage 数据损坏
 
 3. 功能增强:
@@ -1867,7 +1891,9 @@ export default defineConfig({
 
 ## Vite dev-server mock 插件 (@yukino.js/sentry/vite) 是做什么的?
 
-`sentry/src/vite.ts` 导出 `sentryPlugin` (vite) 和 `sentryPlugin7` (vite 7, 通过 `vite7@npm:vite@7.3.3` 别名同时兼容两个大版本) , 是开发环境的「mock 上报服务端」, 解决本地开发没有日志服务的问题.
+`sentry/src/vite.ts` 只导出 `sentryPlugin` (default 导出同物) , 类型签名对齐 vite 8 (sentry 包 devDependencies 为 vite ^8.3.1) ; 文件头部注释保留了 `pnpm add -D vite7@npm:vite@7` 的别名安装说明, 表示曾按 vite 7 做过兼容验证. 它是开发环境的「mock 上报服务端」, 解决本地开发没有日志服务的问题.
+
+注意: yukino-codegen 的 client/vite.config.ts 以 `import { sentryPlugin7 } from "@yukino.js/sentry/vite"` 的方式引用了一个 `sentryPlugin7` 具名导出, 但当前 sentry 源码与已发布的 0.0.1 (npm 上也仅有此版本) 均无该导出, 属于两个仓库之间的版本脱节.
 
 工作流程:
 
@@ -1895,11 +1921,10 @@ function buildPlugin({ dsn }: ISentryPluginOptions) {
 }
 
 export function sentryPlugin(options: ISentryPluginOptions = {}): Plugin {
-  return buildPlugin(options); // vite 8
+  return buildPlugin(options);
 }
-export function sentryPlugin7(options: ISentryPluginOptions = {}): Plugin7 {
-  return buildPlugin(options); // vite 7, 同一实现两种类型签名
-}
+
+export default sentryPlugin;
 ```
 
 中间件逻辑 (node/dev-endpoint.ts, vite/webpack 共用) :

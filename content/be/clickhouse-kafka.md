@@ -1,5 +1,6 @@
 ---
 title: "ClickHouse & Kafka 技术笔记"
+description: "ClickHouse 列式存储、MergeTree 家族、分布式架构与查询优化, Kafka 存储模型、消息语义、高可用与调优"
 ---
 
 > 本文覆盖 ClickHouse 列式存储引擎、MergeTree 家族、分布式架构、查询优化, 以及 Kafka 存储模型、生产者/消费者语义、高可用机制、性能调优等核心知识点.
@@ -334,7 +335,7 @@ ALTER TABLE events DELETE WHERE user_id = 12345;
 1. ReplacingMergeTree: 插入新版本行, 合并时自动去重, 查询用 FINAL 或 argMax
 2. CollapsingMergeTree: 插入 -1 行抵消旧行, +1 行写入新值
 3. 分区级操作: `ALTER TABLE DROP PARTITION` 删除整个分区 (瞬间完成)
-4. 轻量删除 (22.8+): `DELETE FROM events WHERE ...` (注意不是 ALTER TABLE DELETE), 只标记行删除, 不重写 part, 查询时过滤; 合并时物理清除. 比 mutation 快很多, 但标记期间仍占磁盘
+4. 轻量删除 (22.8 实验性引入, 23.3 起 DELETE FROM 语法正式可用): `DELETE FROM events WHERE ...` (注意不是 ALTER TABLE DELETE), 只标记行删除, 不重写 part, 查询时过滤; 合并时物理清除. 比 mutation 快很多, 但标记期间仍占磁盘
 
 ### ClickHouse 与 MySQL 在 OLAP 场景下的性能差异根源是什么?
 
@@ -1022,7 +1023,7 @@ kafka-consumer-groups.sh --bootstrap-server broker:9092 \
 4. 数据再平衡:
    - 方案 A: 新数据自动路由到新分片 (Distributed 表写入时按分片键分配), 旧数据不动 — 简单但数据不均匀
    - 方案 B: 用 `INSERT INTO new_shard SELECT ... FROM old_shard WHERE sipHash64(user_id) % 4 = 3` 手动迁移部分数据 — 均匀但有 I/O 开销
-   - 方案 C: 用脚本自动化方案 B (按分片键计算目标分片、批量 INSERT SELECT、校验行数后清理源数据); 注意 ClickHouse 没有"跨分片数据再平衡"的命令——`SYSTEM REBALANCE QUEUE` 只用于副本间复制队列的再平衡, 不迁移分片数据
+   - 方案 C: 用脚本自动化方案 B (按分片键计算目标分片、批量 INSERT SELECT、校验行数后清理源数据); 注意 ClickHouse 没有内建的"跨分片数据再平衡"命令, 迁移只能靠 INSERT SELECT 或外部工具完成
 
 保证不中断:
 

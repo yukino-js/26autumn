@@ -104,7 +104,7 @@ flowchart TB
 │       ├── app/                     路由、Providers、页面过渡动画
 │       ├── pages/
 │       │   ├── home/                首页 + prompt 输入
-│       │   ├── app-chat/            ★ 核心页：聊天 + 预览 + IDE 工作区
+│       │   ├── app-chat/            核心页：聊天 + 预览 + IDE 工作区
 │       │   │   ├── workspace/       WebContainer 运行时、FS、终端、编辑器
 │       │   │   └── chat/            transcript 视图、权限对话框、能力抽屉
 │       │   ├── app-edit/            应用信息编辑
@@ -116,20 +116,20 @@ flowchart TB
 │           ├── schemas/             Zod schema（与后端协议对齐）
 │           ├── query/               TanStack Query hooks 与 query keys
 │           ├── ui/                  Base UI + Tailwind 组件库（40+ 组件）
-│           └── webcontainer/        ★ WebContainer boot 单例 + 文件树 schema
+│           └── webcontainer/        WebContainer boot 单例 + 文件树 schema
 ├── server/                          Hono 4 后端（Node.js ≥ 20）
 │   ├── prisma/                      schema.prisma + migrations（8 张表）
 │   ├── prompts/                     site-generator-system-prompt.md
 │   └── src/
-│       ├── agent-runtime/           ★ Yukino Agent 集成层（23 个模块）
+│       ├── agent-runtime/           Yukino Agent 集成层（22 个模块）
 │       ├── routes/                  user · app · agent(ws/rest/files) · chat-history · management
 │       ├── session/                 会话存储（Redis / 内存）与认证中间件
 │       ├── deployment/              存储适配器（local / MinIO）
 │       ├── observability/           健康检查、Prometheus 指标、请求上下文
 │       ├── config/                  Zod env & AI schema（fail-fast）
 │       ├── middleware/              CORS、body limit、错误处理、安全头
-│       └── rate-limit/              Redis 令牌桶限流
-└── docs/                            图片与报告
+│       └── rate-limit/              Redis 计数窗口限流
+└── docs/                            图片
 ```
 
 ---
@@ -144,8 +144,8 @@ flowchart TB
 | **Vite**                                             | 7.3                        | 开发服务器（含 COOP/COEP 头注入、`/api` 代理）与生产构建                                    |
 | **TypeScript**                                       | 5.8（strict）              | 全量类型安全                                                                                |
 | **Tailwind CSS**                                     | 4.3（`@tailwindcss/vite`） | 原子化样式；配 `@catppuccin/tailwindcss` 主题、`tailwind-merge`、`class-variance-authority` |
-| **@webcontainer/api**                                | 1.6.4                      | ★ 浏览器内 Node.js 运行时（预览核心，见第 6 章）                                            |
-| **TanStack Query**                                   | 5.103                      | 服务端状态管理（缓存、失效、乐观更新）                                                      |
+| **@webcontainer/api**                                | 1.6.4                      | 浏览器内 Node.js 运行时（预览核心，见第 6 章）                                              |
+| **TanStack Query**                                   | 5.104                      | 服务端状态管理（缓存、失效、乐观更新）                                                      |
 | **TanStack Form**                                    | 1.33                       | 类型安全表单（登录/注册/应用编辑）                                                          |
 | **TanStack Virtual**                                 | 3.14                       | 长列表虚拟化（transcript、管理表格）                                                        |
 | **Zustand**                                          | 5.0                        | 客户端状态（用户 store、auth 水合门）                                                       |
@@ -155,7 +155,7 @@ flowchart TB
 | **@base-ui/react**                                   | 1.8                        | 无样式可访问组件原语（Dialog、Select、Tooltip 等 UI 库底座）                                |
 | **Zod**                                              | 4.6                        | 运行时校验：API 响应、WS 协议消息、postMessage、路由参数                                    |
 | **axios**                                            | 1.20                       | HTTP 客户端（单例封装 + 401 统一处理）                                                      |
-| **socket.io-client / @microsoft/fetch-event-source** | —                          | 备用流式通道（当前主链路为原生 WebSocket）                                                  |
+| **socket.io-client / @microsoft/fetch-event-source** | —                          | 遗留流式依赖（src 未再引入；当前主链路为原生 WebSocket）                                    |
 | **GSAP / animate.css / react-transition-group**      | —                          | 页面过渡与动画                                                                              |
 | **marked + dompurify**                               | —                          | Markdown 渲染 + XSS 消毒（Agent 回复）                                                      |
 | **@yukino.js/sentry**                                | latest                     | 前端监控 SDK（Vite dev mock 插件 `sentryPlugin7`，dsn 指向 `/sentry`）                      |
@@ -163,20 +163,20 @@ flowchart TB
 
 ### 3.2 服务端
 
-| 技术                                  | 版本                         | 角色                                                                                                                                                |
-| ------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Hono**                              | 4.13                         | 轻量 Web 框架（路由、中间件、`zValidator` 校验）                                                                                                    |
-| **@hono/node-server + @hono/node-ws** | 1.19 / 1.3                   | Node 适配器与 WebSocket 升级（`upgradeWebSocket`）                                                                                                  |
-| **@yukino.js/yukino**                 | latest                       | ★ 编码 Agent 引擎：`Agent`、`Remote.Server.createRemoteAgent`、`Permissions`、`MCP`、`Skills`、`Memory`、`Teams`、`Subagent`、`Worktree`、`Compact` |
-| **Prisma**                            | 7.10（`@prisma/adapter-pg`） | ORM；生成客户端到 `src/generated/prisma`；驱动适配器直连 pg                                                                                         |
-| **PostgreSQL**（pg 8.23）             | —                            | 主数据库：用户、应用、Agent 工作区/会话/transcript/交互/MCP/Hook                                                                                    |
-| **ioredis**                           | 5.11                         | 会话存储（生产必需）+ 限流计数                                                                                                                      |
-| **minio**                             | 8.0                          | S3 兼容对象存储（应用封面等；生产必需）                                                                                                             |
-| **Zod**                               | 4.6                          | 环境变量 fail-fast 校验、所有请求体/参数校验、WS 协议 schema                                                                                        |
-| **archiver**                          | 7.0                          | 项目 zip 流式导出                                                                                                                                   |
-| **ws**                                | 8.21                         | WebSocket 底层                                                                                                                                      |
-| **tsx / rollup**                      | —                            | 开发热重载 / 生产打包                                                                                                                               |
-| **Biome**                             | 2.5                          | 服务端 lint + format（CI 用 `--reporter=github`）                                                                                                   |
+| 技术                                  | 版本                         | 角色                                                                                                                                              |
+| ------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hono**                              | 4.13                         | 轻量 Web 框架（路由、中间件、`zValidator` 校验）                                                                                                  |
+| **@hono/node-server + @hono/node-ws** | 1.19 / 1.3                   | Node 适配器与 WebSocket 升级（`upgradeWebSocket`）                                                                                                |
+| **@yukino.js/yukino**                 | latest                       | 编码 Agent 引擎：`Agent`、`Remote.Server.createRemoteAgent`、`Permissions`、`MCP`、`Skills`、`Memory`、`Teams`、`Subagent`、`Worktree`、`Compact` |
+| **Prisma**                            | 7.10（`@prisma/adapter-pg`） | ORM；生成客户端到 `src/generated/prisma`；驱动适配器直连 pg                                                                                       |
+| **PostgreSQL**（pg 8.23）             | —                            | 主数据库：用户、应用、Agent 工作区/会话/transcript/交互/MCP/Hook                                                                                  |
+| **ioredis**                           | 5.11                         | 会话存储（生产必需）+ 限流计数                                                                                                                    |
+| **minio**                             | 8.0                          | S3 兼容对象存储（应用封面等；生产必需）                                                                                                           |
+| **Zod**                               | 4.6                          | 环境变量 fail-fast 校验、所有请求体/参数校验、WS 协议 schema                                                                                      |
+| **archiver**                          | 7.0                          | 项目 zip 流式导出                                                                                                                                 |
+| **ws**                                | 8.22                         | WebSocket 底层                                                                                                                                    |
+| **tsx / rollup**                      | —                            | 开发热重载 / 生产打包                                                                                                                             |
+| **Biome**                             | 2.5                          | 服务端 lint + format（CI 用 `--reporter=github`）                                                                                                 |
 
 ### 3.3 基础设施与质量
 
@@ -218,7 +218,7 @@ Agent 的工具（`Bash`、`EditFile`）需要真实 POSIX 文件系统，所以
 
 ### 4.4 Yukino Agent 引擎背景
 
-`@yukino.js/yukino` 是作者自研的终端 AI 编码代理（同类：Claude Code、Aider、OpenHands），以库形式导出完整 Agent 栈。本项目通过 `Remote.Server.createRemoteAgent` 把"终端里的 Agent"改造成"服务器上的多租户 Agent 服务"，这是整个后端 `agent-runtime/` 目录（23 个模块、约 3800 行）存在的意义：会话持久化、transcript 序列化、权限交互经 WebSocket 转发给浏览器、MCP/Hooks/Skills/Memory 的数据库化管理。
+`@yukino.js/yukino` 是作者自研的终端 AI 编码代理（同类：Claude Code、Aider、OpenHands），以库形式导出完整 Agent 栈。本项目通过 `Remote.Server.createRemoteAgent` 把"终端里的 Agent"改造成"服务器上的多租户 Agent 服务"，这是整个后端 `agent-runtime/` 目录（22 个模块、约 3600 行）存在的意义：会话持久化、transcript 序列化、权限交互经 WebSocket 转发给浏览器、MCP/Hooks/Skills/Memory 的数据库化管理。
 
 ---
 
@@ -233,7 +233,7 @@ Agent = LLM + 工具 + 循环。模型每轮输出"文本 + 工具调用请求"�
 - **工具集**：本项目 Agent 拥有 `ReadFile` / `WriteFile` / `EditFile` / `Glob` / `Grep` / `Bash` / `AskUser` 等；
 - **最大迭代数**：`AI_MAX_ITERATIONS`（默认 40）防止无限循环；
 - **上下文窗口与压缩（Compact）**：对话过长时自动摘要压缩历史；
-- **权限模式**：`DEFAULT`（逐个询问）/ `ACCEPT_EDITS`（自动接受文件编辑）/ `PLAN`（只规划不执行）/ `BYPASS_PERMISSIONS`（全自动，本项目默认）；
+- **权限模式**：`DEFAULT`（逐个询问）/ `ACCEPT_EDITS`（自动接受文件编辑）/ `PLAN`（只规划不执行）/ `DONT_ASK` / `BYPASS_PERMISSIONS`（全自动）共 5 种，本项目工作区默认 `BYPASS_PERMISSIONS`；
 - **系统提示词**：`server/prompts/site-generator-system-prompt.md` 定义了 Agent 的行为契约——用 `pnpm create vite` 脚手架、**禁止在服务器 install/build/dev**（浏览器负责）、依赖直接改 `package.json`、可见回复只写简短进度叙述等。
 
 ### 5.2 MCP（Model Context Protocol）
@@ -307,9 +307,9 @@ Prisma 是类型安全 ORM：`schema.prisma` 声明模型 → 代码生成客户
 **WebContainer** 是 [StackBlitz](https://stackblitz.com) 开发的技术：**一个完全运行在浏览器标签页内的 Node.js 运行时**。它不是虚拟机、不是远程容器，而是用 WebAssembly 重写的 Node.js 核心 + 模拟文件系统 + 模拟网络栈的组合：
 
 - **WASM 编译的 Node 核心**：事件循环、JS 运行时桥接编译为 WebAssembly；
-- **内存文件系统**：`fs` API 由浏览器内存中的虚拟 FS 支撑（可持久化到 IndexedDB）；
-- **Service Worker 虚拟网络**：容器内进程监听的端口被映射为 `https://xxx.local-credentialless.webcontainer-api.io` 形式的真实可访问 URL——由 Service Worker 拦截对该 URL 的请求并转发给容器内的 dev server，因此可以放进 iframe 预览；
-- **原生 npm/Vite 兼容**：跑的是真实 npm（经过 WASM 适配）与真实 Vite，生态兼容性极高；
+- **内存文件系统**：`fs` API 由浏览器内存中的虚拟 FS 支撑，页面刷新即重置，可用 `export` API 导出快照；
+- **Service Worker 虚拟网络**：容器内进程监听的端口被映射为 `https://xxx.local-credentialless.webcontainer-api.io` 形式（credentialless 模式）的真实可访问 URL——由 Service Worker 拦截对该 URL 的请求并转发给容器内的 dev server，因此可以放进 iframe 预览；
+- **原生 npm/Vite 兼容**：容器内置 Turbo npm 客户端（npm CLI 兼容，官方文档称之为 "our npm client"），跑的是真实 Vite，生态兼容性极高；
 - **musl 平台**：容器环境模拟 Alpine Linux（musl libc），这带来一个重要的工程细节（见 6.5.4）。
 
 **与传统方案对比**：
@@ -337,10 +337,10 @@ client/src/shared/webcontainer/          ← 全局基础设施
 └── index.ts
 
 client/src/pages/app-chat/workspace/     ← 运行时编排
-├── webcontainer-runtime.ts              ★ 预览生命周期：mount → install → dev server（484 行）
+├── webcontainer-runtime.ts              预览生命周期：mount → install → dev server（484 行）
 ├── webcontainer-fs.ts                   FS 原语封装：读写/重命名/删除/树遍历/base64
 ├── webcontainer-terminal.ts             jsh shell ↔ xterm.js 桥接
-├── use-workspace-controller.ts          ★ 总控制器：服务器树同步、watcher 回写、冲突（1205 行）
+├── use-workspace-controller.ts          总控制器：服务器树同步、watcher 回写、冲突（1205 行）
 ├── workspace-tree.ts                    服务器树 → 挂载树 / 快照 / 三方合并
 └── workspace-paths.ts                   路径规范化、忽略规则、sha256
 ```
@@ -406,7 +406,7 @@ result[node.name] = {
 
 二进制文件（图片等）以 base64 传输、解码为 `Uint8Array` 挂载；文本保持字符串。另有 `shared/webcontainer/file-tree.schema.ts` 用 Zod 递归 schema（`z.lazy`）校验传输格式，防御服务端异常数据。
 
-### 6.5 预览生命周期状态机（`webcontainer-runtime.ts`）★
+### 6.5 预览生命周期状态机（`webcontainer-runtime.ts`）
 
 这是全项目 WebContainer 工程化最深的文件。UI 状态流：`idle → booting → mounting → installing → starting → ready | failed`。
 
@@ -666,7 +666,7 @@ Agent 的 `onPermissionRequest` / `askUser` 回调被桥接到 WebSocket：
 
 ## 8. 服务端 Agent 运行时（Yukino 集成）
 
-`server/src/agent-runtime/` 是后端最重的模块（23 文件），职责是把单用户终端 Agent 改造成多租户服务：
+`server/src/agent-runtime/` 是后端最重的模块（22 文件），职责是把单用户终端 Agent 改造成多租户服务：
 
 | 模块                                                                                 | 职责                                                                                                                                                           |
 | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -720,7 +720,7 @@ Agent 的 `onPermissionRequest` / `askUser` 回调被桥接到 WebSocket：
 - **类型纪律**：双端 TypeScript strict；`bigint` 序列化统一走 replacer； branded ID 类型（`AppId` 等）防串用；
 - **测试**（Vitest）：
   - 服务端：WS 协议 schema、Agent 运行时并发（锁语义）、命令分发、事件适配、MCP 配置/加密、项目文件路径安全（穿越/symlink 攻击用例）、通用工具；
-  - 客户端：pages 与 shared 层单测（含 webcontainer 运行时的纯函数：`isPreviewRunCurrent`、`dependencyFingerprintFromTree`、`clampLog`、`threeWayMerge` 等被刻意抽成可测纯函数）；
+  - 客户端：pages 与 shared 层单测（含 webcontainer 运行时与工作区的纯函数：`isPreviewRunCurrent`、`dependencyFingerprintFromTree`、`threeWayMerge`、`agentTreeToFileSystem`、`snapshotFromAgentTree` 等被刻意抽成可测纯函数）；
 - **Lint/Format**：客户端 ESLint 9 + unicorn（零警告策略）+ Prettier；服务端 Biome（lint+format 一体，CI 用 GitHub reporter）；
 - **可测试性设计**：核心并发/取消/合并逻辑与 WebContainer API 副作用分离——纯函数导出单测，副作用集中在薄封装层。
 
@@ -730,21 +730,21 @@ Agent 的 `onPermissionRequest` / `askUser` 回调被桥接到 WebSocket：
 
 ### 12.1 REST/WS API 一览（挂载于 `/${BASE_URL}`，默认 `/api`）
 
-| 端点                                                                                         | 说明                                           |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `GET /health`                                                                                | 存活探针                                       |
-| `POST /user/register · login · logout · update · delete`                                     | 用户认证与管理                                 |
-| `GET /user/get/login`                                                                        | 当前登录用户                                   |
-| `POST /user/list/page/vo`                                                                    | 用户分页（admin）                              |
-| `POST /app/add · update · delete`                                                            | 应用 CRUD                                      |
-| `GET /app/get/vo` · `POST /app/my/list/page/vo` · `POST /app/awesome/list/page/vo`           | 应用查询                                       |
-| `GET /app/download/:appId`                                                                   | zip 流式导出                                   |
-| `GET /app/files/:appId`                                                                      | ★ 项目文件树（含 hash，WebContainer 挂载源）   |
-| `PUT /app/files/:appId/file` · `POST .../directory` · `POST .../rename` · `DELETE .../entry` | ★ 文件 mutation（乐观锁 + files_changed 广播） |
-| `GET /app/:appId/agent/ws`                                                                   | ★ Agent WebSocket                              |
-| `/app/...`（capability / mcp 子路由）                                                        | Agent 能力配置、MCP 管理                       |
-| `GET /chat-history/app/:appId` · `POST /chat-history/admin/list/page/vo`                     | 聊天历史                                       |
-| `GET /management/prometheus · health · info`                                                 | 运维端点                                       |
+| 端点                                                                                         | 说明                                         |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `GET /health`                                                                                | 存活探针                                     |
+| `POST /user/register · login · logout · update · delete`                                     | 用户认证与管理                               |
+| `GET /user/get/login`                                                                        | 当前登录用户                                 |
+| `POST /user/list/page/vo`                                                                    | 用户分页（admin）                            |
+| `POST /app/add · update · delete`                                                            | 应用 CRUD                                    |
+| `GET /app/get/vo` · `POST /app/my/list/page/vo` · `POST /app/awesome/list/page/vo`           | 应用查询                                     |
+| `GET /app/download/:appId`                                                                   | zip 流式导出                                 |
+| `GET /app/files/:appId`                                                                      | 项目文件树（含 hash，WebContainer 挂载源）   |
+| `PUT /app/files/:appId/file` · `POST .../directory` · `POST .../rename` · `DELETE .../entry` | 文件 mutation（乐观锁 + files_changed 广播） |
+| `GET /app/:appId/agent/ws`                                                                   | Agent WebSocket                              |
+| `/app/...`（capability / mcp 子路由）                                                        | Agent 能力配置、MCP 管理                     |
+| `GET /chat-history/app/:appId` · `POST /chat-history/admin/list/page/vo`                     | 聊天历史                                     |
+| `GET /management/prometheus · health · info`                                                 | 运维端点                                     |
 
 ### 12.2 数据模型（Prisma，8 模型）
 

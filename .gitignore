@@ -211,3 +211,6 @@ target
 # fumadocs-mdx generated imports
 .source/
 **/.source/
+
+# read-only mirrors of external source repos, used by doc teammates
+.research/

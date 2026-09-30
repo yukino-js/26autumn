@@ -1,7 +1,10 @@
-# Yukino 源代码深度解析（中文）
+---
+title: "Yukino 源代码深度解析"
+description: "基于 apps/yukino 源码逐文件阅读整理的 Coding Agent 深度解析"
+---
 
 > 本机器路径: `$HOME/github/yukino-code/apps/yukino`
-> 基于 `apps/yukino/src`（`@yukino.js/yukino` v0.0.4）源码逐文件阅读整理。
+> 基于 `apps/yukino/src`（`@yukino.js/yukino`）源码逐文件阅读整理。
 > 代码入口：`src/main.tsx`；核心循环：`src/agent/index.ts`；系统提示词：`src/prompt/*`。
 
 ---
@@ -62,6 +65,7 @@ Yukino 是一个**终端 AI 编码代理**（terminal-based AI coding agent）�
 | **Remote 浏览器** | `yukino --remote :18888`                      | Koa + WS，浏览器聊天 UI                                 |
 | **Teammate**      | `--teammate --team-dir ... --member-name ...` | 作为团队成员进程运行（被 tmux/iTerm backend 拉起）      |
 | **ACP**           | `--acp` / `--acp-ws`                          | Agent Client Protocol                                   |
+| **A2A**           | `--a2a [host:port]`                           | Agent-to-Agent 协议服务端（`a2a/index.ts` `runA2a`）    |
 
 ### 1.3 Agent 主循环（`agent/index.ts`）
 
@@ -321,7 +325,7 @@ interface Tool {
 
 ## 5. Thinking 思考强度配置的实现
 
-### 5.1 逻辑等级与映射（`config/index.ts`）
+### 5.1 逻辑等级与映射（`config/provider-config.ts`，`config/index.ts` 仅再导出）
 
 - **七个逻辑等级**：`off, minimal, low, medium, high, xhigh, max`（`THINKING_LEVELS`），默认 `high`（`DEFAULT_THINKING_LEVEL`）。
 - **Anthropic token 预算**（`THINKING_BUDGETS`）：minimal=1024、low=2048、medium=8192、high=16384、xhigh=32768、max=65536。预算必须低于 `DEFAULT_MAX_OUTPUT_TOKENS`(128k)，给回答留空间。
@@ -361,7 +365,7 @@ interface Tool {
 
 ### 6.1 触发阈值（token 预算公式）
 
-```
+```text
 effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 自动压缩阈值  = effectiveWindow − AUTO_COMPACT_SAFETY_MARGIN(13000)
 强制压缩阈值  = effectiveWindow − MANUAL_COMPACT_SAFETY_MARGIN(3000)   // 硬阻塞线
@@ -409,11 +413,13 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 
 - `buildCompactionSummaryMessage`：`"The conversation history before this point was compacted into the following summary:\n\n<summary>...</summary>"`（若有保留尾部，追加「Recent messages have been preserved verbatim.」）。
 - 若有会话文件路径，追加一句：需要压缩前的细节就用 ReadFile 读完整会话转录 `<sessionFilePath>`。
-- **RecoveryState 附件**（`recovery.ts`）：压缩会清空工作对话，为避免模型忘记刚读过的文件/正在用的技能 SOP，附上：
+- **RecoveryState 附件**（`recovery.ts`）：压缩会清空工作对话，为避免模型忘记刚读过的文件，附上：
   - 最近读过的文件（最多 5 个、每个 5000 token）；
-  - 激活过的技能（总预算 25000 token、每个 5000）；
   - 仍可用的工具名列表；
   - 一条「以上为重建上下文，需精确内容请重读源码」的 Note。
+
+  激活过的技能 SOP 不再走附件：压缩后由 `Agent.restoreContext → ConversationManager.injectLongTermMemory` 重新注入（`recovery.ts` 头部注释）。
+
 - `conversation.replaceWithCompacted(summaryContent, toKeep)`：历史替换为 `[摘要 user 消息, ...保留的尾部]`；`longTermMemoryInjected=false` 以便重新注入指令/记忆/技能。
 - Agent 主循环在压缩后调用 `restoreContext()` 重新注入项目指令/记忆/技能。
 
@@ -492,7 +498,7 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
   1. 时间门：距上次整合 ≥ `DEFAULT_MIN_HOURS=24` 小时（上次时间取自 `.consolidate-lock` 的 mtime）；
   2. 扫描节流：`SCAN_THROTTLE_MS=10` 分钟内不重复扫；
   3. 会话门：上次整合以来 ≥ `DEFAULT_MIN_SESSIONS=5` 个会话；
-  4. 锁：`tryAcquireLock` 写 PID 到 `.consolidate-lock`，回读校验；持有超 `HOLDER_STALE_MS=1` 小时且进程不存活才可抢占；失败回滚锁。
+  4. 锁：执行互斥用**非阻塞文件锁** `tryAcquireFileSyncLock(".consolidate-running")`（`teams/file-lock.ts:208`），拿不到就直接放弃本轮；`.consolidate-lock` 不是执行锁，仅以 mtime 记录上次整合时间（整合成功后重写刷新 mtime，`memory/consolidation.ts:154-175`），供第 1 条时间门读取。
 - **执行**：起子 Agent（ReadFile/WriteFile/EditFile/Glob/Grep + 放宽读的 `MemoryPermissionChecker`，`maxIterations=15`），跑四阶段 prompt：
   - Phase 1 Orient：Glob 各记忆目录、读 MEMORY.md 与相关主题文件避免重复；
   - Phase 2 Gather：对疑似漂移核对当前证据；窄范围搜转录，不整文件读；
@@ -514,11 +520,11 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 
 ### 9.1 内置角色（`definition.ts`）
 
-| 角色              | 说明                                              | 限制                                               |
-| ----------------- | ------------------------------------------------- | -------------------------------------------------- |
-| `general-purpose` | 通用：研究复杂问题、探索代码库、执行多步任务      | 无                                                 |
-| `plan`            | 只读架构师：调研现状并给出具体实现计划            | 禁 EditFile/WriteFile，`permissionMode: plan`      |
-| `explore`         | 只读探索者：找代码、追调用路径、给 file:line 证据 | 禁 EditFile/WriteFile，`plan` 模式，`model: haiku` |
+| 角色              | 说明                                              | 限制                                                        |
+| ----------------- | ------------------------------------------------- | ----------------------------------------------------------- |
+| `general-purpose` | 通用：研究复杂问题、探索代码库、执行多步任务      | 无                                                          |
+| `plan`            | 只读架构师：调研现状并给出具体实现计划            | 禁 EditFile/WriteFile，`permissionMode: plan`               |
+| `explore`         | 只读探索者：找代码、追调用路径、给 file:line 证据 | 禁 EditFile/WriteFile，`plan` 模式，`model: deepseek-flash` |
 
 **自定义角色**：`~/.yukino/agents/*.md` 与 `<workDir>/.yukino/agents/*.md`（项目覆盖用户、用户覆盖内置）。frontmatter：`name`、`description`、`tools`(白名单)、`disallowed_tools`(黑名单)、`system_prompt`、`max_turns`、`model`、`background`、`isolation: worktree`；正文作为 `initialPrompt`。
 
@@ -527,7 +533,7 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 - **前台（默认）**：`Agent` 调用**阻塞**，子代理跑完把结果**内联**返回给父代理。
 - **后台**（`run_in_background=true`）：`startBackground` 用 `TaskManager.create` 起任务，**立即返回 task ID**；子代理完成后经 `formatAgentTaskNotification` 生成 `<task-notification task_id=... status=...>`，由父循环的 `notificationFn` 在下一轮排空成 `<system-reminder>`。可用 `TaskStop` 按 task_id 中止。
 - 自定义角色也可用 frontmatter `background: true` 默认后台。
-- **后台代理工具白名单**（`ASYNC_AGENT_ALLOWED_TOOLS`）：只保留 ReadFile/Grep/Glob/Bash/PowerShell/EditFile/WriteFile/LoadSkill/SyntheticOutput/ToolSearch/EnterWorktree/ExitWorktree/McpCall。
+- **后台代理工具白名单**（`ASYNC_AGENT_ALLOWED_TOOLS`）：只保留 ReadFile/WebFetch/Grep/Glob/Bash/PowerShell/EditFile/WriteFile/LoadSkill/SyntheticOutput/ToolSearch/EnterWorktree/ExitWorktree/McpCall。
 
 ### 9.3 上下文窗口 / 运行时继承策略（`spawn.ts`）
 
@@ -544,16 +550,15 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 - **迭代上限**：`definition.maxTurns ?? 200`。
 - **后台 shell**：每个子代理有自己的 `TaskManager`（`backgroundTasks` 默认 true），其内部 backgrounded Bash 通知自己的循环；子代理退出时 `stopAll()` 清理。in-process teammate 传 `backgroundTasks:false`（纯前台）。
 
-### 9.4 工具过滤（`tool-filter.ts`，多层）
+### 9.4 工具过滤（`tool-filter.ts`，五层）
 
-按序应用：
+按序应用（源码注释，tool-filter.ts:95-103）：
 
-1. **MCP 工具**（`mcp__*`）豁免 2–4 层，但仍受定义级黑白名单约束；
-2. `SUBAGENT_DISALLOWED_TOOLS`：全局禁（`MAIN_AGENT_ONLY_TOOLS`=ComputerUse/AskUserQuestion/ExitPlanMode，外加 Agent、TaskStop——防递归 spawning）；
-3. `CUSTOM_AGENT_DISALLOWED_TOOLS`：自定义代理额外限制；
-4. 后台代理套 `ASYNC_AGENT_ALLOWED_TOOLS` 白名单；
-5. 定义级 `disallowedTools` 黑名单；
-6. 定义级 `tools` 白名单交集（`"*"` 关闭此层）。
+1. **MCP 工具**（`mcp__*`）豁免第 2、3 层全局过滤，但仍受第 4、5 层定义级黑/白名单约束；
+2. `SUBAGENT_DISALLOWED_TOOLS`：全局禁（`MAIN_AGENT_ONLY_TOOLS`=ComputerUse/AskUserQuestion/ExitPlanMode，外加 Agent、TaskStop——防递归 spawning、防抢占主线程 UI 单例）；
+3. 后台代理套 `ASYNC_AGENT_ALLOWED_TOOLS` 白名单；
+4. 定义级 `disallowedTools` 黑名单；
+5. 定义级 `tools` 白名单交集（`"*"` 关闭此层）。
 
 fork 用 `cloneRegistryForFork`：只剥 `MAIN_AGENT_ONLY_TOOLS`，保留 Agent（打 fork 标记）与 TaskStop。
 
@@ -602,7 +607,7 @@ fork 用 `cloneRegistryForFork`：只剥 `MAIN_AGENT_ONLY_TOOLS`，保留 Agent�
 
 ### 10.5 teammate 主循环（in-process，`spawnInProcess`）
 
-```
+```text
 while active:
   result = runAgent(buildTeammatePrompt(team, name, nextPrompt), onEvent, signal)
   if checker.mode == "plan":  # plan-mode teammate

@@ -1,5 +1,6 @@
 ---
 title: "Data 工作: JSError 自动修复、视频切片聚类标签与手写 SWR"
+description: "Data 工作复盘: JSError 上报与故障现场还原 (rrweb/componentStack/sourcemap)、视频切片聚类标签、手写 SWR 数据请求方案"
 ---
 
 ## JSError 自动修复与故障现场还原
@@ -84,7 +85,7 @@ class MyBoundary extends React.Component {
 
 React 16 (dev 模式):
 
-```
+```text
     in Chat (at Chat.tsx:10)
     in MessagePanel (at MessagePanel.tsx:15)
     in App (at App.tsx:18)
@@ -92,7 +93,7 @@ React 16 (dev 模式):
 
 React 17+ (V8 / Chrome / Node.js 环境, dev 和 prod 均为此格式):
 
-```
+```text
     at Chat (http://localhost:3000/static/js/bundle.js:1234:5)
     at MessagePanel (http://localhost:3000/static/js/bundle.js:5678:10)
     at App (http://localhost:3000/static/js/bundle.js:9012:3)
@@ -100,7 +101,7 @@ React 17+ (V8 / Chrome / Node.js 环境, dev 和 prod 均为此格式):
 
 React 17+ (SpiderMonkey / Firefox 环境):
 
-```
+```text
     Chat@http://localhost:3000/static/js/bundle.js:1234:5
     MessagePanel@http://localhost:3000/static/js/bundle.js:5678:10
     App@http://localhost:3000/static/js/bundle.js:9012:3
@@ -110,7 +111,7 @@ React 17+ (SpiderMonkey / Firefox 环境):
 
 与 error.stack 的区别: 同一个错误, JS 调用栈是这样的:
 
-```
+```text
 TypeError: Cannot read properties of undefined (reading 'data')
     at Chat.render (Chat.tsx:10)
     at finishClassComponent (react-dom.development.js:17186)
@@ -140,7 +141,7 @@ TypeError: Cannot read properties of undefined (reading 'data')
 
 componentStack 的实现经历了根本性变化, 分水岭是 React 17. 不能用一套机制解释所有版本.
 
-React 16: 依赖构建期注入的 \_\_source
+React 16: 依赖构建期注入的 `__source`
 
 以下描述的是 React 16 的机制. React 16 的 componentStack 生成依赖一条构建期注入链路:
 
@@ -160,7 +161,7 @@ React 运行时在 fiber 协调阶段把 `__source` 存到 fiber 的 `_debugSour
 
 dev 模式下该插件启用, fiber 上有 `_debugSource`, componentStack 带源码位置:
 
-```
+```text
     in Chat (at Chat.tsx:10)
     in MessagePanel (at MessagePanel.tsx:15)
     in App (at App.tsx:18)
@@ -168,7 +169,7 @@ dev 模式下该插件启用, fiber 上有 `_debugSource`, componentStack 带源
 
 生产构建下该插件被禁用 (dev-only), JSX 编译结果里没有 `__source`, fiber 上拿不到 `_debugSource`, 生成 componentStack 时拼不出文件行号. 以下是线上真实采集到的 React 16 生产环境 componentStack:
 
-```
+```text
     in zu
     in Fu
     in Bu
@@ -195,7 +196,7 @@ React 源码中的关键函数是 describeNativeComponentFrame (位于 packages/
 
 这个机制不区分 dev/prod, 在生产环境同样生效. 以下是线上真实采集到的 React 17+ 生产环境 componentStack (Vite 构建, V8 环境):
 
-```
+```text
     at jd (http://localhost:4173/assets/index-W4hlOKTv.js:73:29266)
     at Dd (http://localhost:4173/assets/index-W4hlOKTv.js:73:28881)
     at Md (http://localhost:4173/assets/index-W4hlOKTv.js:73:29391)
@@ -222,14 +223,14 @@ Breaking Change 提示: 重建组件栈涉及重新执行组件的 render 函数
 
 对比总结:
 
-| 维度                  | React 16                                 | React 17+                                      |
-| --------------------- | ---------------------------------------- | ---------------------------------------------- |
-| 位置信息来源          | 构建期 \_\_source -> fiber \_debugSource | 运行时临时 Error 的原生栈帧                    |
-| dev 模式格式          | in Chat (at Chat.tsx:10)                 | at Chat (http://...bundle.js:1234:5)           |
-| prod 模式格式         | in s (仅组件名, 无位置)                  | s@http://...bundle.js:1:470 (有 bundle 行列号) |
-| prod 是否可用于定位   | 仅组件层级, 无定位价值                   | 配合 sourcemap 可反解到原始源码                |
-| 格式前缀              | 固定 in                                  | 随 JS 引擎变化 (V8: at, SpiderMonkey: 无前缀)  |
-| 对 \_debugSource 依赖 | 强依赖                                   | 不依赖                                         |
+| 维度                   | React 16                                  | React 17+                                      |
+| ---------------------- | ----------------------------------------- | ---------------------------------------------- |
+| 位置信息来源           | 构建期 `__source` -> fiber `_debugSource` | 运行时临时 Error 的原生栈帧                    |
+| dev 模式格式           | in Chat (at Chat.tsx:10)                  | at Chat (http://...bundle.js:1234:5)           |
+| prod 模式格式          | in s (仅组件名, 无位置)                   | s@http://...bundle.js:1:470 (有 bundle 行列号) |
+| prod 是否可用于定位    | 仅组件层级, 无定位价值                    | 配合 sourcemap 可反解到原始源码                |
+| 格式前缀               | 固定 in                                   | 随 JS 引擎变化 (V8: at, SpiderMonkey: 无前缀)  |
+| 对 `_debugSource` 依赖 | 强依赖                                    | 不依赖                                         |
 
 对监控侧的结论:
 
@@ -253,7 +254,7 @@ terser 默认 mangle 函数/类名, 线上 componentStack 里的组件名会变�
 keep_classnames / keep_fnames 的局限:
 
 - keep_classnames: true 只保护 class 声明的名称, 对函数组件无效
-- keep_fnames: true 保护函数声明 (function Chat() \{\}) 和具名函数表达式 (const Chat = function Chat() \{\}) 的名称, 但对箭头函数赋值 (const Chat = () => \{\}) 无效——箭头函数是匿名函数赋值给变量, 变量名 Chat 仍会被 mangle
+- keep_fnames: true 保护函数声明 (`function Chat() {}`) 和具名函数表达式 (`const Chat = function Chat() {}`) 的名称, 但对箭头函数赋值 (`const Chat = () => {}`) 无效——箭头函数是匿名函数赋值给变量, 变量名 Chat 仍会被 mangle
 - 现代 React 项目中函数组件大量使用箭头函数, keep_fnames 也救不了
 
 displayName 是最实用的方案:
@@ -964,7 +965,7 @@ yukino-sentry 的 client demo 给出了完整实现, 核心是自研构建插件
 
 约定:
 
-```
+```text
 src/pages/
 ├── page.tsx                 -> /
 ├── behavior/page.tsx        -> /behavior
@@ -1062,7 +1063,7 @@ export const routes: RouteObject[] = [
 
 2. CDN 响应头返回 Access-Control-Allow-Origin:
 
-```
+```text
 Access-Control-Allow-Origin: *
 # 或精确回源站域名
 Access-Control-Allow-Origin: https://www.example.com
@@ -1797,7 +1798,7 @@ Lab 用 headless 浏览器运行页面, 收集运行时数据, 产出性能指�
 
 ## 视频切片与 LLM 聚类标签: 真实实现记录
 
-> 本机器 demo 路径: $HOME/github/26autumn/packages/tags
+> demo 代码为工作期间的本地实现 (packages/tags, Golang), 未随仓库提交
 
 ### 项目背景
 
@@ -1832,7 +1833,7 @@ Go 社区没有成熟的纯 Go 视频编解码库, 社区共识是 "Go 负责编
 
 #### 3. 项目结构
 
-```
+```text
 packages/tags/
 ├── main.go                      # CLI: -config -input -output -segment -frames -concurrency
 ├── go.mod / go.sum              # module github.com/hangtiancheng/26autumn/docs/tags
@@ -1867,7 +1868,7 @@ ProbeDuration 用 ffprobe 拿容器时长 (实测视频 1447.72 秒). PlanSegmen
 
 每个切片不做逐帧分析, 抽 frames_per_segment (默认 3) 张代表帧, 采样位置是:
 
-```
+```text
 t(k) = start + span * (k + 0.5) / n,  k = 0, 1, ..., n-1
 ```
 
@@ -1897,7 +1898,7 @@ eino 的 schema.Message 用 UserInputMultiContent 字段承载多模态输入, �
 
 System Prompt 定义角色和输出规范:
 
-```
+```text
 你是一名视频内容分析专家, 负责分析视频切片的代表帧, 产出聚类标签.
 
 要求:
@@ -1914,8 +1915,8 @@ System Prompt 定义角色和输出规范:
 
 模型回复不保证干净, parseResult 做三层防御:
 
-1. 提取: 取回复中第一个 \{ 到最后一个 \} 之间的子串, 容忍 markdown 代码围栏和前后废话
-2. 反序列化: json.Unmarshal 到 \{labels, summary\} 结构
+1. 提取: 取回复中第一个 `{` 到最后一个 `}` 之间的子串, 容忍 markdown 代码围栏和前后废话
+2. 反序列化: `json.Unmarshal` 到 `{labels, summary}` 结构
 3. 归一化校验: 每个标签 trim、去空、去重, 数量上限 5 个; labels 为空视为非法
 
 #### 3. 重试与兜底: 保证每片必有标签
@@ -1984,7 +1985,7 @@ ffmpeg 9 抽帧报错 "Non full-range YUV is non-standard", 原因是源视频�
 
 改造方向是 BERTopic 式链路, 核心思想: 标签不是"生成"出来的, 而是先让数据自己聚成簇, 再让 LLM 给每个簇"命名". 五步流水线:
 
-```
+```text
 切片代表帧 -> 多模态表示 -> embedding 向量 -> UMAP 降维 -> HDBSCAN 聚类 -> LLM 簇级命名
 ```
 
@@ -2026,7 +2027,7 @@ HDBSCAN 的关键参数 min_cluster_size 按数据量定: 万级切片设 10~50,
 对每个簇:
 
 1. 采样: 取离簇质心最近的 K 个切片 (medoid, 比 centroid 附近随机采样更有代表性), 连同它们的文本描述、时间分布、簇规模组成上下文
-2. Prompt 要求输出 JSON: \{label, definition, boundary\}, label 是简短中文标签, definition 是簇的定义 (什么样的切片属于这个簇), boundary 给出边界判例 (什么样的内容不算这个簇). definition 和 boundary 是留给后续增量归簇和人工抽检用的
+2. Prompt 要求输出 JSON: `{label, definition, boundary}`, label 是简短中文标签, definition 是簇的定义 (什么样的切片属于这个簇), boundary 给出边界判例 (什么样的内容不算这个簇). definition 和 boundary 是留给后续增量归簇和人工抽检用的
 3. 注入已有标签体系, 优先复用已有标签, 控制标签膨胀
 
 调用次数 = 簇数. 内容平台的自然簇数通常在几百到几千量级, 与切片总量 (百万级) 相差三到四个数量级.
@@ -2129,8 +2130,8 @@ embedding 和聚类的生态在 Python (sentence-transformers、umap-learn、hdb
 
 ## 手写 SWR: 预加载 + 请求去重 + Stale-While-Revalidate
 
-> 本机器路径 $HOME/github/26autumn/packages/swr-demo
-> 本文基于 packages/swr-demo 项目, 梳理手写 SWR 数据请求方案的实现思路、与 vercel/swr 等现成方案的选型权衡, 以及 SWR 模式对前端性能的优化原理.
+> demo 代码为工作期间的本地实现 (packages/swr-demo), 未随仓库提交
+> 本文基于该 demo 项目, 梳理手写 SWR 数据请求方案的实现思路、与 vercel/swr 等现成方案的选型权衡, 以及 SWR 模式对前端性能的优化原理.
 
 ### 1. 业务背景: 这个方案解决什么问题
 

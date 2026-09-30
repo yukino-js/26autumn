@@ -1,5 +1,6 @@
 ---
 title: "yukino_rpc RPC 框架技术笔记"
+description: "yukino_rpc 自研 RPC 框架的源码级解析: 线协议、传输层多路复用、Future 异步模型、流式 RPC、熔断/限流/负载均衡与 etcd 服务发现"
 ---
 
 > 本机器路径: `$HOME/github/yukino.go/yukino_rpc`
@@ -12,21 +13,21 @@ title: "yukino_rpc RPC 框架技术笔记"
 
 yukino_rpc 采用严格的分层架构, 从上到下分为:
 
-| 层次       | 包路径                                                          | 职责                                                             |
-| ---------- | --------------------------------------------------------------- | ---------------------------------------------------------------- |
-| 公开 API   | `pkg/rpc`                                                       | 类型别名、Dial/NewServer 入口、ClientConn/Server 门面            |
-| 客户端逻辑 | `internal/client`                                               | 注册模式下的完整调用管线: 限流 -> 发现 -> 熔断 -> 连接池 -> 发送 |
-| 服务端逻辑 | `internal/server`                                               | Accept 循环、反射分发、流式处理、优雅关闭                        |
-| 传输层     | `internal/transport`                                            | TCP 连接管理、请求多路复用、Future、流帧缓冲、连接池             |
-| 协议层     | `internal/protocol`                                             | 二进制帧编解码、Magic 校验、Header 序列化                        |
-| 编解码层   | `internal/codec`                                                | Codec 接口、JSON/Protobuf 实现、Gzip 压缩                        |
-| 治理组件   | `internal/breaker`, `internal/limiter`, `internal/load_balance` | 熔断、限流、负载均衡                                             |
-| 注册中心   | `internal/registry`                                             | etcd v3 注册、发现、Watch                                        |
-| 流接口     | `internal/stream`                                               | ServerStream/ClientStream 接口定义 (避免包间耦合)                |
+| 层次       | 包路径                                                          | 职责                                                               |
+| ---------- | --------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 公开 API   | `pkg/rpc`                                                       | 类型别名、Dial/NewServer 入口、ClientConn/Server 门面              |
+| 客户端逻辑 | `internal/client`                                               | 注册模式下的完整调用管线: `限流 -> 发现 -> 熔断 -> 连接池 -> 发送` |
+| 服务端逻辑 | `internal/server`                                               | Accept 循环、反射分发、流式处理、优雅关闭                          |
+| 传输层     | `internal/transport`                                            | TCP 连接管理、请求多路复用、Future、流帧缓冲、连接池               |
+| 协议层     | `internal/protocol`                                             | 二进制帧编解码、Magic 校验、Header 序列化                          |
+| 编解码层   | `internal/codec`                                                | Codec 接口、JSON/Protobuf 实现、Gzip 压缩                          |
+| 治理组件   | `internal/breaker`, `internal/limiter`, `internal/load_balance` | 熔断、限流、负载均衡                                               |
+| 注册中心   | `internal/registry`                                             | etcd v3 注册、发现、Watch                                          |
+| 流接口     | `internal/stream`                                               | ServerStream/ClientStream 接口定义 (避免包间耦合)                  |
 
 调用链路 (注册模式 unary):
 
-```
+```text
 ClientConn.Invoke
   -> internal/client.Client.Invoke
     -> limiter.Allow()
@@ -64,7 +65,7 @@ type alias (`=`) 而非 type definition 意味着 `rpc.Future` 和 `transport.Fu
 
 `internal/server` 需要 `ServerStream` 接口做反射类型匹配 (判断方法第二参数是否为流), `internal/client` 需要 `ClientStream` 接口作为 `InvokeStream` 的返回类型. 如果 `ServerStream` 定义在 server 包, 而 client 或 pkg/rpc 需要引用它, 就必须导入 server 包, 导致不必要的耦合:
 
-```
+```text
 server  -> stream (反射匹配 ServerStream, 实现 serverStream)
 client  -> stream (InvokeStream 返回 ClientStream)
 pkg/rpc -> stream (re-export 两个接口)
@@ -72,7 +73,7 @@ pkg/rpc -> stream (re-export 两个接口)
 
 `internal/stream` 作为独立的接口包, 只定义接口不含实现, 被 server、client、pkg/rpc 同时引用, 避免了包间耦合:
 
-```
+```text
 server   -> stream (匹配 ServerStream 接口)
 client   -> stream (返回 ClientStream 接口)
 transport 的 ClientStreamConn 隐式实现 ClientStream (无需导入 stream)
@@ -84,7 +85,7 @@ transport 的 ClientStreamConn 隐式实现 ClientStream (无需导入 stream)
 
 ### 请描述 yukino_rpc 的线协议帧格式
 
-```
+```text
 +--------+-----------+---------+----------------+--------------+
 | Magic  | HeaderLen | BodyLen |  Header(JSON)  | Body(bytes)  |
 | 2 byte | 4 byte    | 4 byte  |    N byte      |    M byte    |
@@ -161,7 +162,7 @@ msg := &protocol.Message{
 - 每帧一次 `gzip.Writer` + `gzip.Reader`, CPU 开销在高 QPS 场景下不可忽略.
 - 无法通过配置关闭, 对延迟敏感的小包场景不友好.
 
-改进方向: 增加阈值判断 (如 Body < 256 字节时不压缩) 或暴露 `WithCompression(None)` 选项.
+改进方向: 增加阈值判断 (如 Body 小于 256 字节时不压缩) 或暴露 `WithCompression(None)` 选项.
 
 ### Codec 注册机制是怎样的? Protobuf Codec 有什么约束?
 
@@ -410,7 +411,7 @@ future.OnComplete(func(err error) {
 1. 恰好一次: `OnComplete` 存储在 Future 的单一 slot 中, `Done` 幂等保证回调最多触发一次.
 2. 锁外执行: `Done` 在释放 `mu` 之后才调用 `onComplete`, 避免回调内部 (断路器加锁) 与 Future 锁形成死锁.
 3. 即时触发: 如果注册 `OnComplete` 时 Future 已经完成, 回调立即执行, 不会丢失.
-4. 完整覆盖: 响应错误、超时 (通过强制 Done) 都会触发回调; 发送失败 (连接池 Acquire 失败或 `SendAsyncWithCodec` 返回 err) 时 Future 尚未创建, 直接在 `invokeAsync` 中调用 `br.RecordFailure()` (invoke.go:163-166, 183-186), 不经回调. 断路器统计基本不遗漏, 唯一盲区是 `codec.Marshal(args)` 序列化失败 (invoke.go:169-172, InvokeStream 同理) : 既不 RecordFailure 也不创建 Future, 该次已通过 `breaker.Allow()` 的调用不会计入窗口.
+4. 完整覆盖: 响应错误、超时 (通过强制 Done) 都会触发回调; 发送失败 (连接池 Acquire 失败或 `SendAsyncWithCodec` 返回 err) 时 Future 尚未创建, 直接在 `invokeAsync` 中调用 `br.RecordFailure()` (invoke.go:144-147, 164-167), 不经回调. 断路器统计基本不遗漏, 唯一盲区是 `codec.Marshal(args)` 序列化失败 (invoke.go:149-152, InvokeStream 同理) : 既不 RecordFailure 也不创建 Future, 该次已通过 `breaker.Allow()` 的调用不会计入窗口.
 
 ### InvokeAsync 的超时看门狗是如何工作的?
 
@@ -437,7 +438,7 @@ func (c *Client) InvokeAsync(ctx, service, method, args) (*Future, error) {
 
 - 看门狗是独立 goroutine, 不阻塞调用者. timer 在 goroutine 内部创建, 避免跨 goroutine 共享.
 - `defer timer.Stop()` 保证无论正常完成还是超时, 定时器资源都被回收.
-- 超时后 `Done(nil, context.DeadlineExceeded)` 触发 OnComplete -> 断路器记录失败.
+- 超时后 `Done(nil, context.DeadlineExceeded)` 触发 OnComplete, 断路器记录失败.
 - 与 `Invoke` (同步) 的区别: Invoke 使用 `context.WithTimeout` + `GetResultWithContext`, 超时后主动 Done; InvokeAsync 使用独立定时器, 调用者可以在任意时刻通过 `future.Wait()` 系列方法获取结果.
 
 ---
@@ -475,7 +476,7 @@ Method(req *T, stream ServerStream) error
 反射调用流程:
 
 1. `reflect.New(methodType.In(1).Elem())` 分配请求对象.
-2. `len(body) > 0` 时 `codec.Unmarshal(body, req.Interface())` 反序列化, 空 body 跳过 (handler.go:161-165, 188-192) .
+2. `len(body) > 0` 时 `codec.Unmarshal(body, req.Interface())` 反序列化, 空 body 跳过 (handler.go:141-145, 168-172) .
 3. `safeCall(method, args)` 执行 (带 panic 恢复).
 4. 流式: 启动独立 goroutine, 返回 `(nil, true, nil)` 告知 Process 跳过响应写入.
 5. Unary: 返回结果值, 由 Process 序列化并写回.
@@ -516,7 +517,7 @@ func safeCall(method reflect.Value, args []reflect.Value) (results []reflect.Val
 
 GracefulStop 流程:
 
-```
+```text
 beginShutdown() [once: close(closing), close(listener)]
   -> serveWg.Wait() [等待 accept 循环退出]
   -> 遍历 conns: SetReadDeadline(time.Now()) [中断空闲读]
@@ -596,18 +597,18 @@ func (h *Handler) Process(conn, msg, service, streamWg) {
 2. `Handler.invoke` 匹配流式签名, 构造 `serverStream{conn, requestID, codec, ctx}`.
 3. 启动独立 goroutine 执行业务 handler.
 4. 业务代码循环调用 `stream.Send(msg)`:
-   - Marshal msg -> 构造 `StreamFlag=StreamData` 帧 -> Write.
-5. Handler 返回 nil -> 框架发送 `StreamFlag=StreamEnd` 帧 (空 body).
-6. Handler 返回 error -> 框架发送 `StreamFlag=StreamError` 帧 (Header.Error 携带错误).
+   - Marshal msg, 构造 `StreamFlag=StreamData` 帧, Write.
+5. Handler 返回 nil, 框架发送 `StreamFlag=StreamEnd` 帧 (空 body).
+6. Handler 返回 error, 框架发送 `StreamFlag=StreamError` 帧 (Header.Error 携带错误).
 
 客户端:
 
 1. `NewStream` 发送请求, 创建 `ClientStreamConn` 存入 `streams` map.
-2. readLoop 收到 StreamData 帧 -> `Push(body)` 到 64 帧缓冲 channel.
+2. readLoop 收到 StreamData 帧, `Push(body)` 到 64 帧缓冲 channel.
 3. 业务代码循环 `stream.Recv(&msg)`:
-   - 从 channel 取帧 -> Unmarshal -> 返回.
-4. readLoop 收到 StreamEnd -> `End()` -> `terminate(io.EOF)` -> close(termCh).
-5. `Recv` 排空缓冲后检测到 termCh 关闭 -> 返回 `io.EOF`.
+   - 从 channel 取帧, Unmarshal, 返回.
+4. readLoop 收到 StreamEnd, 依次触发 `End()`、`terminate(io.EOF)`、close(termCh).
+5. `Recv` 排空缓冲后检测到 termCh 关闭, 返回 `io.EOF`.
 
 终结保证: 无论 handler 正常返回、panic、还是连接断开, 客户端的 Recv 最终都会返回 (io.EOF 或 error), 不会永久阻塞.
 
@@ -691,7 +692,7 @@ drain 语义保证: 在 StreamEnd 之前发送的所有数据帧, 客户端都�
 
 ### 为什么只支持 Server Streaming 而不支持 Client/Bidirectional Streaming?
 
-协议层面的限制: `StreamFlag` 只有 4 个值 (None/Data/End/Error), 且所有流帧都是服务端 -> 客户端方向. 没有定义客户端发送流数据帧的 codepoint.
+协议层面的限制: `StreamFlag` 只有 4 个值 (None/Data/End/Error), 且所有流帧都是服务端到客户端方向. 没有定义客户端发送流数据帧的 codepoint.
 
 Server Streaming 的简化假设:
 
@@ -716,7 +717,7 @@ Server Streaming 的简化假设:
 
 每次 `Invoke`/`InvokeAsync`/`InvokeStream` 都经过完整的治理管线:
 
-```
+```text
 1. limiter.Allow()
    |-- 拒绝 -> "rate limit exceeded"
    v
@@ -760,7 +761,7 @@ Server Streaming 的简化假设:
 
 ### 断路器的三态状态机是如何工作的?
 
-```
+```text
          失败率 >= 60%
 Closed ─────────────────> Open
   ^                         |
@@ -779,7 +780,7 @@ Closed 状态:
 
 - 每次调用记录 Success/Failure, 累计到窗口.
 - 当 `successCount + failureCount >= windowSize` 时:
-  - `failureCount / total >= 0.6` -> 转 Open.
+  - `failureCount / total >= 0.6` 则转 Open.
   - 否则重置窗口 (清零计数), 开始新一轮统计.
 
 Open 状态:
@@ -790,8 +791,8 @@ Open 状态:
 HalfOpen 状态:
 
 - `halfOpenProbe` 标志确保只有一个探测请求通过.
-- 探测成功 -> Closed (重置所有计数).
-- 探测失败 -> Open (重新开始计时).
+- 探测成功转 Closed (重置所有计数).
+- 探测失败转 Open (重新开始计时).
 
 同步: 单个 `sync.Mutex` 保护所有状态转换, 无 atomic.
 
@@ -823,9 +824,9 @@ func (s *observedStream) Recv(msg any) error {
 
 设计决策:
 
-- `io.EOF` (流正常结束) -> 记录成功, 使用 `errors.Is` 匹配.
-- `context.Canceled` (调用者主动取消) -> 忽略, 不算服务失败.
-- 其他错误 (网络断开、服务端错误) -> 记录失败.
+- `io.EOF` (流正常结束) 记录成功, 使用 `errors.Is` 匹配.
+- `context.Canceled` (调用者主动取消) 忽略, 不算服务失败.
+- 其他错误 (网络断开、服务端错误) 记录失败.
 - `sync.Once` 保证每个流最多记录一次, 避免一个流的多次 Recv 错误重复计入.
 
 ### 令牌桶限流器的实现有什么特点?
@@ -844,7 +845,7 @@ type TokenBucket struct {
 
 - 初始 tokens = rate (burst 容量等于一秒的速率).
 - 后台 goroutine 每秒 `time.Ticker` 重置 `tokens = rate` (固定窗口, 非平滑补充).
-- `Allow()`: 加锁, tokens > 0 则减一返回 true, 否则 false.
+- `Allow()`: 加锁, `tokens > 0` 则减一返回 true, 否则 false.
 - `Stop()`: `once.Do(close(stop))` 停止补充 goroutine.
 - 负 rate 钳位为 0 (永远拒绝).
 
@@ -865,7 +866,7 @@ type RoundRobin struct { idx atomic.Uint64 }
 
 func (r *RoundRobin) Select(list []Instance) Instance {
     if len(list) == 0 {
-        return Instance{}  // 空列表防御 (round_robin.go:39-41)
+        return Instance{}  // 空列表防御 (round_robin.go:19-21)
     }
     i := r.idx.Add(1)
     return list[(i-1) % uint64(len(list))]
@@ -883,7 +884,7 @@ type Random struct { r *rand.Rand; m sync.Mutex }
 
 func (r *Random) Select(list []Instance) Instance {
     if len(list) == 0 {
-        return Instance{}  // 空列表防御 (random.go:43-45)
+        return Instance{}  // 空列表防御 (random.go:23-25)
     }
     r.m.Lock()
     defer r.m.Unlock()
@@ -897,7 +898,7 @@ func (r *Random) Select(list []Instance) Instance {
 WeightedRR (平滑加权轮询, Nginx 算法):
 
 ```go
-// 每次 Select (前置防御: len(list)==0、len(list)!=len(weights)、totalWeight<=0 均返回零值 Instance, weighted_rr.go:56-69):
+// 每次 Select (前置防御: len(list)==0、len(list)!=len(weights)、totalWeight<=0 均返回零值 Instance, weighted_rr.go:37-49):
 for i := range weights { currentWeight[i] += weights[i] }
 maxIdx := index of max(currentWeight)
 currentWeight[maxIdx] -= totalWeight
@@ -944,7 +945,7 @@ func (r *Registry) copyInstances(service string) []Instance {
 
 注册 (服务端):
 
-```
+```text
 reg.Register("Math", Instance{Addr: "10.0.0.5:8080"}, ttl=10)
   1. client.Grant(ctx, 10)  -> 获取 10s Lease
   2. client.Put(ctx, key, addr, WithLease(leaseID))
@@ -955,7 +956,7 @@ reg.Register("Math", Instance{Addr: "10.0.0.5:8080"}, ttl=10)
 
 发现 (客户端):
 
-```
+```text
 reg.Discover("Math")
   1. RLock 检查本地缓存 -> 命中则返回防御性拷贝
   2. 未命中: Lock, double-check, etcd Get(prefix) 全量拉取
@@ -966,7 +967,7 @@ reg.Discover("Math")
 
 Watch 增量更新:
 
-```
+```text
 watch(service):
   for {
     watchCh := client.Watch(ctx, prefix, WithPrefix())
@@ -1026,7 +1027,7 @@ go func() {
 
 首次 Discover (冷启动):
 
-1. RLock 检查 `services[service]` -> nil.
+1. RLock 检查 `services[service]`, 结果为 nil.
 2. 升级为 Lock, double-check (防止并发初始化).
 3. etcd `Get` with prefix: 全量拉取该服务所有实例.
 4. 构建 `map[addr]Instance` 存入缓存.
@@ -1035,17 +1036,17 @@ go func() {
 
 后续 Discover (热路径):
 
-1. RLock 读缓存 -> 命中.
+1. RLock 读缓存, 命中.
 2. 构建新切片拷贝 (防止调用者修改内部状态).
 3. 返回.
 
 Watch 持续更新:
 
-- PUT 事件: 新实例上线 (显式 client.Put 注册) -> 更新缓存. 注意: Lease 续约 (KeepAlive) 只刷新 TTL, 不产生 Watch PUT 事件.
-- DELETE 事件: 实例下线或 Lease 过期 -> 删除缓存.
+- PUT 事件: 新实例上线 (显式 client.Put 注册), 更新缓存. 注意: Lease 续约 (KeepAlive) 只刷新 TTL, 不产生 Watch PUT 事件.
+- DELETE 事件: 实例下线或 Lease 过期, 删除缓存.
 - Watch 断开: 1s 退避后重建 Watch (期间缓存可能过期).
 
-一致性保证: 最终一致. Watch 事件有延迟 (通常 <100ms), 新上线的实例不会立即被发现, 下线的实例在事件到达前仍会被路由到.
+一致性保证: 最终一致. Watch 事件有延迟 (通常小于 100ms), 新上线的实例不会立即被发现, 下线的实例在事件到达前仍会被路由到.
 
 ---
 
@@ -1088,10 +1089,10 @@ Watch 持续更新:
 
 使用场景:
 
-1. `TCPClient.pending`: RequestID -> Future, 高并发读写 (每次请求 Store+Delete, readLoop 频繁 LoadAndDelete).
-2. `TCPClient.streams`: RequestID -> ClientStreamConn, 同上.
-3. `Client.pools`: addr -> ConnectionPool, 懒初始化 (LoadOrStore).
-4. `Client.breaker`: "service|addr" -> CircuitBreaker, 同上.
+1. `TCPClient.pending`: `RequestID -> Future`, 高并发读写 (每次请求 Store+Delete, readLoop 频繁 LoadAndDelete).
+2. `TCPClient.streams`: `RequestID -> ClientStreamConn`, 同上.
+3. `Client.pools`: `addr -> ConnectionPool`, 懒初始化 (LoadOrStore).
+4. `Client.breaker`: `"service|addr" -> CircuitBreaker`, 同上.
 
 选择理由:
 

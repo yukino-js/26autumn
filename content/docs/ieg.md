@@ -1,5 +1,6 @@
 ---
 title: "IEG 工作: NoSQL 管理端四项工程实践"
+description: "IEG 工作复盘: 类组件迁移函数组件、进程池与 ffi 内存模型、TCP 连接池、闭包内存泄漏排查"
 ---
 
 ## IEG 工作 1: 迁移类组件到函数组件
@@ -32,7 +33,7 @@ IEG 的 ToB 项目是腾讯 NoSQL 的管理端, 页面上存在多个公共选�
 
 - componentDidMount 对应 useEffect(fn, []), 但注意 effect 是在浏览器绘制后异步执行, 和 componentDidMount 的时机有细微差别; 需要在绘制前同步读 DOM 的场景要用 useLayoutEffect
 - componentDidUpdate 对应带依赖数组的 useEffect, 依赖必须列全, 漏列会拿到过期值
-- componentWillUnmount 对应 effect 的清理函数 return () => \{\}
+- componentWillUnmount 对应 effect 的清理函数 `return () => {}`
 - shouldComponentUpdate 对应 React.memo 包裹组件, 配合 useMemo/useCallback 稳定引用
 - getDerivedStateFromProps 这类"从 props 派生 state"的逻辑, 优先改成渲染期直接计算或 useMemo, 而不是再存一份 state
 - 无法迁移的部分: 错误边界 (static getDerivedStateFromError, 配合 componentDidCatch) 没有 hook 等价物, 这类组件必须保留类组件
@@ -478,7 +479,7 @@ function load(key, bigValue) {
 按泄漏模式对症:
 
 - 定时器: 保存句柄, 在明确的生命周期点 clearInterval/clearTimeout; 服务类对象要有 dispose 语义
-- 事件监听: 注册和移除成对出现; Node 侧可以用 \{ once: true \} 或 AbortController 统一管理移除
+- 事件监听: 注册和移除成对出现; Node 侧可以用 `{ once: true }` 或 AbortController 统一管理移除
 - 缓存: 加淘汰策略, 容量上限用 lru (参考 Tiktok 项目的 lru 实现), 或键是对象时改用 WeakMap, 让条目随键的回收自动消失
 - 缩小闭包捕获面: 把大对象的使用收敛到局部, 注册回调前把需要的字段提取成小变量, 避免闭包拖着整个大作用域; 必要时把注册逻辑拆到独立函数, 切断与大作用域的联系
 - 全局引用: 代码审查中禁止随手挂全局, 调试代码不进主干

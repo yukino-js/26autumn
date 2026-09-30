@@ -19,7 +19,7 @@ export const linkItems: LinkItemType[] = [
     active: "nested-url",
   },
   {
-    text: "工作笔记",
+    text: "工作文档",
     url: "/docs",
     icon: <NotebookPen />,
     active: "nested-url",

@@ -1,5 +1,6 @@
 ---
 title: "Tiktok 工作: 设备性能采集、数据链路、RPC、BFF 与虚拟滚动"
+description: "TikTok 工作复盘: Android 设备性能采集 (perfetto 插桩与抓栈)、数据链路存储选型、RPC 与 BFF 分层、虚拟滚动实现"
 ---
 
 ## Tiktok 设备性能数据采集: perfetto 与两种采集方法
@@ -121,7 +122,7 @@ Tiktok 项目使用 perfetto 在海量 Android 端设备侧采集设备性能数
 
 整体链路:
 
-```
+```text
 Android 设备侧采集 -> 上报网关 -> Kafka -> 消费任务分发
                                           -> Hive (离线全量)
                                           -> ClickHouse (实时聚合)
@@ -273,13 +274,13 @@ BFF 拿到 rpc 返回的数据后做清洗、整形, 再暴露 http 接口给前
 
 Tiktok 项目实际的链路是:
 
-```
+```text
 数据库 -> 后端 (Go + Kitex) -> rpc -> 前端 BFF (Nest.js) -> http -> 前端页面 (React)
 ```
 
 一个自然的疑问是: 为什么不省掉 BFF, 让后端直接暴露 http 接口给前端页面:
 
-```
+```text
 数据库 -> 后端 (Go + Kitex) -> http -> 前端页面 (React)
 ```
 

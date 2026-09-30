@@ -1,5 +1,6 @@
 ---
 title: "yukino_http 技术笔记"
+description: "yukino_http Go HTTP 框架的源码级解析: 洋葱模型中间件、延迟响应、Trie 路由、SSE 与 WebSocket (RFC 6455)"
 ---
 
 > 本机器路径: `$HOME/github/yukino.go/yukino_http`
@@ -17,7 +18,7 @@ A: yukino_http 是一个受 Koa.js 启发的 Go HTTP 框架, 核心设计理念�
 
 架构分层:
 
-```
+```text
 Application (yukino.go)
   ├── router (router.go + trie.go)    -- 路由注册与匹配
   ├── Router (group.go)            -- 嵌套 Router 实现路由分组、前缀、静态文件
@@ -30,7 +31,7 @@ Application (yukino.go)
 
 请求生命周期:
 
-```
+```text
 http.Server -> Application.ServeHTTP
   -> 收集匹配前缀的中间件
   -> router.handle(ctx, middlewares)
@@ -46,7 +47,7 @@ http.Server -> Application.ServeHTTP
 
 请详细解释 compose 函数的实现原理, 它如何保证洋葱模型的执行顺序? 如何防止 next() 被多次调用?
 
-A: `compose` 函数位于 `yukino.go:132-153`, 核心实现:
+A: `compose` 函数位于 `yukino.go:112-133`, 核心实现:
 
 ```go
 func compose(middlewares []Middleware, final Middleware) func(ctx *Context) {
@@ -80,8 +81,8 @@ func compose(middlewares []Middleware, final Middleware) func(ctx *Context) {
 3. final 参数: 路由 handler 作为 `final` 传入, 在所有中间件执行完后调用. final 收到的 `next` 是空函数 `func() {}`, 防止 handler 内部误调 next.
 
 4. 执行顺序示例: 对于 `[Logger, Recovery, Auth]` + handler:
-   - 进入: Logger.before -> Recovery.before -> Auth.before -> handler
-   - 退出: Auth.after -> Recovery.after -> Logger.after
+   - 进入: `Logger.before -> Recovery.before -> Auth.before -> handler`
+   - 退出: `Auth.after -> Recovery.after -> Logger.after`
 
 这使得 Logger 可以在 `next()` 后记录耗时, Recovery 可以在 `next()` 后捕获 panic.
 
@@ -99,7 +100,7 @@ A: 延迟响应是 Koa.js 的核心设计: 中间件不直接操作 `http.Respon
 - 避免"header 已发送"的不可逆问题
 - 错误处理中间件可以覆盖之前设置的 Body
 
-Status 自动提升 (`response.go:34-38`) :
+Status 自动提升 (`response.go:14-18`) :
 
 ```go
 func (ctx *Context) promoteStatus() {
@@ -111,7 +112,7 @@ func (ctx *Context) promoteStatus() {
 
 默认 Status 为 404. 当调用 `ctx.JSON()`、`ctx.String()` 等方法设置 Body 时, 如果用户未显式调用 `SetStatus()`, 则自动提升为 200. 这模拟了 Koa 中"设置 body 即意味着 200"的语义.
 
-respond() 的类型分发 (`response.go:93-130`) :
+respond() 的类型分发 (`response.go:98-109`) :
 
 ```go
 switch body := ctx.Body.(type) {
@@ -170,7 +171,7 @@ type node struct {
 
 addRoute 中为什么要做 pattern 规范化? getRoute 如何提取路径参数?
 
-A: Pattern 规范化 (`router.go:54-66`) :
+A: Pattern 规范化 (`router.go:34-46`) :
 
 ```go
 parts := parsePattern(pattern)
@@ -182,7 +183,7 @@ key := method + "-" + pattern
 
 如果不做规范化, 先注册 `/users/` 再注册 `/users`, 两次注册走同一条 trie 路径 (段都是 `users`) , 后一次会把 trie 叶节点的 pattern 覆盖为 `/users`; 查找时按最终 pattern 拼 key `GET-/users`, 命中的是后注册的 handler——先注册的 handler 永远不会被命中, 被静默遮蔽.
 
-参数提取 (`router.go:68-92`) :
+参数提取 (`router.go:61-70`) :
 
 ```go
 parts := parsePattern(n.pattern)  // 注册时的模式段
@@ -220,7 +221,7 @@ type Router struct {
 
 `app.Router("/api")` 创建子 Router, 其 prefix 为父 prefix + 规范化后的新前缀. 子 Router 注册路由时, pattern = prefix + comp.
 
-中间件收集 (`yukino.go:120-130`) :
+中间件收集 (`yukino.go:100-110`) :
 
 ```go
 func (app *Application) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -236,7 +237,7 @@ func (app *Application) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 遍历所有已注册的 Router, 将前缀匹配的 Router 的中间件按注册顺序收集. 这意味着嵌套分组的中间件会层层叠加.
 
-matchRouterPath 边界匹配 (`group.go:186-194`) :
+matchRouterPath 边界匹配 (`group.go:166-174`) :
 
 ```go
 func matchRouterPath(requestPath, routerPrefix string) bool {
@@ -252,7 +253,7 @@ func matchRouterPath(requestPath, routerPrefix string) bool {
 
 必须检查前缀后的字符是 `/` 或已到末尾. 否则 prefix `/api` 会错误匹配 `/apikeys`, 导致 `/apikeys` 请求被施加 `/api` 分组的中间件.
 
-normalizePrefix (`group.go:50-64`) : 确保前缀以 `/` 开头、不以 `/` 结尾 (根 `/` 转为空串) . 注释说明了不做规范化会导致 trie 注册可达但中间件永远不匹配的 bug.
+normalizePrefix (`group.go:30-44`) : 确保前缀以 `/` 开头、不以 `/` 结尾 (根 `/` 转为空串) . 注释说明了不做规范化会导致 trie 注册可达但中间件永远不匹配的 bug.
 
 ---
 
@@ -260,7 +261,7 @@ normalizePrefix (`group.go:50-64`) : 确保前缀以 `/` 开头、不以 `/` 结
 
 Context 的设计有哪些 Koa 风格的特征? State 和 Params 的用途是什么? Throw 的设计意图?
 
-A: Context 结构 (`context.go:33-57`) :
+A: Context 结构 (`context.go:13-37`) :
 
 ```go
 type Context struct {
@@ -286,7 +287,7 @@ Koa 风格特征:
 - `Body` 为 `any`: 等价于 Koa 的 `ctx.body`, 支持任意类型, 由 respond() 根据类型分发序列化
 - `Throw(status, msg)`: 等价于 Koa 的 `ctx.throw()`, 设置状态码并生成错误 Body
 
-Throw 的统一错误格式 (`context.go:71-77`) :
+Throw 的统一错误格式 (`context.go:51-57`) :
 
 ```go
 func (ctx *Context) Throw(status int, msg string) {
@@ -300,7 +301,7 @@ func (ctx *Context) Throw(status int, msg string) {
 
 statusSet 标志: 区分"用户显式设置的状态码"和"默认 404". `SetStatus()` 和 `Throw()` 设置 `statusSet = true`, 防止 `promoteStatus()` 将其覆盖为 200.
 
-BindJSON (`context.go:108-111`) : 使用 `json.NewDecoder` 流式解码, 比 `io.ReadAll` + `json.Unmarshal` 更省内存 (不需要先读全部 body 到内存) .
+BindJSON (`context.go:88-91`) : 使用 `json.NewDecoder` 流式解码, 比 `io.ReadAll` + `json.Unmarshal` 更省内存 (不需要先读全部 body 到内存) .
 
 ---
 
@@ -308,7 +309,7 @@ BindJSON (`context.go:108-111`) : 使用 `json.NewDecoder` 流式解码, 比 `io
 
 Recovery 中间件如何工作? 为什么要特殊处理 http.ErrAbortHandler? trace 函数的实现细节?
 
-A: Recovery 实现 (`recovery.go:49-70`) :
+A: Recovery 实现 (`recovery.go:29-50`) :
 
 ```go
 func Recovery() Middleware {
@@ -340,7 +341,7 @@ ctx.Body = H{"message": "Internal Server Error"}
 
 清除 headers 是因为 panic 前可能已设置了不完整的 header (如部分 CORS header) , 保留它们可能导致不一致的响应.
 
-trace 函数 (`recovery.go:31-47`) :
+trace 函数 (`recovery.go:11-27`) :
 
 ```go
 func trace(message string) string {
@@ -359,7 +360,7 @@ func trace(message string) string {
 
 Static 方法如何实现静态文件服务? 为什么需要 statusRecorder? staticFileExists 的设计考量?
 
-A: 注册 (`group.go:111-115`) :
+A: 注册 (`group.go:91-95`) :
 
 ```go
 func (r *Router) Static(relativePath string, root string) {
@@ -371,7 +372,7 @@ func (r *Router) Static(relativePath string, root string) {
 
 利用通配路由 `/*filepath` 捕获文件路径, 再交给 `http.FileServer` 处理.
 
-createStaticHandler (`group.go:117-136`) :
+createStaticHandler (`group.go:97-116`) :
 
 ```go
 fileServer := http.StripPrefix(absolutePath, http.FileServer(fs))
@@ -397,7 +398,7 @@ return func(ctx *Context, next func()) {
 2. 刷新延迟 header: 上游中间件 (如 CORS) 通过 `ctx.Set()` 设置的 header 必须在 FileServer 写入前刷到 ResponseWriter
 3. 设置 flushed = true: 阻止 `respond()` 再次写入
 
-statusRecorder (`group.go:164-184`) :
+statusRecorder (`group.go:144-164`) :
 
 ```go
 type statusRecorder struct {
@@ -409,7 +410,7 @@ type statusRecorder struct {
 
 FileServer 内部直接调用 `WriteHeader()`, 绕过了 Context 的延迟响应. statusRecorder 拦截 `WriteHeader` 和 `Write` 调用, 将实际状态码同步回 `ctx.Status`, 使 Logger 等后续中间件能记录正确的状态码.
 
-staticFileExists (`group.go:141-160`) :
+staticFileExists (`group.go:121-140`) :
 
 - 打开文件后立即关闭 (避免 fd 泄漏)
 - 目录仅在包含 `index.html` 时视为存在 (匹配 koa-static 行为)
@@ -421,7 +422,7 @@ staticFileExists (`group.go:141-160`) :
 
 SSE 实现如何保证线程安全? Heartbeat 的 goroutine 生命周期如何管理? Stream 方法的设计?
 
-A: SSEWriter 初始化 (`sse.go:38-51`) :
+A: SSEWriter 初始化 (`sse.go:18-31`) :
 
 ```go
 func (ctx *Context) SSE() *SSEWriter {
@@ -456,7 +457,7 @@ func (w *SSEWriter) Event(event string, data string) {
 
 这允许多个 goroutine 并发向同一 SSE 连接推送事件 (如多个 worker 向同一客户端推送进度) .
 
-writeData 的多行处理 (`sse.go:160-166`) :
+writeData 的多行处理 (`sse.go:140-146`) :
 
 ```go
 func (w *SSEWriter) writeData(data string) {
@@ -470,7 +471,7 @@ func (w *SSEWriter) writeData(data string) {
 
 SSE 协议要求多行数据每行都以 `data: ` 前缀, 最后以空行结束事件.
 
-Heartbeat 生命周期管理 (`sse.go:106-132`) :
+Heartbeat 生命周期管理 (`sse.go:86-112`) :
 
 ```go
 func (w *SSEWriter) Heartbeat(interval time.Duration) func() {
@@ -501,7 +502,7 @@ func (w *SSEWriter) Heartbeat(interval time.Duration) func() {
 
 返回的 stop 函数使用 `sync.Once` 保证幂等, `<-done` 确保 goroutine 完全退出 (无泄漏) . select 有三条路径: ticker 触发发送心跳、客户端断开 (Request Context Done) 退出循环、主动调用 stop 退出循环.
 
-Stream 方法 (`sse.go:138-150`) : 阻塞式消费 channel, 适合将上游 channel (如 LLM 流式输出) 直接桥接到 SSE:
+Stream 方法 (`sse.go:118-130`) : 阻塞式消费 channel, 适合将上游 channel (如 LLM 流式输出) 直接桥接到 SSE:
 
 ```go
 func (w *SSEWriter) Stream(ch <-chan string) {
@@ -523,7 +524,7 @@ func (w *SSEWriter) Stream(ch <-chan string) {
 
 WebSocket 握手过程如何实现? 为什么选择 Hijack 而非标准 ResponseWriter? CheckOrigin 的安全意义?
 
-A: 握手流程 (`websocket.go:91-178`) :
+A: 握手流程 (`websocket.go:71-158`) :
 
 1. 验证请求: 检查 Method == GET、Connection: upgrade、Upgrade: websocket、Sec-WebSocket-Version: 13、Sec-WebSocket-Key 非空
 2. 子协议协商: `negotiateSubprotocol` 按服务端优先级匹配客户端提供的协议列表
@@ -533,7 +534,7 @@ A: 握手流程 (`websocket.go:91-178`) :
 
 为什么用 Hijack: WebSocket 升级后, 连接不再是 HTTP 语义——需要双向、全双工通信. 标准 `http.ResponseWriter` 只能写响应, 无法读取后续帧. Hijack 将底层 TCP 连接的所有权从 `net/http` 转移到应用层.
 
-Accept Key 计算 (`websocket.go:541-546`) :
+Accept Key 计算 (`websocket.go:521-526`) :
 
 ```go
 func computeAcceptKey(key string) string {
@@ -548,7 +549,7 @@ RFC 6455 规定: 将客户端 Key 与固定 GUID 拼接后 SHA-1 再 Base64.
 
 CheckOrigin 安全意义: WebSocket 不受同源策略限制 (浏览器不会自动拦截跨域 WS 请求) . 如果不校验 Origin, 恶意网站可以建立到服务器的 WebSocket 连接, 利用用户的 Cookie 进行 CSRF 攻击. 默认不设置 CheckOrigin 时跳过检查 (开发便利) , 生产环境应配置.
 
-bufio.Reader 复用 (`websocket.go:139-150`) :
+bufio.Reader 复用 (`websocket.go:119-130`) :
 
 ```go
 if brw.Reader.Buffered() > 0 {
@@ -570,7 +571,7 @@ readFrame 如何解析 WebSocket 帧? readMessage 如何处理分片消息? 有�
 
 A: 帧格式 (RFC 6455 Section 5.2) :
 
-```
+```text
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-------+-+-------------+-------------------------------+
@@ -583,13 +584,13 @@ A: 帧格式 (RFC 6455 Section 5.2) :
 +-------------------------------------+-------------------------+
 ```
 
-readFrame 实现 (`websocket.go:378-443`) :
+readFrame 实现 (`websocket.go:358-423`) :
 
 安全校验:
 
 1. RSV1-3 必须为 0: 未协商扩展 (如 permessage-deflate) , 非零则拒绝
 2. opcode 合法性: 仅允许 0(continuation)、1(text)、2(binary)、8(close)、9(ping)、10(pong)
-3. 控制帧约束: 必须 FIN=1 (不可分片) 、payload <= 125 字节
+3. 控制帧约束: 必须 FIN=1 (不可分片) 、payload 不超过 125 字节
 4. Mask 必须存在: RFC 6455 要求客户端到服务端的帧必须 mask (防止缓存投毒攻击)
 5. 最大帧大小: 单帧 payload 不得超过 `messageLimit()` (默认 maxFrameSize = 65536) , 防止内存耗尽攻击
 
@@ -601,7 +602,7 @@ for i := range payload {
 }
 ```
 
-readMessage 分片重组 (`websocket.go:448-486`) :
+readMessage 分片重组 (`websocket.go:428-466`) :
 
 ```go
 func (ws *WSConn) readMessage() (opcode int, payload []byte, err error) {
@@ -637,7 +638,7 @@ func (ws *WSConn) readMessage() (opcode int, payload []byte, err error) {
 - 分片中途不能出现新的数据帧
 - 重组后总大小不超过 `messageLimit()` (默认 maxFrameSize = 64KB, 可通过 `UpgradeOptions.MaxMessageSize` 配置)
 
-writeFrame (`websocket.go:488-518`) : 服务端到客户端不 mask (RFC 规定) . 根据 payload 长度选择 7-bit、16-bit、64-bit 长度编码.
+writeFrame (`websocket.go:468-498`) : 服务端到客户端不 mask (RFC 规定) . 根据 payload 长度选择 7-bit、16-bit、64-bit 长度编码.
 
 ---
 
@@ -645,7 +646,7 @@ writeFrame (`websocket.go:488-518`) : 服务端到客户端不 mask (RFC 规定)
 
 框架中有哪些并发安全的设计? WSConn 的读写锁如何工作?
 
-A: WSConn 的锁设计 (`websocket.go:68-82`) :
+A: WSConn 的锁设计 (`websocket.go:48-62`) :
 
 ```go
 type WSConn struct {
@@ -692,7 +693,7 @@ Application 层面的隐含约束: 路由注册 (addRoute) 应在 Listen 之前�
 
 Application 的 Shutdown 如何实现? 为什么 server 在 New() 中构造而非 Listen() 中?
 
-A: 实现 (`yukino.go:64-74`) :
+A: 实现 (`yukino.go:44-54`) :
 
 ```go
 func (app *Application) Listen(addr string) error {
@@ -708,7 +709,7 @@ func (app *Application) Shutdown(ctx context.Context) error {
 }
 ```
 
-server 在 New() 中构造的原因 (注释 `yukino.go:42-44`) :
+server 在 New() 中构造的原因 (注释 `yukino.go:22-24`) :
 
 ```go
 // Constructed here (not in Listen) so a concurrent Shutdown never races
@@ -764,7 +765,7 @@ A:
 
 1. 延迟响应 vs 即时写入: yukino_http 的延迟响应允许上游中间件在 `next()` 返回后修改下游设置的响应, 但牺牲了流式写入的灵活性 (SSE/WS 需要 flushed 标志绕过) . Gin 的 `c.JSON()` 立即写入, 更直观但不可逆.
 
-2. 零依赖 vs 生态: yukino_http 手写 WebSocket 和 SSE, 代码量约 760 行 (websocket.go 590 行 + sse.go 172 行), 覆盖了核心场景. Gin 生态依赖 gorilla/websocket 等成熟库, 边界情况处理更完善.
+2. 零依赖 vs 生态: yukino_http 手写 WebSocket 和 SSE, 代码量约 720 行 (websocket.go 570 行 + sse.go 152 行), 覆盖了核心场景. Gin 生态依赖 gorilla/websocket 等成熟库, 边界情况处理更完善.
 
 3. Context 复用: Gin 使用 `sync.Pool` 复用 Context 对象减少 GC 压力. yukino_http 每请求新建 Context, 实现简单但在极高 QPS 下 GC 压力更大.
 
@@ -811,7 +812,7 @@ A:
 
 1. Context 对象池: 引入 `sync.Pool` 复用 Context, 减少高 QPS 下的 GC 压力. 需要 `reset()` 方法清理所有字段.
 
-2. 路由性能: 当前 Trie 的 children 是 slice, 路由数量大时线性扫描. 可改为 map[string]\*node + 通配子节点分离, 或迁移到 radix tree.
+2. 路由性能: 当前 Trie 的 children 是 slice, 路由数量大时线性扫描. 可改为 `map[string]*node` + 通配子节点分离, 或迁移到 radix tree.
 
 3. 路由冲突检测: 当前 `/users/:id` 和 `/users/:name` 可以同时注册但行为未定义 (先注册的优先) . 应在注册时检测冲突并 panic.
 
