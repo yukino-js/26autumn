@@ -335,7 +335,7 @@ onLCP((metric) => {
 
 ## 7. 浏览器兼容性
 
-截至 2025 年的支持情况:
+标准化状态: `fetchpriority` 在 MDN 上被标记为 Baseline 2024 "Newly available" (自 2024 年 10 月起在主流浏览器的最新版本中可用) , 即各主流引擎均已落地, 但发布时间较新、旧版本浏览器可能不支持. 截至 2026 年的支持情况:
 
 | 浏览器           | HTML `fetchpriority` | JS `fetch({ priority })` | 备注           |
 | ---------------- | -------------------- | ------------------------ | -------------- |
@@ -345,6 +345,8 @@ onLCP((metric) => {
 | Safari           | 17.2+                | 17.2+                    | 部分行为差异   |
 | Samsung Internet | 19+                  | 19+                      | —              |
 | iOS Safari       | 17.2+                | 17.2+                    | —              |
+
+`fetchpriority` 除作用于 `img`/`link`/`script` 外, 在 SVG 中也有对应属性 (SVG `fetchpriority`) , 可用于 SVG 内引用的外部资源. 相比之下, `loading` 属性 (尤其 `loading="lazy"`) 属于 Baseline Widely Available, 各主流浏览器早在 2020-2022 年即已支持, 兼容面比 `fetchpriority` 更广.
 
 对于不支持的浏览器, `fetchpriority` 属性会被静默忽略, 不会产生任何错误或副作用. JS 中传入 `priority` 字段在不支持的浏览器中同样被忽略. 因此这是一个天然渐进增强的特性, 无需 polyfill 或特性检测即可安全使用.
 
@@ -566,8 +568,12 @@ const supportsFetchPriority = "fetchPriority" in HTMLImageElement.prototype;
 
 ## 11. 规范与参考资源
 
-- Fetch Priority 规范: https://fetch.spec.whatwg.org/#request-priority
-- HTML 规范中的 fetchpriority 属性: https://html.spec.whatwg.org/multipage/urls-and-fetching.html#fetch-priority-attribute
+- HTML 规范中的 fetchpriority 属性 (按元素分别定义) :
+  - `<img>`: https://html.spec.whatwg.org/multipage/embedded-content.html#attr-img-fetchpriority
+  - `<link>`: https://html.spec.whatwg.org/multipage/semantics.html#attr-link-fetchpriority
+  - `<script>`: https://html.spec.whatwg.org/multipage/scripting.html#attr-script-fetchpriority
+- Fetch 标准 (请求优先级的底层模型) : https://fetch.spec.whatwg.org/
+- MDN fetchpriority 属性 (含 Baseline 状态) : https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/fetchpriority
 - Chrome 开发者文档: https://developer.chrome.com/docs/devtools/network/reference
 - web.dev 文章 "Optimize LCP": https://web.dev/articles/optimize-lcp
 - web.dev 文章 "Fetch Priority": https://web.dev/articles/fetch-priority

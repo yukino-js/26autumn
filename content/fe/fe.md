@@ -55,7 +55,7 @@ NaN == NaN    // false, NaN 不等于任何值包括自身
 
 ### 原型与原型链是什么
 
-A: 每个对象都有一个内部槽 [[Prototype]], 指向它的原型对象, 可以通过 Object.getPrototypeOf 或 `__proto__` (历史遗留但已被 ECMAScript 附录 B 规范化、HTML 规范要求浏览器实现的访问器) 访问. 函数对象额外拥有一个 prototype 属性, 该属性的 constructor 指回函数本身. 当通过 new 创建实例时, 实例的 [[Prototype]] 会被设为构造函数的 prototype.
+A: 每个对象都有一个内部槽 [[Prototype]], 指向它的原型对象, 可以通过 Object.getPrototypeOf 或 `__proto__` (历史遗留访问器, 已被 ECMAScript 附录 B 规范化: 面向浏览器环境的实现必须提供) 访问. 函数对象额外拥有一个 prototype 属性, 该属性的 constructor 指回函数本身. 当通过 new 创建实例时, 实例的 [[Prototype]] 会被设为构造函数的 prototype.
 
 三者的关系:
 
@@ -222,7 +222,7 @@ A: 浅拷贝只复制第一层引用, 如 Object.assign、展开运算符、Arra
 常见方案及其局限:
 
 - JSON.parse(JSON.stringify(obj)): 会丢失 undefined、function、Symbol, Date 变字符串, Map/Set/RegExp 变空对象, BigInt 直接抛错, 遇到循环引用抛错, 且丢失原型链. 只适合纯数据.
-- structuredClone(obj): 浏览器与 Node 17+ 原生支持, 基于结构化克隆算法, 支持 Map、Set、Date、RegExp、ArrayBuffer、TypedArray、循环引用; 但不支持函数、DOM 节点、Proxy、getter/setter, 且不会保留原型链 (class 实例被拷贝成 plain object) .
+- structuredClone(obj): 浏览器与 Node 17+ 原生支持, 基于结构化克隆算法, 支持 Map、Set、Date、RegExp (不保留 lastIndex)、ArrayBuffer、TypedArray、Error、循环引用; 但函数与 DOM 节点会直接抛 DataCloneError, getter/setter 只取当前值、不保留访问器本身, 且不会保留原型链 (class 实例被拷贝成 plain object) .
 - 手写递归: 用 WeakMap 记录已拷贝对象解决循环引用, 并针对特殊类型做分支处理:
 
 ```js
@@ -313,7 +313,7 @@ A: 核心区别:
 5. 循环依赖处理: CJS 遇到循环时返回已执行部分的 exports (半成品) ; ESM 通过活绑定处理, 未初始化的绑定访问会触发 TDZ 报错.
 6. 动态导入: ESM 用 import() 返回 Promise, 实现按需加载与代码分割; CJS 的 require 天然就是动态调用.
 
-互操作: Node 中 ESM 可以 default import CJS 模块 (整体作为默认导出) , CJS 不能 require ESM (新版 Node 已在部分场景放开同步 require ESM) . 浏览器只原生支持 ESM, 需要 type="module" 的 script 标签, 模块默认 defer 且跨域受 CORS 约束.
+互操作: Node 中 ESM 可以 default import CJS 模块 (整体作为默认导出) ; CJS require ESM 自 Node 22.12/23 起获得支持 (要求该 ESM 及其依赖图不含顶层 await, 否则抛 ERR_REQUIRE_ASYNC_MODULE) , Node 24 LTS 起为默认行为. 浏览器只原生支持 ESM, 需要 type="module" 的 script 标签, 模块默认 defer 且跨域受 CORS 约束.
 
 ### Proxy 与 Reflect 是什么
 
@@ -583,9 +583,9 @@ A: DOM Level 2 定义的事件流包含三个阶段:
 
 - addEventListener 第三个参数决定监听器挂在捕获还是冒泡阶段.
 - event.target 是事件真正发生的节点 (deepest ) , event.currentTarget 是当前正在执行监听器的节点.
-- 并非所有事件都冒泡: focus/blur、mouseenter/mouseleave、load、error (资源加载) 等不冒泡; 对应的可冒泡替代是 focusin/focusout、mouseover/mouseout. focus/blur、load 这类事件仍可在捕获阶段被祖先监听, 但 mouseenter/mouseleave 完全不参与传播 (只在目标上触发) , 无法通过捕获委托.
+- 并非所有事件都冒泡: focus/blur、mouseenter/mouseleave、load、error (资源加载) 等不冒泡; 对应的可冒泡替代是 focusin/focusout、mouseover/mouseout. 不冒泡不等于不参与传播: 捕获阶段与 bubbles 标志无关, focus/blur、load 等事件仍能被祖先的捕获监听器观察到 (这是资源加载错误监控的标准手段) . mouseenter/mouseleave 同理可被捕获, 但它们会对指针进入链路上的每个元素逐一派发, 捕获端一次会收到一串事件、语义复杂, 实践中委托一律用 mouseover/mouseout 配合 relatedTarget 判断进出.
 - event.composedPath() 返回完整传播路径 (含 Shadow DOM 内部节点, 取决于 composed 与 shadow mode) .
-- 事件对象在传播中被复用, 异步读取其属性需先保存.
+- 原生事件对象不会被复用: 传播结束后 target、type 等属性依然可读, 只有 currentTarget 会按规范在派发结束后重置为 null. 常被误认为"事件会被复用/清空"的是 React 16 及以前的合成事件池化 (event pooling, 回调结束后所有属性被清空, React 17 已移除该机制) , 那时异步访问事件才需要先保存字段.
 
 ### addEventListener 的三个参数分别是什么
 
@@ -794,7 +794,7 @@ A: preact signals (@preact/signals-core) 是细粒度响应式原语, 核心由�
 - Signal.subtle.Watcher: 底层观察者, watch(signal) 后用 getPending() 取出变更的信号再主动拉取值; 刻意不内建 effect, 把调度策略留给框架.
 - Signal.subtle.untrack 等用于在回调中解除依赖收集.
 
-该提案目前仍处于标准化推进阶段 (Stage 1 之后持续打磨, 尚无浏览器原生全量实现) , 使用前需要 polyfill. 注意不要与 AbortSignal 混淆: AbortSignal 是已广泛实现的取消机制 API (配合 AbortController 用于 fetch 取消、addEventListener 移除等) , 二者只是名字相似.
+该提案目前处于 Stage 1, 定位是对齐各框架的信号图核心语义 (而非面向应用开发者的 API) , 尚无浏览器原生实现, 使用前需要 polyfill (官方 signal-polyfill) 或依赖框架自带实现. 注意不要与 AbortSignal 混淆: AbortSignal 是已广泛实现的取消机制 API (配合 AbortController 用于 fetch 取消、addEventListener 移除等) , 二者只是名字相似.
 
 ## 第四部分 BOM 与浏览器 API
 
@@ -1523,7 +1523,7 @@ JS 沙箱方案:
 
 - 快照沙箱: 子应用挂载前记录 window 快照, 卸载时还原差异. 实现简单但只支持单实例, 且遍历 window 成本高 (qiankun 旧版降级方案) .
 - Proxy 沙箱: 用 Proxy 包一层 fakeWindow, 子应用代码通过 with(proxyWindow) 或函数参数注入的方式访问"window", 写操作落在 fakeWindow 上不污染真实全局, 支持多实例并存 (qiankun legacy 主力方案) . 逃逸点: 直接引用 globalThis、setTimeout 回调里的隐式全局、原型链修改.
-- iframe/ShadowRealm 类: 天然硬隔离. 无界 (wujie) 用 iframe 承载 JS 执行 + 主文档承载 DOM 渲染, 规避了 iframe 的 UI 局限; ShadowRealm 是 TC39 提案方向.
+- iframe/ShadowRealm 类: 天然硬隔离. 无界 (wujie) 用 iframe 承载 JS 执行 + 主文档承载 DOM 渲染, 规避了 iframe 的 UI 局限; ShadowRealm 是 TC39 的隔离执行环境提案 (现处 Stage 2.7) , 目标是提供无 DOM/网络访问的轻量硬隔离沙箱.
 
 样式隔离方案:
 
@@ -1874,7 +1874,7 @@ class CircuitBreaker {
 
 ## 第十二部分 算法实现
 
-本部分基于本仓库相邻的手写源码库 (`$HOME/github/h/chucks/js` 目录, 共 35 个源码文件) 编排, 覆盖其中 32 个文件 (proto.js、promise-pool.js、downloader-sdk.ts 未单列), 每题含源码解读、深入解析、进阶延伸.
+本部分基于本机手写源码练习库 (`$HOME/github/h/chucks/js` 目录, 共 35 个源码文件, 含 lc/ 子目录 18 题与 polyfill/) 编排 33 道高频手写实现题, 覆盖 this 绑定、闭包、原型继承、Promise、并发控制、柯里化与深拷贝等核心主题, 覆盖其中 32 个文件 (proto.js、promise-pool.js、downloader-sdk.ts 未单列; miHoYo.js 为历史题目文件, 已不在该目录), 每题含源码解读、深入解析、进阶延伸.
 
 | #   | 题目                                | 对应文件                 | 核心要点                       |
 | --- | ----------------------------------- | ------------------------ | ------------------------------ |
@@ -1921,7 +1921,7 @@ class CircuitBreaker {
 - 为什么用 Symbol() 而不是固定字符串键? ——避免与 ctx 已有属性冲突, 且 delete ctx[prop] 后不留痕迹.
 - ctx 为 null/undefined 时原生行为是绑定到全局对象 (非严格模式) 或保持 undefined (严格模式) , 如何兼容? 传入原始值 (如数字) 时原生会装箱为包装对象.
 - new.target 是 ES6 元属性 (meta property) , 它让函数感知自己的调用方式; bind2 中利用它区分构造调用与普通调用, 这是手写 bind 最容易丢分的一步.
-- 原生 bind 产生的函数没有 prototype, 且其 length/name 会被重写 (bound xxx) .
+- 原生 bind 产生的函数没有自己的 prototype 属性 (ES2015 起) , 且其 length/name 会被重写 (name 为 bound xxx, length 扣除预置参数个数) .
 
 参考实现:
 
@@ -1950,7 +1950,7 @@ Function.prototype.bind2 = function (ctx, ...args) {
 - var 声明提升 + 函数作用域 -> 所有回调闭包引用同一词法环境记录 (Environment Record) .
 - 四种修复的本质差异:
   1. IIFE: 每轮创建新函数作用域;
-  2. let: ES6 为 for 循环体每次迭代创建新的词法环境 (per-iteration binding) , 这是规范 13.7.4.8 节的特殊处理;
+  2. let: ES6 为 for 循环每次迭代创建新的词法环境 (per-iteration binding, 即规范中 CreatePerIterationEnvironment 的专门处理) ;
   3. setTimeout 第三参: setTimeout(cb, t, arg) 会把 arg 作为回调入参传入;
   4. bind 预设参数: setTimeout(console.log.bind(null, i), ...).
 - 计时并不精确: 宏任务排队 + 最小延迟 (浏览器对嵌套 >=5 层的定时器强制 >=4ms) .
@@ -2015,7 +2015,7 @@ function curry(fn) {
 - 用 WeakMap 而非 Map: 键弱引用, 拷贝结束后原对象可被 GC, 且天然支持对象键.
 - 必须在递归之前 seen.set(obj, clone), 否则循环引用死循环.
 - 源码的盲区: for...in 会遍历原型链 (靠 hasOwnProperty 过滤) 但漏掉 Symbol 键与不可枚举属性; 不处理 Map/Set/Promise/Function/BigInt 包装对象.
-- 对比方案: structuredClone (原生, 支持 Map/Set/ArrayBuffer/循环引用, 但不支持函数、DOM、原型上的 getter/setter) ; JSON.parse(JSON.stringify()) (丢 undefined/函数/Symbol/循环引用直接抛错、Date 变字符串) .
+- 对比方案: structuredClone (原生, 支持 Map/Set/ArrayBuffer/Error/循环引用, 但函数与 DOM 节点会抛 DataCloneError, 不保留原型链与 getter/setter 访问器) ; JSON.parse(JSON.stringify()) (丢 undefined/函数/Symbol, 循环引用直接抛错, Date 变字符串) .
 
 ### 题目 7| 寄生组合式继承
 
@@ -2341,7 +2341,7 @@ function createInfiniteObject(path = []) {
 - setDate 溢出进位是规范行为 (MakeDay) , 比手写"每月天数表 + 闰年"可靠得多.
 - 月份 getMonth() 从 0 起——补零前 +1, 经典踩坑点.
 - 跨时区/夏令时切换日, "加一天"与"加 24h"不等价 (setDate(+1) 是日历日, +86400000 是物理时长) .
-- 扩展原生原型的争议——生产应封装工具函数或使用 Temporal API (取代 Date 的新标准, Chrome 144+/Firefox 139+ 已原生支持, Safari 尚未).
+- 扩展原生原型的争议——生产应封装工具函数或使用 Temporal API (取代 Date 的新标准, 已达 Stage 4; Chrome 144+/Firefox 139+ 已原生支持, Safari 仅在技术预览版提供).
 
 ### 题目 30| promisify
 
@@ -2436,7 +2436,7 @@ A: 隐藏类 (Hidden Class / Map / Shape) :
 - 单态 (monomorphic) : 总是同 Map -> 直接比较 Map 后按偏移取值, 极快.
 - 多态 (polymorphic, 2-4 种 Map) : 小跳转表.
 - 超态 (megamorphic) : 退化哈希查表——热点代码要避免.
-- TurboFan 基于 IC 反馈做推测优化: 假设类型不变直接生成机器码 + 去优化 (deopt) 检查点 (假设失败回退字节码) .
+- TurboFan 基于 IC 反馈做推测优化: 假设类型不变直接生成机器码 + 去优化 (deopt) 检查点 (假设失败回退字节码) . V8 现已形成 Ignition (解释器) → Sparkplug (基线编译) → Maglev (中层 JIT, 编译快、优化浅) → TurboFan (顶层优化) 的多层执行管线, 代码按热度逐级晋升.
 
 逃逸分析 (Escape Analysis) : JIT 证明对象不逃逸出函数 (不外传、不存堆) -> 标量替换: 对象不分配, 字段拆成局部变量 (栈上寄存器分配) , 省掉堆分配与 GC.
 
@@ -2466,7 +2466,7 @@ BigInt: 任意精度整数 (123n) ; 不能与 Number 混算 (显式转换) ; typ
 - 正则 d 标志 (indices, 捕获组起止下标) 、命名捕获组、后行断言.
 - ES2025 已落地 (2025-06 定稿): Set 集合方法 (union/intersection/difference 等) 、Iterator Helpers (Iterator.prototype.map/filter/take 等) 、Promise.try、RegExp.escape、Float16Array, 现代浏览器基本都已原生支持.
 - import attributes (`import ... with { type: 'json' }` 语法) 与 JSON modules 均已收入 ES2025 (两者都在 TC39 finished proposals 清单中) ; Chrome 123+、Safari 17.4+ 已支持 `with` 语法, 早期的 `assert` 写法已废弃.
-- 提案动态: Temporal (取代 Date 的新标准, 已达 Stage 4, 将随 ES2027 并入 ECMA-262; Chrome 144+/Firefox 139+ 已原生提供, Node 26 跟进, Safari 尚未) 、Decorator (已落地 TS 5.0, TC39 新设 Stage 2.7 做实现验证, 提案现处该阶段) 、Pattern Matching 演进为 Extractors 提案 (Stage 2) ; Record & Tuple 已归档, 值类型方向由 Composites 等新提案探索.
+- 提案动态: Temporal (取代 Date 的新标准, 已达 Stage 4, 将随 ES2027 并入 ECMA-262; Chrome 144+/Firefox 139+ 已原生提供, Node 26/Bun/Deno 跟进, Safari 仅技术预览版可用) 、Decorator (已落地 TS 5.0, TC39 为需要实现验证的提案新设 Stage 2.7, 该提案与 Decorator Metadata 现处此阶段) ; 原 Pattern Matching 提案仍在 Stage 1, 其核心机制由更聚焦的 Extractors 提案承接 (Stage 2) ; Record & Tuple 已于 2025 年撤回, 值类型方向由 Composites 提案 (Stage 2) 延续.
 
 ### 正则引擎与灾难性回溯
 

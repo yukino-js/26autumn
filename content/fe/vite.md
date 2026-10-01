@@ -30,7 +30,7 @@ Webpack dev 启动时要扫描所有依赖、构建完整依赖图、全量转�
 
 Vite 快的三个关键点:
 
-1. 依赖预构建: node_modules 中的 CJS/UMD 依赖被一次性转为 ESM, 缓存在 node_modules/.vite, 二次启动直接读缓存; Vite 8 起该步骤由 Rolldown (Rust) 完成, Vite 7 及之前由 esbuild (Go, 比 Babel 快 10-100 倍) 完成.
+1. 依赖预构建: node_modules 中的 CJS/UMD 依赖被一次性转为 ESM, 缓存在 node_modules/.vite/deps, 二次启动直接读缓存; Vite 8 起该步骤由 Rolldown (Rust) 完成, Vite 7 及之前由 esbuild (Go, 比 Babel 快 10-100 倍) 完成.
 2. 源码按需转译: 业务代码只在被请求时转译, 配合 HTTP 304 协商缓存, 未修改的模块不重复处理.
 3. HMR 粒度小: 修改一个模块只需重新请求该模块的 ESM, 不需要重新计算整个依赖图 (详见「Webpack HMR 和 Vite HMR 的实现原理有何不同?」).
 
@@ -66,7 +66,7 @@ Loader 和 Plugin 的区别:
 
 ### esbuild 和 Rollup 在 Vite 中各自承担什么角色? 为什么生产构建不直接用 esbuild?
 
-先说现状: 这道题在 Vite 8 起已成为历史. Vite 8 用 Rust 编写的 Rolldown 作为统一打包器, dev 预构建与生产打包都由它完成; TS/JSX 转译与产物压缩默认改用 oxc (`build.minify` 默认值即 `'oxc'`, terser/esbuild 仍可显式选用). 本机安装的 vite@8.3.1 中 rollup 已不在依赖列表, 官方迁移指南的表述是 "Vite 8 uses Rolldown and Oxc based tools instead of esbuild and Rollup".
+先说现状: 这道题在 Vite 8 起已成为历史. Vite 8 用 Rust 编写的 Rolldown 作为统一打包器, dev 依赖预构建与生产打包都由它完成; JS/TS/JSX 转译改用 Oxc Transformer (顶层 `esbuild` 配置项已废弃, 自动转换为 `oxc`) , JS 产物压缩默认改用 Oxc Minifier (`build.minify` 类型为 `boolean | 'oxc' | 'terser' | 'esbuild'`, 客户端构建默认 `'oxc'`, SSR 构建默认 `false`; `'esbuild'` 已废弃, 选 `'terser'`/`'esbuild'` 需自行安装对应依赖) ; CSS 压缩默认改用 Lightning CSS (`build.cssMinify` 默认 `'lightningcss'`, 可改回 `'esbuild'` 但需安装 esbuild) 。本机 `/Users/hangtiancheng/github/yukino-chatbot` 的 pnpm-lock.yaml 解析出 vite@8.3.1, 其 dependencies 为 `rolldown`、`lightningcss`、`postcss`、`picomatch`、`tinyglobby`, 已不含 rollup, esbuild 降级为 optionalDependency; 官方迁移指南的表述是 "Vite 8 uses Rolldown and Oxc based tools instead of esbuild and Rollup". 与之配套, 依赖预构建的 `optimizeDeps.esbuildOptions` 也已废弃, 自动转换为 `optimizeDeps.rolldownOptions`.
 
 Vite 7 及之前版本的分工:
 
@@ -83,7 +83,7 @@ Vite 7 及之前版本的分工:
 
 ### Vite 依赖预构建 (optimizeDeps) 的原理是什么? 遇到过哪些坑?
 
-原理: Vite 启动时扫描源码中的裸模块导入 (bare import, 如 `import React from 'react'`), 用 Rolldown (Vite 7 及之前为 esbuild) 将这些 node_modules 依赖打包成 ESM 并输出到 node_modules/.vite. 目的有两个:
+原理: Vite 启动时扫描源码中的裸模块导入 (bare import, 如 `import React from 'react'`), 用 Rolldown (Vite 7 及之前为 esbuild) 将这些 node_modules 依赖打包成 ESM 并输出到 node_modules/.vite/deps. 目的有两个:
 
 1. 格式统一: 很多包只发布 CJS/UMD, 浏览器 ESM 无法直接消费, 预构建统一转为 ESM.
 2. 请求合并: 像 lodash-es 这种包内部有几百个小模块, 不合并的话一次导入会触发几百个 HTTP 请求, 预构建合并为单文件.
@@ -93,7 +93,7 @@ Vite 7 及之前版本的分工:
 实际踩过的坑:
 
 1. 运行时才发现的新依赖: 动态 import 的依赖在首次扫描中漏掉, 运行时触发"new dependencies optimized"并整页 reload, 体验很差. 解决: 用 `optimizeDeps.include` 显式声明.
-2. CJS/ESM 互操作: 某些包的 `exports` 字段配置不规范, 预构建后 default 导出行为与 Webpack 下不一致 (`esModuleInterop` 差异), 需要 `optimizeDeps.needsInterop` 或让包方修复.
+2. CJS/ESM 互操作: 某些包的 `exports` 字段配置不规范, 预构建后 default 导出行为与 Webpack 下不一致 (`esModuleInterop` 差异), 需要 `optimizeDeps.needsInterop` 或让包方修复. 值得注意的是, Vite 8 引入了"一致的 CommonJS 互操作"规则: 对 CJS 模块的 `default` 导入, 当导入方是 `.mjs`/`.mts`、或最近 `package.json` 的 `type` 为 `module`、或被导入 CJS 的 `module.exports.__esModule` 不为 `true` 时, `default` 即 `module.exports` 本身, 否则取 `module.exports.default`; dev 与 build 行为从此统一. 该变化可能打破依赖旧行为的代码, 可用临时的 `legacy.inconsistentCjsInterop: true` 恢复旧行为, 更推荐修包.
 3. monorepo 内部包: workspace 链接的内部包默认不做预构建 (被视为源码), 如果内部包是 CJS 产物就会报错, 需要将其加入 `optimizeDeps.include` 并在 `build.commonjsOptions.include` 同步配置 (此为 Vite 7 及之前的做法; Vite 8 起 `build.commonjsOptions` 已废弃且不再生效).
 4. 模块联邦场景: 在给 @module-federation/vite 提 PR 时发现, 原实现对每个 shared 依赖单独执行一次 optimizeDeps, 依赖多时预构建耗时很长, 我将多个 shared 依赖合并为一次调用, 预构建时间从约 12 秒降到 3 秒.
 
@@ -196,7 +196,7 @@ build: {
 
 注意点: manualChunks 手动分组容易引入循环加载问题 (chunk A 的初始化依赖 chunk B 中的模块), Rollup 会警告 circular chunk, 需要保证分组边界与依赖方向一致.
 
-Vite 8 中的变化: `build.rollupOptions` 的类型已切换为 RolldownOptions (并整体标记废弃, 更名为 `build.rolldownOptions`), manualChunks 的对象写法已被移除, 函数写法虽保留但已标记废弃, 对应能力由声明式的 `output.codeSplitting` 提供 (按 name/test 等条件分组), 过渡期 API `output.advancedChunks` 在 Rolldown 中同样已标记废弃.
+Vite 8 中的变化: `build.rollupOptions` 已更名为 `build.rolldownOptions` 并整体标记废弃 (类型切换为 RolldownOptions) , `worker.rollupOptions` 同样更名为 `worker.rolldownOptions`; `output.manualChunks` 的对象写法已被移除, 函数写法虽保留但已标记废弃, 等价能力由 Rolldown 更灵活的声明式 `output.codeSplitting` 选项提供. 此外一批 Rollup 细节在 Vite 8 中不再支持: `output.format` 的 `'system'`/`'amd'`、`shouldTransformCachedModule`/`resolveImportMeta`/`renderDynamicImport`/`resolveFileUrl` 等插件钩子; 所有并行钩子按顺序执行; `parseAst`/`parseAstAsync` 废弃, 改用 `parseSync`/`parse`; 依赖 `transformWithEsbuild` 的插件需自行安装 esbuild, 官方推荐迁移到 `transformWithOxc`. 用 plugin-legacy 转译到 ES5 及以下也不再支持.
 
 ### Source Map 有哪些类型? 生产环境如何选择与管理?
 
@@ -318,7 +318,7 @@ Webpack 的 MF 依赖 `__webpack_init_sharing__` / `container.init` / `container
 
 浏览器兼容:
 
-1. 统一用 browserslist 声明目标 (`.browserslistrc`), 让 Babel/SWC、autoprefixer、esbuild target 共享同一份目标.
+1. 统一用 browserslist 声明目标 (`.browserslistrc`), 让 Babel/SWC、autoprefixer、esbuild target 共享同一份目标. 注意 Vite 自身并不读 browserslist: `build.target` 默认值是特殊值 `'baseline-widely-available'`, 在 Vite 8 中具体对应 `chrome111`/`edge111`/`firefox114`/`safari16.4`/`ios16.4` (对齐 2026-01-01 的 Baseline Widely Available) ; 要支持更老的浏览器需显式覆盖 `build.target`。
 2. 语法降级与 polyfill 分开考虑: 语法降级由转译器完成; polyfill 用 core-js 的 `useBuiltIns: 'usage'` 按需注入, 或交给 polyfill 服务按 UA 下发.
 3. Vite 的现代/传统双产物: `@vitejs/plugin-legacy` 生成带 polyfill 的 legacy chunk, 通过 `<script type="module">` 与 `nomodule` 让新浏览器加载小的现代产物、老浏览器加载兼容产物.
 4. 兼容成本要有边界: 与业务方确认最低支持版本, 每往下兼容一档都有体积与维护成本, 不做无限兼容.

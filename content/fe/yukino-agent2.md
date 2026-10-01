@@ -5,29 +5,29 @@ description: "基于代码事实梳理 yukino-agent2 的 Hono HTTP 层、LangGra
 
 > 本机器路径 `$HOME/github/yukino-agent2`
 
-yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScript 实现, 由一个 Python 版本迁移而来 (`README.md` 首段: "This is the migrated backend of the Python project in `~/Downloads/python`"). 后端品牌为 MeowMeow Select, 客服人设名为 Meow (`AGENTS.md` 中固化为项目规范, 且声明 "Yukino Agent2 is a pure English project", 知识库语料为英文). 本文所有结论均基于仓库真实源码, 关键处给出相对仓库根的文件路径与函数名引用.
+yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScript 实现, 由一个 Python 版本迁移而来 (`README.md` 首段: "This is the migrated backend of the Python project in `~/Downloads/python`"). 后端品牌为 Yukino Select, 客服人设名为 Meow (`AGENTS.md` 中固化为项目规范, 且声明 "Yukino Agent2 is a pure English project", 知识库语料为英文). 本文所有结论均基于仓库真实源码, 关键处给出相对仓库根的文件路径与函数名引用.
 
 ## 一、项目快照
 
-本机仓库 2026-09-30 核实 (`git log -1`): HEAD 为 `87b14a2`, 提交日期 2026-09-30; 仓库仅有两个提交 (`67ee80c` Initial commit 与 `87b14a2` "feat: Update npm registry").
+本机仓库 2026-10-02 核实 (`git log -1`): HEAD 为 `d0d6e30` (完整哈希 `d0d6e30e68b03e3af82dd7ffc61ee30ff9ad57b2`), 提交日期 2026-10-02, 提交信息 "Initial commit". 该仓库于 2026-10-02 00:05 被整体重建: 旧提交历史 (一路到 `87b14a2` "feat: Update npm registry") 已被这单个 Initial commit 替换, 旧提交哈希已不在本地对象库中, 无法再 `git show`. 与重建前的工作树相比, 本轮实质差异极小: 仅一批依赖版本上浮 (根 `package.json` 的 `@hono/node-server`/`hono`/`openai`/`pg`/`vitest`, `fe/package.json` 的 `lucide-static`/`motion`), 另有 `.agents/` 目录与 `skills-lock.json` 从工作树移除; `src/`、`fe/app`、`prisma/schema.prisma`、`tests/` 源码未变, 正文中的源码结论均已按新快照复核仍然成立.
 
 | 维度        | 内容                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
 | 定位        | 电商客服 Agent 后端: 意图路由、知识库 RAG、ReAct 工具调用、工单/退款流程、运营后台                                         |
 | 语言/运行时 | TypeScript (ESM, `"type": "module"`), 通过 tsx 直接运行, Node 内置 `process.loadEnvFile` 读 `.env` (`src/config.ts:11-14`) |
-| HTTP 框架   | Hono 4.13.10 (`hono` + `@hono/node-server` + `hono-pino`)                                                                  |
+| HTTP 框架   | Hono 4.13.12 (`hono` + `@hono/node-server` + `hono-pino`)                                                                  |
 | Agent 编排  | LangChain/LangGraph: `@langchain/langgraph` 1.4.18, `@langchain/core` 1.2.13, `@langchain/openai` 1.6.0                    |
-| 会话持久化  | `@langchain/langgraph-checkpoint-postgres` 1.0.5 (PostgresSaver) + `pg` 8.23.0                                             |
+| 会话持久化  | `@langchain/langgraph-checkpoint-postgres` 1.0.5 (PostgresSaver) + `pg` 8.23.1                                             |
 | 关系数据    | Prisma 7.10.0 (`@prisma/client` + `@prisma/adapter-pg`, 输出到 `generated/prisma`)                                         |
 | 向量库      | 可选 Milvus Standalone (`@zilliz/milvus2-sdk-node` 3.0.6); 缺省为进程内检索                                                |
 | 校验/日志   | zod 4.6.5, pino 10.3.1 + pino-pretty, ajv 8.20.0 (工具参数校验)                                                            |
 | 协议/可观测 | `@modelcontextprotocol/server` 与 `client` 2.2.0, Langfuse 5.11.1 (over OpenTelemetry `@opentelemetry/sdk-node` 0.222.0)   |
-| 测试        | Vitest 5.0.2 (16 个测试文件, 59 个用例)                                                                                    |
+| 测试        | Vitest 5.0.3 (16 个测试文件, 59 个用例)                                                                                    |
 | 前端        | `fe/` 子包: Lit 3.3.3 + `@yukino.js/lit-jsx` + Vite 8.3.1 + Tailwind CSS 4.3.3                                             |
 | 包管理      | pnpm workspace (`pnpm-workspace.yaml` 声明 `packages: [fe]`)                                                               |
 | 启动        | `pnpm dev` (tsx watch) 或 `node main.js dev` (先拉起两个 MCP mock 服务再 `pnpm dev`)                                       |
 
-版本号取自根 `package.json` 的 dependencies/devDependencies 声明区间, 其中 hono 4.13.10、langgraph 1.4.18、core 1.2.13、checkpoint-postgres 1.0.5、openai 7.23.0 与 `pnpm-lock.yaml` 实际解析版本一致.
+版本号取自根 `package.json` 的 dependencies/devDependencies 声明区间, 其中 hono 4.13.12、langgraph 1.4.18、core 1.2.13、checkpoint-postgres 1.0.5、openai 7.25.0 与 `pnpm-lock.yaml` 实际解析版本一致.
 
 ### 目录结构
 

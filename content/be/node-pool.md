@@ -27,7 +27,7 @@ generic-pool 是一个零运行时依赖的 Node.js 通用资源池库, README (
 | Lint          | eslint ^4.9.0 + prettier ^1.7.4 (README:381 亦有说明)                 |
 | 关键词        | pool / pooling / throttle (package.json keywords)                     |
 
-CHANGELOG 中 3.9.0 一节记录了两处修复: 给 index.d.ts 补上 ready 函数声明; 给 pool 内部的 setTimeout 加 `.unref()`。需要说明的是, 该 unref 修复 (提交 e94fd37) 只改了驱逐定时器 Pool.js:405 一处; 现在 Pool.js:157 的另一处 unref 是 2021 年引入 destroyTimeoutMillis 特性时 (提交 ea53332) 就自带的, 随 v3.8.0 发布。
+CHANGELOG 中 3.9.0 一节记录了两处修复: 给 index.d.ts 补上 ready 函数声明 (提交 0a5ef1d); 给 pool 内部的 setTimeout 加 `.unref()` (提交 e94fd37)。当前 HEAD 源码中恰好有两处定时器 `.unref()` 调用点: `_applyDestroyTimeout` 的销毁超时 race (Pool.js:157) 与驱逐调度定时器 (Pool.js:405); 后者是周期性定时器, unref 后不再阻止进程退出。git 历史可精确区分两处 unref 的来源: e94fd37 ("fix: unref setTimeout in pool", 2022-08-03) 只改 lib/Pool.js 一行 — 给驱逐定时器补 `.unref()` (即 Pool.js:405 处); 而销毁超时 race 的 `.unref()` 早在 2021-07-11 的 ea53332 ("Add destroyTimeoutMillis option", 5 个文件、+96 行) 引入 `_applyDestroyTimeout` 时就已存在, 该提交收录于 v3.8.0 (tag a9926ba, 2021-07-12)。需要说明的是, CHANGELOG.md 中没有 3.8.x 一节 (v3.7.1 之后直接跳到 v3.9.0), 3.8.x 的变更记录只能从 git tag 与提交历史考证。
 
 lib/ 目录 18 个文件与职责 (行数为 `wc -l` 实测):
 
@@ -305,7 +305,7 @@ Pool 构造时就创建了 _evictionIterator 并在整个生命周期复用 (Poo
 
 ### 调度
 
-驱逐器默认不运行。start() 调用 _scheduleEvictorRun (Pool.js:424、398-407): 仅当 `evictionRunIntervalMillis > 0` 时注册 setTimeout, 回调里先 _evict() 再递归调用 _scheduleEvictorRun 排下一轮; 定时器带 `.unref()`, 不会阻止进程退出 — 这正是 CHANGELOG 3.9.0 "unref setTimeout in pool" 修复的落点。drain() 完成时 _descheduleEvictorRun 清掉定时器 (Pool.js:409-414、587)。
+驱逐器默认不运行。start() 调用 _scheduleEvictorRun (Pool.js:424、398-407): 仅当 `evictionRunIntervalMillis > 0` 时注册 setTimeout, 回调里先 _evict() 再递归调用 _scheduleEvictorRun 排下一轮; 定时器带 `.unref()`, 不会阻止进程退出 — 与 CHANGELOG 3.9.0 "unref setTimeout in pool" (提交 e94fd37) 的修复意图一致。drain() 完成时 _descheduleEvictorRun 清掉定时器 (Pool.js:409-414、587)。
 
 ### _evict 主循环
 
@@ -350,7 +350,7 @@ evict(config, pooledResource, availableObjectsCount) {
 
 空闲时长的基准是 lastIdleTime, 它在资源进入空闲队列时由 idle() 刷新 (PooledResource.js:39-42, Pool.js:564) — 即 "最后一次变为空闲" 的时刻, 而不是最后一次归还时刻 (两者在 release 路径上几乎同时, 但新建资源从未借出也有 lastIdleTime)。
 
-硬超时与 min 的交互会产生 churn: idleTimeoutMillis 路径驱逐时不看 min, 而 _destroy 末尾的 _ensureMinimum (Pool.js:150) 又会立刻把池补回 min — 若 min 大于 0 且空闲超时较短, 池内连接会周期性地销毁重建。README:306-317 关于 "进程退出前卡 30 秒" 的 draining 章节描述的正是驱逐器与 min 共同作用下的定时器滞留问题 (3.9.0 的 unref 修复缓解了这一点)。
+硬超时与 min 的交互会产生 churn: idleTimeoutMillis 路径驱逐时不看 min, 而 _destroy 末尾的 _ensureMinimum (Pool.js:150) 又会立刻把池补回 min — 若 min 大于 0 且空闲超时较短, 池内连接会周期性地销毁重建。README:306-317 关于 "进程退出前卡 30 秒" 的 draining 章节描述的正是驱逐器与 min 共同作用下的定时器滞留问题 (当前 HEAD 中驱逐定时器与销毁定时器均已 unref, 周期性定时器不再挂住事件循环)。
 
 ## 十、配置项与默认值逐项考据
 

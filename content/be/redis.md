@@ -264,7 +264,7 @@ save 60 10000   # 60s 内至少 10000 次修改
 | RDB 快照 | 恢复快                 | 快照间隔期间数据丢失多 |
 | AOF 日志 | 数据丢失少 (最多 1 秒) | 恢复慢                 |
 
-混合持久化 (`aof-use-rdb-preamble yes`, Redis 4.0+) 在 AOF 重写时触发:
+混合持久化 (`aof-use-rdb-preamble yes`, Redis 4.0+ 引入, 7.0 起默认开启) 在 AOF 重写时触发:
 
 1. fork 子进程, 将 fork 瞬间的全量数据以 RDB 二进制格式写入新 AOF 文件的开头
 2. 重写期间主进程的增量写命令进入「AOF 重写缓冲区」

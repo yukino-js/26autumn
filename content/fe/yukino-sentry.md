@@ -944,7 +944,7 @@ export async function recorder(reporter: IDataReporter): Promise<Cleanup> {
 }
 ```
 
-设计要点: `recorder` 是闭包而非 class——`recordWindow` 作为闭包变量维护滚动窗口, `pruneWindow` 原地 shift 淘汰过期事件 (不复制数组) . rrweb 的 `record()` 返回停止函数, 直接作为 cleanup 返回给插件的 destroy 链路. 动态 `import("@rrweb/record")` 和 `import("pako")` 并行加载, 避免录制库阻塞主 bundle; 加载失败时记录日志并降级为 noop. 插件构造函数接受 `{ durationMs, eventTypes }`, init 时把二者写入 SDK options (数组拷贝, 实例间不共享引用) .
+设计要点: `recorder` 是闭包而非 class——`recordWindow` 作为闭包变量维护滚动窗口, `pruneWindow` 原地 shift 淘汰过期事件 (不复制数组) . rrweb 的 `record()` 返回停止函数, 直接作为 cleanup 返回给插件的 destroy 链路. 动态 `import("@rrweb/record")` 和 `import("pako")` 并行加载, 避免录制库阻塞主 bundle; 加载失败时记录日志并降级为 noop. 插件构造函数接受 `{ durationMs, eventTypes }`, init 时把二者写入 SDK options (数组拷贝, 实例间不共享引用) . 上方代码块是核心摘录, 实际的 `record()` 配置还包含 `recordCanvas: true`、`inlineImages: true` (快照内联图片) 与 `maskAllInputs: false` + `maskInputFn`/`maskTextFn` (把原始值拼接 `#` + `dom2str(元素路径)` 作为掩码值, 保留来源定位能力) .
 
 触发机制:
 
@@ -1193,6 +1193,7 @@ let instance: DataReporter | null = null;
 export function resetReporter(): void {
   instance?.dispose(); // 清定时器、摘 online/offline 监听、丢弃队列
   instance = null;
+  resetServerRecovery(); // 恢复探测退避复位回 1s 初始值, 供下一次 init 重新使用
 }
 
 export default new Proxy({} as DataReporter, {

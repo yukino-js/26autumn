@@ -181,7 +181,7 @@ WebSocket 通道 (GET 升级):
 
 `ChatHub` (server/src/hub/chat-hub.ts) 维护 `Map<uuid, ClientConn>`, 每用户至多一条连接:
 
-- `register`: 同一 uuid 的旧连接被 `safeClose` 挤掉 (顶号登录语义, chat-hub.ts:63-77); 新连接先收到纯文本欢迎帧 `"welcome to yukino chat"`, 再向其他所有在线用户广播 `online` 系统通知, 并异步更新 `lastOnlineAt`
+- `register`: 同一 uuid 的旧连接被 `safeClose` 挤掉 (顶号登录语义, chat-hub.ts:63-77); 新连接先收到纯文本欢迎帧 `"welcome to yukino chat"`; 仅在非顶号替换 (没有旧连接) 时才向其他所有在线用户广播 `online` 系统通知并异步更新 `lastOnlineAt` (chat-hub.ts:70-76), 顶号场景不重复广播在线状态
 - 心跳: 30s 定时器扫描 (chat-hub.ts:20-22, 47-61), 超过 90s 无任何帧的连接直接注销; 一个周期内未见 pong 的连接 `terminate()`; 客户端无需实现应用层 ping, 服务端用 WS 协议层 ping/pong (ws-chat-route.ts:37-42 监听 raw `pong` 事件刷新 alive/lastSeen)
 - `unregister`: 若该用户还在通话中, 代其向房间剩余成员广播 `leave_call` 信令帧, 保证对端关闭死流 (chat-hub.ts:87-110); 随后广播下线 `online` 通知并更新 `lastOfflineAt`
 - `pushSystem(topic, uuids)`: 构造 `{type:5, send_id:"SYSTEM", content:topic}` 帧定向推送; topic 取值 contact/group/apply/session/online (frame-types.ts:45-49), 语义是 "该列表脏了, 请重新拉取", 不携带数据
@@ -269,7 +269,7 @@ UI 层 `store/call.ts` 维护 `phase: idle|ringing|dialing|active` 状态机, �
 
 `loadAgentConfig()` (server/src/agent/yukino-config.ts:18-60) 两级回退:
 
-1. 首选 `Config.loadConfig("")` 读 `~/.yukino/config.yaml` (yukino 库的标准配置), 取第一个 provider、`mcp_servers`、`hooks`、`permission_mode`
+1. 首选 `Config.loadConfig("")` 读 yukino 库的标准配置 (查找顺序 `~/.yukino/config.yaml`, 其次工作目录 `./.yukino/config.yaml`; 传 `allowEmptyProviders: true` 容忍空 provider 列表), 取第一个 provider、`mcp_servers`、`hooks`、`permission_mode`
 2. 无配置文件时用 `YUKINO_AI_PROTOCOL/BASE_URL/API_KEY/MODEL` 环境变量合成单 provider (protocol 默认 openai-compat); BASE_URL 或 MODEL 为空则返回 null
 3. null 即 "agent 不可用": 聊天主流程完全不受影响, `AgentManager.available = false`, 用户私聊 Yukino 会得到一条 "not configured" 的聊天回复 (agent-manager.ts:130-139)
 
@@ -289,7 +289,7 @@ UI 层 `store/call.ts` 维护 `phase: idle|ringing|dialing|active` 状态机, �
 
 `AgentRuntime` (server/src/agent/agent-runtime.ts) 是每用户长生命周期对象, 注释自述 "Mirrors the Go bridge's per-user Session":
 
-- `ensureReady()` (agent-runtime.ts:93-113): 首次使用时创建/复用 `agent_sessions` 行, `mkdir` 工作区, 调 `Remote.Server.createRemoteAgent({provider, workDir, mcpServers, hooks, askUser})` 拿到完整 agent 栈句柄 (client、conversation、registry、contextWindow、teamManager、backgroundTaskManager 等), promise 缓存防并发重建
+- `ensureReady()` (agent-runtime.ts:93-113): 首次使用时创建/复用 `agent_sessions` 行, `mkdir` 工作区, 调 `Remote.Server.createRemoteAgent({provider, workDir, mcpServers, hooks, enableCoordinatorMode: false, forkDisabled: false, askUser})` 拿到完整 agent 栈句柄 (client、conversation、registry、contextWindow、teamManager、backgroundTaskManager 等), promise 缓存防并发重建
 - 再水化 (agent-runtime.ts:118-125): 从 DB `context` JSON 恢复对话, 过滤掉可再生的 `<system-reminder>` 包裹消息防止跨重启累积; 每回合结束 `saveContext` 把 `conv.getMessages()` 快照写回 DB. 持久化策略是 DB-only: 构造 `Agent.Agent` 时 `sessionId: ""` 显式禁用库自身的 JSONL 会话写入 (agent-runtime.ts:268-271 注释), agent-stores.ts 头注释: "JSON is the only memory that survives restarts: DB is authoritative"
 - 上下文窗口策略: 每回合构造 `Agent.Agent` 时透传 `contextWindow: handle.contextWindow` 与 `maxOutput: Config.getMaxOutputTokens(handle.provider)` (agent-runtime.ts:275-276), 窗口上限由 provider 配置决定; 主动压缩走 `/compact` 斜杠命令调 `Compact.Compact.forceCompact` (agent-runtime.ts:366-384), 与 yukino 库的自动压缩机制共用同一 conversation/recoveryState
 - 提示队列 (agent-runtime.ts:186-223): `dispatch` 入队, 单 worker 串行消费; 队长超 `AGENT_QUEUE_CAP` (默认 8) 时向所有连接推 "Yukino is still working through earlier messages" 系统通知并丢弃
@@ -339,7 +339,7 @@ flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取
 
 聊天页把 agent items 按锚点缝进消息流 (chat.tsx:80-96): 落库消息 uuid 集合为 `storedUuids`; anchor 命中的 items 归入 `overlayByAnchor`, 经 `MessageBubble` 的 `renderAfter(uuid)` 回调渲染在该气泡之后; 未命中的进 `trailingOverlay` 渲染在列表尾部. 流式气泡的交接零闪烁: `stream` 项一旦其 messageId 出现在 storedUuids (即 /wss 已把落库消息推来), 该 overlay 项被跳过, 由真实消息气泡接管 (chat.tsx:77-87, 注释 "A streamed bubble hands over to its stored message"). 助手会话的 composer 关闭附件 (`allowAttachments={false}`, 服务端对非文本也只回一句话), streaming 时显示 Stop 按钮接 `session/cancel`, 斜杠命令菜单由 `session/commands` 驱动.
 
-`components/agent/agent-item.tsx` 渲染五类 item: stream (复用 MessageContent/Streamdown, 流式光标)、thinking (Collapsible 折叠)、tool (按工具名映射图标 Bash->Terminal、Grep/Glob->Search、Read/Write/Edit->FileText, args 预览取 command/file_path/pattern/path/url 首个非空键, 输出截断 5000 字符, agent-item.tsx:37-58)、permission 卡 (allow/deny/allowAlways)、question 卡 (多问题多选项).
+`components/agent/agent-item.tsx` 渲染六类 item: stream (复用 MessageContent/Streamdown, 流式光标)、thinking (Collapsible 折叠)、tool (按工具名映射图标 Bash->Terminal、Grep/Glob/WebSearch->Search、`Read*`/`Write*`/`Edit*` 前缀->FileText、其余->Wrench, args 预览取 command/file_path/pattern/path/url 首个非空键, 输出截断 5000 字符, agent-item.tsx:37-58)、notice (系统/错误/完成单行提示, 按 tone 取 AlertTriangle/CircleCheck/Info 图标, agent-item.tsx:151-164)、permission 卡 (allow/deny/allowAlways)、question 卡 (多问题多选项).
 
 ## 九、React 客户端工程化
 
@@ -386,7 +386,7 @@ flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取
 ## 十一、测试
 
 - Vitest 单测 4 个文件 (server/tests, `vitest run`, 环境强制 `REDIS_URL=""` 走内存缓存、不触 DB, vitest.config.ts 注释): `common.test.ts` (JWT 往返/错密钥/畸形、randomId、sanitizeFilename)、`call-manager.test.ts` (房间 id 派生、忙状态、leave 返回剩余成员、空房解散)、`event-adapter.test.ts` (流文本累积与 tool_use 触发 flush、回合计数)、`interaction-broker.test.ts` (fake timers 验证权限超时 fail-closed 等)
-- Smoke 脚本 2 个 (对运行中的服务器, 默认 :8000): `http-smoke.mjs` 30 次请求覆盖注册/登录/错误路径/联系人/群组/会话/消息全流程; `ws-smoke.mjs` 覆盖聊天 WS 握手、在线状态、单聊/群聊扇出、顶号驱逐、call_failed、agent WS 握手+ping+私聊分发、dashboard WS (文件头注释)
+- Smoke 脚本 2 个 (对运行中的服务器, 默认 :8000): `http-smoke.mjs` 以约 30 次请求覆盖注册/登录/错误路径/联系人/群组/会话/消息/管理守卫全流程, 末尾循环 `/login` 直至 429 验证按 IP 限流 (刻意放在最后, 避免污染限流桶, 脚本注释自述); `ws-smoke.mjs` 覆盖聊天 WS 握手、在线状态、单聊/群聊扇出、顶号驱逐、call_failed、agent WS 握手+ping+私聊分发、dashboard WS (文件头注释)
 
 ## 十二、与 yukino.go 栈的关系
 

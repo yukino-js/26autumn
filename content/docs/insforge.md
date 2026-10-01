@@ -48,7 +48,17 @@ MCP server 不在主 monorepo 内 (根 package.json 的 workspaces 不含 mcp, D
 ```json
 {
   "tasks": {
-    "build": { "dependsOn": ["^build"], "env": ["VITE_*"] },
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "src/**",
+        "tsconfig*.json",
+        "package.json",
+        "vite.config.*",
+        "tsup.config.*"
+      ],
+      "env": ["VITE_*"]
+    },
     "@insforge/backend#build": {
       "outputs": ["../dist/server.js", "../dist/server.js.map"]
     },
@@ -288,7 +298,7 @@ backend/src/api/routes/s3-gateway/ 实现了完整的 S3 线协议: dispatch.ts 
 | ----------- | --------------------------------------------------------------------------------------------------- |
 | Object 读写 | put-object, get-object, head-object, copy-object, delete-object, delete-objects                     |
 | 分块上传    | create-multipart-upload, upload-part, list-parts, complete-multipart-upload, abort-multipart-upload |
-| Bucket      | create-bucket, delete-bucket, head-bucket, list-buckets, get-bucket-location                        |
+| Bucket      | create-bucket, delete-bucket, head-bucket, list-buckets, get-bucket-location, list-objects-v2       |
 | Versioning  | get-bucket-versioning, put-bucket-versioning                                                        |
 | CORS        | get-bucket-cors, put-bucket-cors, delete-bucket-cors                                                |
 | Tagging     | get-object-tagging, put-object-tagging, delete-object-tagging                                       |
@@ -425,7 +435,7 @@ deploy/setup.sh (POSIX sh) 的行为: 克隆或 HTTPS 拉取 image-only 栈所�
 
 ## 十四、测试与工程纪律 (主仓库)
 
-backend/tests 分 unit (197 个 *.test.ts 文件)、integration、cloud、local、manual 五类, 配 run-all-tests.sh (npm run test:e2e 入口)、preflight.sh、cleanup-all-test-data.sh 与 test-config.sh; vitest 承担 unit/integration (test:integration 单独 30s 超时), supertest 打 HTTP 层, devDependency 里有 insforge-test ^0.2.0 (自家测试辅助包)。单元测试文件名透露了大量回归场景: ai-streaming-token-double-count.reproduction.test.ts (流式 token 重复计数的复现测试)、token-manager-csrf / token-manager-jwks / cloud-token、s3-gateway-cors-tagging-versioning、s3-gateway-list-objects-v2、storage-url-versioning、verify-admin、schedule.service.delete-not-found、app.config.test.ts 等。
+backend/tests 分 unit (207 个 *.test.ts 文件, 其中 10 个在 compute/ 子目录)、integration、cloud、local、manual 五类, 配 run-all-tests.sh (npm run test:e2e 入口)、preflight.sh、cleanup-all-test-data.sh 与 test-config.sh; vitest 承担 unit/integration (test:integration 单独 30s 超时), supertest 打 HTTP 层, devDependency 里有 insforge-test ^0.2.0 (自家测试辅助包)。单元测试文件名透露了大量回归场景: ai-streaming-token-double-count.reproduction.test.ts (流式 token 重复计数的复现测试)、token-manager-csrf / token-manager-jwks / cloud-token、s3-gateway-cors-tagging-versioning、s3-gateway-list-objects-v2、storage-url-versioning、verify-admin、schedule.service.delete-not-found、app.config.test.ts 等。
 
 根目录 eslint.config.js (9KB) + prettier + typescript-eslint; CI 在 .github 下; .prettierignore 单独维护。CHANGELOG 由 release-please 风格自动生成 (compare 链接 + conventional commits)。仓库还有 .gstack、.idea、.codex、.claude、.archive 等工具目录未纳入本文范围。
 
@@ -565,7 +575,7 @@ OAuth 流程本体 (oauth-manager.ts): 对 MCP 客户端做标准授权码 + PKC
 | docs 路由路径穿越防护限 docs/ 与 .agents/docs                        | backend/src/api/routes/docs/index.routes.ts 安全检查段                                                                                         |
 | runner 镜像 CMD 先迁移后 exec node                                   | 根 Dockerfile runner 阶段                                                                                                                      |
 | setup.sh 生成六个 secret (含两个 access key)、幂等、不启动服务       | deploy/setup.sh gen_secret 调用与头注释; README Quickstart                                                                                     |
-| 单测 197 个                                                          | backend/tests/unit/*.test.ts glob 计数                                                                                                         |
+| 单测 207 个 (顶层 197 加 compute/ 子目录 10)                         | backend/tests/unit/**/*.test.ts glob 计数                                                                                                      |
 | MCP bin 三入口与 start 命令                                          | insforge-mcp/package.json bin/scripts                                                                                                          |
 | 健康检查 10s 超时且失败即终止注册                                    | insforge-mcp/src/shared/tools/index.ts fetchBackendVersion/registerInsforgeTools                                                               |
 | 版本门控两条与 LOCAL_ONLY_TOOLS                                      | insforge-mcp/src/shared/tools/index.ts TOOL_VERSION_REQUIREMENTS/LOCAL_ONLY_TOOLS                                                              |

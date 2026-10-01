@@ -11,6 +11,7 @@ export default defineConfig(
       "**/dist/**",
       "**/node_modules/**",
       "packages/**",
+      "a2ui/**",
       ".next/**",
       "out/**",
       ".source/**",

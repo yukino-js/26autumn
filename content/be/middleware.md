@@ -60,7 +60,7 @@ etcd 中的 Raft 优化
 - PreVote: 节点在发起选举前先进行 PreVote, 避免网络分区恢复后扰乱集群
 - CheckQuorum: Leader 定期检查是否仍与多数节点连通, 否则主动下台
 - Learner 角色: 非投票成员, 用于新节点加入时先同步数据再提升为 Voter
-- 成员变更: etcd 3.3 及之前采用两阶段 Joint Consensus (C_old + C_new) 变更成员; 3.4 起改为单服务器简单变更 (simple membership change), 不再使用联合配置
+- 成员变更: etcd server 在 3.3 及之前只通过 ConfChange 做单服务器变更 (一次只能有一个节点加入/移除, raft 库保证同一时刻只有一个变更在进行); 3.4 起引入 ConfChangeV2, 涉及多个服务器的复合变更会自动先进入联合配置 (EnterJoint) 再退出 (LeaveJoint), 即 Raft 的 Joint Consensus 两阶段变更; 单服务器变更则保持原有的简单语义
 
 ### etcd 的 MVCC 多版本并发控制是如何实现的?
 
@@ -858,14 +858,14 @@ HNSW (Hierarchical Navigable Small World)
 
 对比
 
-| 维度       | FLAT       | HNSW                  |
-| ---------- | ---------- | --------------------- |
-| 准确率     | 100%       | 95-99%                |
-| 查询延迟   | O(N), 慢   | O(log N), 快          |
-| 内存       | 1x         | 1.5-2x                |
-| 建索引速度 | 无需建索引 | 较慢                  |
-| 增量更新   | 天然支持   | 支持 (但可能降低质量) |
-| 适用规模   | < 10 万    | > 10 万               |
+| 维度       | FLAT            | HNSW                                    |
+| ---------- | --------------- | --------------------------------------- |
+| 准确率     | 100%            | 95-99%                                  |
+| 查询延迟   | O(N), 慢        | O(log N), 快                            |
+| 内存       | 1x (仅原始向量) | 原始向量 + 图结构 (高维下图开销约 3-5%) |
+| 建索引速度 | 无需建索引      | 较慢                                    |
+| 增量更新   | 天然支持        | 支持 (但可能降低质量)                   |
+| 适用规模   | < 10 万         | > 10 万                                 |
 
 ### Redis 向量搜索的查询语法和 KNN 检索是如何工作的?
 
@@ -1086,10 +1086,10 @@ func retrieve(ctx context.Context, question string, topK int) ([]Chunk, error) {
 内存优化
 
 ```text
-1. 量化 (Quantization):
-   - FLOAT32 (4 bytes/dim) -> FLOAT16 (2 bytes/dim) -> INT8 (1 byte/dim)
-   - 1536 维: 6KB -> 3KB -> 1.5KB per vector
-   - RediSearch 2.6+ 支持 FP16/BF16 向量类型
+1. 向量类型选择:
+   - RediSearch 的 VECTOR 字段只支持 FLOAT32 (4 bytes/dim) 与 FLOAT64 (8 bytes/dim) 两种类型
+   - 不提供原生 FP16/INT8 量化 (与部分专用向量数据库不同), 低位宽量化无法在 Redis 存储层降低内存
+   - 默认使用 FLOAT32; FLOAT64 仅在需要更高数值精度时才有意义, 代价是向量内存翻倍
 
 2. 降维:
    - PCA / 自编码器将 1536 维降到 256-512 维
@@ -1124,16 +1124,16 @@ func retrieve(ctx context.Context, question string, topK int) ([]Chunk, error) {
 
 3. 预过滤优化:
    - 标签过滤缩小候选集, 减少 KNN 搜索范围
-   - 但候选集太小 (< 1000) 时 FLAT 可能比 HNSW 快
+   - 但过滤条件过于苛刻、候选集很小时, 暴力扫描 (FLAT) 反而可能比图搜索 (HNSW) 快
 
 4. 索引构建:
    - 批量写入后统一建索引 (比逐条插入快)
    - 使用 FT._CREATEIFNX 避免重复创建
 
-5. 监控指标:
-   - ft_search_duration: 查询延迟
-   - ft_index_size: 索引内存
-   - ft_index_num_docs: 索引文档数
+5. 监控:
+   - FT.INFO <index> 查看 num_docs, inverted_sz_mb, vector_index_sz_mb
+     等字段, 掌握索引规模与内存占用
+   - SLOWLOG GET / LATENCY HISTORY 观测慢查询与延迟事件
 ```
 
 ---

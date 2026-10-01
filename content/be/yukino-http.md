@@ -5,6 +5,7 @@ description: "yukino_http Go HTTP 框架的源码级解析: 洋葱模型中间�
 
 > 本机器路径: `$HOME/github/yukino.go/yukino_http`
 > 基于项目 `github.com/hangtiancheng/yukino.go/yukino_http` 源码整理, 覆盖洋葱模型中间件、延迟响应、Trie 路由、SSE、WebSocket (RFC 6455) 等核心主题.
+> 仓库为扁平布局 (yukino.go 根目录下直接是 yukino_http/, 无 packages/ 层). `yukino_http/go.mod` 声明模块路径与 `go 1.26.0`, 仓库根 `go.work` 声明 `go 1.26.4`; go.mod 无任何 require, 只有指向同仓库相邻模块的 replace 指令. 本文所有行号引用均以 HEAD `573f84d` (2026-09-30) 源码快照为准.
 
 ## 项目整体架构与设计理念
 
@@ -20,14 +21,16 @@ A: yukino_http 是一个受 Koa.js 启发的 Go HTTP 框架, 核心设计理念�
 
 ```text
 Application (yukino.go)
-  ├── router (router.go + trie.go)    -- 路由注册与匹配
-  ├── Router (group.go)            -- 嵌套 Router 实现路由分组、前缀、静态文件
-  ├── Context (context.go)            -- 请求上下文
-  ├── Response (response.go)          -- 延迟响应序列化
-  ├── Logger / Recovery               -- 内置中间件
-  ├── SSE (sse.go)                    -- Server-Sent Events
-  └── WebSocket (websocket.go)        -- RFC 6455 实现
+  ├── router (router.go + trie.go)  -- 路由注册与匹配
+  ├── Router (group.go)             -- 嵌套 Router 实现路由分组、前缀、静态文件
+  ├── Context (context.go)          -- 请求上下文
+  ├── Response (response.go)        -- 延迟响应序列化
+  ├── Logger / Recovery             -- 内置中间件 (logger.go / recovery.go)
+  ├── SSE (sse.go)                  -- Server-Sent Events
+  └── WebSocket (websocket.go)      -- RFC 6455 实现
 ```
+
+另有 `main.go`, 带 `//go:build ignore` 标记的可运行演示 (Hello World、panic 触发 Recovery、SSE 三事件, 监听 :9999), 不参与包编译.
 
 请求生命周期:
 
@@ -518,6 +521,8 @@ func (w *SSEWriter) Stream(ch <-chan string) {
 }
 ```
 
+另有三个便捷方法: `Done()` 发送 `data: [DONE]` 结束标记 (对齐 OpenAI 风格流式接口的结束约定, main.go 演示即用) ; `Flush()` 手动触发一次 `http.Flusher` 刷新; `Closed()` 返回 Request Context 的 Done channel, 供外部等待客户端断开.
+
 ---
 
 ## WebSocket 实现 (RFC 6455)
@@ -526,11 +531,12 @@ WebSocket 握手过程如何实现? 为什么选择 Hijack 而非标准 Response
 
 A: 握手流程 (`websocket.go:71-158`) :
 
-1. 验证请求: 检查 Method == GET、Connection: upgrade、Upgrade: websocket、Sec-WebSocket-Version: 13、Sec-WebSocket-Key 非空
-2. 子协议协商: `negotiateSubprotocol` 按服务端优先级匹配客户端提供的协议列表
-3. Hijack 连接: `http.NewResponseController(ctx.Writer).Hijack()` 获取底层 `net.Conn`
-4. 构造 101 响应: 手动拼接 HTTP 响应头 (包含 `Sec-WebSocket-Accept`)
-5. 写入握手响应: 直接 `conn.Write(p)`
+1. 校验 Origin: 仅当 `UpgradeOptions.CheckOrigin` 非 nil 时执行, 不通过则 `Throw(403)` 并返回错误
+2. 验证请求: 依次检查 Method == GET、Connection: upgrade、Upgrade: websocket、Sec-WebSocket-Version 包含 13、Sec-WebSocket-Key 非空; 版本不符时还会通过 `ctx.Set` 回写 `Sec-WebSocket-Version: 13` 响应头
+3. 子协议协商: `negotiateSubprotocol` 按服务端优先级匹配客户端提供的协议列表
+4. Hijack 连接: `http.NewResponseController(ctx.Writer).Hijack()` 获取底层 `net.Conn` 与 `bufio.ReadWriter`; Hijack 成功后立即置 `flushed = true`、`Status = 101`、`statusSet = true`, 再用 `conn.SetDeadline(time.Time{})` 清空 HTTP Server 可能遗留的读写超时
+5. 构造 101 响应: 手动拼接 HTTP 响应头 (包含 `Sec-WebSocket-Accept`, 协商成功时附带 `Sec-WebSocket-Protocol`)
+6. 写入握手响应: 直接 `conn.Write(p)`, 绕过 bufio
 
 为什么用 Hijack: WebSocket 升级后, 连接不再是 HTTP 语义——需要双向、全双工通信. 标准 `http.ResponseWriter` 只能写响应, 无法读取后续帧. Hijack 将底层 TCP 连接的所有权从 `net/http` 转移到应用层.
 
@@ -640,6 +646,8 @@ func (ws *WSConn) readMessage() (opcode int, payload []byte, err error) {
 
 writeFrame (`websocket.go:468-498`) : 服务端到客户端不 mask (RFC 规定) . 根据 payload 长度选择 7-bit、16-bit、64-bit 长度编码.
 
+消息消费有两种模式: 拉取式 `ReadMessage()` (持有 readMu, 自动回复 Ping、吞掉 Pong, 收到 Close 时回写 Close 帧并返回 `ErrWSClosed`) 与事件驱动 `Listen()` (阻塞读循环, 分发 OnMessage/OnClose/OnError/OnPing/OnPong 回调, Ping 同样自动回 Pong) . `WSConn.Heartbeat(interval)` 周期性发送 Ping 帧并返回幂等 stop 函数, 与 SSEWriter.Heartbeat 同构 (sync.Once + done channel) , 但监听的是 `closed` channel 而非请求 Context.
+
 ---
 
 ## 并发安全设计
@@ -709,7 +717,7 @@ func (app *Application) Shutdown(ctx context.Context) error {
 }
 ```
 
-server 在 New() 中构造的原因 (注释 `yukino.go:22-24`) :
+server 在 New() 中构造的原因 (注释 `yukino.go:22-23`) :
 
 ```go
 // Constructed here (not in Listen) so a concurrent Shutdown never races

@@ -4,7 +4,7 @@ description: "基于 apps/yukino 源码逐文件阅读整理的 Coding Agent 深
 ---
 
 > 本机器路径: `$HOME/github/yukino-code/apps/yukino`
-> 基于 `apps/yukino/src`（`@yukino.js/yukino`）源码逐文件阅读整理。
+> 基于 `apps/yukino/src`（`@yukino.js/yukino`）源码逐文件阅读整理，代码事实核对于仓库 HEAD `526dd77`（2026-09-30）。
 > 代码入口：`src/main.tsx`；核心循环：`src/agent/index.ts`；系统提示词：`src/prompt/*`。
 
 ---
@@ -52,7 +52,7 @@ Yukino 是一个**终端 AI 编码代理**（terminal-based AI coding agent）�
 | `worktree/`     | Git worktree 隔离                                                                              |
 | `mcp/`          | MCP 客户端 / 管理 / 延迟加载策略                                                               |
 | `ui/`           | Ink TUI（`app.tsx` 3100+ 行，组装一切）                                                        |
-| `remote/`       | Koa + WebSocket 浏览器模式                                                                     |
+| `remote/`       | Express + WebSocket 浏览器模式                                                                 |
 | `acp/`          | Agent Client Protocol                                                                          |
 | `telemetry/`    | OpenTelemetry / Langfuse / Sentry                                                              |
 
@@ -62,7 +62,7 @@ Yukino 是一个**终端 AI 编码代理**（terminal-based AI coding agent）�
 | ----------------- | --------------------------------------------- | ------------------------------------------------------- |
 | **TUI 交互**      | `yukino`                                      | Ink 渲染，默认                                          |
 | **Print 非交互**  | `yukino -p "..."`                             | 单 prompt，打印结果，支持 `--output-format stream-json` |
-| **Remote 浏览器** | `yukino --remote :18888`                      | Koa + WS，浏览器聊天 UI                                 |
+| **Remote 浏览器** | `yukino --remote [addr]`                      | Express + WS，浏览器聊天 UI，默认端口 18888             |
 | **Teammate**      | `--teammate --team-dir ... --member-name ...` | 作为团队成员进程运行（被 tmux/iTerm backend 拉起）      |
 | **ACP**           | `--acp` / `--acp-ws`                          | Agent Client Protocol                                   |
 | **A2A**           | `--a2a [host:port]`                           | Agent-to-Agent 协议服务端（`a2a/index.ts` `runA2a`）    |
@@ -224,7 +224,7 @@ interface Tool {
 
 | 工具                | category | 描述（摘）                                                             | 参数                                                                                      | 能力要点                                                                                |
 | ------------------- | -------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| **AskUserQuestion** | read     | 向用户提 1–4 个单选/多选题并等待回答；每题 1–4 个选项，自动加「Other」 | `questions[]`：`question`/`header`(≤12 字符)/`options[]`(label/description)/`multiSelect` | 实际提问委托给注入的 UI 对话框（同 onPermissionRequest 模式）；只问会改变任务的关键信息 |
+| **AskUserQuestion** | read     | 向用户提 1–4 个单选/多选题并等待回答；每题 2–4 个选项，自动加「Other」 | `questions[]`：`question`/`header`(≤12 字符)/`options[]`(label/description)/`multiSelect` | 实际提问委托给注入的 UI 对话框（同 onPermissionRequest 模式）；只问会改变任务的关键信息 |
 | **ExitPlanMode**    | read     | 退出 plan 模式并把计划交给用户审批                                     | 无参数                                                                                    | 仅在 plan 模式有意义；成功后结束本轮，触发 UI 审批对话框                                |
 | **EnterWorktree**   | write    | 创建并进入 git worktree 做隔离工作                                     | `slug`(必)                                                                                | 独立分支/工作副本                                                                       |
 | **ExitWorktree**    | write    | 退出并可选清理 git worktree                                            | `path`(必)、`branch`(必)、`git_root`(必)、`head_commit`                                   | 用 head_commit 检测是否有改动                                                           |
@@ -435,9 +435,9 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 
 ### 7.1 文件检查点（`file-history/index.ts`）
 
-- `trackEdit(path)`：每次编辑前把文件当前内容备份成 `<sha256(path)前16位>@v<version>`，存到 `.yukino/file-history/<sessionId>/`；文件不存在也升版本号（rewind 时表示「当时不存在」）。
-- `makeSnapshot(messageIndex, userText)`：Agent 主循环在**每轮无 tool_use 收尾时**打快照，记录 `messageIndex = conversation.len()`、摘要文本、以及当前所有被追踪文件的备份指针。最多保留 100 个。
-- `rewind(snapshotIndex)`：把目标快照里的文件备份逐一恢复（内容不同才写），**删除目标之后才创建的文件**，截断快照历史（不能前进了），重置版本计数。
+- `trackEdit(path)`：文件**首次**被编辑前登记追踪，并做一次基线捕获——文件存在则把原始内容备份为 `<sha256(path)前16位>@baseline`，不存在记 `absent`，读不了记 `unavailable`；基线用于回滚到「追踪开始之前」。
+- `makeSnapshot(messageIndex, userText, sessionLineCount?)`：Agent 主循环在**每轮无 tool_use 收尾时**打快照，把全部已追踪文件的当前内容备份为 `<hash>@s<N>`（N 为单调递增的 `nextSnapshotSeq`，永不复用），记录 `messageIndex = conversation.len()`、截断 60 字符的摘要文本、以及会话日志行数 `sessionLineCount`（供 /rewind 精确截断 JSONL）。最多保留 100 个，修剪时删除被丢弃快照的备份文件。
+- `rewind(snapshotIndex)`：把目标快照里的文件备份逐一恢复（内容不同才写）；备份文件缺失表示「快照时文件不存在」，删除当前文件；对目标之后才首次追踪的文件按其 `@baseline` 基线恢复（存在过→还原原始内容，当时不存在→删除文件）；截断快照历史（不能前进）并删除被移除快照的备份。`nextSnapshotSeq` 不回退（数组位置会复用，计数器必须单调）。
 
 ### 7.2 `/rewind` 三种回退（`ui/app.tsx` `handleRewindAction`）
 
@@ -672,7 +672,7 @@ while active:
 ### 12.2 Hooks（`hooks/index.ts`）
 
 - **事件**：`session_start / session_end / turn_start / turn_end / pre_send / post_receive / pre_tool_use / post_tool_use / shutdown`。
-- **动作**：shell command、HTTP 请求、prompt 注入（agent 型）；支持 condition、reject-on-failure、once、async、on_error。
+- **动作**：`command`（shell，30s 超时/10MB 缓冲，注入 YUKINO_EVENT/YUKINO_TOOL/YUKINO_FILE_PATH）、`prompt`（文本注入）、`http`（POST HookContext JSON，30s 超时）、`agent`（执行分支保留但当前无宿主注册 agentRunner，`validate()` 一律拒绝该类型配置）；支持 condition（编译为 JS 表达式求值，字段 event/tool/filePath/message/args）、reject（仅 pre_tool_use，与 async 互斥）、once（成功后本会话不再触发，失败释放槽位）、async（后台执行，完成后经通知队列注入）、on_error（ignore/fail/reject）。
 - hook 输出经 `recordNotification` 排队，下一轮由主循环排空成 system-reminder；`pre_tool_use` 可 reject 拦截工具。
 
 ### 12.3 沙箱 / 遥测 / 其他

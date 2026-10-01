@@ -335,7 +335,7 @@ CLI 脚本 (specification/proposals/express/scripts/, 全部需 A2UI_EXPRESS_ENA
 | run_decompiler.py        | 反向: 标准 A2UI v1.0 JSON 信封转回 Express DSL                  |
 | recreate_dsl_examples.py | 从当前代码再生成 express_dsl_examples.md 文档                   |
 
-Python SDK 实现: python/a2ui_agent/src/a2ui/inference_formats/experimental/express/, 含 ANTLR 生成的 express_parser / express_lexer / express_visitor, 以及 compiler.py、decompiler.py、prompt_generator.py、parser.py、visitor.py、format.py、schema_helper.py、errors.py、constants.py。测试位于 python/a2ui_agent/tests/express/ (test_compiler、test_parser_decompile、test_integration、test_prompt_generator、test_cli_tools、test_version_compliance)。
+Python SDK 实现: python/a2ui_agent/src/a2ui/inference_formats/experimental/express/, 含 ANTLR 生成的 express_parser / express_lexer / express_visitor (generated/ 子目录), 以及 compiler.py、decompiler.py、prompt_generator.py、parser.py、visitor.py、format.py、schema_helper.py、errors.py、constants.py。测试位于 python/a2ui_agent/tests/express/ (test_compiler、test_parser_decompile、test_integration、test_prompt_generator、test_cli_tools、test_version_compliance)。agent 侧 conformance 套件另为 Express 单列四套用例 conformance/agent/express/ (compiler.yaml 约千行, 把变量名即组件 id、内联组件提升、ParseError/ValidationError 两类错误等编译规则固化为跨语言用例; decompiler.yaml、prompt_generator.yaml、response_parser.yaml 各司反向编译、签名生成与响应块解析)。
 
 反编译器 (JSON -> Express) 的一个实用价值: 可以把存量标准 A2UI JSON (如 few-shot 示例、历史会话) 机械转换为 Express DSL, 作为迁移或构造示例的基座。
 
@@ -389,6 +389,7 @@ Python SDK 实现: python/a2ui_agent/src/a2ui/inference_formats/experimental/exp
 - 生命周期错误消除: Express 的 surface() 指令把 createSurface/updateComponents 的区分移到编译器按会话状态处理, 模型侧不再产生 "缺 createSurface / 杂散 createSurface" 这类生命周期失败 (对应 a2ui.md 降级策略一节的失败形态第五类)
 - 更细粒度的纠错: micro-refinement (行级隔离 + 单行快模型修正 + 热替换) 是比 correctA2uiBlock 整块重试更细的 L2 修复, 可作为降级策略的演进方向
 - prompt 契约同构: ExpressPromptGenerator 的 catalog -> 位置签名编译, 与 @yukino.js/a2ui-shadcn 的 "组件实现 -> zod schema -> catalog.json -> LLM prompt" 单一事实源链路是同一思想 (catalog 契约驱动 prompt), 差别只在目标语法
+- 与 macros 的组合 (2026-10-01 快照新增): Python Agent SDK 新增 macros 可编程组件与类型强制引擎 (transformers/macros, @macro 装饰器 + MacroExpander, 详见 a2ui.md 的 macros 一节), 社区示例 samples/community/macros 直接把 Express DSL 用作模型输出格式——MacroAgentRuntime 组合 ExpressFormat 与 MacroExpander, 模型输出的 DSL 可引用注册的高层宏 (如 root = UserProfile("usr_101", "Alice Smith", "Lead Architect")), parser.compile 之后由 transform_to_transport 在服务端同步展开为原语组件子树再下发 v0.9.1 wire 消息, 客户端仍只见标准 basic catalog 组件。Express 压缩语法层 token, macros 压缩组件层语义空间, 二者正交可叠加
 
 ## 11. 总结
 

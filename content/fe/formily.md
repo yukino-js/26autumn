@@ -38,7 +38,7 @@ description: "基于本机 formily@d9a4644 源码核对的 Formily 入门与原�
           // ========== 3. 校验 ==========
           "required": true, // 标准关键字, 自动并入 validator
           "x-validator": [
-            { "format": "email" }, // 内置格式: email/url/ipv4/ipv6/phone/date/money/zh/zip/qq
+            { "format": "email" }, // 内置格式 (formats.ts): url/email/ipv4/ipv6/number/integer/idcard/qq/phone/money/zh/date/zip
             { "min": 2, "max": 32 }, // 字符串长度或数值范围
             { "pattern": "^[a-zA-Z]" }, // 正则
             { "validator": "{{(v) => v === 'admin' ? '不允许该用户名' : ''}}" }, // 自定义 (支持异步)
@@ -228,6 +228,8 @@ Formily 2.x 采用 monorepo 架构, 由多个独立的 npm 包组成, 各司其�
 | @formily/next           | Fusion Next 组件适配                         |
 
 它们之间的依赖关系可以用一句话概括: reactive 是地基, core 是骨架, react 是皮肤, json-schema 是协议层.
+
+上表只列出了 React 技术栈的主线包. 当前仓库 packages/ 目录下共有 16 个包, 除上表 10 个之外还有: @formily/grid (响应式网格布局引擎, FormGrid 的底层) 、@formily/vue 与 @formily/reactive-vue (经 vue-demi 同时支持 Vue 2.6+/3 的绑定层与渲染桥接) 、@formily/element (Element UI 组件适配) , 以及 benchmark 与 reactive-test-cases-for-react18 两个 private 内部测试包. 发布包版本号统一 (本快照为 2.3.7) , 由 lerna 管理.
 
 ---
 
@@ -521,21 +523,27 @@ Proxy 的 set 拦截器:
 
 ```ts
 set(target, key, value, receiver) {
+  // vue2 中重写过的数组原型场景: __proto__ 直接赋值, 不代理
+  if (key === '__proto__') {
+    target[key] = value
+    return true
+  }
   const hadKey = hasOwnProperty.call(target, key)
+  const newValue = createObservable(target, key, value) // 赋入的对象也递归代理
   const oldValue = target[key]
-  target[key] = value
+  target[key] = newValue
   if (!hadKey) {
     // 新增属性
-    runReactionsFromTargetKey({ target, key, value, oldValue, type: 'add' })
+    runReactionsFromTargetKey({ target, key, value: newValue, oldValue, receiver, type: 'add' })
   } else if (value !== oldValue) {
     // 修改属性 (值变了才触发)
-    runReactionsFromTargetKey({ target, key, value, oldValue, type: 'set' })
+    runReactionsFromTargetKey({ target, key, value: newValue, oldValue, receiver, type: 'set' })
   }
   return true
 }
 ```
 
-runReactionsFromTargetKey 会从 RawReactionsMap 中查出所有依赖了 target[key] 的 reactions, 将它们加入 PendingReactions 队列, 等批处理结束时统一执行. 注意 runReactionsFromTargetKey 自身也用 batchStart/batchEnd 包裹, 所以即使外部没有显式 batch, 更新也会经过这个队列 (源码中"立即执行"的分支标注了 never reach) .
+runReactionsFromTargetKey 会先同步通知 observe() 注册的 ObserverListeners (Form 的 ON_FORM_VALUES_CHANGE 就走这条路) , 再从 RawReactionsMap 中查出所有依赖了 target[key] 的 reactions: 带 _isComputed 标记的直接调用其 _scheduler (标记为脏, 不立即重算) , 其余加入 PendingReactions (或 batch.scope 期间的 PendingScopeReactions) 队列, 等批处理结束时统一执行. 注意 runReactionsFromTargetKey 自身也用 batchStart/batchEnd 包裹, 所以即使外部没有显式 batch, 更新也会经过这个队列 (源码中"立即执行"的分支标注了 never reach) . 对 add/delete/clear 操作, 还会额外触发数组 length 或 ITERATION_KEY 上的 reactions.
 
 ### 4.5 autorun 与 Tracker
 
@@ -985,6 +993,8 @@ export const useCompatFactory = (factory) => {
 };
 ```
 
+GarbageCollector (packages/reactive-react/src/shared/gc.ts) 的实现有两条路径: 环境支持 FinalizationRegistry 时, 把一个由 React state 持有的哨兵对象注册进去, 当 React 真正丢弃该组件 (哨兵被 GC 回收) 时触发 token.clean, 进而 dispose Tracker; 不支持 FinalizationRegistry 的环境则退化为一个默认 10 秒的 setTimeout 兜底. 组件正常卸载时, useCompatEffect 的 cleanup 会直接 dispose 并调用 close 注销注册, 两条路径互补, 保证 StrictMode 下"挂载即卸载"的幽灵实例不会泄漏依赖绑定.
+
 ---
 
 ## 七、原理解析: @formily/react 组件层
@@ -1044,6 +1054,13 @@ const ReactiveInternal = (props) => {
 
 export const ReactiveField = observer(ReactiveInternal, { forwardRef: true });
 ```
+
+以上是简化版. 真实实现 (packages/react/src/components/ReactiveField.tsx) 还做了几件事:
+
+- componentType/decoratorType 若是字符串, 会先从 SchemaComponentsContext 提供的组件表里解析 (FormPath.getIn(components, target) , 因此支持 "ArrayItems.Index" 这类点路径) , 解析不到才原样透传
+- 除了 value/onChange, 还会注入 onFocus/onBlur (转发给 field.onFocus/field.onBlur) , 并根据 field.pattern 注入 disabled (disabled 或 readPretty 时为 true) 与 readOnly (readOnly 时为 true) , 注入顺序在 toJS(field.componentProps) 之前, 所以用户可以在 x-component-props 里显式覆盖
+- onChange/onFocus/onBlur 在调用 field 方法之后, 还会继续调用 componentProps 中原有的同名 handler, 两者不互斥
+- field.content (来自 x-content) 或 componentProps.children 会作为组件 children 渲染, 这就是"提交"按钮文案的实现方式
 
 关键点: 由于 observer 的存在, 只有当这个字段自己的 value、display、componentProps 等属性变化时, 这个组件才会重渲染. 其他字段的变化不会影响它. 这就是"字段分布式渲染"的实现原理.
 
@@ -1157,20 +1174,24 @@ RecursionField 是递归渲染的核心. 它根据 schema.type 决定创建哪�
 
 Formily 在标准 JSON Schema 基础上扩展了 x-* 属性:
 
-| 属性                              | 含义                                                   |
-| --------------------------------- | ------------------------------------------------------ |
-| x-component                       | 渲染组件名 (从 components 表中查找)                    |
-| x-component-props                 | 组件 props                                             |
-| x-decorator                       | 装饰器组件名                                           |
-| x-decorator-props                 | 装饰器 props                                           |
-| x-reactions                       | 联动规则                                               |
-| x-display                         | 展示状态 (visible / hidden / none)                     |
-| x-pattern                         | 交互模式 (editable / disabled / readOnly / readPretty) |
-| x-validator                       | 校验规则                                               |
-| x-visible / x-hidden / x-disabled | 快捷状态设置                                           |
-| x-index                           | 排序权重                                               |
-| x-data                            | 自定义扩展数据                                         |
-| x-content                         | 内容 (如按钮文字)                                      |
+| 属性                                                  | 含义                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------ |
+| x-component                                           | 渲染组件名 (从 components 表中查找)                    |
+| x-component-props                                     | 组件 props                                             |
+| x-decorator                                           | 装饰器组件名                                           |
+| x-decorator-props                                     | 装饰器 props                                           |
+| x-reactions                                           | 联动规则                                               |
+| x-display                                             | 展示状态 (visible / hidden / none)                     |
+| x-pattern                                             | 交互模式 (editable / disabled / readOnly / readPretty) |
+| x-validator                                           | 校验规则                                               |
+| x-value                                               | 直接设置字段值 (映射到 field.value)                    |
+| x-visible / x-hidden                                  | display 的布尔快捷开关                                 |
+| x-disabled / x-editable / x-read-only / x-read-pretty | pattern 的布尔快捷开关                                 |
+| x-index                                               | 排序权重                                               |
+| x-data                                                | 自定义扩展数据                                         |
+| x-content                                             | 内容 (如按钮文字)                                      |
+
+映射关系由 packages/json-schema/src/shared.ts 的 SchemaStateMap 定义 (default → initialValue、enum → dataSource、title/description → 同名字段等) ; required、format、pattern、min/max 系列等标准校验关键字则通过 SchemaValidatorMap 逐条并入 field.validator (调用 setValidatorRule) .
 
 ### 8.2 Schema 到 Field Props 的转换
 
@@ -1235,28 +1256,45 @@ const getUserReactions = (schema, options) => {
       }
 
       // 对象声明式:
-      const { when, fulfill, otherwise, target, dependencies } = reaction;
+      const { when, fulfill, otherwise, target, effects } = reaction;
       const run = () => {
-        const $deps = getDependencies(field, dependencies);
-        const scope = { ...baseScope, $deps };
+        const $deps = getDependencies(field, reaction.dependencies);
+        const scope = lazyMerge(baseScope, {
+          $target: null,
+          $deps,
+          $dependencies: $deps,
+        });
         const condition = when ? shallowCompile(when, scope) : true;
         const request = condition ? fulfill : otherwise;
         setSchemaFieldState({ field, target, request, scope });
       };
 
+      // 有 target 时, effects 缺省为 ['onFieldInit', 'onFieldValueChange']
       if (target) {
-        // 被动联动: 监听目标字段的事件
-        reaction.effects.forEach((type) =>
-          FieldEffects[type](field.address, run),
-        );
+        reaction.effects = effects?.length ? effects : DefaultFieldEffects;
+      }
+      if (reaction.effects) {
+        // 事件式联动: 在本字段 (field.address) 的指定生命周期上挂 run,
+        // 借助 autorun.memo(deps=[]) 保证只注册一次
+        autorun.memo(() => {
+          untracked(() => {
+            each(reaction.effects, (type) => {
+              if (FieldEffects[type]) {
+                FieldEffects[type](field.address, run);
+              }
+            });
+          });
+        }, []);
       } else {
-        // 主动联动: 在 autorun 中执行 (自动追踪依赖)
+        // autorun 式联动: 直接执行 run (自动追踪读取到的 observable)
         run();
       }
     };
   });
 };
 ```
+
+两点澄清: 一是"被动联动"监听的是当前字段自己的生命周期事件 (`FieldEffects[type](field.address, run)`) , 事件触发后再通过 `form.setFieldState(target, ...)` 去驱动目标字段, 表达式作用域里的 $target 就是目标字段的 state; 二是 effects 也可以脱离 target 单独声明, 此时监听的仍是本字段事件, 但 fulfill/otherwise 的 state 改动也落在本字段身上. run 的注册发生在 core 的 createReactions 所创建的 autorun 内部 (packages/core/src/shared/internals.ts) , 未声明 effects 的 run 依赖该 autorun 自动追踪 $deps 读取到的 observable.
 
 ### 8.4 表达式编译
 
@@ -1269,20 +1307,21 @@ x-reactions 中的 `{{...}}` 语法会被 compiler.ts 编译为 JavaScript 函�
 
 编译时可用的作用域变量:
 
-| 变量                  | 含义                      |
-| --------------------- | ------------------------- |
-| $self                 | 当前字段                  |
-| $form                 | 表单实例                  |
-| $values               | 表单值                    |
-| $deps / $dependencies | 依赖字段的值数组          |
-| $target               | 目标字段状态 (被动联动时) |
-| $record               | 当前记录 (数组字段中)     |
-| $records              | 所有记录                  |
-| $index                | 当前索引                  |
-| $observable           | 创建 observable 对象      |
-| $effect               | autorun.effect            |
-| $memo                 | autorun.memo              |
-| $props                | 设置组件 props            |
+| 变量                  | 含义                                          |
+| --------------------- | --------------------------------------------- |
+| $self                 | 当前字段                                      |
+| $form                 | 表单实例                                      |
+| $values               | 表单值                                        |
+| $deps / $dependencies | 依赖字段的值数组                              |
+| $target               | 目标字段状态 (被动联动时)                     |
+| $record               | 当前记录 (数组字段中)                         |
+| $records              | 所有记录                                      |
+| $index                | 当前索引                                      |
+| $lookup               | 数组嵌套时的外层记录 (顶层作用域下即 $values) |
+| $observable           | 创建 observable 对象                          |
+| $effect               | autorun.effect                                |
+| $memo                 | autorun.memo                                  |
+| $props                | 设置组件 props                                |
 
 ---
 
@@ -1357,12 +1396,14 @@ Formily 支持多种校验规则声明方式:
 
 校验在以下时机自动触发:
 
-- onInput: 用户输入后 (selfModified 为 true 时)
-- onFocus: 聚焦时 (可配置)
-- onBlur: 失焦时 (可配置)
-- submit: 提交时 (全量校验)
+- onInput: 用户输入时, field.onInput 末尾显式 await validateSelf(this, 'onInput')
+- onFocus: 聚焦时, validateSelf(this, 'onFocus')
+- onBlur: 失焦时, validateSelf(this, 'onBlur')
+- submit: 提交时, batchSubmit 内 await target.validate() 全量校验
 
-在 Field.makeReactive 中:
+每条规则可以用 triggerType 声明自己响应哪些时机, 不匹配当前 triggerType 的规则会被跳过; 字段/表单级的 validatePattern 与 validateDisplay (默认分别为 ['editable'] 与 ['visible']) 决定处于什么 pattern/display 的字段才参与校验 (internals.ts 的 shouldValidate) .
+
+除了显式时机, 值变化本身也会触发校验. 在 Field.makeReactive 中:
 
 ```ts
 createReaction(
@@ -1374,6 +1415,8 @@ createReaction(
   },
 );
 ```
+
+注意 caches.inputting 这个开关: field.onInput 执行期间它为 true, 所以输入引发的值变化不会走这条 reaction 重复校验, 校验统一由 onInput 末尾那次显式调用完成; 而通过 field.value = x 或 setValues 这类非输入途径改值时, selfModified 为 false, 这条 reaction 也不会触发校验 — 即"程序改值默认不校验, 用户改值才校验".
 
 ### 10.3 校验结果
 
@@ -1403,27 +1446,30 @@ form.errors 是一个 computed 属性, 聚合所有字段 type === 'error' 的 f
    |
 3. ReactiveField 中构造的 onChange 调用 field.onInput(...args)
    |
-4. field.onInput 内部 (batch 包裹) :
-   +-- 解析事件参数, 提取 value
+4. field.onInput 内部 (makeObservable 里标记为 batch) :
+   +-- 解析事件参数, 从 event.target.value/checked 提取 value
+   +-- caches.inputting = true (抑制值 reaction 里的重复校验)
    +-- 设置 field.inputValue / field.inputValues
-   +-- 设置 field.selfModified = true
-   +-- 调用 field.setValue(value)
-   |   +-- 写入 form.values[field.path] = value
+   +-- field.value = value
+   |   +-- setValue 写入 form.values[field.path]
    |       +-- Proxy set 拦截器触发 runReactionsFromTargetKey
-   |           +-- 触发 Field 的 makeReactive 中的 reaction
-   |           |   +-- 发布 ON_FIELD_VALUE_CHANGE 事件
-   |           |   +-- 触发 validateSelf (校验)
-   |           +-- 触发 Form 的 makeReactive 中的 observe
-   |           |   +-- 发布 ON_FORM_VALUES_CHANGE 事件
-   |           +-- 触发其他依赖了 form.values[path] 的 reactions
-   |                (如 x-reactions 中 dependencies 包含此字段的联动)
+   |           +-- 同步通知 observe 监听器 -> Form 发布 ON_FORM_VALUES_CHANGE
+   |           +-- 依赖 target[key] 的 reactions 入队 (PendingReactions)
+   +-- modify(): selfModified = true, modified = true, 并向父字段与 form.modified 传播
+   +-- 发布 ON_FIELD_INPUT_VALUE_CHANGE / ON_FORM_INPUT_CHANGE
+   +-- await validateSelf(this, 'onInput') (按 triggerType 执行校验规则)
+   +-- caches.inputting = false
    |
 5. batch 结束, 执行 PendingReactions:
+   +-- Field 的 makeReactive 值 reaction: 发布 ON_FIELD_VALUE_CHANGE
+   |   (因 caches.inputting 为 true, 这次不再重复 validateSelf)
+   +-- 依赖 form.values[path] 的其他 reaction
+   |   (如 x-reactions 中 dependencies 包含此字段的联动)
    +-- 当前字段的 ReactiveField 重渲染 (value 变了)
    +-- 依赖此字段的其他字段的 ReactiveField 重渲染
-   +-- FormConsumer 重渲染 (如果监听了 values)
+   +-- FormConsumer 重渲染 (如果渲染函数读了受影响的 form 状态)
    |
-6. 校验完成, field.feedbacks 更新
+6. 校验结果写入 field.feedbacks
    +-- 装饰器 (FormItem) 重渲染, 显示错误信息
 ```
 
@@ -1463,13 +1509,17 @@ const MyFormItem = observer((props) => {
     <div className="form-item">
       <label>{field.title}</label>
       {props.children}
-      {field.errors.map((err) => (
-        <span className="error">{err}</span>
+      {field.selfErrors.map((msg, i) => (
+        <span className="error" key={i}>
+          {msg}
+        </span>
       ))}
     </div>
   );
 });
 ```
+
+说明: field.selfErrors 是字段自身校验错误的消息数组 (FeedbackMessage) ; field.errors 则是聚合对象数组 (IFormFeedback, 含本字段及子字段的错误, 每条带 address/path/type/messages) , 直接渲染会拿到对象而不是文案.
 
 ### 12.3 异步数据源
 

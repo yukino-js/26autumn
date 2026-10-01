@@ -128,7 +128,12 @@ flowchart TB
 │       ├── observability/           健康检查、Prometheus 指标、请求上下文
 │       ├── config/                  Zod env & AI schema（fail-fast）
 │       ├── middleware/              CORS、body limit、错误处理、安全头
-│       └── rate-limit/              Redis 计数窗口限流
+│       ├── rate-limit/              Redis 计数窗口限流
+│       ├── database/                Prisma 客户端装配（src/generated/prisma）
+│       ├── project/                 输出目录构建（tmp/code_output/{appId}）与 zip 下载
+│       ├── user/ · app-module/      用户、应用两个领域的 service/repository/schema
+│       ├── chat-history/            聊天历史查询
+│       └── common/                  crypto、错误码、HTTP 错误、分页等公共件
 └── docs/                            图片
 ```
 
@@ -263,7 +268,7 @@ Prisma 是类型安全 ORM：`schema.prisma` 声明模型 → 代码生成客户
 长连接双向通信需要自己解决：消息格式、请求关联、断线重连、消息补发。本项目协议（`protocol.ts`，全部 Zod 校验）：
 
 - **客户端 → 服务端**：`hello`（携带 `afterSequence` 请求补发）、`run`、`abort`、`permission_response`、`question_response`、`command_complete`、`runtime_action`、`heartbeat`；
-- **服务端 → 客户端**：`ready`（会话状态快照 + 待处理交互）、`event`（单条 transcript 事件）、`transcript_batch`（历史回放，每批 ≤1000 条）、结构化流事件（`assistant_delta` / `tool_use` / `tool_result` / `usage` / `turn_complete` 等）、`permission_request` / `question_request` / `interaction_resolved`、`runtime_status`、`files_changed`、`error`、`heartbeat_ack`；
+- **服务端 → 客户端**：`ready`（会话状态快照 + 待处理交互）、`event`（单条 transcript 事件）、`transcript_batch`（历史回放，每批 ≤1000 条）、结构化流事件（`assistant_delta` / `tool_use` / `tool_result` / `usage` / `turn_complete` 等）、`permission_request` / `question_request` / `interaction_resolved`、`command_result` / `candidates`（斜杠命令结果与补全候选）、`runtime_status`、`files_changed`、`error`、`heartbeat_ack`；
 - **单调序列号**：每条 transcript 事件带数据库分配的 `sequence`（BigInt），客户端记录 high-watermark，重连时 `hello { afterSequence }` 精确补发缺口——这是"至少一次 + 幂等回放"的经典事件溯源设计；
 - **心跳**：客户端每 20s 发 `heartbeat`，10s 无 ack 判定断线，指数退避重连（500ms → 15s）。
 
@@ -463,7 +468,8 @@ const DEPENDENCY_FILE_PATHS = [
   "yarn.lock",
 ];
 
-// 指纹 = 每个清单文件的 "path:length:sha256" 拼接
+// 指纹 = 每个清单文件的 "path:length:hash" 拼接 (hash 由 workspace-paths.ts 的
+// hashContents 计算: FNV-1a 32-bit hex, 非 sha256; 清单缺失时记 "path:missing")
 needsInstall =
   !hasNodeModules || fingerprint !== installedDependencyFingerprint;
 ```

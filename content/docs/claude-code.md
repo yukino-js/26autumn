@@ -60,7 +60,7 @@ CCB 是社区对 Anthropic 官方 Claude Code CLI 的逆向复原项目 (CLAUDE.
 - Vite 备选管线: vite.config.ts + scripts/post-build.ts, chunk 输出 dist/chunks/, post-build 对 globalThis.Bun 解构做 patch 并复制 vendor。
 - Vendor 路径解析统一走 src/utils/distRoot.ts, 通过 import.meta.url 中 lastIndexOf('dist'|'src') 定位根目录。
 - Dev mode: scripts/dev.ts 通过 Bun -d flag 注入 MACRO.* defines 运行 cli.tsx, 默认启用全部 feature; README 说开发模式看到版本号 888 即正确。
-- Feature flag 机制: 代码统一 import { feature } from 'bun:bundle', feature('FLAG_NAME') 返回 boolean, 由环境变量 FEATURE_<FLAG_NAME>=1 启用。Build 默认 features 集中定义在 scripts/defines.ts 的 DEFAULT_BUILD_FEATURES (build.ts 从中 import), 实际共 43 个; CLAUDE.md 正文一处写 "19 个 feature"、Feature Flag 一节又写 "65+ 个", 两处口径都与源码不符, 以 scripts/defines.ts 为准。Dev mode 全部启用。
+- Feature flag 机制: 代码统一 import { feature } from 'bun:bundle', feature('FLAG_NAME') 返回 boolean, 由环境变量 FEATURE_<FLAG_NAME>=1 启用。Build 默认 features 集中定义在 scripts/defines.ts 的 DEFAULT_BUILD_FEATURES (build.ts 从中 import): 35 个活跃条目, 另有 HISTORY_SNIP、CONTEXT_COLLAPSE、FORK_SUBAGENT、UDS_INBOX、LAN_PIPES、REVIEW_ARTIFACT、SKILL_LEARNING、TEAMMEM 八个以注释形式保留在清单里 (连同活跃项共 43 个具名条目); CLAUDE.md 正文一处写 "19 个 feature"、Feature Flag 一节又写 "65+ 个", 两处口径都与源码不符, 以 scripts/defines.ts 为准。Dev mode 全部启用。
 - feature() 只能直接出现在 if 条件或三元表达式位置 (Bun 编译器限制), 不能赋值给变量或放进 && 链。
 - Lint/Format: Biome 覆盖 src/、scripts/、packages/ (含 @ant), 42 条规则因 decompiled 代码被关闭仅保留 recommended 基线; .tsx 120 列 + 强制分号, 其他 80 列; husky + lint-staged 提交时自动 biome check --fix / format --write; CI 在类型检查前跑 bunx biome ci .。
 - 质量闸门: bun run precheck = typecheck + lint fix + test, TypeScript strict 必须零错误, 这是 CLAUDE.md 反复强调的验收标准。

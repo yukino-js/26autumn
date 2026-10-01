@@ -8,7 +8,7 @@ description: "围绕 apps/yukino 终端 Coding Agent 实现细节的 104 组深�
 > 本文档围绕 `apps/yukino` (一个运行在终端中的 Coding Agent, 类似 Claude Code) 的实现细节设计深度问答.
 > 所有回答均基于真实源码 (`apps/yukino/src/`) , 回答中标注了关键文件与机制, 可作为系统学习材料.
 > 全文共 104 组问答, 覆盖架构、循环、协议、工具、权限、TUI、上下文管理、会话与记忆、多智能体、工程化、运行模式、命令系统、基础设施、手写代码题、场景设计题、开放题与补充子系统.
-> 注: 文中的文件路径与行号为撰写时点快照, 源码目录此后有过重构 (如 `src/tui/` 已并入 `src/ui/`、`src/agent/agent.ts` 现为 `src/agent/index.ts`) , 具体位置以函数/结构体名称为准.
+> 注: 文中的文件路径与行号已对照仓库 HEAD `526dd77` (2026-09-30) 逐一核对; 早期版本的 `src/tui/` 已并入 `src/ui/`、`src/agent/agent.ts` 现为 `src/agent/index.ts`、`src/conversation/conversation.ts` 现为 `src/conversation/index.ts` 等, 引用一律使用当前路径.
 
 ## 一、项目整体架构与设计决策
 
@@ -18,7 +18,7 @@ Yukino 是一个运行在终端中的 Coding Agent, 本质区别不在于"CLI", 
 
 架构上分为六层:
 
-1. 入口分发层 (`src/main.tsx`) : 根据 CLI 参数按序分发到六种运行模式 (main.tsx:39-49) —— acp (`--acp` / `--acp-ws`, Agent Client Protocol 适配) 、a2a (`--a2a [host:port]`, Agent-to-Agent 协议服务端) 、teammate (子进程后台代理) 、remote (Koa + WebSocket 的浏览器 UI) 、print (`-p` 管道模式, 支持 `text`/`stream-json` 输出) 、TUI (默认, Ink/React 交互界面) .
+1. 入口分发层 (`src/main.tsx`) : 根据 CLI 参数按序分发到六种运行模式 —— acp (`--acp` / `--acp-ws`, Agent Client Protocol 适配, main.tsx:39-43) 、a2a (`--a2a [host:port]`, Agent-to-Agent 协议服务端, main.tsx:45-49) 、teammate (子进程后台代理, main.tsx:52-65) 、print (`-p` 管道模式, 支持 `text`/`stream-json` 输出, main.tsx:79-92) 、remote (`--remote [addr]`, Express + WebSocket 的浏览器 UI, 默认端口 18888, main.tsx:108-143) 、TUI (默认, Ink/React 交互界面, main.tsx:145 起) .
 2. Agent 循环层 (`src/agent/index.ts`) : 核心是一个 `async *run(): AsyncGenerator<AgentEvent>` 生成器, 把"思考-行动"循环抽象为事件流.
 3. LLM 抽象层 (`src/llm/`) : 统一 `LLMClient` 接口 (`stream()` + `setSystemPrompt()`) , 适配 anthropic / openai / openai-compat 三种协议.
 4. 工具层 (`src/tools/`) : 统一 `Tool` 接口 (`schema()` + `execute()`) , 按 `category: read | write | command` 分类, 支撑并行调度与权限决策.
@@ -46,20 +46,20 @@ Yukino 是一个运行在终端中的 Coding Agent, 本质区别不在于"CLI", 
 
 `src/agent/events.ts` 定义了 13 个成员的判别联合 (discriminated union) :
 
-| 事件                            | 载荷                                         | 语义                                                                          |
-| ------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------- |
-| `stream_text` / `thinking_text` | `text`                                       | 正文/思考增量                                                                 |
-| `thinking_complete`             | `thinking, signature`                        | 思考块完成 (签名用于 Anthropic 回传)                                          |
-| `tool_use`                      | `toolName, toolId, args`                     | 工具调用开始                                                                  |
-| `tool_result`                   | `toolName, toolId, output, isError, elapsed` | 工具执行结果                                                                  |
-| `turn_complete`                 | —                                            | 一轮 (一次 LLM 响应+工具执行) 结束                                            |
-| `loop_complete`                 | `stopReason`                                 | 整个 Agent 循环结束                                                           |
-| `steering_delivered`            | `text`                                       | 排队的 steering 消息已在轮次边界 (工具结果之后、下一次 LLM 调用之前) 注入对话 |
-| `usage`                         | `UsageInfo`                                  | token 用量                                                                    |
-| `error`                         | `Error`                                      | 错误                                                                          |
-| `compact`                       | `message, boundary?`                         | 发生了上下文压缩                                                              |
-| `retry`                         | `reason, delay`                              | 自我恢复重试                                                                  |
-| `permission_request`            | `toolName, args`                             | 权限询问 (透传给 UI)                                                          |
+| 事件                            | 载荷                                                                                      | 语义                                                                          |
+| ------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `stream_text` / `thinking_text` | `text`                                                                                    | 正文/思考增量                                                                 |
+| `thinking_complete`             | `thinking, signature`                                                                     | 思考块完成 (签名用于 Anthropic 回传)                                          |
+| `tool_use`                      | `toolName, toolId, args`                                                                  | 工具调用开始                                                                  |
+| `tool_result`                   | `toolName, toolId, output, isError, elapsed` (另有可选 `contentBlocks`, 承载图片等富内容) | 工具执行结果                                                                  |
+| `turn_complete`                 | —                                                                                         | 一轮 (一次 LLM 响应+工具执行) 结束                                            |
+| `loop_complete`                 | `stopReason`                                                                              | 整个 Agent 循环结束                                                           |
+| `steering_delivered`            | `text`                                                                                    | 排队的 steering 消息已在轮次边界 (工具结果之后、下一次 LLM 调用之前) 注入对话 |
+| `usage`                         | `UsageInfo`                                                                               | token 用量                                                                    |
+| `error`                         | `Error`                                                                                   | 错误                                                                          |
+| `compact`                       | `message, boundary?`                                                                      | 发生了上下文压缩                                                              |
+| `retry`                         | `reason, delay`                                                                           | 自我恢复重试                                                                  |
+| `permission_request`            | `toolName, args`                                                                          | 权限询问 (透传给 UI)                                                          |
 
 选 discriminated union 而非类继承的原因:
 
@@ -78,7 +78,7 @@ Ink 的核心价值是把声明式 UI 和组件化心智模型带进终端, 而 
 1. 声明式增量渲染: 流式输出本质是"状态随时间变化", React 的 state→view 映射天然契合. 对比 Blessed 的命令式 `box.setContent()`, React 模型下流式文本只是 `setStreamingText(text)`.
 2. 组件复用与生态: `ink-spinner`、对话框组件、`<Static>`/`<Box>`/`<Text>` 布局原语可直接组合; 团队已有的 React 经验零迁移成本.
 3. `<Static>` 组件解决终端特有痛点: 终端里已滚出屏幕的内容无法被重绘. Ink 的 `<Static>` 把"已提交消息"写入终端回滚缓冲区 (scrollback) 且永不重渲染, 与动态区 (流式内容) 分离 —— 这是 Yukino 消除闪烁的核心手段 (`ui/transcript.tsx` 的 `Transcript` 组件) .
-4. Hooks 管理复杂状态: `app.tsx` 用 83 个 `useState`/`useRef` (33 个 useState + 50 个 useRef) 管理流式文本、权限请求、子代理进度、Ctrl+C 双击退出等状态, 逻辑内聚在函数组件中.
+4. Hooks 管理复杂状态: `app.tsx` 用 83 个 `useState`/`useRef` (33 个 useState + 50 个 useRef) 管理消息列表、权限请求、子代理进度等状态 (流式文本与流式节流抽到了 `useAgentOutput` 钩子, Ctrl+C 双击计数抽到了 `useTerminalControls` 钩子) , 逻辑内聚在函数组件中.
 
 代价与应对:
 
@@ -92,7 +92,7 @@ Ink 的核心价值是把声明式 UI 和组件化心智模型带进终端, 而 
 
 ### 项目的系统提示词 (System Prompt) 是如何组织的? 这种"分段组装"的设计解决了什么问题?
 
-`src/prompt/builder.ts` 实现了 PromptBuilder 模式: 系统提示词不是一个巨字符串, 而是一组带优先级的"段落 (Section) ", 按优先级排序后拼接 (`buildSystemPrompt()`, builder.ts:97-107, 共 8 个段落) :
+`src/prompt/builder.ts` 实现了 PromptBuilder 模式: 系统提示词不是一个巨字符串, 而是一组带优先级的"段落 (Section) ", 按优先级排序后拼接 (`buildSystemPrompt()`, builder.ts:74-85, 共 8 个段落) :
 
 | 优先级 | 段落             | 内容                                                             |
 | ------ | ---------------- | ---------------------------------------------------------------- |
@@ -105,13 +105,13 @@ Ink 的核心价值是把声明式 UI 和组件化心智模型带进终端, 而 
 | 60     | TextOutput       | 进度汇报与输出约定 (`# Updates`)                                 |
 | 70     | Environment      | 运行时环境 (workDir、OS、shell、git 分支、模型、日期)            |
 
-注意: 技能清单、项目指令 (AGENTS.md: 用户级 `~/.yukino/AGENTS.md` + 项目内自 git root 至 workDir 各级的 `AGENTS.md`/`.yukino/AGENTS.md`) 与长期记忆不再是系统提示词段落, 而是通过 `conversation.injectLongTermMemory()` (conversation.ts:133) 以 system-reminder 形式注入对话 —— 技能清单是项目级内容, 放进系统提示词会破坏跨项目的 prompt cache 前缀.
+注意: 技能清单、项目指令 (AGENTS.md: 用户级 `~/.yukino/AGENTS.md` + 项目内自 git root 至 workDir 各级的 `AGENTS.md`/`.yukino/AGENTS.md`) 与长期记忆不再是系统提示词段落, 而是通过 `conversation.injectLongTermMemory()` (conversation/index.ts:133-166) 以 system-reminder 形式注入对话 —— 技能清单是项目级内容, 放进系统提示词会破坏跨项目的 prompt cache 前缀.
 
 解决的问题:
 
 1. 可组合性: 不同运行模式 (TUI / print / subagent) 可以裁剪不同段落组合, 例如子代理可注入 `systemPromptOverride` 完全替换.
 2. 可测试性: 每个 section 是独立纯函数, 可单测.
-3. 缓存友好: Anthropic 客户端在系统提示词上打 `cache_control: { type: "ephemeral" }` 断点 (`anthropic.ts:372`) , 系统提示词整体稳定不变才能命中 prompt cache —— 如果把易变内容 (如日期) 混在正文里会破坏缓存, 所以日期等信息放在靠后的 Environment 段, 且会话内不变.
+3. 缓存友好: Anthropic 客户端在系统提示词上打 `cache_control: { type: "ephemeral" }` 断点 (`anthropic.ts:324-331`) , 系统提示词整体稳定不变才能命中 prompt cache —— 如果把易变内容 (如日期) 混在正文里会破坏缓存, 所以日期等信息放在靠后的 Environment 段, 且会话内不变.
 4. 身份保护: Identity 段 (sections.ts:7-13) 只定义 "You are Yukino..." 一句身份声明 (安全禁令在 System 段的 `# Context` 里) . 旧版 remote 模式初始化时注入的 "IDENTITY OVERRIDE" system-reminder (要求不得提及 Claude/Anthropic/OpenAI 等) 在当前代码中已删除, 全仓无匹配 —— 身份约束现在只来自系统提示词.
 
 ---
@@ -123,7 +123,7 @@ Ink 的核心价值是把声明式 UI 和组件化心智模型带进终端, 而 
 ```text
 main.tsx ──┬── TUI      → Ink <App>, 消费 AgentEvent → React state
            ├── print    → parsePrintFlags → 消费 AgentEvent → stdout (text/stream-json)
-           ├── remote   → Koa + WebSocket, 消费 AgentEvent → 广播给浏览器 React 前端
+           ├── remote   → Express + WebSocket, 消费 AgentEvent → 广播给浏览器 React 前端
            ├── teammate → 子进程, 消费 AgentEvent → 写文件邮箱/进度文件
            ├── acp      → --acp/--acp-ws, 消费 AgentEvent → agentEventToUpdate 转 ACP 会话更新
            └── a2a      → --a2a, 消费 AgentEvent → agentEventToMessage 转 A2A 消息推送
@@ -143,13 +143,13 @@ main.tsx ──┬── TUI      → Ink <App>, 消费 AgentEvent → React sta
 
 ### 请完整描述 Agent 循环 `run()` 的单轮迭代流程.
 
-`src/agent/agent.ts` 的 `run()` 是一个 `while (looping)` 循环 (起于 line 174, 循环体在 line 189) , 单轮迭代按严格顺序执行:
+`src/agent/index.ts` 的 `run()` 是一个 `while (looping)` 循环 (run() 起于 index.ts:272, while 循环在 index.ts:296) , 单轮迭代按严格顺序执行:
 
 1. 最大迭代守卫: `maxIterations > 0 && iteration > maxIterations` 时 yield error 并返回, 防止失控死循环 (默认 `maxIterations = 0` 即不限制, 200 是 spawnSubagent 的默认值) .
 2. 计划模式提醒: 若权限模式为 `plan`, 注入 system-reminder —— 第 1 轮和每第 5 轮用完整版, 其余轮用一行精简版 (`plan-mode.ts`, `reminderInterval = 5`) , 在"持续约束模型行为"与"节省 token"之间折中.
 3. 排空旁路通知: 把异步消息 drain 成 system-reminder 注入对话 —— Hook 引擎排队的通知 (`hookEngine.drainNotifications()`) 、团队邮箱消息 (`notificationFn()`) 与会话中途新增的技能清单 (`skillDeltaFn`, 只发增量不动系统提示词) ; 另有 coordinator 模式与延迟工具清单两类按需注入的提醒.
 4. 生命周期钩子: 依次 fire `turn_start`、`pre_send`.
-5. Layer 1 — 自动压缩: `manageContext()` 估算 token, 超过自动阈值则执行压缩, 压缩后重新注入长期记忆. 注意此处不做预算修剪 —— 工具结果在入历史时已完成预算处理 (agent.ts 注释 "Tool results are already budget-processed at the time they enter history") , transcript 里的消息尺寸是终态, 直接从它们估算 token 即可.
+5. Layer 1 — 自动压缩: `manageContext()` 估算 token, 超过自动阈值则执行压缩, 压缩后重新注入长期记忆. 注意此处不做预算修剪 —— 工具结果在入历史时已完成预算处理 (agent/index.ts 注释 "Tool results are already budget-processed at the time they enter history") , transcript 里的消息尺寸是终态, 直接从它们估算 token 即可.
 6. 调用 LLM 流式接口: `client.stream()` 返回 AsyncGenerator`<StreamEvent>`, Agent 把内部事件映射为 AgentEvent 转发给消费方 (`text_delta→stream_text`、`thinking_delta→thinking_text`、`tool_call_complete→tool_use` 等) , 同时累积 `fullText`、`thinkingBlocks`、`toolUses`、`stopReason`.
 7. 错误自愈 (见「Agent 循环的自愈机制」) : `ContextTooLongError` → 强制压缩重试; `RateLimitError` → 按 Retry-After 等待重试.
 8. post_receive 钩子.
@@ -200,24 +200,24 @@ for (const tu of toolUses) {
 
 ### Agent 循环有哪些"自愈"机制? 请分别说明触发条件与恢复策略.
 
-Yukino 有三类自愈机制, 都在 `agent.ts` 中:
+Yukino 有三类自愈机制, 都在 `agent/index.ts` 中:
 
 1. 上下文超长 (ContextTooLongError) → 强制压缩重试
 
-- 触发: LLM API 返回 413 或消息匹配 `/prompts?\s+too\s+long/i` (OpenAI 侧还检查 400 + `context_length_exceeded`) .
+- 触发: HTTP 413, 或 400 错误且消息命中 `containsContextLengthError()` (llm/errors.ts:45-51) —— 该正则同时匹配 `context_length_exceeded`、`maximum context length` 与 `prompt(s) (is) too long`, Anthropic 与 OpenAI 两侧的分类器 (`classifyAnthropicError` / `classifyOpenAIError`) 共用这一判定.
 - 策略: `forceCompact()` → 清除 usage anchor → 重新注入长期记忆 → yield `compact` 事件 → `continue` 重试本轮. 若压缩本身失败才向上抛错.
 
 2. 限流 (RateLimitError) → 退避重试
 
 - 触发: HTTP 429.
-- 策略: 解析 `Retry-After` 头 (默认 5000ms) , yield `retry` 事件通知 UI, 然后 `interruptibleSleep(waitMs)` —— 睡眠期间若用户按 Ctrl+C 触发 abort, 则优雅退出 (yield `loop_complete: "interrupted"`) 而不是粗暴中断.
+- 策略: 解析 `Retry-After` 头 (`parseRetryAfter`, 缺省 5000ms, 延迟钳制在 `MAX_RETRY_DELAY_MS = 60000`ms 内) , yield `retry` 事件通知 UI, 然后 `interruptibleSleep(waitMs)` —— 睡眠期间若用户按 Ctrl+C 触发 abort, 则优雅退出 (yield `loop_complete: "interrupted"`) 而不是粗暴中断. 重试有上限: 连续 `MAX_RATE_LIMIT_RETRIES = 3` 次仍限流则 yield error 终止 (agent/index.ts:557-570) .
 
 3. max_tokens 截断 → 输出上限升级 + 多轮续写
 
 - Phase 1 (升级) : 首次 `stop_reason === "max_tokens"` 时, 把输出上限提升到 `MAX_TOKENS_CEILING = 64000` (以 `Math.min` 钳制在 context window 内) , 把已生成的部分文本作为 assistant 消息落历史, 追加用户消息"从断点直接继续", 立即重试.
 - Phase 2 (多轮恢复) : 若升级后仍截断, 最多再做 `MAX_TOKENS_RECOVERIES = 3` 轮续写, 提示词改为"把剩余工作拆成更小的块". 任何非 max_tokens 的停止原因都会重置计数器.
 
-三类都是资源/瞬态问题, 用"修正上下文后重试"恢复. 另一类相关机制是未知工具的处理 (`streaming-executor.ts:65-76`) : 模型幻觉出不存在的工具名时, 执行器不做任何计数或熔断, 只是返回一条 `Error: unknown tool 'xxx'` 错误结果 (源码注释写明 "let the model self-correct with another tool; keep the loop running") , 让模型看到错误后自行纠正 —— 循环照常继续.
+三类都是资源/瞬态问题, 用"修正上下文后重试"恢复. 另一类相关机制是未知工具的处理 (`streaming-executor.ts:87-98`) : 模型幻觉出不存在的工具名时, 执行器不做任何计数或熔断, 只是返回一条 `Error: unknown tool 'xxx'` 错误结果 (源码注释写明 "let the model self-correct with another tool; keep the loop running") , 让模型看到错误后自行纠正 —— 循环照常继续.
 
 设计哲学: 可恢复故障优先"修正上下文后重试"而不是直接失败. 所有恢复路径都通过 yield 事件让 UI 可见 (用户能看到"retrying..."、"compacting...") , 不是静默魔法.
 
@@ -241,7 +241,7 @@ Yukino 有三类自愈机制, 都在 `agent.ts` 中:
 1. 同样冲刷节流、提交消息 (这次是 assistant 正文) ;
 2. 若处于 plan 模式 → 弹出计划审批对话框.
 
-值得说明的是职责归属: 会话持久化 (写 JSONL) 与文件历史快照 (供 `/rewind` 回滚) 并不在 UI 的事件处理器里, 而是由 Agent 核心完成 —— `persistLastMessage()` (agent.ts:814) 在每条消息进入对话历史时即追加落盘, `fileHistory.makeSnapshot()` (agent.ts:578) 在循环正常退出时记录快照. UI 只负责渲染收尾与交互.
+值得说明的是职责归属: 会话持久化 (写 JSONL) 与文件历史快照 (供 `/rewind` 回滚) 并不在 UI 的事件处理器里, 而是由 Agent 核心完成 —— `persistLastMessage()` (agent/index.ts:1217) 在每条消息进入对话历史时即追加落盘, `fileHistory.makeSnapshot()` (agent/index.ts:820) 在循环正常退出时记录快照. UI 只负责渲染收尾与交互.
 
 这个双层边界的价值: turn 是"渲染提交单元", loop 是"交互单元". 把 thinking/工具调用折叠成 turn_summary 再进 Static 区, 显著减少了 Static 项数量和终端回滚区的渲染压力 —— 用户看到的是简洁的"思考了 3s · 用了 5 个工具"摘要, 而不是刷屏的中间过程.
 
@@ -273,7 +273,7 @@ case "stream_text":
 
 Yukino 用 Promise-based suspension (Promise 悬挂) 把"同步阻塞等待用户"桥接进异步生成器:
 
-1. Agent 构造时注入回调 `onPermissionRequest: (toolName, args, decision) => Promise<"allow" | "deny" | "allowAlways">`(`agent.ts:101-105`) .
+1. Agent 构造时注入回调 `onPermissionRequest: (toolName, args, decision, toolCallId) => Promise<"allow" | "deny" | "allowAlways">`(`tools/types.ts:193-198` 的 `PermissionRequestHandler`, Agent 配置项在 agent/index.ts:126) .
 2. 权限检查判定需要询问时, Agent `await onPermissionRequest(...)` —— 生成器在这一帧挂起.
 3. TUI 侧的注入实现: 把 `resolve` 函数存入 `permissionResolveRef`, 同时 `setPermissionRequest({...})` 触发 React 渲染 `PermissionDialog`.
 4. 用户在对话框按键选择 (Yes / Yes, don't ask again / No) , `onComplete` 调用 `permissionResolveRef.current?.(action)`.
@@ -326,7 +326,7 @@ interface LLMClient {
 | 工具增量       | `input_json_delta` 累积 JSON                                                    | function_call arguments 增量                                                | 按 `tc.index` 的 Map 累积, `finish_reason` 时一次性发出                             |
 | 停止原因       | `stop_reason` 字符串                                                            | `status:"incomplete"` + `incomplete_details.reason`                         | `finish_reason` (`length→max_tokens`)                                               |
 | 缓存统计       | `cache_read`/`cache_creation`                                                   | `cached_tokens`, 且需从 input_tokens 中去重 (`Math.max(0, input - cached)`) | 同 Responses                                                                        |
-| 上下文超长信号 | 413 或 "prompt too long"                                                        | 400 + `context_length_exceeded`                                             | 同左                                                                                |
+| 上下文超长信号 | 413, 或 400 + `containsContextLengthError()` 正则                               | 同左 (OpenAI 常以 400 + `context_length_exceeded` 返回)                     | 同左                                                                                |
 
 收敛点: 三家最终都吐出同一个 `StreamEvent` 联合 (`text_delta`、`thinking_delta`、`thinking_complete`、`tool_call_start/delta/complete`、`stream_end{stopReason, usage}`) . 上层 Agent 对协议零感知 —— 这是典型的防腐层 (Anti-Corruption Layer) 模式, 把第三方 API 的方言翻译为内部统一语言.
 
@@ -338,9 +338,9 @@ interface LLMClient {
 
 Anthropic 的 prompt caching 按前缀匹配计费优化 —— 从消息开头到 `cache_control` 断点处的内容若与上次请求一致, 则命中缓存 (cache read 价格约为原价的 1/10) . Yukino 在 `anthropic.ts` 设了三个断点, 位置选择体现"稳定性递减"原则:
 
-1. 系统提示词 (anthropic.ts:372) : 整个 system prompt 打 `cache_control: { type: "ephemeral" }`. 系统提示词在一个会话内不变, 是最稳定的前缀.
-2. 最后一个非 deferred 工具 schema (`markToolsForCache()`, anthropic.ts:68-77) : 从后往前找到最后一个未标记 `defer_loading` 的工具打上缓存标记, 使整个工具块命中缓存. 工具集只在"发现延迟工具"时变化, 相对稳定; 且工具 schema 体积大 (描述文本长) , 缓存收益最高. 之所以要跳过 deferred 工具, 是因为"同时携带 defer_loading 与 cache_control"会被 API 拒绝.
-3. 最后一条 user 消息尾部 (`markLastUserTailForCache()`, anthropic.ts:561) : 从后往前找到最后一条非空 user 消息, 在其最后一个内容块上打断点 (通过 `Reflect.set` 动态附加, 且优先选非 image 块 —— 某些网关拒绝在 image 块上打断点) . 这利用了会话的增量特性 —— 每轮请求都是"上一轮全部内容 + 新增尾部", 在最新尾部前打断点, 使得整段历史前缀都可命中缓存, 只有新增的增量部分按全价计费.
+1. 系统提示词 (anthropic.ts:324-331) : 整个 system prompt 打 `cache_control: { type: "ephemeral" }`. 系统提示词在一个会话内不变, 是最稳定的前缀.
+2. 最后一个非 deferred 工具 schema (`markToolsForCache()`, anthropic.ts:57-70) : 从后往前找到最后一个未标记 `defer_loading` 的工具打上缓存标记, 使整个工具块命中缓存. 工具集只在"发现延迟工具"时变化, 相对稳定; 且工具 schema 体积大 (描述文本长) , 缓存收益最高. 之所以要跳过 deferred 工具, 是因为"同时携带 defer_loading 与 cache_control"会被 API 拒绝.
+3. 最后一条 user 消息尾部 (`markLastUserTailForCache()`, anthropic.ts:549-589) : 从后往前找到最后一条非空 user 消息, 在其最后一个内容块上打断点 (通过 `Reflect.set` 动态附加, 且优先选非 image 块 —— 某些网关拒绝在 image 块上打断点) . 这利用了会话的增量特性 —— 每轮请求都是"上一轮全部内容 + 新增尾部", 在最新尾部前打断点, 使得整段历史前缀都可命中缓存, 只有新增的增量部分按全价计费.
 
 效果: 多轮对话中, 第 N 轮的输入 token 大部分以 cache read 计价, 成本和首 token 延迟 (TTFT) 都显著下降. `UsageInfo` 里专门有 `cacheReadInputTokens` / `cacheCreationInputTokens` 字段来观测缓存命中率.
 
@@ -356,7 +356,7 @@ Anthropic API 要求消息严格 user/assistant 交替 —— 连续两条同角
 - `addSystemReminder()`: system-reminder 以 `role: "user"` 落历史 (Anthropic 协议无独立 system 角色消息位, system 只能是顶层参数) ;
 - 团队邮箱通知、Hook 通知注入.
 
-`buildAnthropicMessages()` (`anthropic.ts:177`) 的合并规则: 若当前 user 文本消息的前一条也是 user 文本消息 (且非 tool_result) , 则把当前内容作为额外 text 块合并进前一条. tool_result 块消息独立处理 (它们是协议允许的 user 角色内容块) .
+`buildAnthropicMessages()` (`anthropic.ts:149-243`) 的合并规则: 只要前一条出站消息同为 user 角色 —— 包括携带 tool_result 块的消息 —— 当前 user 文本消息的内容就作为额外 text 块追加合并进前一条 (源码注释: "Merge every consecutive user turn, including reminders or steering immediately after tool results") . tool_result 块与文本块共处同一条 user 消息, 角色交替仍然协议合规.
 
 这个"内部模型宽松、出站转换严格"的分层很典型: 内部 `ConversationManager` 允许任意追加 (简单、不易错) , 协议合规性在序列化边界一次性保证. 对比"每次插入都检查前驱"的方案, 序列化时归一化只需处理一次且逻辑集中, 不容易在多个注入点漏处理.
 
@@ -391,7 +391,7 @@ LLMError
 
 痛点: 上下文压缩需要知道"当前对话占多少 token", 但本地无法精确计算 (不同模型的 tokenizer 不同) . 纯字符估算 (`chars / 3.5`) 误差大 —— 中文、代码、base64 的字符/token 比差异悬殊, 误差累积会导致"过早压缩 (浪费) "或"过晚压缩 (爆上下文) ".
 
-UsageAnchor 的解法 (`conversation.ts:203`) : 用 API 返回的真实用量校准.
+UsageAnchor 的解法 (`conversation/index.ts:235-247`) : 用 API 返回的真实用量校准.
 
 ```ts
 recordUsageAnchor(input, output, cacheRead, cacheCreation) {
@@ -400,7 +400,7 @@ recordUsageAnchor(input, output, cacheRead, cacheCreation) {
 }
 ```
 
-每次 LLM 响应返回真实 `usage` 后记录锚点: `baselineTokens` 是当时全部历史的真实 token 数, `_anchorCount` 是当时的历史长度. 之后的估算 (`compact.ts:232` `currentContextTokens()`) :
+每次 LLM 响应返回真实 `usage` 后记录锚点: `baselineTokens` 是当时全部历史的真实 token 数, `_anchorCount` 是当时的历史长度. 之后的估算 (`compact/compact.ts:297` `currentContextTokens()`) :
 
 ```text
 currentTokens = baselineTokens + estimateMessages(history.slice(anchorCount))
@@ -466,7 +466,7 @@ interface Tool {
 
 机制 (`tools/registry.ts` + `tools/tool-search.ts`) :
 
-1. 标记隐藏: 工具可标记 `deferred: true` (MCP 工具注册时默认 `deferred = true`, 见 mcp/tool-wrapper.ts:78; 但若全部 MCP schema 总量低于上下文窗口的 10%, mcp/strategy.ts 的 eager 模式会清除该标记全量加载, 见「MCP 工具进入上下文的三种模式」) . `getAllSchemas()` 过滤掉未发现的 deferred 工具 —— 模型初始只看到核心工具 + 一个 `ToolSearch` 工具.
+1. 标记隐藏: 工具可标记 `deferred: true` (MCP 工具注册时默认 `deferred = true`, 见 mcp/tool-wrapper.ts:54; 但若全部 MCP schema 总量低于上下文窗口的 10%, mcp/strategy.ts 的 eager 模式会清除该标记全量加载, 见「MCP 工具进入上下文的三种模式」) . `getAllSchemas()` 过滤掉未发现的 deferred 工具 —— 模型初始只看到核心工具 + 一个 `ToolSearch` 工具.
 2. 按需发现: 模型需要时调用 `ToolSearch`, 两种方式:
    - 关键词搜索: `searchDeferred(query)` 对 name/description 做大小写不敏感的 `includes()` 匹配, 最多返回 5 个候选的完整 schema;
    - 精确选择: `select:name1,name2` 语法按名直接激活.
@@ -551,7 +551,7 @@ interface Tool {
 - Layer 3.5 — 沙箱自动放行: OS 沙箱可用且工具为 Bash 时, 把复合命令按 `&&`/`||`/单个 `&`/`;`/`|`/换行 拆分为子命令逐个过规则引擎 —— 任一 deny 则整体 deny、有 ask 则整体 ask, 否则 allow. 命令将在内核级隔离中运行, 即使恶意也伤不到宿主, HITL 询问无增量价值.
 - Layer 4 — 路径沙箱 (PathSandbox) : 文件类工具限定在项目目录 + os.tmpdir 内; 拒写名单 (`DEFAULT_DENY_WRITE`, permissions/index.ts:241) 当前为空数组 —— 旧版列入的 `.yukino/config.yaml`、`.yukino/permissions.local.yaml`、`.yukino/skills/` 条目已移除, 机制保留但名单清空 (与 Layer 3 的 `DANGEROUS_PATTERNS` 同一处理方式) , 即这一层目前不会对任何路径命中 deny-write.
 - Layer 4b — "allow always" 规则: 用户点"不再询问"后, `allowAlways()` (`index.ts:734-759`) 把授权转为一条 scoped 规则并持久化 —— 文件类工具按"父目录 + `/*`", 命令类按"前 1-2 个词 + `*`" (即整个命令族) , 经 `ruleEngine.appendProjectRule()` (`index.ts:488-510`) 写入项目本地规则 YAML (同 `Tool(pattern)` 格式、去重) . 该规则下次检查经 Layer 5 的规则引擎命中 → allow, 且跨会话重启仍然生效.
-- Layer 5 — YAML 规则引擎 (RuleEngine) : 用户/项目/本地三级 YAML 规则文件, `ToolName(pattern)` 形式的 glob 规则 → 按规则 allow/deny/ask. 规则文件按 mtime+size 缓存, 文件变化后下一次检查即读到新规则, 改规则立即生效.
+- Layer 5 — YAML 规则引擎 (RuleEngine) : 用户级 `~/.yukino/permissions.yaml` 与项目级 `{workDir}/.yukino/permissions.yaml` 两个规则文件 (permissions/index.ts:443-444) , `ToolName(pattern)` 形式的 glob 规则 → 按规则 allow/deny/ask. 规则文件按 mtime+size 缓存, 文件变化后下一次检查即读到新规则, 改规则立即生效.
 - Layer 6 — 模式矩阵兜底 (`modeDecide()`) : `default` (read 放行, write/command 询问) 、`acceptEdits` (write 放行, command 询问) 、`plan` (write/command 均询问) 、`bypassPermissions` (全放行) .
 
 设计原则: "显式规则 (deny/ask) → 例外 → 白名单 → 黑名单 → 环境隔离 → 资源边界 → 用户记忆 → 用户规则 → 模式默认", 从具体到一般排列. 任何一层给出确定结论即短路, 保证可预测性; 同时 allow/deny/ask 三态而非布尔, 保留了"询问"这个 HITL 中间态.
@@ -589,7 +589,7 @@ interface Tool {
 - plan 模式是一套完整工作流: 进入时保存原模式 (`prePlanMode`) ; Agent 循环每轮注入 plan 提醒 (判定为 `(iteration - 1) % 5 === 0` 即第 1/6/11... 轮用完整版、其余精简版) ; 模型通过 `ExitPlanModeTool` 结束规划; 循环结束时弹出 `PlanApprovalDialog`, 用户可选 yolo (切 bypass 执行) / manual (恢复原模式执行) / feedback (打回反馈继续规划) . 权限模式在这里扮演了状态机的状态.
 - bypassPermissions 配合沙箱才有意义: Layer 3.5 的"沙箱自动放行"与 bypass 的区别是 —— 沙箱放行有内核隔离背书, bypass 是裸奔. 生产实践中 bypass 应只在容器/VM 中使用.
 
-模式的持久化: `permission_mode` 可写入 YAML 配置作为会话默认值; 而"不再询问"的授权会被持久化为本地规则 YAML 中的 scoped 规则 (`allowAlways()` → `appendLocalRule()`, 见「PermissionChecker 的分层决策管线」Layer 4b) —— 授权粒度被收敛到"目录/命令族", 且 deny > ask > allow 的优先级保证任何 deny 规则都无法压制它, 跨会话生效.
+模式的持久化: `permission_mode` 可写入 YAML 配置作为会话默认值; 而"不再询问"的授权会被持久化为项目规则 YAML 中的 scoped 规则 (`allowAlways()` → `appendProjectRule()`, 见「PermissionChecker 的分层决策管线」Layer 4b) —— 授权粒度被收敛到"目录/命令族", 且 deny > ask > allow 的优先级保证用户配置的 deny 规则始终压过这条授权, 跨会话生效.
 
 ---
 
@@ -727,11 +727,11 @@ if (cache.prefix !== prefix || cache.width !== width || cache.theme !== theme) {
 
 `app.tsx` 的状态可清晰分为五层, 这是它没有失控的根本原因:
 
-1. 渲染态 (useState) : `messages`、`streamingText`、`activeTools`、`error` 等 —— 直接驱动视图的;
-2. 镜像态 (useRef 双写) : `streamingTextRef`、`permModeRef` —— 异步回调需要最新值的 (见「streamingTextRef 可变 ref 镜像」) ;
-3. 边界态 (useRef) : `headerPrintedRef`、`submittingRef` (重入守卫) 、`streamingTextRef` (流式文本镜像) —— 参与逻辑但不驱动渲染;
+1. 渲染态 (useState) : `messages`、`error`、`permMode`、`subagents` 等 (流式文本/工具列表等渲染态随事件循环抽到了 `useAgentOutput` 钩子) —— 直接驱动视图的;
+2. 镜像态 (useRef 双写) : `permModeRef`、`selectedProviderRef`、`sandboxEnabledRef` (app.tsx) 与 `streamingTextRef` (use-agent-output.ts) —— 异步回调需要最新值的 (见「streamingTextRef 可变 ref 镜像」) ;
+3. 边界态 (useRef) : `mcpModeDecidedRef`、`hasExitedPlanModeRef`、`initialResumeHandledRef`、`memExtractingRef` (重入/阶段标记) —— 参与逻辑但不驱动渲染;
 4. 服务实例态 (useRef) : `clientRef`、`convRef`、`registryRef`、`hookEngineRef`、`teamManagerRef` 等十几个 —— 本质是用 ref 当依赖注入容器: 这些对象有方法、有内部状态、生命周期等于会话, 放进 ref 既不触发渲染又保证单例;
-5. 异步句柄态 (useRef) : `permissionResolveRef`、`askResolveRef`、`abortControllerRef`、`streamThrottleRef` —— 跨渲染帧存活的 Promise/定时器句柄.
+5. 异步句柄态 (useRef) : `permissionResolveRef`、`askResolveRef`、`abortControllerRef`、`modelDialogControllerRef` (app.tsx) 与 `streamThrottleRef` (use-agent-output.ts) —— 跨渲染帧存活的 Promise/定时器句柄.
 
 关键架构选择: 领域逻辑不下放为 React 状态. 对话历史在 `ConversationManager` (普通类) 、工具在 `ToolRegistry`、团队在 `TeamManager` —— React 只是这些领域对象的"投影". `messages` state 是投影的结果而非事实来源. 因此 `app.tsx` 虽长, 但长而不乱: 每个 ref/state 职责单一, 事件循环 (`for await`) 是唯一的调度主线.
 
@@ -741,7 +741,7 @@ if (cache.prefix !== prefix || cache.width !== width || cache.theme !== theme) {
 
 ### 输入框 (InputBox) 在 Ink 里是如何从零实现的? 包括光标、多行、历史、自动补全.
 
-Ink 没有 `<input>` 组件, `input.tsx` (1070 行) 基于 `useInput` 原始按键事件自建了微型文本编辑器:
+Ink 没有 `<input>` 组件, `input.tsx` (1071 行) 基于 `useInput` 原始按键事件自建了微型文本编辑器:
 
 文本模型: `lines: string[]` + `cursorLine`/`cursorCol` 光标坐标. 字符插入是切片拼接 `line.slice(0, col) + input + line.slice(col)`; Shift+Enter/Ctrl+J 在光标处拆行实现多行; 光标渲染用 `<Text inverse>` 反色显示光标位字符. 粘贴被 Ink 合并为单条含 `\r\n` 的输入, 按多字符批量插入处理.
 
@@ -749,7 +749,7 @@ Ink 没有 `<input>` 组件, `input.tsx` (1070 行) 基于 `useInput` 原始按�
 
 斜杠命令自动补全: 三级匹配管道 (`useMemo`) —— 精确名 > 前缀名 > Fuse.js 模糊匹配 (权重 name:3 / aliases:2 / description:0.5, 阈值 0.4; 命令现无别名字段, aliases 槽恒空) ; `CommandUsageTracker` 把最近使用的命令提顶; 若输入是最佳匹配的前缀, 剩余字符以暗色"幽灵文本"显示在光标后.
 
-@文件展开: 行尾出现 `@<partial>` 时弹文件下拉 —— `scanWorkdirFiles()` 递归扫描 (跳过 `SKIP_DIRS` 和点文件, 上限 2000) , 结果缓存于 `fileCacheRef` (每次挂载只扫一次) ; 前缀匹配优先、子串次之, 上限 8 条; Tab/Enter 补全为 `@<path> `.
+@文件展开: 行尾出现 `@<partial>` 时弹文件下拉 —— `scanWorkdirFiles()` 递归扫描 (跳过 `SKIP_DIRS` 和点文件, 上限 2000) , 结果缓存于 `fileCacheRef` (按 workDir + fileFactsVersion 键控; version 在 WriteFile/EditFile 工具结果到达时与每次 run 结束时自增, 变化即重扫工作区, input.tsx:385-413、app.tsx:2268-2274/2326-2328) ; 前缀匹配优先、子串次之, 上限 8 条; Tab/Enter 补全为 `@<path> `.
 
 模式切换: 检测 Shift+Tab (终端序列为 `\x1b[Z` 或 `key.tab && key.shift`) 循环四种权限模式.
 
@@ -763,17 +763,28 @@ Ink 没有 `<input>` 组件, `input.tsx` (1070 行) 基于 `useInput` 原始按�
 
 `sync-output.ts` 用 DEC 2026 同步输出协议解决: monkey-patch `process.stdout.write`, 把所有写入包进 BSU (`\x1b[?2026h`, 开始同步更新) / ESU (`\x1b[?2026l`, 结束) 信封 —— 支持的终端 (iTerm2、WezTerm、Warp、kitty、foot、alacritty、Ghostty、VTE≥6800、Windows Terminal 等) 会攒住整帧内容直到 ESU 才一次性上屏.
 
-合帧用 `queueMicrotask`:
+合帧用 stdout cork + `queueMicrotask`:
 
 ```ts
-frameBuffer += str;
-if (!scheduled) {
-  scheduled = true;
-  queueMicrotask(() => { originalWrite(BSU + frameBuffer + ESU); ... });
-}
+process.stdout.write = function (chunk, ...) {
+  if (!scheduled) {
+    scheduled = true;
+    originalCork();          // cork 住流, 本帧所有写入被 Node 缓冲
+    originalWrite(BSU);      // 帧首写 BSU
+    queueMicrotask(() => {
+      try {
+        originalWrite(ESU);  // 微任务收尾写 ESU
+      } finally {
+        scheduled = false;
+        originalUncork();    // uncork 时整帧一次性刷出
+      }
+    });
+  }
+  return originalWrite(chunk, ...); // 原样透传每个 chunk 与回调
+};
 ```
 
-同一微任务内的所有同步 write 合并为一个信封, 成本几乎为零.
+同一微任务窗口内的所有同步 write 被 cork 缓冲、包进一个 BSU/ESU 信封, 成本几乎为零 (Ink 的 onRender 是同步的, 一帧的全部写入都发生在排队的微任务闭合之前) .
 
 能力探测读取 `TERM_PROGRAM`、`TERM`、环境变量白名单, tmux 下禁用 (tmux 会吞掉该序列) —— 探测失败时静默不启用, 优雅降级.
 
@@ -786,7 +797,7 @@ if (!scheduled) {
 三个对话框体现了终端键盘交互的统一模式语言:
 
 1. 选项列表 + 光标 + 回车确认: `PermissionDialog` 三个固定选项 (Yes / Yes, don't ask again / No) , 上下键循环 (边界回绕) , Enter 选择, Esc 一律视为拒绝 —— 拒绝是零成本默认动作, 安全交互的基本原则.
-2. 向导模式 (多步表单) : `AskUserDialog` (537 行, 最复杂) 用 `useReducer` 管理 `currentQuestion + answers + submitCursor` 状态机: 顶部导航条展示问题页签 (已答项带对勾标记) ; 上下键选选项、Tab/左右键切问题、数字键直跳选项、空格切换多选、"Other"进入自由文本; 答完进入 Submit 页复核. 单问题非多选时隐藏 Submit 页、选完即提交 —— 按复杂度自适应流程长度.
+2. 向导模式 (多步表单) : `AskUserDialog` (约 540 行, 最复杂) 用 `useReducer` 管理 `currentIndex + questionStates (各题答案/光标/Other 模式) + submitCursor` 状态机: 顶部导航条展示问题页签 (已答项带对勾标记) ; 上下键选选项、Tab/左右键切问题、数字键直跳选项、空格切换多选、"Other"进入自由文本; 答完进入 Submit 页复核. 单问题非多选时隐藏 Submit 页、选完即提交 —— 按复杂度自适应流程长度.
 3. 破坏性操作的双段确认: 计划审批三选项 (yolo / manual / feedback) , Esc 默认落到最保守的 manual; 反馈文本用 Shift+Tab 提交避免与 Enter 冲突.
 4. 统一的中断语义: 所有对话框期间 Ctrl+C/Esc 都有明确含义 (拒绝/取消) , 与全局 Ctrl+C 双击退出 (`ctrlCCountRef` + 2 秒窗口计数器) 分层: 对话框消费优先, 冒泡到全局的是"无对话框时"的退出.
 
@@ -798,7 +809,7 @@ if (!scheduled) {
 
 两条路径:
 
-- 子代理 (in-process) : `AgentTool` 的 spawn 回调给每个子代理分配单调递增 id, `onProgress({turn, lastTool})` 回调直接 `setSubagents(...)` —— 同进程, 可直接事件驱动, 渲染为动态区的品红进度行 (`label · turn N · lastTool`) .
+- 子代理 (in-process) : `AgentTool` 的 spawn 回调给每个子代理分配单调递增 id, `onProgress({turn, lastTool})` 回调直接 `setSubagents(...)` —— 同进程, 可直接事件驱动, 渲染为动态区 Agent 工具卡片上的进度行 (竖线分隔, 如 `general-purpose subagent | 3 turns | EditFile`) .
 - 团队 teammate (可能跨进程) : `useTeammateStates` 钩子 (`src/ui/use-teammate-states.ts`) 每 500ms 轮询 `TeamManager.getAllTeammateStates()`, 序列化签名变化才 setState; 状态传入 `AgentActivity` 组件渲染 teammate 进度行, 状态栏 `TeamStatus` 显示 teammate 计数徽标.
 
 团队用轮询的原因:
@@ -818,8 +829,8 @@ if (!scheduled) {
 1. `messages` 数组的全量 slice: 每帧 `messages.slice(0, committed)` / `slice(committed)` 产生两个新数组, 消息上千时是 O(n) 分配. 可改为只传 `(messages, committedIndex)` 让子组件内部切片, 或对 Static 区改为"追加式"API (Ink 的 Static 本就只认新 item, 可用版本号比对) .
 2. turn_summary 之前的中间渲染: 工具执行期间 `activeTools` 每次状态变化都整体重渲染动态区. `ToolDisplay` 已是 memo 友好结构, 可进一步给每个 ToolBlock 加 `React.memo` + 稳定 key (toolId) .
 3. markdown 渲染的双通道: `StreamingText` 缓存了稳定前缀, 但 `MessageBlock` (assistant 提交后) 会再次全量解析同一文本 —— 提交时可把已解析结果随消息传递, 避免提交瞬间的一次全量重解析.
-4. 文件扫描缓存的失效策略: `fileCacheRef` 在 InputBox 生命周期内不失效, 长会话中新建文件无法被 `@` 补全. 可加 mtime 失效或定时刷新.
-5. 500ms 团队轮询可升级为混合模式: in-process teammate 直接回调, 仅跨进程回退轮询 —— `detectBackend()` (`backend.ts:43-68`) 在非 win32 且 TMUX/ITERM_SESSION_ID 均不存在时即返回 `"in-process"` (本地最常见形态) , 恰有条件做此优化.
+4. 文件扫描缓存的失效已部分解决: `fileCacheRef` 按 fileFactsVersion 键控, Agent 写文件 (WriteFile/EditFile 结果到达) 与每次 run 结束时版本号自增触发重扫; 剩余缺口是"非工具写入的外部文件变化" (如用户手动新建文件) 要到下一次 run 结束才可见, 可加 mtime 探测进一步收紧.
+5. 500ms 团队轮询可升级为混合模式: in-process teammate 直接回调, 仅跨进程回退轮询 —— `detectBackend()` (`backend.ts:22-42`) 在非 win32 且 TMUX/ITERM_SESSION_ID 均不存在时即返回 `"in-process"` (本地最常见形态) , 恰有条件做此优化.
 6. 大输出的字符串成本: 工具结果拼接到消息 content 是 O(n) 字符串复制, 超长会话下 GC 压力可观; 可考虑结构化存储 (消息只持引用, 渲染时物化) .
 
 回答框架仍然是: 定位真实瓶颈 (引用具体机制) → 给出方案 → 说明为什么当前不急着做 (YAGNI / 收益成本比) —— 这才体现工程判断力而非背优化清单.
@@ -830,13 +841,13 @@ if (!scheduled) {
 
 ### 上下文管理的"两道防线"是什么? 为什么预算落盘在前、compact 在后?
 
-膨胀源治理分两级, 关键是预算处理的时机 —— 它不在每轮调 LLM 前做, 而在工具结果"入历史时"完成 (`agent.ts:503-541`) . agent.ts 注释写明 "Tool results are already budget-processed at the time they enter history", 因此 transcript 中的消息尺寸即终态, 后续压缩阈值估算可直接基于它们.
+膨胀源治理分两级, 关键是预算处理的时机 —— 它不在每轮调 LLM 前做, 而在工具结果"入历史时"完成 (`agent/index.ts:705-754`) . agent/index.ts 注释写明 "Tool results are already budget-processed at the time they enter history", 因此 transcript 中的消息尺寸即终态, 后续压缩阈值估算可直接基于它们.
 
 第一道 — 工具结果预算 (廉价、无损) , 分两个环节:
 
-- 单结果落盘: 结果入历史前, 长度超过 `MAX_OUTPUT_CHARS = 50000` (`agent.ts:62`, 注释解释了取 5 万的原因: 让模型一次就能看到足够内容, 免一次 ReadFile 回读往返) → 调 `persistLargeResult()` 全文写入 `.yukino/sessions/{id}/tool-results/{toolUseId}.txt` (注意目录名是连字符 `tool-results`) , 原位置替换为 `<persisted-output>` 包裹的 2000 字符预览 + 文件路径 (`tool-result/index.ts` 的 `buildSpillPreview()`, 模型需要时可 ReadFile 读回) ;
+- 单结果落盘: 结果入历史前, 长度超过 `MAX_OUTPUT_CHARS = 50000` (`agent/index.ts:64-71`, 注释解释了取 5 万的原因: 让模型一次就能看到足够内容, 免一次 ReadFile 回读往返) → 调 `persistLargeResult()` 全文写入 `.yukino/sessions/{id}/tool-results/{toolUseId}.txt` (注意目录名是连字符 `tool-results`) , 原位置替换为 `<persisted-output>` 包裹的 2000 字符预览 + 文件路径 (`tool-result/index.ts` 的 `buildSpillPreview()`, 模型需要时可 ReadFile 读回) ;
 - 聚合预算: `applyBudget()` (`tool-result/index.ts`) 处理整批 —— 一条消息内全部结果字符总数超 `MESSAGE_AGGREGATE_LIMIT = 200000` 时, 按大小降序逐个落盘直到达标 (单条 ≤ 预览长度的不落盘, 写了也没省到空间) . 并行批的多个结果落进同一条消息, 单条阈值管不住总和, 所以需要这层聚合;
-- 防回环: `isSpillReadback()` (`tool-result/index.ts`) 识别"读回落盘文件的 ReadFile 调用", agent.ts 把它 (以及本轮已单条落盘者) 收集进 `exemptIds` 豁免集合 —— 豁免条目既不会被聚合预算再次落盘, 也不会被单条落盘二次处理 (详见「isSpillReadback 防御的无限循环场景」) .
+- 防回环: `isSpillReadback()` (`tool-result/index.ts`) 识别"读回落盘文件的 ReadFile 调用", agent/index.ts 把它 (以及本轮已单条落盘者) 收集进 `exemptIds` 豁免集合 —— 豁免条目既不会被聚合预算再次落盘, 也不会被单条落盘二次处理 (详见「isSpillReadback 防御的无限循环场景」) .
 
 第二道 — `manageContext()` (`compact/compact.ts`, 昂贵、有损) : 每轮调 LLM 前估算 token, 超过自动阈值才触发, 用 LLM 生成摘要重写历史 (见「压缩算法完整流程」) .
 
@@ -874,7 +885,7 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 
 ### token 估算为什么用 `chars / 3.5`? 这个数字的误差如何处理?
 
-`CHARS_PER_TOKEN = 3.5` (`compact.ts:56`) 是英文代码/文本混合语料下 Claude tokenizer 的经验均值 (英文约 4, 代码符号密集略低, 取保守值使估算偏大而宁早勿晚) .
+`CHARS_PER_TOKEN = 3.5` (`compact/compact.ts:41`) 是英文代码/文本混合语料下 Claude tokenizer 的经验均值 (英文约 4, 代码符号密集略低, 取保守值使估算偏大而宁早勿晚) .
 
 估算函数 `estimateMessages()` 对每条消息累加 `content.length + JSON.stringify(toolUses).length + ΣtoolResults + Σthinking`, 再除以 3.5 向上取整.
 
@@ -908,7 +919,7 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 
 这个设计的精妙之处: 持久化格式与运行时压缩共用同一份数据结构 —— 压缩算法产出的 (summary, keep) 二元组直接序列化为 boundary, 恢复算法就是压缩重建算法的镜像. 不需要单独的"检查点格式", 语义自洽且单调: JSONL 是纯追加的, 恢复时只需线性扫描.
 
-附带机制: 会话 30 天过期清理 —— `cleanExpiredSessions()` (`src/session/index.ts`) 直接 `rmSync` 整个会话子目录, jsonl 与 budget 落盘的 `tool-results/` 目录一并清除 (源码注释专门点明: 目录名带连字符, 一次 rm 同时覆盖) . 历史插曲: 早期版本里 budget 落盘写的是 `tool-results` (连字符) , 而清理代码删的却是 `tool_results` (下划线) , 目录名不匹配导致清理删不到真实落盘目录——这种"写入方与清理方各执一词"的目录名漂移是真实项目里常见的 bug 形态, 最终以"删整个会话目录"的方式收敛. 另 `newSessionId()` 用 `Date.now().toString(36) + "-" + randomBytes(4).hex` 保证可读性与唯一性.
+附带机制: 会话 30 天过期清理 —— `cleanExpiredSessions()` (`src/session/index.ts:560-611`) 直接 `rmSync` 整个会话子目录, jsonl、budget 落盘的 `tool-results/` 目录与对应的 `file-history/{id}/` 目录 (备份快照、剪贴板图片) 一并清除 (源码注释专门点明: 目录名带连字符, 一次 rm 同时覆盖) . 历史插曲: 早期版本里 budget 落盘写的是 `tool-results` (连字符) , 而清理代码删的却是 `tool_results` (下划线) , 目录名不匹配导致清理删不到真实落盘目录——这种"写入方与清理方各执一词"的目录名漂移是真实项目里常见的 bug 形态, 最终以"删整个会话目录"的方式收敛. 另 `newSessionId()` 用 `Date.now().toString(36) + "-" + randomBytes(4).hex` 保证可读性与唯一性.
 
 ---
 
@@ -920,7 +931,7 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 2. 模型 (按设计) 用 ReadFile 去读那个落盘文件 → ReadFile 返回 100KB 内容;
 3. 如果没有防回环: 这个新结果又超 50KB → 又被落盘 → 新路径给模型 → 模型再读 → 无限循环, 磁盘被无意义复制撑爆, 模型永远看不到全文.
 
-防御: `isSpillReadback()` (`tool-result/index.ts`) 判断"该工具调用是否是读取 spill 目录的 ReadFile". 它在每轮工具结果入历史之前由 agent.ts 统一执行: 命中的 tool_use_id 被收集进 `exemptIds` 豁免集合, 既跳过单结果的 `persistLargeResult` 落盘, 也在聚合预算 `applyBudget` 中跳过 —— 回读内容原样留在上下文 (它是模型主动要看的, 属于"回读"而非"冗余") .
+防御: `isSpillReadback()` (`tool-result/index.ts`) 判断"该工具调用是否是读取 spill 目录的 ReadFile". 它在每轮工具结果入历史之前由 agent/index.ts 统一执行: 命中的 tool_use_id 被收集进 `exemptIds` 豁免集合, 既跳过单结果的 `persistLargeResult` 落盘, 也在聚合预算 `applyBudget` 中跳过 —— 回读内容原样留在上下文 (它是模型主动要看的, 属于"回读"而非"冗余") .
 
 这是自指防护 (self-reference guard) 的经典案例: 任何"把 X 移出主存储并留下指针"的系统, 都必须处理"指针被解引用后产物再次进入主存储"的回环. GC 的 card marking、操作系统的 swap-in 页不再立即 swap-out 候选, 都是同构问题.
 
@@ -934,7 +945,7 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 2. 传话游戏衰减: 多次压缩时, 第二次压缩的输入是第一次的摘要 —— 摘要的摘要, 信息呈指数衰减, 远期上下文很快退化为空话.
 3. Yukino 的对策是"分层保真":
    - 近期 10K-40K token 原文保留: 近端上下文是模型正在操作的工作区, 精度要求最高 —— 直接不压缩;
-   - 远期用结构化摘要: 9 段式模板 (而非自由摘要) 强制保留"全部用户消息""文件与代码段""待办"等高价值维度, 是有损但有纪律的压缩;
+   - 远期用结构化摘要: 6 段式模板 (Goal / Constraints & Preferences / Progress 下 Done·In Progress·Blocked / Key Decisions / Next Steps / Critical Context) 强制保留目标、约束与授权、进度、决策理由、下一步动作与关键路径/符号/错误等高价值维度, 是有损但有纪律的压缩;
    - 工作记忆单独恢复: 最近读过的 5 个文件内容作为恢复附件重新注入 —— 解决"摘要忘了模型刚看过什么"这一最高频痛点.
 4. 类比收尾: 这对应操作系统的存储分层 —— 寄存器/L1 (保留尾部, 热数据原样) 、内存 (恢复附件, 刚换入的页) 、磁盘 (摘要, 冷数据压缩存档) . 纯摘要相当于"只有磁盘没有内存".
 
@@ -946,9 +957,10 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 
 机制 (`file-history/index.ts`) :
 
-- 编辑前备份: `trackEdit(filePath)` 在每次 Write/Edit 前, 把当前文件内容复制到 `.yukino/file-history/{sessionId}/{sha256(path).hex.slice(0,16)}@v{N}`, 版本号在 `trackedFiles: Map` 中递增. 文件尚不存在时也递增版本 (语义: "此版本时文件不存在") .
-- 回合快照: `makeSnapshot(messageIndex)` 在 loop 结束时记录"全部已追踪文件当前版本"与对话位置的对应关系, 上限 `MAX_SNAPSHOTS = 100` (丢最旧) , userText 截断 60 字符作为快照标签.
-- 回滚: `rewind(snapshotIndex)` —— 把目标快照中每个文件的备份内容写回工作区; 备份缺失 (当时文件不存在) 则删除当前文件; 快照数组截断到该点 (无 redo, 回滚是破坏性的单行道) ; 版本计数器同步回退.
+- 首次编辑登记: `trackEdit(filePath)` 在文件第一次被 Write/Edit 前登记进 `trackedFiles: Set`, 并做一次基线捕获 (`captureBaseline`) —— 文件存在则把原始内容备份为 `{sha256(path).hex.slice(0,16)}@baseline`, 不存在则记 `absent` 状态, 读不了记 `unavailable` (file-history/index.ts:113-145) .
+- 回合快照: `makeSnapshot(messageIndex, userText, sessionLineCount?)` 在 loop 无工具调用收尾时, 把全部已追踪文件的当前内容备份为 `{hash}@s{N}` (N 是单调递增的 `nextSnapshotSeq` 计数器, 数组位置会因修剪复用而计数器永不重复) ; 文件此刻不存在则只留一条未写入的备份路径 (rewind 语义: "当时不存在") ; 快照同时记录对话位置 `messageIndex`、会话日志行数 `sessionLineCount` (供 /rewind 精确截断会话文件) 与截断到 60 字符的 `userText` 标签, 上限 `MAX_SNAPSHOTS = 100` (丢最旧并删除其备份文件) (index.ts:154-208) .
+- 回滚: `rewind(snapshotIndex)` —— 把目标快照中每个文件的备份内容写回工作区 (内容相同则跳过) ; 备份文件缺失 (快照时文件不存在) 则删除当前文件; `unavailable` 备份跳过不动; 对目标快照之后才首次追踪的文件, 按其首追踪基线恢复 (存在过的还原原始内容, 当时不存在的删除文件, 基线不可用的保留原样待下次重试) ; 快照数组截断到该点并删除被移除快照的备份 (无 redo, 回滚是破坏性的单行道) ; `nextSnapshotSeq` 不回退 (index.ts:210-329) .
+- 持久化: 快照元数据存 `.yukino/file-history/{sessionId}/snapshots.json` (Zod 校验, version 1, 含 baselines 与 nextSnapshotSeq) , 重启/resume 后 `load()` 重建 (index.ts:352-413) .
 
 为什么用 `sha256(path)` 作备份文件名:
 
@@ -967,7 +979,7 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 
 召回层 (`manager.ts` `findRelevantMemories()`) : 每轮对话前做非阻塞预取 —— 扫描全部记忆 frontmatter (上限 200 条, 新的在前) 构建清单, 连同"最近用过的工具列表"发给 LLM, 让它选最多 5 条相关记忆 (提示词明确要求"克制挑剔") , Zod 校验 JSON 响应. 结果附"记忆年龄"警告 (超过 1 天即 ≥2 天的记忆提示可能过时、使用前先对当前代码核实) . 预取是 fire-and-forget: 预取 Promise 完成后经 then 回调写入 settled 标志, Agent 循环在工具执行后只读该标志 (不 await) , 就绪则注入 system-reminder, 未就绪直接跳过 —— 召回绝不阻塞主循环.
 
-提取层 (`extractor.ts`) : 对话 loop 完成后自动触发 (调用方以消息游标节流: 距上次提取新增不足 2 条消息则跳过) , 派一个子代理 (工具: Read/Write/Edit/Glob/Grep, maxIterations 5, bypass 权限) 从对话中提取值得长期记忆的内容. 防重复: 提取前先注入现有记忆清单 ("更新旧文件优于新建") ; 防并发: `inProgress` 标志 + `pendingContext` 合批 (提取运行期间的新上下文合并到下一轮尾巴跑) . 子代理没输出工具调用时还有文本协议兜底 (`MEMORY_NAME:/MEMORY_TYPE:/---` 块解析) .
+提取层 (`extractor.ts`) : 对话 loop 完成后自动触发 (调用方以消息游标节流: 距上次提取新增不足 2 条消息则跳过) , 派一个子代理 (工具: Read/Write/Edit/Glob/Grep, maxIterations 5, 权限用 `MemoryPermissionChecker` —— 只允许记忆目录内的 `.md` 写, command 类一律拒绝) 从对话中提取值得长期记忆的内容. 防重复: 提取前先注入现有记忆清单 ("更新旧文件优于新建") ; 防并发: `inProgress` 标志 + `pendingContext` 合批 (提取运行期间的新上下文合并到下一轮尾巴跑) . 子代理没输出工具调用时还有文本协议兜底 (`MEMORY_NAME:/MEMORY_TYPE:/---` 块解析) .
 
 巩固层 (`consolidation.ts`) : 定期 (≥24 小时且 ≥5 个会话, 10 分钟扫描节流) 派子代理合并/去重/清理记忆; 执行互斥用非阻塞文件锁 `.consolidate-running` (`teams/file-lock.ts` 的 `tryAcquireFileSyncLock`, 拿不到即放弃本轮) , `.consolidate-lock` 仅以 mtime 记录上次整合时间.
 
@@ -983,16 +995,16 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 
 - `command`: 执行 shell (30s 超时、10MB 缓冲) , 注入环境变量 `YUKINO_EVENT/YUKINO_TOOL/YUKINO_FILE_PATH`;
 - `prompt`: 把文本注入对话 (作为通知排队) ;
-- `http`: POST JSON (整个 HookContext) 到 URL —— webhook 集成;
-- `agent`: 委派给注入的 agentRunner 跑子代理.
+- `http`: POST JSON (整个 HookContext) 到 URL (默认 POST, GET/HEAD 不带 body; 30s 超时) —— webhook 集成;
+- `agent`: 执行分支保留 (委派给注入的 agentRunner) , 但当前没有任何宿主注册 agentRunner, `validate()` 一律拒绝 `agent` 类型配置并提示改用 command/prompt (hooks/index.ts:401-413) .
 
-条件表达式: `evaluateCondition()` 支持 `&&`/`||`/`!`、`==`/`!=`、`=~` (正则) 、`=*` (glob, `→.*`、`*→[^/]*`、`?→.`) , 字段含 `tool/event/file_path/message` 及工具参数 —— 如 `tool == "EditFile" && file_path =* "src/.ts"`.
+条件表达式: `compileCondition()` 直接把 condition 字符串编译为 JavaScript 表达式 (`new Function("event","tool","filePath","message","args", ...)`, hooks/index.ts:315-327) , 在钩子上下文上求值并做 Boolean 收敛; 求值抛错返回 false (该 hook 跳过) . 源码注释给出理由: 配置文件本就能通过 command 动作执行任意 shell, 评估同源表达式不新增权限.
 
 三个标志:
 
 - `reject` (仅 pre_tool_use) : hook 返回拒绝即阻止工具执行, 拒绝原因作为工具结果回喂模型 —— 实现"策略即代码" (如"禁止在 main 分支直接写文件") ; 与 `async` 互斥 (异步无法同步否决) , 配置时校验.
-- `once`: `firedOnce` 集合按 hook id 去重, 每会话最多触发一次 —— 解决"会话开场白""首次提醒"类需求, 避免每轮重复注入.
-- `async`: 后台执行 (`.then()` 不 await) , 立即返回 `(async)` 占位, 真实输出完成后作为通知排队注入下一轮 —— 慢操作 (如 http 上报) 不阻塞 Agent 主循环.
+- `once`: `firedOnce` 集合按 hook id 去重, 成功触发过的钩子本会话不再触发 —— 解决"会话开场白""首次提醒"类需求, 避免每轮重复注入; 执行失败时槽位释放, 允许后续重试 (hooks/index.ts:118-131) .
+- `async`: 后台执行 (`.then()` 不 await) , 主循环立即继续处理下一个钩子 (不再有占位结果) , 真实输出完成后经 `recordNotification()` 排队注入下一轮 —— 慢操作 (如 http 上报) 不阻塞 Agent 主循环; 失败沿用 `on_error` 语义 (`ignore` 仅记日志, 其余上报 "Async hook error: ...") (hooks/index.ts:133-153) .
 
 钩子输出统一走 `recordNotification()` 队列, 在下一轮开头被 Agent drain 成 system-reminder (见「Agent 循环 run() 的单轮迭代流程」第 3 步) —— 异步世界与生成器主线的汇合点.
 
@@ -1050,13 +1062,13 @@ JSONL (每行一条 JSON, 纯追加) 的优势在该场景下非常契合:
 - `plan`: 禁 Edit/Write + plan 权限模式 —— 只读架构师, 产出实施计划;
 - `explore`: 禁 Edit/Write + plan 模式 + `model: "deepseek-flash"` (definition.ts:40) —— 用便宜快速模型做代码探索, 是成本分层设计: 探索类任务 token 消耗大但智力要求低, 用便宜模型省钱.
 
-派生层 (`spawn.ts`) : `spawnSubagent()` 为子代理创建全新 `ConversationManager` (隔离上下文, 防污染主线) ; 模型解析优先级 `调用方覆盖 > 定义指定 > 父级模型`, 模型不同时新建 LLMClient 否则复用父客户端; `maxIterations = maxTurns ?? 200`; `onProgress` 回调向 UI 汇报 turn/lastTool.
+派生层 (`spawn.ts`) : `spawnSubagent()` 为子代理创建全新 `ConversationManager` (隔离上下文, 防污染主线; fork 路径例外, 复用调用方注册表与 fork 出的对话副本) ; 模型解析优先级 `调用方覆盖 > 定义指定 > 父级模型` (spawn.ts:73-75) , 指定了模型或定义带 `systemPromptOverride` 时新建 LLMClient, 否则直接复用父客户端 (spawn.ts:85-88) ; `maxIterations = maxTurns ?? 200`; `onProgress` 回调向 UI 汇报 turn/lastTool.
 
 工具过滤 (`tool-filter.ts`, 源码注释标明五层) : MCP 工具 (`mcp__*` 前缀) 豁免第 2、3 层全局过滤, 但仍受第 4、5 层定义级黑/白名单约束 → 全局黑名单 `SUBAGENT_DISALLOWED_TOOLS` (ComputerUse/AskUserQuestion/ExitPlanMode 三个主线程专属工具, 外加 Agent/TaskStop —— 防子代理再派生子代理失控、抢占主线程 UI 单例) → 异步 (后台) 代理白名单 `ASYNC_AGENT_ALLOWED_TOOLS` (14 个工具, 含 WebFetch) → 定义级黑名单 `disallowedTools` → 定义级白名单 `tools` (`["*"]` 表示禁用此层) .
 
 防递归 fork: fork 路径 (继承父上下文运行) 有双重检测 —— `querySource` 标记 + 扫描对话中的 `<fork_boilerplate>` 标签; fork 出的代理拿到的是克隆注册表 (`cloneRegistryForFork()` 把 Agent 工具深拷贝并打上 fork 标记) , 使其再次 fork 时能被识别并拒绝.
 
-三种执行路径 (`agent-tool.ts`) : `team_name` → 作为团队成员运行; 无 `subagent_type` → fork (继承父上下文) ; 指定定义 → 标准派生.
+三种执行路径 (`agent-tool.ts`) : `team_name` → 作为团队成员运行; 无 `subagent_type` → fork (继承父上下文; 若配置 `enable_fork` 关闭则回退为 general-purpose 定义派生) ; 指定定义 → 标准派生.
 
 ---
 
@@ -1112,10 +1124,10 @@ fork 模式: 技能在隔离子代理中运行, 自带上下文, `fork_context` 
 
 1. 连接: `MCPManager.connectAll(configs)` 为每个服务器建 `MCPClient`, 支持三种传输 —— stdio (`command + args`, 环境变量 `${VAR}`/`$VAR` 展开) 、StreamableHTTP (URL 型默认) 、SSE (显式指定) ;
 2. 发现: 连接后 `listTools()` 拉取工具清单, 服务器 instructions 收集后注入 system-reminder;
-3. 适配: 每个 MCP 工具包一个 `MCPToolWrapper` 实现统一 `Tool` 接口 —— 名称消毒为 `mcp__{server}__{tool}` (非字母数字转 `_`) , `execute()` 内部调 `client.callTool()`, 把 MCP 的 content 数组拍平为文本, 保留 `isError`;
+3. 适配: 每个 MCP 工具包一个 `MCPToolWrapper` 实现统一 `Tool` 接口 —— 名称消毒为 `mcp__{server}__{tool}` (非字母数字转 `_`) , `execute()` 内部调 `client.callTool()`, 把 MCP 的 content 数组拍平为文本 (image 块经缩放转 base64 contentBlocks 一并返回, mcp/client.ts:123-185) , 保留 `isError`;
 4. 注册: wrapper 注册进全局 `ToolRegistry`, 从此对 Agent/权限/调度完全透明 —— MCP 工具与内置工具走同一条执行管线.
 
-为什么 MCP 工具注册时默认 `deferred = true` (`mcp/tool-wrapper.ts:78`, eager 模式除外 —— 见「MCP 工具进入上下文的三种模式」) :
+为什么 MCP 工具注册时默认 `deferred = true` (`mcp/tool-wrapper.ts:54`, eager 模式除外 —— 见「MCP 工具进入上下文的三种模式」) :
 
 1. 上下文成本: MCP 服务器动辄暴露几十个工具 (如 GitHub MCP 有 90+) , 全量 schema 会吃掉大量窗口并稀释注意力 —— 延迟加载 (见「延迟工具机制」) 让模型先经 ToolSearch 发现再启用;
 2. 信任分级: MCP 是第三方代码, schema 里可能含提示注入内容, 不进入初始上下文等于默认最小暴露面;
@@ -1219,7 +1231,7 @@ E2E 层: 仓库当前未附带独立 E2E 脚本 (旧版的 run-e2e.mjs / run-fai
 
 ### print 模式 (`-p`) 的 `stream-json` 输出协议是如何设计的? 为什么它选择"事件不落盘、统计在尾部"?
 
-`print-mode.ts` 把 Agent 事件流映射为每行一个 JSON 对象 (NDJSON) 输出到 stdout, 供脚本/CI 管道消费. 协议设计 (`emitStreamJson()`, print-mode.ts:301) :
+`print-mode.ts` 把 Agent 事件流映射为每行一个 JSON 对象 (NDJSON) 输出到 stdout, 供脚本/CI 管道消费. 协议设计 (`emitStreamJson()`, print-mode.ts:384-433) :
 
 在线事件 (随 Agent 循环实时输出) :
 
@@ -1240,9 +1252,9 @@ E2E 层: 仓库当前未附带独立 E2E 脚本 (旧版的 run-e2e.mjs / run-fai
 值得注意的两个取舍:
 
 1. `stream_text`/`thinking_text` 不在线输出: 正文增量被聚合进尾部 `result` 字段, 而非逐 delta 发出. 理由: print 模式的消费者是机器 (jq、脚本) , 逐字符的文本流对机器无增量价值, 反而产生大量行解析开销; 工具事件则保留在线, 因为它们有"观测执行进度"的价值. 这与 TUI (人类消费者, 逐字渲染) 形成对照 —— 输出格式按消费者的消费粒度设计.
-2. 统计尾部化: `num_turns`、累计 usage、工具耗时都只在循环结束才能得出终值, 所以放在 `result` 行. 工具耗时的归因用了个小技巧 (print-mode.ts:245-250) : 从后往前找第一个同名且 `elapsed===0` 的调用记录补上耗时 —— 处理同一工具被多次调用时的配对.
+2. 统计尾部化: `num_turns`、累计 usage、工具耗时都只在循环结束才能得出终值, 所以放在 `result` 行. 工具耗时的归因用了个小技巧 (print-mode.ts:293-304) : 从后往前找第一个同名且 `elapsed===0` 的调用记录补上耗时 —— 处理同一工具被多次调用时的配对.
 
-此外 print 模式的权限策略是硬编码 `bypassPermissions` (print-mode.ts:200) —— 非交互环境无法弹对话框, 要么放行要么拒绝, 管道场景选择放行 (使用者需自知风险, 通常配合容器运行) . 错误处理: `text` 模式错误写 stderr (不污染 stdout 的结果管道) , `stream-json` 模式错误作为 error 行写 stdout (机器统一解析) .
+此外 print 模式的权限策略是硬编码 `bypassPermissions` (print-mode.ts:123) —— 非交互环境无法弹对话框, 要么放行要么拒绝, 管道场景选择放行 (使用者需自知风险, 通常配合容器运行) . 错误处理: `text` 模式错误写 stderr (不污染 stdout 的结果管道) , `stream-json` 模式错误作为 error 行写 stdout (机器统一解析) .
 
 ---
 
@@ -1251,12 +1263,12 @@ E2E 层: 仓库当前未附带独立 E2E 脚本 (旧版的 run-e2e.mjs / run-fai
 `teammate.ts` 是一个无 UI、邮箱驱动的长驻 Agent 进程. 生命周期 (`runTeammate()`) :
 
 1. 初始化: 独立 sessionId (`teammate-{name}-{ts}`) , logger 模式 `"teammate"` 且 `skipCleanup: true` (避免多进程并发删日志的竞态) .
-2. 构造 Agent: 注册 7 个核心读写工具 (Read/Bash/PowerShell/Glob/Grep/Write/Edit) 之外还有 ToolSearch、McpCall、SyntheticOutput、Worktree 工具 (Enter/Exit) 、技能工具 (LoadSkill/InstallSkill) 、团队通信与任务工具 (SendMessage + TaskCreate/TaskGet/TaskList/TaskUpdate) 、以及配置的 MCP 工具 (`teammate.ts:146-201` `buildTeammateRegistry()`) —— 唯独没有 Agent/TeamCreate/TeamDelete, 即 teammate 不能再派生子代理或团队. 权限模式固定 `acceptEdits`.
+2. 构造 Agent: 注册 7 个核心读写工具 (Read/Bash/PowerShell/Glob/Grep/Write/Edit) 之外还有 ToolSearch、McpCall、SyntheticOutput、Worktree 工具 (Enter/Exit) 、技能工具 (LoadSkill/InstallSkill) 、团队通信与任务工具 (SendMessage + TaskCreate/TaskGet/TaskList/TaskUpdate) 、以及配置的 MCP 工具 (`teammate.ts:152-234` `buildTeammateRegistry()`) —— 唯独没有 Agent/TeamCreate/TeamDelete, 即 teammate 不能再派生子代理或团队. 权限模式固定 `acceptEdits`.
 3. 执行初始任务: `--task` 参数作为首条 user 消息, 跑一轮完整 Agent 循环, `stream_text` 直接写 stdout.
 4. 上报 idle: 任务完成 → 向 lead 邮箱发 `[idle] {name} has completed their task...`.
 5. 待命循环: 手写轮询循环每 2 秒调 `mailbox.receive()` 收邮箱 (不用 `mailbox.poll`, 为的是每个间隔都能执行 lead 存活探测) :
    - 收到 shutdown 请求 (`isShutdownRequest`) → 跳出循环, 进程退出;
-   - lead 进程已死 (探活失败持续一段时间) → 自行退出 (死 leader 永远不会发 shutdown 通知) ;
+   - lead 进程已死 (探活失败持续超过 `LEADER_LOST_EXIT_MS = 60` 秒) → 自行退出 (死 leader 永远不会发 shutdown 通知) ;
    - 收到其他消息 → 作为新 user 消息追加进同一个 `ConversationManager` (保留此前全部上下文) , 再次跑 Agent 循环, 完成后再次上报 idle, 继续待命.
 
 关键差异 (对比 TUI/print) :
@@ -1282,27 +1294,38 @@ remote 模式 (`remote/server.ts`) 把 TUI 换成浏览器 React 前端, 通信�
 - 流式: `stream_text`、`stream_end` (冲刷缓冲区) 、`thinking_text`
 - 工具: `tool_use`、`tool_result`
 - 节奏: `turn_complete{turn}`、`loop_complete{stopReason,totalTurns,elapsed}`、`usage`、`retry`、`compact`
-- 交互: `permission_request{id,toolName,description}`、`ask_user{id,questions}`
-- 控制: `connected{session,cwd}`、`commands` (命令清单供前端补全) 、`system`、`clear`、`replay_user/replay_assistant` (会话恢复回放) 、`command_done`、`error`
+- 交互: `permission_request{id,toolName,description}`、`ask_user{id,questions}`、`plan_approval_request`、`code_review_form`、`code_review_progress`
+- 控制: `connected{session,cwd}`、`commands` (命令清单供前端补全) 、`status`、`system`、`clear`、`replay_user/replay_assistant` (会话恢复回放) 、`session_list`、`steering_queued/steering_delivered`、`command_done`、`error`、`pong`
 
-入站 (浏览器 → 服务端) : `user_message{content}`、`permission_response{id,response}`、`ask_user_response{id,answers}`、`cancel`、`ping`.
+入站 (浏览器 → 服务端) : `user_message{content}`、`permission_response{id,response}`、`ask_user_response{id,answers}`、`plan_approval_response{choice,feedback}`、`code_review_start`、`cancel`、`ping` (全部经 Zod schema 校验, server.ts:154-184) .
 
 权限往返 (「权限确认的 Promise 悬挂模式」的网络版) :
 
 ```ts
 onPermissionRequest: async (toolName, args, decision) => {
-  const id = `perm_${Date.now().toString(36)}`;
-  this.broadcast({ type: "permission_request", data: { id, toolName, ... } });
-  return new Promise((resolve) => this.pendingPermissions.set(id, resolve));
-}
+  const id = nextRequestId("perm"); // perm_<base36 时间戳>_<单调计数器>, 防同毫秒碰撞
+  this.broadcast({
+    type: "permission_request",
+    data: { id, toolName, description },
+  });
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      /* 10 分钟无响应自动 deny */
+    }, PENDING_REQUEST_TIMEOUT_MS);
+    this.pendingPermissions.set(id, (response) => {
+      clearTimeout(timer);
+      resolve(response);
+    });
+  });
+};
 ```
 
-服务端生成请求 id → 广播给所有客户端 → Agent 生成器挂起 → 任一浏览器回 `permission_response{id, response}` → 从 `pendingPermissions` Map 取出 resolver 兑现 → Agent 恢复. ask_user 同理 (`pendingAsks`) .
+服务端生成请求 id → 广播给所有客户端 → Agent 生成器挂起 → 任一浏览器回 `permission_response{id, response}` → 从 `pendingPermissions` Map 取出 resolver 兑现 → Agent 恢复. ask_user 同理 (`pendingAsks`) . 另有兜底: 请求超过 `PENDING_REQUEST_TIMEOUT_MS` (10 分钟) 无人应答则自动 deny 并广播系统消息, 防止关闭的浏览器标签页把 streaming 槽位与整个 run 永久钉死 (server.ts:140-143, 2311-2328) .
 
 设计细节:
 
 1. `streaming` 互斥标志: 同一时间只允许一个会话流, 并发的 `user_message` 直接丢弃 —— 避免多客户端同时驱动导致对话状态错乱 (当前是"广播即共享屏幕"模型, 所有客户端看到同一对话) .
-2. agent 惰性初始化: `createRemoteAgent()` 失败时不阻塞服务器启动, 降级为"首条消息时重试" (`ensureAgent()`, server.ts:909-938) .
+2. agent 惰性初始化: `createRemoteAgent()` 失败时不阻塞服务器启动, 降级为"首条消息时重试" (`ensureAgent()`, server.ts:1181 起) .
 3. 取消语义: `cancel` 消息调 `agentHandle.abort()` —— AbortController 贯穿到 LLM 流与工具执行.
 4. 命令体系复用: 同一套 CommandRegistry 在 WS 侧按 type 分发 (local → system 消息; local_ui → 专属处理; prompt → 走 agent 循环; skill_fork 明确报"暂不支持"—— 远程模式下子代理 fork 的 UI 缺失时显式降级而非静默失败) .
 
@@ -1310,16 +1333,16 @@ onPermissionRequest: async (toolName, args, decision) => {
 
 ### remote server 的静态文件服务有哪些安全措施? SPA fallback 是怎么实现的?
 
-`serveStatic()` (`server.ts:153`) 服务 `fe/dist/` 目录, 安全措施:
+`serveStatic()` (`server.ts:203-222`) 服务 `fe/dist/` 目录, 安全措施:
 
 1. 路径归一化: `normalize(path).replace(/^(\.\.[/\\])+/, "")` 先剥离开头的 `../` 序列;
 2. 根目录校验: 拼接后 `fullPath.startsWith(FE_DIST)` 二次确认 —— 双重防御目录穿越 (normalize 处理 `..`, startsWith 兜底绝对路径与符号链接逃逸) ;
 3. 存在性与类型检查: `existsSync && isFile()`, 目录请求拒绝;
 4. MIME 白名单: 显式后缀映射表, 未知后缀 `application/octet-stream` (浏览器下载而非渲染, 避免 content sniffing XSS) .
 
-SPA fallback: 请求路径找不到文件时回退到 `index.html` (server.ts:803-804) —— 前端用客户端路由 (React Router 类) , 刷新 `/chat/xxx` 这类路径时服务器返回应用外壳, 由 JS 路由接管. 这是静态站点服务 SPA 的标准做法.
+SPA fallback: 请求路径找不到文件时回退到 `index.html` (server.ts:1002-1008) —— 前端用客户端路由 (React Router 类) , 刷新 `/chat/xxx` 这类路径时服务器返回应用外壳, 由 JS 路由接管. 这是静态站点服务 SPA 的标准做法.
 
-健康检查端点 `/health` 返回 `{status:"ok", remote: true, clients: n}` 便于探活. server.ts 约 2500 行实现了一个功能完整的远程 Agent 服务器 —— 归功于 Koa 只做静态文件+WS 挂载点, 业务逻辑全部复用 Agent 核心.
+健康检查端点 `/health` 返回 `{status:"ok", remote: true, clients: n}` 便于探活. server.ts 约 2500 行实现了一个功能完整的远程 Agent 服务器 —— 归功于 Express 只做静态文件+WS 挂载点, 业务逻辑全部复用 Agent 核心.
 
 ---
 
@@ -1343,9 +1366,9 @@ SPA fallback: 请求路径找不到文件时回退到 `index.html` (server.ts:80
 
 规律: 越"无人值守"的模式, 组装越精简, 但精简的对象不同.
 
-- print 砍掉的是状态与交互设施: 无会话持久化 (一次性运行) 、无 TaskStore、无 Worktree 工具、无技能、无 Hook、无记忆; 但保留了完整的执行与协作面 —— ToolSearch、MCP 工具、子代理 (AgentTool) 与团队工具 (TeamCreate/SendMessage/TeamDelete/TaskStop, print-mode.ts:130-173, 注释说明这是为了让 Lead 能在单次非交互执行中组队派活) 都可用;
+- print 砍掉的是状态与交互设施: 无会话持久化 (一次性运行) 、无 TaskStore、无 Worktree 工具、无技能、无 Hook、无记忆; 但保留了完整的执行与协作面 —— ToolSearch、MCP 工具、子代理 (AgentTool) 与团队工具 (TeamCreate/SendMessage/TeamDelete/TaskStop, print-mode.ts:147-150 注册团队工具、154-221 构造并注册 AgentTool, 注释说明这是为了让 Lead 能在单次非交互执行中组队派活) 都可用;
 - teammate 砍掉的是"交互设施" (Hook、记忆、UI) 与"派生能力" (没有 Agent/TeamCreate/TeamDelete, 防止 teammate 再嵌套派生) , 但保留完整的读写与发现工具集 (ToolSearch、McpCall、技能、Task、Worktree、SendMessage) —— 它是长驻的独立工作者, 需要干活的完整能力;
-- remote 几乎全量保留 (浏览器也是"完整客户端") , 权限固定 `acceptEdits` 模式 (`server.ts:550`) —— 远程场景写操作免确认以保证浏览器侧操作流畅, 但命令仍需确认, 且不能信任客户端切到 bypass.
+- remote 几乎全量保留 (浏览器也是"完整客户端") , 权限固定 `acceptEdits` 模式 (`server.ts:611`) —— 远程场景写操作免确认以保证浏览器侧操作流畅, 但命令仍需确认, 且不能信任客户端切到 bypass.
 
 这是"同一核心、按宿主能力裁剪外围"的组装策略: `Agent` 构造参数全部可选 (`hookEngine?`、`activeSkills?`、`notificationFn?`…) , 缺省即关闭对应能力. 没有为每种模式写一套 Agent 变体 —— 组合优于继承.
 
@@ -1381,13 +1404,13 @@ SPA fallback: 请求路径找不到文件时回退到 `index.html` (server.ts:80
 为什么需要类型维度 —— 因为命令的"副作用域"不同, 宿主必须知道如何处置结果:
 
 - `local` 是纯函数, 终端/远程都能安全执行;
-- `local_ui` 需要宿主有对应 UI 能力 (TUI 能弹 rewind 对话框, remote 只能回"暂不支持") —— 类型让宿主按能力降级 (`handleLocalUICommand()` 对 rewind/sandbox/worktree 显式降级提示, server.ts:1257-1320) ;
+- `local_ui` 需要宿主有对应 UI 能力 (TUI 能弹 rewind 对话框, remote 只能回"暂不支持") —— 类型让宿主按能力降级 (`handleLocalUICommand()` 对 rewind/sandbox/worktree 显式降级提示, server.ts:1597 起) ;
 - `prompt` 会消耗 LLM 配额、改变对话状态, 必须与普通查询区分;
 - `skill_fork` 需要子代理基础设施, remote 模式直接声明不支持.
 
 用户自定义命令 (`.yukino/commands/*.md`) 一律是 `prompt` 类型 —— 用户能扩展的恰好是"提示词模板"这个最安全也最有用的维度, 而不能注入任意 UI 行为. 类型系统在这里是扩展点的安全边界.
 
-命令注册的其他细节: `CommandRegistry` 内部是单个 Map (name→cmd) , 注册时撞名抛错 (commands.ts:41-43) ; `parse()` 按第一个空白切分 name/args, 且 name 含 `/` 的输入按文件路径处理、不当作命令 (commands.ts:73-84) .
+命令注册的其他细节: `CommandRegistry` 内部是单个 Map (name→cmd) , 注册时撞名抛错 (commands.ts:43-48) ; `parse()` 按第一个空白切分 name/args, 且 name 含 `/` 的输入按文件路径处理、不当作命令 (commands.ts:73-92) .
 
 ---
 
@@ -1399,7 +1422,7 @@ SPA fallback: 请求路径找不到文件时回退到 `index.html` (server.ts:80
 
 命名空间: 子目录映射为冒号分隔的命令名 —— `frontend/component/gen.md` → `/frontend:component:gen` (`commandName()`: 小写、空格转连字符、`:` 连接) . 这让命令可以按领域组织而不撞名.
 
-文件格式: YAML frontmatter (Zod 校验: `description`、`argument-hint`、`aliases`) + markdown 正文. frontmatter 提供元信息, 正文即提示词模板.
+文件格式: YAML frontmatter (Zod 校验: `description`、`argument-hint`, loader.ts:66-69; 当前命令没有别名字段) + markdown 正文. frontmatter 提供元信息, 正文即提示词模板.
 
 参数替换 (`renderBody()`) :
 
@@ -1411,7 +1434,7 @@ return body;
 
 两种契约: 模板含 `$ARGUMENTS` 时做精确占位替换 (作者控制参数出现位置, 可多处引用) ; 否则尾部追加 (零模板成本, 自然语言拼接) .
 
-与内置命令的关系: 用户命令注册时撞名内置命令 → 保留内置 (`catch` 静默跳过, 见 `server.ts:586-591` 与 app.tsx:636-641 同逻辑) —— 内置命令是关键路径 (`/clear`、`/quit`) , 不允许被覆盖劫持; 技能注册为命令同理 (`wireSkillsToCommands()`: `find()` 已存在则跳过) .
+与内置命令的关系: 用户命令注册时撞名内置命令 → 保留内置 (`catch` 静默跳过, 见 `server.ts:767-771` 与 app.tsx:870-876 同逻辑) —— 内置命令是关键路径 (`/clear`、`/quit`) , 不允许被覆盖劫持; 技能注册为命令同理 (TUI 侧 `wireSkillsToRegistry()` / remote 侧 `wireSkillsToCommands()`: `find()` 已存在则跳过) .
 
 这个"markdown 即扩展"的思路 (命令、技能、记忆、计划全部用 markdown + frontmatter) 大幅降低了扩展门槛 —— 用户不需要写代码, 只需要会写提示词.
 
@@ -1453,7 +1476,7 @@ return usageCount * Math.max(recency, 0.1);
 
 XML 风格标签包裹 + path 属性 —— 让模型明确知道"这是用户主动引用的文件内容", 与工具读文件的 tool_result 区分开.
 
-双文本策略 (`app.tsx:1866`) :
+双文本策略 (`app.tsx:2436-2448`) :
 
 ```ts
 const expanded = await expandAtRefsWithImages(text, workDir); // LLM 看到展开版 (文本内联 + 图片 content block)
@@ -1462,7 +1485,7 @@ convRef.current.addUserMessage(expanded);
 ```
 
 - 会话记录存原始版: `@src/foo.ts` 只有几个字符 —— 会话文件不被展开内容撑大; 恢复会话时不会因文件已变化而困惑; UI 显示用户真实输入;
-- LLM 收展开版: 模型需要文件内容才能回答. `expandAtRefsWithImages()` (at-expand.ts:106) 在文本内联之外还支持 `@path#L3-10` 行范围引用 (IDE 集成插入的锚点, 截取指定行内联) 与图片引用 (png/jpg/gif/webp 加载为 base64 image content block, 每条消息上限 10 张).
+- LLM 收展开版: 模型需要文件内容才能回答. `expandAtRefsWithImages()` (at-expand.ts:107) 在文本内联之外还支持 `@path#L3-10` 行范围引用 (IDE 集成插入的锚点, 截取指定行内联) 与图片引用 (png/jpg/gif/webp 加载为 base64 image content block, 每条消息上限 10 张).
 
 失败语义: 文件不存在/超限/是目录 → 原样保留 `@token` 文本, 模型会自己用 ReadFile 工具去读 —— 优雅降级为工具调用, 不报错打断用户.
 
@@ -1472,7 +1495,7 @@ convRef.current.addUserMessage(expanded);
 
 ### 斜杠命令自动补全的"三级匹配管道"为什么这样排序? Fuse.js 权重配置说明了什么?
 
-`input.tsx` 的命令过滤管道 (`useMemo`) 按精确度递减短路 (input.tsx:312-348) :
+`input.tsx` 的命令过滤管道 (`useMemo`) 按精确度递减短路 (input.tsx:321-348) :
 
 1. 精确名匹配 (`/clear` 输全)
 2. 前缀名匹配 (`/cle` → clear)
@@ -1501,7 +1524,7 @@ Fuse.js 配置 (`keys: [{name:"name",weight:3},{name:"aliases",weight:2},{name:"
 
 双向依赖边的意义: `addBlocks(A, [B])` 同时维护 `A.blocks=[B]` 与 `B.blockedBy=[A]` —— 冗余存储让两个方向的查询都是 O(1): "这个任务阻塞了什么" (排期决策) 与"这个任务被什么阻塞" (就绪检查) . 这是图存储的经典空间换时间: 写入时双写, 读取时免遍历. 对 Coding Agent 场景, 模型可以用它表达"先修类型错误 → 再改调用方"的任务 DAG, 而不是扁平清单.
 
-工具元数据 (`todo/tools.ts`) : 4 个 Task 工具 (TaskCreate/TaskGet/TaskList/TaskUpdate) 只标记 `category = "read"`, 没有 `deferred` 标记 —— 这是刻意的. `types.ts:92-104` 的注释说明了原因: `deferred` 只给 MCP 工具用 (MCP 是 per-project 配置、单服务器可能几十个工具且 schema 冗长, 全塞进初始列表会吃掉大块上下文) , 内置工具数量固定可控、隐藏它们只会逼模型多走一次 ToolSearch 往返, 所以内置工具永不 deferred —— Task 工具作为内置工具, schema 直接进初始列表, 随用随调.
+工具元数据 (`todo/tools.ts`) : 4 个 Task 工具 (TaskCreate/TaskGet/TaskList/TaskUpdate) 只标记 `category = "read"`, 没有 `deferred` 标记 —— 这是刻意的. `types.ts:288-300` 的注释说明了原因: `deferred` 只给 MCP 工具用 (MCP 是 per-project 配置、单服务器可能几十个工具且 schema 冗长, 全塞进初始列表会吃掉大块上下文) , 内置工具数量固定可控、隐藏它们只会逼模型多走一次 ToolSearch 往返, 所以内置工具永不 deferred —— Task 工具作为内置工具, schema 直接进初始列表, 随用随调.
 
 `category: "read"` 的作用: 任务操作不触碰用户文件系统, 归入最安全类别 —— 权限层直接放行, 且 `partitionToolCalls()` 允许它们与其他 read 工具并行.
 
@@ -1522,13 +1545,13 @@ Fuse.js 配置 (`keys: [{name:"name",weight:3},{name:"aliases",weight:2},{name:"
 
 `.worktreeinclude` 解决的痛点: worktree 是从 git 创建的干净检出, 但很多项目有不入库但运行必需的文件 (`.env`、本地证书、IDE 配置) . `copyWorktreeIncludeFiles()` 逐行读该文件 (支持 `#` 注释) , 把列出的路径从主仓库复制进 worktree, 带路径穿越防护.
 
-配套的后创建设置 (`performPostCreationSetup()`) : 复制 `.yukino/` 配置、重设 `core.hooksPath` (worktree 的 hooks 路径默认指向错误位置) 、符号链接 node_modules (避免每个 worktree 重装依赖 —— 前端项目 node_modules 动辄 GB 级, 软链秒级完成) . 这些全是"Agent 在隔离 worktree 里能立刻干活"的实操细节 —— 体现了对真实开发工作流的深刻理解.
+配套的后创建设置 (`performPostCreationSetup()`, worktree/index.ts:423-432) : 按 allowlist 复制 `.yukino/` 的共享配置 (permissions.yaml/agents/commands/memory, 刻意排除 sessions/file-history/plans/logs/teams 等运行时状态) 与 `.agents/` 的 AGENTS.md/skills、重设 `core.hooksPath` (存在 .husky 时指向主仓库的 hooks 目录) 、符号链接 node_modules (避免每个 worktree 重装依赖 —— 前端项目 node_modules 动辄 GB 级, 软链秒级完成) . 这些全是"Agent 在隔离 worktree 里能立刻干活"的实操细节 —— 体现了对真实开发工作流的深刻理解.
 
 ---
 
 ### logger 系统的 Proxy 惰性初始化、模块级 child logger 分别解决了什么问题?
 
-Proxy 惰性初始化 (`logger.ts:216`) :
+Proxy 惰性初始化 (`logger/index.ts:196-213`) :
 
 ```ts
 export const logger = new Proxy(silentFallback, {
@@ -1543,7 +1566,7 @@ export const logger = new Proxy(silentFallback, {
 
 问题: 模块导入顺序上, 很多模块 (工具、子系统) 在 `initLogger()` 之前就 import 了 logger 并可能在模块顶层打日志. 若 logger 是"初始化前为 null"的普通变量, 调用方要么判空要么崩溃. Proxy 方案: 导出绑定永远有效 —— 初始化前代理到 silent 实例 (真实的 `pino({ level: "silent" })`, 安全 no-op) , 初始化后 `get` trap 转发到真实 logger (函数值还做 bind 保证 this 正确, `set` trap 把 `logger.level = ...` 这类写入也路由到活实例) . 调用方无感知, 零判空样板. 这是"Null Object 模式 + 动态转发"的组合.
 
-模块级上下文绑定 (`createChildLogger()`, logger.ts:244-277) : 问题 —— 各子系统希望日志自动带上 `module` 标签 (session/tools/tui/subagent…) , 但逐层传参污染所有函数签名. 解法是工厂返回一个 Proxy, 惰性解析"当前根 logger 的 child" (`current.child(bindings)` 结果缓存, 根 logger 重建时才重新派生) —— 模块顶层 `const log = createChildLogger({ module: "session" })` 一次声明, 之后标签沿调用链隐式出现且跨 `initLogger()` 重初始化仍然有效.
+模块级上下文绑定 (`createChildLogger()`, logger/index.ts:224-255) : 问题 —— 各子系统希望日志自动带上 `module` 标签 (session/tools/tui/subagent…) , 但逐层传参污染所有函数签名. 解法是工厂返回一个 Proxy, 惰性解析"当前根 logger 的 child" (`current.child(bindings)` 结果缓存, 根 logger 重建时才重新派生) —— 模块顶层 `const log = createChildLogger({ module: "session" })` 一次声明, 之后标签沿调用链隐式出现且跨 `initLogger()` 重初始化仍然有效.
 
 同步写设计: `pino.destination(fd)` 用文件描述符同步写而非默认的 worker 线程异步写 —— 因为 tsup 全量打包后 worker 线程的模块解析会失效 (worker 需要独立入口文件) , 同步写规避了打包复杂度, 日志量小的场景性能无损. 这又是"构建产物约束反向影响运行时设计"的例子 (呼应「tsup 构建产物的特殊处理」的全量内联决策) .
 
@@ -1569,7 +1592,7 @@ export const logger = new Proxy(silentFallback, {
 
 ### prompt history 的持久化为什么"每次追加都全量重写"? 这不是违背了追加写原则吗?
 
-`history.ts` 确实是每次 `append()` 都 load 全部 → push → trim 到 `MAX_HISTORY_ENTRIES = 200` → 全量重写 `prompt_history.jsonl`. 表面看与「会话持久化选用 JSONL 追加写」推崇的追加写矛盾, 实际是一致原则的正确应用:
+`history/index.ts` 确实是每次 `append()` 都 load 全部 → push → trim 到 `MAX_HISTORY_ENTRIES = 200` → 全量重写 `prompt_history.jsonl`. 表面看与「会话持久化选用 JSONL 追加写」推崇的追加写矛盾, 实际是一致原则的正确应用:
 
 1. 访问模式不同: 会话 JSONL 是"只增不改"的日志 (追加写最优) ; prompt history 需要容量截断 (只留最近 200 条) 与尾部去重 (连续重复不记) —— 两个操作都需要看到全量数据, 纯追加格式做不到截断, 必须定期 compact, 反而更复杂.
 2. 规模有界: 200 条 × 平均百字符 ≈ 几十 KB, 全量重写是微秒级操作; 会话 JSONL 是几百 MB 量级, 全量重写不可接受.
@@ -1597,13 +1620,13 @@ model 字段现在直接写具体模型 ID: 内置 explore 角色即 `model: "de
 
 ### `/resume` 恢复会话时, "对话状态"与"UI 状态"分别是如何重建的?
 
-`/resume <id>` 的重建 (`app.tsx:983`) 是双轨的:
+`/resume <id>` 的重建 (`app.tsx:1692` 起) 是双轨的:
 
 对话状态重建 (发给 LLM 的上下文) :
 
 1. `loadSession()` 读 JSONL;
 2. `rebuildFromSession()` 处理 compact_boundary (见「compact_boundary 与可恢复会话」) —— 产出摘要+保留尾部+boundary 后消息;
-3. 新建 `ConversationManager`, 逐条 `addUserMessage`/`addAssistantMessage` 回放;
+3. 同一个 `ConversationManager` 原地 `reset()` 后经 `appendMessages()` 批量回放 (不新建实例 —— AgentTool 的 fork 路径持有旧实例引用, 换实例会让它指向被丢弃的历史) ;
 4. 重新注入长期记忆 (AGENTS.md 项目指令 + auto memory + 当前日期) —— 注意日期是"恢复当天"的, 不是原会话的;
 5. `taskListRef` 重指向新 `TaskStore(workDir, sessionId)` —— 任务列表也按会话隔离恢复.
 
@@ -1612,7 +1635,7 @@ UI 状态重建 (用户看到的画面) :
 - TUI: 从恢复的消息重建 `messages` 数组, 全部传入 `<Static>` 的 items —— Ink 内建机制保证它们只渲染一次, 历史已定型无需再编辑;
 - remote: 先广播 `clear`, 再逐条广播 `replay_user`/`replay_assistant` 让前端重建聊天流.
 
-不支持恢复的部分: usage anchor (token 基线归零, 首轮估算回退字符估算) 、文件历史快照 (rewind 不可跨会话) 、会话白名单 (内存态) . 这些是刻意的: 恢复的是"对话记忆", 不是"进程状态" —— 会话文件是唯一事实来源, 内存结构全部按需重建.
+恢复时重置的内存态: usage anchor (token 基线归零, 首轮估算回退字符估算) 、`announcedSkills`/`recentTools`/`surfacedMemories` 清空、`RecoveryState` 重建. 文件历史快照则按会话持久化: `FileHistory` 以恢复的 session id 重建并加载该会话的 `snapshots.json`, 因此恢复后仍可在该会话内 `/rewind` (按快照记录的会话日志行数截断 JSONL, app.tsx:1764-1769) . 即: 恢复的是"对话记忆 + 会话内的中间态", 而非进程状态 —— 会话文件是唯一事实来源, 内存结构全部按需重建.
 
 入口细节: 无参数时弹出会话选择器 (`ui/session-selector.tsx`, 列出全部非空会话, 展示 id、首条消息预览 (截断 100 字符) 与相对时间, 支持 Fuse.js 模糊过滤、上下键选择) ; `/resume <id>` 则直接按 id 恢复.
 
@@ -1623,7 +1646,7 @@ UI 状态重建 (用户看到的画面) :
 | 维度         | `/clear`                                    | `/compact`                                 |
 | ------------ | ------------------------------------------- | ------------------------------------------ |
 | 语义         | 遗忘: 开启全新对话                          | 压缩: 保留脉络, 丢弃细节                   |
-| 对话历史     | 新建空 ConversationManager                  | 摘要+保留尾部重建 (见「压缩算法完整流程」) |
+| 对话历史     | 同一 ConversationManager 原地 reset()       | 摘要+保留尾部重建 (见「压缩算法完整流程」) |
 | 会话文件     | 新 sessionId, 旧文件封存                    | 同 sessionId 追加 compact_boundary         |
 | 任务列表     | 新 TaskStore                                | 保留                                       |
 | 文件历史     | 新 FileHistory                              | 保留                                       |
@@ -1634,9 +1657,9 @@ UI 状态重建 (用户看到的画面) :
 
 实现对比的核心: 两者都在"管理上下文", 但一个是"换房间", 一个是"整理房间".
 
-`/clear` 的实现要点 (`app.tsx:866`) : 几乎重建所有会话级 ref (conv/sessionId/taskStore/fileHistory/记忆提取游标) , 并直接 `process.stdout.write` ANSI 清屏序列 —— 绕过 React/Ink 直接操作终端, 因为清屏语义是"终端级"的而非"组件级"的.
+`/clear` 的实现要点 (`app.tsx:1540-1591`) : 几乎重建所有会话级 ref (conversation 原地 reset、新 sessionId、新 TaskStore/FileHistory、记忆提取游标归零、RecoveryState 重建, 并停掉后台任务与团队) , 并直接 `process.stdout.write` ANSI 清屏序列 —— 绕过 React/Ink 直接操作终端, 因为清屏语义是"终端级"的而非"组件级"的.
 
-`/compact` 的实现要点 (`app.tsx:947`) : 调 `forceCompact()` 后立即 `saveCompactBoundary()` —— 手动压缩也必须落 boundary, 否则 `/resume` 会恢复压缩前的膨胀历史. remote 模式的 `/compact` (`server.ts:1351` `handleCompact()`) 同样遵循此约束.
+`/compact` 的实现要点 (`app.tsx:1628-1678`) : 调 `forceCompact()` 后立即 `saveCompactBoundary()` —— 手动压缩也必须落 boundary, 否则 `/resume` 会恢复压缩前的膨胀历史. remote 模式的 `/compact` (`server.ts:1778` `handleCompact()`) 同样遵循此约束.
 
 ---
 
@@ -2223,21 +2246,21 @@ LLM 输出用 Zod 校验是 Agent 应用的特殊要点: 模型的 function call
 
 `mcp/strategy.ts` 的 `decideAndApply()` 在 MCP 连接完成、全部内置工具注册之后执行一次 (时机刻意靠后: 模式判定要拿"全部工具 schema 总量"与上下文窗口比较) , 三种模式:
 
-1. eager: 全部 MCP schema 的字符总量 (按 `CHARS_PER_TOKEN = 2.5` 折算, JSON 符号密集所以比值低于自然语言的 3.5) 低于上下文窗口的 10% (`DEFAULT_EAGER_THRESHOLD_PERCENT`, strategy.ts:51) → 全部进 tools[], 无延迟加载. 省下的上下文不值得为此承担任何复杂度.
-2. native: 官方 Anthropic 端点 (`isOfficialAnthropicEndpoint()` 判定 host) → 工具留在 tools[] 但带 `defer_loading` 标记, 由服务端对模型隐藏; ToolSearch 命中后返回 `tool_reference`, 服务端再展开 schema. tools 数组字节级不变.
+1. eager: 全部 MCP schema 的字符总量 (按 `CHARS_PER_TOKEN = 2.5` 折算, JSON 符号密集所以比值低于自然语言的 3.5) 低于上下文窗口的 10% (`DEFAULT_EAGER_THRESHOLD_PERCENT`, strategy.ts:30) → 全部进 tools[], 无延迟加载. 省下的上下文不值得为此承担任何复杂度. 另有环境变量 `YUKINO_MCP_LOADING` 可显式覆盖模式 (native 覆盖对非 anthropic 协议自动降级为 dispatch) .
+2. native: 官方 Anthropic 端点 (`isOfficialAnthropicEndpoint()` 判定 host, 且要求 protocol 为 anthropic) → 工具留在 tools[] 但带 `defer_loading` 标记, 由服务端对模型隐藏; ToolSearch 命中后返回 `tool_reference`, 服务端再展开 schema. tools 数组字节级不变.
 3. dispatch: 其他端点 (国产厂商、各类代理网关) 两者都不支持 → 自行模拟: MCP 工具完全不进 tools[], 模型统一经单一的 `McpCall` 工具按 `server__tool` 派发.
 
-为什么如此在意 tools 数组的稳定性 —— strategy.ts:37-40 的注释给出了实测数据: tools 渲染在 system 之后、messages 之前, 数组任何变化都会使其后全部对话历史的 prompt cache 失效; 在一个 2 万 token 历史的会话里, 向 tools 末尾追加一个工具, 缓存命中率从 99.4% 跌到 9.5%, 等于全量重算. 所以 `exposeToolSearch`/`exposeMcpCall` 两个开关也是本模式判定时一次性算好并整个会话固定 (registry.ts:41-49 注释) , 避免"会话中途 tools[] 变化". 这是"用数据说话的缓存工程"范例.
+为什么如此在意 tools 数组的稳定性 —— strategy.ts:16-19 的注释 (tools/types.ts:239-242 同义) 给出了实测数据: tools 渲染在 system 之后、messages 之前, 数组任何变化都会使其后全部对话历史的 prompt cache 失效; 在一个 2 万 token 历史的会话里, 向 tools 末尾追加一个工具, 缓存命中率从 99.4% 跌到 9.5%, 等于全量重算. 所以 `exposeToolSearch`/`exposeMcpCall` 两个开关也是本模式判定时一次性算好并整个会话固定 (registry.ts:26-34 注释) , 避免"会话中途 tools[] 变化". 这是"用数据说话的缓存工程"范例.
 
 ### 图像支持是如何实现的? 从剪贴板粘贴到进入 LLM 上下文要经过哪些关卡?
 
 链路 (`images/index.ts` + `images/clipboard.ts` + `ui/input.tsx` + `conversation/at-expand.ts`) :
 
-1. 粘贴入口: InputBox 的 `usePaste` 回调收到空文本时视为"可能粘贴了图像", 触发 `pasteImageFromClipboard()` (input.tsx:351) → `saveClipboardImage()` 平台分发读取剪贴板 —— macOS 用 `osascript`、Linux/Windows 各有实现 (clipboard.ts:141-207) ; 仅接受 PNG, 校验魔数 (`isPngBuffer`) 与大小上限.
-2. 落盘与去重: 图像存入会话的 file-history 目录, 文件名取 `sha256(bytes).slice(0,16).png` (clipboard.ts:23) —— 与文件历史备份同一命名方案, 同一张图粘贴两次复用同一文件; 随后向输入框插入 `@<相对路径>` 引用.
-3. 提交展开: `expandAtRefsWithImages()` (at-expand.ts:106) 识别图片后缀, `loadImageAttachment()` (`images/index.ts`) 走"格式魔数嗅探 → 尺寸/体积压缩"流水线 —— 扩展名不可信, 魔数判定真实格式 (`sniffMediaType`) ; 原始字节 ≤ 3.75MB 直接透传 (5MB 是 base64 后的 API 上限, 3.75 = 5 \* 3/4) , 超限则用 sharp 压缩: 边长封顶 `MAX_DIMENSION_PX = 2000`, PNG/GIF 源先尝试保格式 PNG 输出, 再沿 JPEG 质量 80/60/40/20 阶梯下降, 仍超限则尺寸减半重试 (最多两次) , GIF/WebP 需要压缩时重编码.
-4. 入上下文: 返回 base64 image content block, 每条用户消息上限 `MAX_IMAGES_PER_MESSAGE = 10` (`images/index.ts:46`) ; 会话持久化时 base64 内联进 JSONL (app.tsx:1869-1878) .
-5. 上下文预算: 压缩估算里每个 image block 记 `IMAGE_CHAR_EQUIV = 7000` 字符 (约合 1750 token, Anthropic 单图成本量级, compact.ts:112) , 防止图像密集会话系统性低估、压缩过晚; 工具结果落盘则永远跳过 image 块 (agent.ts:517-519, 图片必须原样发给 API) .
+1. 粘贴入口: InputBox 的 `usePaste` 回调收到空文本时视为"可能粘贴了图像", 触发 `pasteImageFromClipboard()` (input.tsx:482-497) → `saveClipboardImage()` 平台分发读取剪贴板 —— macOS 用 `osascript`、Linux 用 `wl-paste`、Windows 用 PowerShell 各有实现 (clipboard.ts:157-247) ; 仅接受 PNG, 校验魔数 (`isPngBuffer`) 与大小上限 (32MB) .
+2. 落盘与去重: 图像存入会话的 file-history 目录, 文件名取 `sha256(bytes).slice(0,16).png` (clipboard.ts:29-30) —— 与文件历史备份同一命名方案, 同一张图粘贴两次复用同一文件; 随后向输入框插入 `@<相对路径>` 引用.
+3. 提交展开: `expandAtRefsWithImages()` (at-expand.ts:107) 识别图片后缀, `loadImageAttachment()` (`images/index.ts`) 走"格式魔数嗅探 → 尺寸/体积压缩"流水线 —— 扩展名不可信, 魔数判定真实格式 (`sniffMediaType`) ; 原始字节 ≤ 3.75MB 直接透传 (5MB 是 base64 后的 API 上限, 3.75 = 5 \* 3/4) , 超限则用 sharp 压缩: 边长封顶 `MAX_DIMENSION_PX = 2000`, PNG/GIF 源先尝试保格式 PNG 输出, 再沿 JPEG 质量 80/60/40/20 阶梯下降, 仍超限则尺寸减半重试 (最多两次) , GIF/WebP 需要压缩时重编码.
+4. 入上下文: 返回 base64 image content block, 每条用户消息上限 `MAX_IMAGES_PER_MESSAGE = 10` (`images/index.ts:46`) ; 会话持久化时 base64 内联进 JSONL (app.tsx:2438-2448) .
+5. 上下文预算: 压缩估算里每个 image block 记 `IMAGE_CHAR_EQUIV = 7000` 字符 (约合 1750 token, Anthropic 单图成本量级, compact/compact.ts:101) , 防止图像密集会话系统性低估、压缩过晚; 工具结果落盘则永远保留 image 块 —— `replaceToolResultContent()` (tool-result/index.ts:56-67) 只把文本块换成预览, 非文本块原样保留 (图片必须原样发给 API) .
 
 这是一个典型的"多级降级管道": 每一关 (格式、体积、尺寸、数量) 都有明确上限与对应的降级动作, 而不是一刀切报错.
 
@@ -2245,7 +2268,7 @@ LLM 输出用 Zod 校验是 Agent 应用的特殊要点: 模型的 function call
 
 `src/vscode/` 三个模块复用了 Claude Code 扩展的内嵌 MCP 服务器:
 
-1. 发现 (lockfile.ts) : 扩展激活时写 `~/.claude/ide/<port>.lock` (JSON: workspaceFolders/pid/ideName/transport/authToken) , 并向集成终端注入 `CLAUDE_CODE_SSE_PORT` 环境变量. `detectIde()` 扫描锁文件, 匹配规则: 端口等于环境变量的优先; 否则 cwd 落在其 workspaceFolders 内且唯一匹配才采用; pid 已死的锁文件忽略. 路径比较做了 NFC/NFD 归一化 (macOS 返回 NFD、VSCode 上报 NFC, lockfile.ts:60-70) .
+1. 发现 (lockfile.ts) : 扩展激活时写 `~/.claude/ide/<port>.lock` (JSON: workspaceFolders/pid/ideName/transport/authToken, 仅接受 `transport: "ws"`) , 并向集成终端注入 `CLAUDE_CODE_SSE_PORT` 环境变量. `detectIde()` 扫描锁文件, 匹配规则: 端口等于环境变量的优先; 否则 cwd 落在其 workspaceFolders 内且唯一匹配才采用; pid 已死的锁文件忽略. 路径比较做了 NFC/NFD 归一化 (macOS 返回 NFD、VSCode 上报 NFC, lockfile.ts:40-51) .
 2. 连接 (ide-client.ts + ws-transport.ts) : 用 MCP SDK 的 Client 配自实现 `WebSocketTransport` (`ws://127.0.0.1:<port>`, 带 `X-Claude-Code-Ide-Authorization` 头) ; 连上后发 `ide_connected` 通知携带本进程 pid —— 扩展靠它把 Cmd+Option+K 路由到正确终端里的 CLI. 仅当疑似在 IDE 终端 (环境变量存在或 TERM_PROGRAM=vscode) 时才轮询等待扩展激活 (最多 30s, 每秒一次) , 否则立即放弃.
 3. 消费: 监听 `at_mentioned` 通知 (扩展传来文件路径 + 0-based 行区间, 客户端转成 1-based) , `useIdeInput` 钩子 (`ui/use-ide-input.ts`) 把它拼成 `@相对路径#L3-10` 插入输入框; 提交时 at-expand 的 `parseRef()` 正则解析行区间, 只内联指定行, 巨大文件也不怕 (行号引用模式另有 `MAX_RANGE_FILE_BYTES = 10MB` 文件上限) .
 

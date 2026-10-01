@@ -3,7 +3,7 @@ title: "React 核心知识点"
 description: "React 核心知识点问答: 闭包陷阱、Fiber 架构、Virtual DOM 与 Diff、Hooks 原理、setState 批处理、并发调度与性能优化体系"
 ---
 
-> 本文档涵盖运行时机制、性能优化、Hooks 原理等核心主题. 每个知识点均附详细解析.
+> 本文档涵盖运行时机制、性能优化、Hooks 原理等核心主题. 每个知识点均附详细解析. React 19 的 Actions 模型与新增 API 见「React 19: Actions 与新增 API」一节, 相关版本事实以本机 `/Users/hangtiancheng/github/26autumn/node_modules` 中安装的 react@19.3.0 与 React 官方博客为准.
 
 ## 1. 闭包陷阱 (Stale Closure)
 
@@ -465,7 +465,7 @@ function BadComponent({ flag }) {
 
 React Compiler 现状:
 
-React Compiler 已于 2025 年 10 月发布 1.0 并可用于生产, 以独立的 Babel 插件形式启用, 兼容 React 17+. 它在编译期自动插入记忆化 (等效于自动 memo/useMemo/useCallback) , 但 Hooks 必须无条件调用的规则并未放宽——编译器同样依赖调用顺序稳定这一前提, 底层链表结构没有改变.
+React Compiler 已于 2025 年 10 月 (React Compiler v1.0, 官方博客 2025-10-07) 发布 1.0 并可用于生产, 以独立的 Babel 插件 `babel-plugin-react-compiler` 形式接入, 并配套 `eslint-plugin-react-compiler` 做静态检查, 兼容 React 17+. 运行时依赖 `react/compiler-runtime` (本机 react@19.3.0 的 package.json 已导出该子路径). 它在编译期自动插入记忆化 (等效于自动 memo/useMemo/useCallback) , 但 Hooks 必须无条件调用的规则并未放宽——编译器同样依赖调用顺序稳定这一前提, 底层链表结构没有改变.
 
 ---
 
@@ -790,6 +790,116 @@ Context 适用场景: 低频更新、全局配置 (主题、语言、当前用�
 
 ---
 
+## 11. React 19: Actions 与新增 API
+
+### 题目
+
+React 19 引入了 Actions 模型与一批新 Hook, React 19.2 / 19.3 又陆续稳定了 `useEffectEvent`、`Activity`、`<ViewTransition>` 等能力. 请说明 Actions 解决了什么问题, 以及各新增 API 的适用场景.
+
+### 解析
+
+版本事实以本机安装的 react@19.3.0 (`/Users/hangtiancheng/github/26autumn/node_modules/react`) 与 React 官方博客为准: React 19.2 发布于 2025-10-01, React 19.3 发布于 2026-09-09.
+
+### 11.1 Actions: 把"异步交互"变成一等公民
+
+React 19 之前, 处理一个异步表单提交需要手动维护 `isPending`、`error`、乐观值等多套状态. Actions 把"提交一个异步操作"抽象为一等概念: 传给 `form action`、`onClick` 等事件处理器的异步函数就是一个 Action, React 负责跟踪其生命周期 (pending / error / 成功) , 并在必要时自动处理过渡.
+
+配套的三个 Hook 分别覆盖三类需求:
+
+```jsx
+import { useActionState, useOptimistic } from "react";
+import { useFormStatus } from "react-dom"; // 注意: 在 react-dom 而非 react
+
+// useActionState: 管理 Action 的返回状态与 pending
+function UpdateName() {
+  const [state, formAction, isPending] = useActionState(
+    updateName,
+    initialState,
+  );
+  return (
+    <form action={formAction}>
+      <input name="name" />
+      <button disabled={isPending}>更新</button>
+      {state?.error && <p>{state.error}</p>}
+    </form>
+  );
+}
+
+// useFormStatus: 子组件读取父 <form> 的提交状态 (无需 prop 透传)
+function SubmitButton() {
+  const { pending } = useFormStatus();
+  return <button disabled={pending}>提交</button>;
+}
+
+// useOptimistic: 乐观 UI, 失败自动回滚
+function AddMessage({ formAction }) {
+  const [optimisticMessages, addOptimistic] = useOptimistic(
+    messages,
+    (list, msg) => [...list, { ...msg, sending: true }],
+  );
+  return <form action={formAction}>{/* 渲染 optimisticMessages */}</form>;
+}
+```
+
+要点:
+
+- `useActionState(action, initialState, permalink?)` 返回 `[state, formAction, isPending]`, 是 React 19 取代早期 `useFormState` 的稳定 API.
+- `useFormStatus` 必须从 `react-dom` 导入, 且只能在 `<form>` 的子组件中调用.
+- Actions 与 `startTransition`/`useTransition` 是同一套并发机制的上层封装: Action 内部的更新默认以 transition 优先级执行, 可被更高优先级更新打断.
+
+### 11.2 `use` Hook: 渲染期读取 Promise 与 Context
+
+`use(resource)` 是 React 19 的稳定 API, 用于在渲染期读取一个 Promise 或 Context:
+
+```jsx
+import { use, Suspense } from "react";
+
+function Comments({ commentsPromise }) {
+  // 读取 Promise: 未就绪则挂起最近的 Suspense 边界
+  const comments = use(commentsPromise);
+  return comments.map((c) => <p key={c.id}>{c.text}</p>);
+}
+
+function Page({ commentsPromise }) {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <Comments commentsPromise={commentsPromise} />
+    </Suspense>
+  );
+}
+```
+
+与其他 Hook 的关键差异:
+
+- `use` 是唯一可以在条件分支与循环中调用的 Hook (其余 Hook 必须无条件、按固定顺序调用, 见第 6 节) ; 但它仍只能在组件或自定义 Hook 中调用, 不能放进 try/catch/finally、事件处理器或类组件里.
+- 读取 Promise 时, 若 Promise 尚未 resolve, `use` 会挂起 (throw Promise) , 由最近的 `<Suspense>` 接管; 读取 Context 时等价于 `useContext`, 但可在条件分支里使用.
+- `use` 读取的 Promise 应当由服务端组件或上层创建后传入, 不要在渲染函数内部新建 Promise (每次渲染都是新引用, 会反复挂起) .
+
+### 11.3 React 19.2 稳定的能力
+
+React 19.2 (2025-10-01) 主要稳定了两个长期处于实验阶段的 API:
+
+- `useEffectEvent`: 把"读取最新 props/state 但不想成为依赖"的回调从 Effect 中抽离. 返回的函数不应出现在依赖数组中. 它正是闭包陷阱 (见第 1 节) 的官方解法之一.
+- `Activity`: 以 `mode="visible" | "hidden"` 控制子树的显示, hidden 时保留 DOM 与状态、清理 Effect, 回到 visible 时恢复. 适用于 Tab 面板、下拉菜单等"频繁切换但不想销毁重建"的场景.
+
+React 19.2 还引入了 React Performance Tracks 等性能可观测性改进.
+
+### 11.4 React 19.3 稳定的能力
+
+React 19.3 (2026-09-09) 将 View Transitions 与 Fragment Refs 转为稳定, 并新增若干能力:
+
+- `<ViewTransition>`: 包裹需要动画的子树, 在被 transition 标记的更新导致其挂载/卸载/样式变化时, 借助浏览器 View Transition API 播放 enter/exit/update/share 动画. 默认交叉淡入淡出, 可通过 View Transition Class 或事件属性 (`onEnter`/`onExit`/`onShare`/`onUpdate`) 自定义. 配合 `addTransitionType` 可为同一次状态更新附加"原因"标记 (如轮播的 next/previous) , 从而播放不同方向的动画. 目前仅支持 DOM 平台.
+- Fragment Refs: 给 `<Fragment ref={...}>` 传入 ref 可得到一个 `FragmentInstance`, 以"成组"方式操作 Fragment 的一级子 DOM 而不改变其结构. 提供 `addEventListener`/`removeEventListener`/`dispatchEvent`、`focus`/`focusLast`/`blur`、`observeUsing`/`unobserveUsing` (对接 IntersectionObserver / ResizeObserver) 、`getClientRects`/`getRootNode`/`compareDocumentPosition`/`scrollIntoView`.
+- `react-dom` 的 `browser()`: 在组件中调用 `use(browser())` 可让该组件退出服务端渲染——SSR 时触发最近的 Suspense fallback, 客户端水合后 `use(browser())` 不再挂起, 组件正常渲染. 它遵循 `use` 的规则, 可放在条件分支或提前 return 之后.
+- Trusted Types 支持: 当站点以 `Content-Security-Policy: require-trusted-types-for 'script'` 强制 Trusted Types 时, React 不再把传入 DOM sink (如 `innerHTML`) 的值强制转为字符串, 从而保留 `TrustedHTML`/`TrustedScript`/`TrustedScriptURL` 类型对象, 让浏览器的校验与开发者的净化策略生效.
+- Server Components 中可直接渲染 `<Context>`: 从 `'use client'` 模块导入的 Context 现在能在 Server Component 里直接作为 Provider 渲染, 不必再额外导出一个包装用的 Provider 组件.
+
+### 11.5 与并发特性的关系
+
+Actions、`use`、`Activity`、`<ViewTransition>` 都构建在第 8 节所述的并发渲染与 Lanes 优先级模型之上: Action 与 `<ViewTransition>` 依赖 transition 优先级来"可被打断地"播放过渡; `use` 的 Promise 挂起依赖 Suspense 与并发协调; `Activity` 的 hidden 子树则以低优先级保持. 理解第 8 节是理解这些新 API 的前提.
+
+---
+
 ## 附加题: 手写实现
 
 ### 实现一个简化版 useState
@@ -860,4 +970,4 @@ function useDebounce(value, delay = 300) {
 
 ---
 
-_本文档由 Yukino 编写, 最后更新: 2026-07-21_
+_本文档由 Yukino 编写, 最后更新: 2026-10-01_

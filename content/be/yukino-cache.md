@@ -6,6 +6,7 @@ description: "yukino-cache 分布式缓存 TypeScript 与 Go 双实现的源码�
 > 本机器路径: `$HOME/github/yukino.js/packages/cache`
 > 本机器路径: `$HOME/github/yukino.go/yukino_cache`
 > 基于 npm 包 `@yukino.js/cache` (Node.js / TypeScript 实现, 与 Go 版 `yukino.go/yukino_cache` 对齐, 个别细节差异在正文相应位置标注) 源码整理, 覆盖架构设计、存储引擎、一致性哈希、服务发现、并发模型、容错机制等核心主题.
+> 版本事实: TS 侧 `@yukino.js/cache@0.0.1` (yukino.js HEAD `7f7277f`), 运行时依赖 `@grpc/grpc-js` ^1.14.5、`@grpc/proto-loader` ^0.7.15、`etcd3` ^1.1.2, engines 要求 Node >= 20. Go 侧模块 `github.com/hangtiancheng/yukino.go/yukino_cache` (yukino.go HEAD `573f84d`), go.mod 声明 `go 1.26.0`, 直接依赖 `google.golang.org/grpc` v1.82.1、`google.golang.org/protobuf` v1.36.11、`go.etcd.io/etcd/client/v3` v3.7.0 与 `github.com/hangtiancheng/yukino.go/yukino_http` v0.0.1 (dashboard 用).
 
 ## 1. 项目整体架构
 

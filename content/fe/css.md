@@ -327,9 +327,9 @@ BFC (Block Formatting Context, 块级格式化上下文) 是页面中的一块�
 - `float` 不为 `none`
 - `position` 为 `absolute` 或 `fixed`
 - `overflow` 不为 `visible` (即 `hidden`、`auto`、`scroll`)
-- `display` 为 `inline-block`、`table-cell`、`table-caption`、`flex`、`inline-flex`、`grid`、`inline-grid`、`flow-root`
-- `contain: layout` / `content` / `strict`
-- 多列容器 (`column-count` 非 `auto`) 等
+- `display` 为 `inline-block`、`table-cell`、`table-caption`、`flex`、`inline-flex`、`grid`、`inline-grid`、`flow-root`、`list-item`
+- `contain: layout` / `paint` / `content` / `strict` (布局或绘制包含会建立格式化上下文)
+- 容器查询容器 (`container-type: inline-size` / `size`, 施加包含从而建立 BFC) 、多列容器 (`column-count`/`columns` 非 `auto`) 等
 
 精确性补充: 严格来说 flex/grid 容器建立的是独立的 flex/grid 格式化上下文, 效果与 BFC 等价 (同样不与浮动重叠、隔断 margin 合并); 另外 flex/grid 容器的直接子项 (flex item / grid item) 会各自建立新的 BFC.
 
@@ -403,7 +403,7 @@ flex 容器属性:
 - `flex-wrap`: 是否换行, `nowrap`(默认) / `wrap`
 - `justify-content`: 主轴对齐, `flex-start` / `center` / `flex-end` / `space-between` / `space-around` / `space-evenly`
 - `align-items`: 交叉轴对齐 (单行), `stretch`(默认) / `center` / `baseline` 等
-- `align-content`: 多条 flex 行之间分配交叉轴剩余空间; 单行时行仍会被整体定位 (center 居中, space-around/space-evenly 同为居中, space-between 靠起点), 只有默认 stretch 会把单行拉伸占满容器
+- `align-content`: 在多条 flex 行之间分配交叉轴剩余空间; 现行规范 (CSS Box Alignment) 使其同样作用于单行 flex 容器——单行时 center 整体居中, space-around/space-evenly 等效居中, space-between 靠起点, 默认 stretch 把单行拉伸占满容器. 早期浏览器完全忽略单行容器上的 align-content, 主流引擎 2024 年起随块布局 align-content 的统一一并实现 (Chrome 123+/Firefox 125+/Safari 17.4+)
 - `gap`: 项目间距, 替代子元素 margin 的方案
 
 flex 项目属性:
@@ -580,7 +580,7 @@ sticky 常见失效原因 (常见疑问):
 3. 未设置阈值属性 (至少给一个 `top`/`bottom`/`left`/`right`)
 4. 表格相关元素上支持不全 (旧浏览器)
 
-`fixed` 的坑 (常见疑问): 当祖先元素存在 `transform`、`filter`、`perspective`、`backdrop-filter`、`will-change: transform` 时, 该祖先会成为 fixed 元素的包含块, fixed 不再相对视口, 弹窗/悬浮按钮"跑飞"多半是这个原因.
+`fixed` 的坑 (常见疑问): 当祖先元素存在 `transform`、`filter`、`perspective`、`backdrop-filter`、`will-change: transform`, 或 `contain: layout`/`paint`、`container-type` (非 normal) 时, 该祖先会成为 fixed (以及 absolute) 后代的包含块, fixed 不再相对视口, 弹窗/悬浮按钮"跑飞"多半是这个原因.
 
 ### 13. z-index 为什么会失效? 什么是层叠上下文?
 
@@ -1028,7 +1028,7 @@ A:
 注意点:
 
 - `display: -webkit-box` 会让子元素按旧版 flexbox 排版, 内部复杂结构可能被影响, 一般把这段样式挂在纯文本节点上
-- `-webkit-line-clamp` 的标准化版本是 `line-clamp`, 规范在推进中
+- `-webkit-line-clamp` 的标准化版本是 `line-clamp` (CSS Overflow 4), 目前各引擎的无前缀实现仍处实验阶段 (Chrome/Firefox 需开启实验标志, Safari 仅预览版提供过), 生产环境继续用 `-webkit-` 前缀写法
 - 该方案省略号是浏览器自动加的, 无法定制"展开全文"按钮的位置
 
 兼容老浏览器的多行方案:
@@ -1140,6 +1140,8 @@ aspect-ratio 方案:
   max-height: 500px;
 }
 ```
+
+注意 min/max 约束优先于比例: 上例中按比例推算的高度若超过 500px, 实际高度按 `max-height` 取值, 元素真实宽高比不再是 16/9 (宽度保持 100%) . 只有当 width/height 之一为 auto (或未设置) 时, `aspect-ratio` 才参与求解另一维度; 两者都是确定值时比例不参与尺寸计算.
 
 ---
 
@@ -1847,7 +1849,7 @@ A:
 `content-visibility` 的三个值:
 
 - `visible`: 默认, 正常渲染
-- `hidden`: 跳过内容渲染且不保留可访问性状态, 比 `display: none` 快 (保留渲染状态, 恢复时无需重建)
+- `hidden`: 跳过内容渲染——内容不进入渲染树、不暴露给无障碍树、页内查找也不会命中; 但与 `display: none` 不同, 浏览器保留其最后的渲染状态, 恢复可见时无需从零重建, 频繁显隐的区域切换更快
 - `auto`: 最重要 — 视口外的内容跳过渲染, 滚到附近才开始渲染, 浏览器自动管理
 
 ```css
@@ -2605,7 +2607,7 @@ React Native 没有浏览器、没有 DOM、没有 CSSOM. 所谓"RN 里的 CSS"�
 2. 继承极弱: Web 中大量属性可继承; RN 中只有 `Text` 组件嵌套 `Text` 时继承部分文字属性, `View` 完全不继承文字样式, 所有文本必须包在 `<Text>` 中
 3. 单位: 数值无单位, 是逻辑像素 (dp/pt), 由系统按 DPR 换算物理像素; `PixelRatio.get()` 可查; 不支持 `em`/`rem`/`vw`, 百分比仅部分属性支持
 4. 默认布局不同: 全部是 Flexbox, 且默认 `flexDirection: 'column'` (Web 默认 `row`); 无 `float`、无 `display: grid/inline/table`、`position` 只有 `relative`/`absolute` (新版逐步加入 `static` 语义), 没有 `sticky`
-5. 样式属性子集与差异: 无伪类 (`:hover` 用 Pressable 状态回调)、无伪元素、无媒体查询 (用 `useWindowDimensions`/`Platform.select`), `boxShadow` 旧版分平台 (iOS `shadow*` 四件套 / Android `elevation`), `zIndex` 只在兄弟间有效且 Android 早期有绘制顺序问题, `transform` 是数组语法 (`[{ rotate: '45deg' }]`)
+5. 样式属性子集与差异: 无伪类 (`:hover` 用 Pressable 状态回调)、无伪元素、无媒体查询 (用 `useWindowDimensions`/`Platform.select`), 阴影曾分平台实现 (iOS 的 `shadow*` 属性族 / Android 的 `elevation`; React Native 0.76 起提供跨平台统一的 `boxShadow`), `zIndex` 只在兄弟间有效且 Android 早期有绘制顺序问题, `transform` 是数组语法 (`[{ rotate: '45deg' }]`)
 6. 盒模型细节: 默认 border-box 行为 (width 含 padding/border), 更符合直觉; margin 不合并
 7. 伪响应式: 断点、主题都要在 JS 层做, 社区方案 (Restyle、Unistyles、NativeWind) 把 Tailwind 式类名编译为 RN style 对象
 
@@ -2742,7 +2744,7 @@ View Transitions API (视图过渡):
 - 同文档用法: `document.startViewTransition(() => updateDOM())`; 浏览器生成 `::view-transition-old()` 与 `::view-transition-new()` 伪元素树, 默认做交叉淡入, 可用 CSS 完全自定义
 - 共享元素过渡: 给新旧两个元素设置相同的 `view-transition-name`, 浏览器自动补间其位置与尺寸, 实现"缩略图放大为详情图"的原生转场
 - 跨文档 (MPA) 过渡: CSS 声明 `@view-transition { navigation: auto; }` 即可让传统多页应用获得 SPA 般的转场; SPA 路由框架 (React Router、Vue Router、Next.js) 已内置集成
-- 注意: 过渡期间页面不可交互 (快照是位图); 需要 `@media (prefers-reduced-motion: reduce)` 降级
+- 注意: 过渡进行 (animating 阶段) 时, 被捕获元素的真实渲染与命中测试被挂起 (规范规定其等效于不绘制且不响应 hit-testing) , 页面改由快照呈现——旧快照是位图, 新快照跟随新状态的实时渲染; 因此过渡期间不要依赖页面交互, 过渡要短, 并用 `@media (prefers-reduced-motion: reduce)` 降级
 
 滚动驱动动画 (Scroll-driven Animations):
 
@@ -2766,7 +2768,7 @@ View Transitions API (视图过渡):
 ```
 
 - `animation-timeline: view()`: 进度绑定元素自身在视口中的可见进度, 配合 `animation-range: entry 0% cover 40%` 控制起止区间, 实现元素入场淡入、视差效果, 可替代一部分 IntersectionObserver 用例
-- 兼容性: Chromium 115+ 与 Safari 26+ 已支持, Firefox 仍在跟进中, 需 `@supports (animation-timeline: scroll())` 检测并以无动画作为降级
+- 兼容性: Chromium 115+ 与 Safari 26+ 已支持, Firefox 目前仅在预览版 (Nightly) 提供, 需 `@supports (animation-timeline: scroll())` 检测并以无动画作为降级
 
 ---
 

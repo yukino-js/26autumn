@@ -6,6 +6,7 @@ description: "yukino_rpc 自研 RPC 框架的源码级解析: 线协议、传输
 > 本机器路径: `$HOME/github/yukino.go/yukino_rpc`
 > 基于项目 `github.com/hangtiancheng/yukino.go/yukino_rpc` 源码整理, 覆盖线协议、传输层多路复用、Future 异步模型、流式 RPC、熔断/限流/负载均衡、etcd 服务发现等核心主题.
 > 公开 API: `pkg/rpc` (框架门面) 与 `pkg/api` (Arith 示例服务, README Quick Start 基于它) | 实现细节: `internal/`
+> 仓库为扁平布局 (yukino.go 根目录下直接是 yukino_rpc/, 无 packages/ 层). `yukino_rpc/go.mod` 声明 `go 1.26.0`, 依赖仅两项: `go.etcd.io/etcd/client/v3` v3.7.0 与 `google.golang.org/protobuf` v1.36.11. 本文所有行号引用均以 HEAD `573f84d` (2026-09-30) 源码快照为准.
 
 ## 一、整体架构与设计哲学
 
@@ -59,7 +60,7 @@ type ClientStream = stream.ClientStream
 type Future       = transport.Future
 ```
 
-type alias (`=`) 而非 type definition 意味着 `rpc.Future` 和 `transport.Future` 是同一个类型, 用户可以直接调用 Future 的所有导出方法而无需额外适配.
+type alias (`=`) 而非 type definition 意味着 `rpc.Future` 和 `transport.Future` 是同一个类型, 用户可以直接调用 Future 的所有导出方法而无需额外适配. 七个别名分两个文件: 前五个在 `pkg/rpc/rpc.go`, `ServerStream`/`ClientStream` 在 `pkg/rpc/stream.go` (rpc.go 另导出 `CodecJSON`/`CodecProto` 两个 codec 常量变量与 `NewRegistry` 工厂函数).
 
 ### internal/stream 包存在的意义是什么?
 
@@ -411,7 +412,7 @@ future.OnComplete(func(err error) {
 1. 恰好一次: `OnComplete` 存储在 Future 的单一 slot 中, `Done` 幂等保证回调最多触发一次.
 2. 锁外执行: `Done` 在释放 `mu` 之后才调用 `onComplete`, 避免回调内部 (断路器加锁) 与 Future 锁形成死锁.
 3. 即时触发: 如果注册 `OnComplete` 时 Future 已经完成, 回调立即执行, 不会丢失.
-4. 完整覆盖: 响应错误、超时 (通过强制 Done) 都会触发回调; 发送失败 (连接池 Acquire 失败或 `SendAsyncWithCodec` 返回 err) 时 Future 尚未创建, 直接在 `invokeAsync` 中调用 `br.RecordFailure()` (invoke.go:144-147, 164-167), 不经回调. 断路器统计基本不遗漏, 唯一盲区是 `codec.Marshal(args)` 序列化失败 (invoke.go:149-152, InvokeStream 同理) : 既不 RecordFailure 也不创建 Future, 该次已通过 `breaker.Allow()` 的调用不会计入窗口.
+4. 完整覆盖: 响应错误、超时 (通过强制 Done) 都会触发回调; 发送失败 (连接池 Acquire 失败或 `SendAsyncWithCodec` 返回 err) 时直接在 `invokeAsync` 中调用 `br.RecordFailure()` (invoke.go:144-147, 164-167), 不经回调: Acquire 失败时 Future 尚未创建; `SendAsyncWithCodec` 返回 err 时 Future 虽已在函数内部创建并短暂存入 pending, 但写帧失败后会在其内部被删除, 调用方同样拿不到可注册 OnComplete 的句柄. 断路器统计基本不遗漏, 唯一盲区是 `codec.Marshal(args)` 序列化失败 (invoke.go:149-152, InvokeStream 同理) : 既不 RecordFailure 也不返回 Future, 该次已通过 `breaker.Allow()` 的调用不会计入窗口.
 
 ### InvokeAsync 的超时看门狗是如何工作的?
 
@@ -440,6 +441,8 @@ func (c *Client) InvokeAsync(ctx, service, method, args) (*Future, error) {
 - `defer timer.Stop()` 保证无论正常完成还是超时, 定时器资源都被回收.
 - 超时后 `Done(nil, context.DeadlineExceeded)` 触发 OnComplete, 断路器记录失败.
 - 与 `Invoke` (同步) 的区别: Invoke 使用 `context.WithTimeout` + `GetResultWithContext`, 超时后主动 Done; InvokeAsync 使用独立定时器, 调用者可以在任意时刻通过 `future.Wait()` 系列方法获取结果.
+
+静态模式同样有看门狗: `pkg/rpc/client.go` 的 `invokeAsyncStatic` 在发送成功后启动结构完全相同的 `time.NewTimer(cc.timeout)` goroutine, 超时强制 `Done(nil, context.DeadlineExceeded)`, 行为与注册模式对齐.
 
 ---
 

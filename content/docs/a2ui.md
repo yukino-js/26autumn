@@ -3,7 +3,7 @@ title: "A2UI"
 description: "A2UI 协议调研: v0.9/v0.9.1 规范的组件与函数目录、扩展机制、Dart/Swift/TypeScript 多语言 SDK、A2A 集成与 restaurant_finder 示例的源码级走读"
 ---
 
-仓库路径: https://github.com/a2ui-project/a2ui (本机克隆位于 $HOME/Downloads/a2ui, 2026-10-01 pull 至 HEAD 8d75b7901dcbb78dded6449036a6f17bf52c62c1)
+仓库路径: https://github.com/a2ui-project/a2ui (本机克隆位于 $HOME/Downloads/a2ui, 2026-10-01 pull 至 HEAD 102ec1a0497510eede5dc1938d6d1cc6042b3370)
 本机器路径 (撰写时点): $HOME/github/a2ui/packages/shadcn (@yukino.js/a2ui monorepo, 本地 remote 为 git@github.com:hangtiancheng/a2ui.git)
 注: 本文为调研时点快照, 此后两处本地仓库状态已变——shadcn 包目录在本机已无法定位; yukino-agent 已拆为独立仓库 ($HOME/github/yukino-agent), 移除了 @yukino.js/a2ui-shadcn npm 依赖, shadcn prompt 改为内联 vendored 在 @/lib/a2ui/prompt (server-safe), 其当前 A2UI 依赖为 @a2ui/web_core ^0.10.7、@a2ui/react ^0.10.2、@a2ui/markdown-it ^0.1.2. 正文保留调研时点描述.
 
@@ -349,6 +349,20 @@ theme 正式支持三个属性: primaryColor (主色), iconUrl 和 agentDisplayN
   }
 }
 ```
+
+### macros: Agent 侧可编程组件与类型强制引擎
+
+2026-10-01 本地快照新增的 macros (#2519, python/a2ui_agent/src/a2ui/transformers/macros/) 为 Python Agent SDK 与 generate-validate 循环提供了 "可编程组件" 通道: 服务端用 @macro 注册高层布局函数, LLM 像写 catalog 组件一样写 macro 组件, 服务端在下发前把它们同步展开为标准原语组件子树——客户端零改动、零自定义组件。三个模块分工:
+
+- macro.py (@macro 装饰器): 支持裸用、@macro("Name") 与 @macro(name=..., description=...) 三种写法, 缺省取函数名的 PascalCase 作为组件名; 读取签名与类型提示 (get_type_hints) 并解析 Google/Sphinx 风格 docstring 提取参数描述, \_map_type_hint_to_schema 把 Python 类型逐条映射为协议 JSON Schema——DynamicString/Number/Boolean/StringList 映射 common_types.json 同名 $defs, 单子槽位 (ComponentBuilderNode/ComponentRef) 映射 ComponentId, 组件节点列表映射 ChildList, Action/CheckRule/AccessibilityAttributes/FunctionCall/DataBinding 各映射对应 $ref, Literal/Enum 映射 enum, Optional 展开; \_MacroMetadata.to_json_schema() 输出组件 schema
+- processor.py (类型强制引擎): \_MacroProcessor.expand 在执行宏前把 LLM 产出的 JSON 参数强制转换为 builder AST 类型——字符串对单子槽位转 ComponentRef (外部 ID 原样保留, 不做命名空间化) 、字符串数组对多子槽位转 ComponentRef 列表、\{"path": ...\} 转 DataBinding、dict 转 AccessibilityAttributes; action 的三种写法统一归一为 Action (wire 形态 \{"event": \{name, context\}\}、简写 \{"event": "name"\}、裸事件体 \{name, context\}; functionCall 本身即 wire 形态, 直接交 Pydantic 校验) 。Action 刻意不接受字符串简写——接受它的 before-validator 对类型检查器不可见, 因此把 LLM 的自然输出改在 processor 层显式映射。宏函数必须返回 ComponentBuilderNode 或节点序列, 再经 flatten_component_tree 压平 (ID 命名空间化 + root 拼接)
+- expander.py (MacroExpander, catalog 与消息变换器): transform_to_inference_catalog 把宏 schema 注入 base catalog 的 components 与 $defs.anyComponent.oneOf, 得到 LLM 据以写作的 "推理 catalog" (宏与现有组件重名即报 A2uiCatalogError; passthrough_components 可裁剪 base catalog, 传空列表则只暴露宏) ; transform_to_transport 扫描 surfaceUpdate/createSurface/updateComponents 信封里的 components 列表, 把宏调用展开为原语子树, 支持宏中嵌套宏的递归展开 (深度上限 16 层, 超限抛 A2uiRecursionError; 单个宏展开失败记日志并保留原组件, 不丢弃整批) ; transform_to_inference 为恒等直通; to_catalog 另可导出独立 macros catalog (catalogId https://a2ui.org/catalogs/macros, v0.9.1 基线)
+
+跨语言一致性由 conformance/agent/macros/macros.yaml 钉住: 参考宏用声明式 builder AST 模板定义 (三个哨兵 \{$param: "name"\} 注入参数、\{$spreadParam: "name"\} 展开数组参数、$\{name\} 字符串插值) , 配 8 个黄金用例 (root 拼接与 ID 命名空间化、单子槽位强制保留外部 ID、多子槽位列表强制、action 字符串强制、数据绑定强制、原语/字典参数、嵌套宏组合、完整 surface 生命周期信封) , 每例双重断言: 展开结果等于黄金文件, 且黄金文件通过 A2UI 校验器。
+
+社区示例 samples/community/macros (#2520) 把 macros 与 Express DSL 接成完整链路: server.py (FastAPI, uvicorn 默认端口 8000) 用 MacroAgentRuntime (macro_runtime.py) 组合 BasicCatalog 0.9.1 + MacroExpander + ExpressFormat, 模型输出 \<a2ui> 标签内的 Express DSL, compile_dsl 经 parser.compile → transform_to_transport 同步展开后下发 v0.9.1 wire 消息; macros/ 包按一宏一模块注册 13 个宏 (SalaryCard / UserProfile / FeedbackItem / GoalItem / SectionCard / TeamCard / TeamRoster / TeamGoalList / TeamFeedbackBoard / TeamMemberKnowledgePanel / TwoColumnLayout / EmployeeSalaryCard / PayrollSummary) , 其中 EmployeeSalaryCard 演示 "动态 server resolver"——模型只传 employeeId, 薪酬等敏感数值由服务端 Python resolver 回调查询内部数据库后注入, 敏感数据不进入模型上下文; React 客户端 (client/, yarn dev, 端口 5173) 提供带延迟/token 指标的交互聊天与三阶段 Dynamic Macro Studio (输入参数 → 底层布局结构 → 实时渲染输出) , Playwright e2e 见 test_e2e.mjs。
+
+与 Express DSL 的分工是正交的: Express 压缩输出 token (语法层) , macros 压缩语义空间 (组件层) ——一行 root = UserProfile("usr_101", "Alice Smith", "Lead Architect") 展开为整个 Card 子树; 二者可叠加, 该示例即组合使用 (Express 负责紧凑生成, macros 负责高层抽象与服务端数据注入) .
 
 ### 安全模型小结
 
@@ -804,6 +818,8 @@ function extractAndValidate(llmOutput) {
 
 校验通过后, A2UI 消息列表被包装为 A2A 响应的 parts (kind: data), 通过流式 status-update 事件逐步下发.
 
+Python SDK 侧一个与 schema 相关的细节 (#2826): 从 JSON Schema 代码生成 Pydantic 模型时 (python/a2ui_core 的 codegen), schema 的 default 关键字只被保留为描述性 hint——注入 "Defaults to X when absent." 到字段 description——而不物化为模型默认值, 属性仍是 Optional/None; 运行时校验器 (payload_validator) 则继续按 schema 语义在函数调用缺参时从 default 补全. 二者分工明确: 代码生成不悄悄固化默认值, 校验与补全留在运行时.
+
 ### 阶段 9: Client 流式解析 SSE, 增量渲染
 
 A2UIClient.send 内部按 SSE 帧增量解析, 每个 chunk 立即回调 onChunk:
@@ -1090,9 +1106,9 @@ export const A2uiSurface = ({ surface }) => {
 
 (1) NodeResolver -- 把组件模型解析为响应式 ComponentNode 树
 
-NodeResolver (typescript/web_core/src/resolution/node-resolver.ts) 把 SurfaceModel 中的每个 ComponentModel 解析为 ComponentNode (typescript/web_core/src/resolution/component-node.ts): 节点 props 是 Signal 驱动的已解析值——动态绑定为 ResolvedBinding, action 属性为可直接调用的闭包, child 属性为活的 ComponentNode 引用 (或其数组). 组件尚未到达时生成 isPlaceholder 占位节点, 到达后原位替换, 渐进渲染由 node layer 统一承担; 属性绑定由 GenericBinder (resolution/generic-binder.ts) 按 catalog schema 刮取的行为 (DYNAMIC / ACTION / STRUCTURAL / CHECKABLE / STATIC, 见阶段 11 分类) 建立订阅.
+NodeResolver (typescript/web_core/src/resolution/node-resolver.ts) 把 SurfaceModel 中的每个 ComponentModel 解析为 ComponentNode (typescript/web_core/src/resolution/component-node.ts): 节点 props 是 Signal 驱动的已解析值——动态绑定为 ResolvedBinding, action 属性为可直接调用的闭包, child 属性为活的 ComponentNode 引用 (或其数组) ; 节点另暴露只读的 context (resolver 绑定该节点所用的 ComponentContext, 占位期间为 undefined, #2879 起对渲染器公开, 供视图查询数据作用域与执行边界) . 组件尚未到达时生成 isPlaceholder 占位节点, 到达后原位替换, 渐进渲染由 node layer 统一承担; 属性绑定由 GenericBinder (resolution/generic-binder.ts) 按 catalog schema 刮取的行为 (DYNAMIC / ACTION / STRUCTURAL / CHECKABLE / STATIC, 见阶段 11 分类) 建立订阅.
 
-该 node layer 是框架无关的契约, 并且正在跨语言复制: 2026-10-01 的克隆快照中, Dart 的 a2ui_core 已实现同构的 resolution 层 (#2669, dart/a2ui_core/lib/src/resolution/ 下的 component_node / node_resolver / ref_fields / resolved_binding), 仓库 conformance 套件同步新增 core/node_resolution.yaml 用例, Dart 与 TypeScript web_core 对各自的 NodeResolver 跑同一套用例; Dart 侧随之做了破坏性收敛——GenericBinder / Behavior / BehaviorNode / ComponentContext 不再导出, 渲染器一律经 NodeResolver / ComponentNode 读组件, 动态属性以 ResolvedBinding 承载 (可写绑定是 WritableBinding, 写入走 WritableBinding.set), SurfaceModel.dispatchAction 只对 event 载荷派发动作, functionCall 由节点的 action 自行执行.
+该 node layer 是框架无关的契约, 并且正在跨语言复制: 2026-10-01 的克隆快照中, Dart 的 a2ui_core 已实现同构的 resolution 层 (#2669, dart/a2ui_core/lib/src/resolution/ 下的 component_node / node_resolver / ref_fields / resolved_binding), 仓库 conformance 套件同步新增 core/node_resolution.yaml 用例, Dart 与 TypeScript web_core 对各自的 NodeResolver 跑同一套用例; 同一 conformance 目录还覆盖 core/expressions.yaml (formatString 背后的客户端表达式解析器, #2874 扩展) 与 core/data_model.yaml、core/data_context.yaml (#2883 新增的 DataModel/DataContext 跨语言 parity 套件: 路径 upsert/删除语义与作用域相对路径解析逐语言对齐) . Dart 侧随之做了破坏性收敛——GenericBinder / Behavior / BehaviorNode / ComponentContext 不再导出 (lib/a2ui_core.dart 对 contexts.dart hide ComponentContext, 对 binder.dart 只 show ChildNode 等少量符号) , 渲染器一律经 NodeResolver / ComponentNode 读组件, 动态属性以 ResolvedBinding 承载 (可写绑定是 WritableBinding, 写入走 WritableBinding.set), SurfaceModel.dispatchAction 只对 event 载荷派发动作, functionCall 由节点的 action 闭包本地执行 (#2846: 闭包先识别 {functionCall: {call, args}} 与展开的 {call, args} 形态并经 dataContext.resolveSync 本地求值, 其余才走 dispatchAction 发往 agent) . web_core 的 universal elements (Lit/Web Components 形态的 basic catalog 实现, typescript/web_core/src/v0_9/universal/) 同样接入了 node layer: renderA2uiNode 新增 ComponentNode 重载 (#2880), 把已解析节点直接渲染为实现的自定义元素并传入 .node 与 .context, 占位、已 dispose 或非 Web Component 实现一律返回 nothing, 原有 (context, catalog) 重载保持兼容.
 
 要点: 组件树解析、存在性与数据作用域 (dataPath) 管理不再由 React 组件逐层订阅事件完成, 而是集中在 NodeResolver 内; 节点仅在自身已解析属性变化时发出信号 (子节点内部属性变化不触发父节点), 更新范围被限制在单个组件粒度, 避免整棵树重渲染.
 

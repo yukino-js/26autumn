@@ -762,7 +762,7 @@ redo log 与直接刷数据页相比的优势:
 - redo log 记录粒度小 (页内 delta), 数据页刷盘至少 16KB
 - 事务提交只需保证 redo log 落盘, 把"每事务一次随机写"聚合成"批量顺序写"
 
-redo log 写满了怎么办? redo log 是固定大小的环形结构 (write pos 追 checkpoint), 写满时所有更新阻塞, 强制把脏页刷盘、推进 checkpoint 腾出空间——这是线上"写入周期性抖动"的常见原因, 需调大 redo log 或优化刷脏速度.
+redo log 写满了怎么办? redo log 是环形结构 (write pos 追 checkpoint), 写满时所有更新阻塞, 强制把脏页刷盘、推进 checkpoint 腾出空间——这是线上"写入周期性抖动"的常见原因, 需调大 redo log 或优化刷脏速度. 8.0.30 之前调整容量需要修改 innodb_log_file_size / innodb_log_files_in_group 并重启实例; 8.0.30 起两者合并为 innodb_redo_log_capacity, 支持在线动态调整容量, 环形写的机制本身不变.
 
 ### redo log 的刷盘时机与 innodb_flush_log_at_trx_commit
 
@@ -916,7 +916,7 @@ binlog 是追加写的全量逻辑日志, 恢复方案:
 ### 异步复制、半同步复制、组复制的区别?
 
 - 异步复制 (默认): 主库提交后立即返回客户端, 不等从库. 性能最好; 主库宕机时未同步的 binlog 丢失, 切换后丢数据
-- 半同步复制 (semi-sync): 主库提交后, 至少等 1 个从库把事件写入 relay log 并 ACK 才返回客户端 (`rpl_semi_sync_master_wait_for_slave_count`). 折中方案; 注意从库只是收到、还没回放; 超时 (`rpl_semi_sync_master_timeout`, 默认 10s) 会退化为异步. 5.7 的 AFTER_SYNC (无损半同步) 在写 binlog 后、引擎 commit 前等 ACK, 避免了 AFTER_COMMIT 下"主库已提交但 ACK 未达即宕机"的幻读窗口
+- 半同步复制 (semi-sync): 主库提交后, 至少等 1 个从库把事件写入 relay log 并 ACK 才返回客户端 (`rpl_semi_sync_master_wait_for_slave_count`, 默认 1). 折中方案; 注意从库只是收到、还没回放; 超时 (`rpl_semi_sync_master_timeout`, 默认 10s) 会退化为异步. 5.7 起的 AFTER_SYNC (无损半同步, 默认等待点) 在写 binlog 后、引擎 commit 前等 ACK, 避免了 AFTER_COMMIT 下"主库已提交但 ACK 未达即宕机"的幻读窗口. 8.0.26 起这组参数更名为 rpl_semi_sync_source_\* / rpl_semi_sync_replica_\* 系列 (旧名仍可用但已废弃)
 - 组复制 (MGR, Group Replication): 基于 Paxos 变体的多数派协议, 事务提交需组内多数节点认证通过, 提供强一致与自动故障切换 (单主/多主模式), 是 InnoDB Cluster 的基础. 性能低于异步, 网络要求高
 
 ### 主从延迟的原因有哪些? 如何解决?
@@ -932,7 +932,7 @@ binlog 是追加写的全量逻辑日志, 恢复方案:
 
 解决:
 
-1. 并行复制: 5.7 基于组提交并行 (同组提交的事务无冲突可并行回放, `slave_parallel_type = LOGICAL_CLOCK`); 8.0 基于 WRITESET, 按行冲突检测并行度更高
+1. 并行复制: 5.7 基于组提交并行 (同一组刷盘的事务无写写冲突, 可并行回放, `slave_parallel_type = LOGICAL_CLOCK`); 8.0 进一步提供 WRITESET 依赖跟踪 (`binlog_transaction_dependency_tracking = WRITESET`), 按行级哈希集合而非组提交时间窗判定冲突, 并行度更高; 8.0.27 起 `replica_parallel_workers` 默认为 4, 多线程回放开箱即用 (8.0.26 起 slave_\* 系列参数更名为 replica_\* 系列)
 2. 拆大事务: 大删除改为分批 limit 循环; DDL 用 gh-ost
 3. 从库升配、控制单主挂载的从库数量、读流量分散
 4. 业务侧容忍或规避 (见本章 "读写分离下如何保证读到最新数据?")

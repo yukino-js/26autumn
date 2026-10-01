@@ -303,7 +303,7 @@ ClickHouse 的 JOIN 实现:
 
 1. Hash JOIN (默认): 将右表构建为内存中的哈希表, 左表逐行探测. 右表必须能放进内存, 否则 OOM
 2. Partial Merge JOIN: 右表太大时, 分块加载右表, 排序后与左表做归并. 速度慢但不 OOM
-3. Grace Hash JOIN: 右表按哈希分桶写磁盘, 逐桶加载构建哈希表. 22.3+ 引入
+3. Grace Hash JOIN: 右表按哈希分桶写磁盘, 逐桶加载构建哈希表. 2022 年的 22.x 版本引入 (`join_algorithm = 'grace_hash'`)
 4. Distributed JOIN: 分布式表 JOIN 时, 数据需要在节点间 shuffle, 网络开销大
 
 性能陷阱与优化:
@@ -426,8 +426,8 @@ ISR (In-Sync Replicas): 与 leader 保持同步的副本集合.
 
 同步标准:
 
-- follower 的 LEO (Log End Offset, 已写入的最大 offset) 与 leader 的 LEO 差距在 `replica.lag.time.max.ms` (默认 30s) 以内
-- 即 follower 在 30s 内有过成功拉取, 就认为同步; 超过 30s 没追上则被踢出 ISR
+- LEO (Log End Offset): 该副本下一条将要写入的 offset (即已写入的最大 offset + 1)
+- Kafka 2.5 起判定依据是时间而非落后条数: follower 在最近 `replica.lag.time.max.ms` (默认 30s) 内向 leader 拉取并追平到 leader 的 LEO, 就认为同步; 超过该时间窗口没追上则被踢出 ISR (2.5 之前只看"最近一次 fetch 请求的时间", 更早的 0.9 之前还有按落后消息条数判定的 replica.lag.max.messages, 已移除)
 
 HW (High Watermark): ISR 中所有副本的最小 LEO, 消费者只能读到 HW 之前的消息 (保证读到的数据不会因 leader 切换而丢失).
 
@@ -524,7 +524,7 @@ Eager 协议的问题:
 
 - Stop-the-world: Rebalance 期间所有消费者停止消费, 等待重新分配
 - 重复消费: 消费者在 Rebalance 前未提交的 offset 会被重新分配给其他消费者
-- 频繁 Rebalance: 消费者处理慢导致心跳超时 (`session.timeout.ms` 默认 45s, Kafka 2.1 之前为 10s), 被 Coordinator 认为死亡, 触发 Rebalance, 形成恶性循环
+- 频繁 Rebalance: 0.10.1 起心跳由后台线程独立发送, 业务处理慢并不会导致 `session.timeout.ms` (默认 45s, Kafka 3.0 起由 10s 上调) 超时, 它只在进程挂起/断网时生效; 处理慢真正触发的是超过 `max.poll.interval.ms` (默认 5min) 没有再次调用 poll, 消费者主动离组引发 Rebalance, 形成恶性循环
 
 优化:
 
@@ -616,7 +616,7 @@ Kafka 使用 sendfile 系统调用:
 | ---------- | --------------------- | ---------------------------- | ------------------------- |
 | 设计目标   | 高吞吐日志/流处理     | 业务消息, 金融级可靠         | 灵活路由, 企业集成        |
 | 吞吐量     | 百万级 TPS            | 十万级 TPS                   | 万级 TPS                  |
-| 延迟       | 毫秒级 (批量优化)     | 毫秒级                       | 微秒级 (单条)             |
+| 延迟       | 毫秒级 (批量优化)     | 毫秒级                       | 微秒~毫秒级 (单条低延迟)  |
 | 消息模型   | Pull (消费者拉取)     | Pull + 长轮询                | Push (broker 推送)        |
 | 顺序消息   | 分区内有序            | 队列内有序 + 严格顺序模式    | 单队列有序                |
 | 延迟消息   | 不原生支持            | 18 个等级 (5.x 支持任意时间) | 插件支持                  |
@@ -931,7 +931,7 @@ ALTER TABLE events ADD PROJECTION proj_by_type (
 
 1. 分区过多: 按小时分区 + 数据保留一年 = 8760 个分区, 元数据膨胀, 合并效率低; 建议按天或按月
 2. ORDER BY 键选了低基数列: 如 `ORDER BY (status)` 只有 5 个值, 索引几乎无效
-3. 用 ClickHouse 做高频点查: 单行查询延迟 50~200ms, QPS 上限约几百; 点查场景用 Redis / MySQL
+3. 用 ClickHouse 做高频点查: 它为分析型查询设计, 官方文档建议单服务器查询速率保持在每秒百次量级以内; 点查仍要经过多 part 扫描与线程池调度开销, 延迟远高于 OLTP 数据库; 点查场景用 Redis / MySQL
 4. 频繁 ALTER UPDATE/DELETE: Mutation 是重写 part, 生产上应尽量避免
 5. 不设置 `max_memory_usage`: 单个查询可能吃光内存导致 OOM, 影响其他查询
 6. Distributed 表上直接 INSERT: 数据先写本地临时文件再异步分发, 可能丢数据; 应直接写本地表, 或用 `insert_distributed_sync=1`

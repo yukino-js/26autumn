@@ -515,7 +515,7 @@ WebServer (`timer_demo/app/webserver/app.go` 加 `timer_demo/service/webserver/`
 | trigger   | zrangeGapSeconds / workersNum                                                                                   | 1 / 10000                 |
 | webserver | port                                                                                                            | 8092                      |
 
-`timer_demo/conf.yml` 中仅 `mysql.dsn` 与 `redis.address` 必填, 其余段落有默认值. 状态常量见 `common/consts/timer.go`: 任务 NotRun/Running/Succeed/Failed, 定时器 Unable=1/Enable=2, 时间格式 `MinuteFormat` 为 "2006-01-02 15:04" 等.
+`timer_demo/conf.yml` 中仅 `mysql.dsn` 与 `redis.address` 标为必填 (另有一个 `redis.password` 占位符也需按环境填写), 其余段落有默认值. 状态常量见 `common/consts/timer.go`: 任务 NotRun/Running/Succeed/Failed, 定时器 Unable=1/Enable=2, 时间格式 `MinuteFormat` 为 "2006-01-02 15:04" 等.
 
 ### 入口与运行方式
 

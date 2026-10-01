@@ -102,14 +102,15 @@ React 18+ 的并发特性允许应用同时准备多个版本的 UI, 根据优�
 
 核心 API:
 
-| API                | 用途                                    | 场景                   |
-| ------------------ | --------------------------------------- | ---------------------- |
-| `startTransition`  | 标记非紧急更新                          | 搜索结果过滤、Tab 切换 |
-| `useTransition`    | 获取 isPending 状态 + startTransition   | 带 loading 的导航      |
-| `useDeferredValue` | 延迟某个值的更新                        | 输入框实时搜索         |
-| `Suspense`         | 声明式异步边界                          | 数据加载、代码分割     |
-| `use()`            | 在组件中读取 Promise/Context (React 19) | 配合 Suspense 使用     |
-| `Activity`         | 保持隐藏组件的状态 (React 19.2)         | Tab 面板、下拉菜单     |
+| API                | 用途                                                 | 场景                   |
+| ------------------ | ---------------------------------------------------- | ---------------------- |
+| `startTransition`  | 标记非紧急更新                                       | 搜索结果过滤、Tab 切换 |
+| `useTransition`    | 获取 isPending 状态 + startTransition                | 带 loading 的导航      |
+| `useDeferredValue` | 延迟某个值的更新                                     | 输入框实时搜索         |
+| `Suspense`         | 声明式异步边界                                       | 数据加载、代码分割     |
+| `use()`            | 在组件中读取 Promise/Context (React 19)              | 配合 Suspense 使用     |
+| `Activity`         | 保持隐藏组件的状态 (React 19.2)                      | Tab 面板、下拉菜单     |
+| `<ViewTransition>` | 基于 View Transition API 播放进出场动画 (React 19.3) | 路由/列表项进出场动画  |
 
 startTransition 示例:
 
@@ -321,8 +322,12 @@ export const dynamic = "force-dynamic";
 // 按需重验证
 import { revalidatePath, revalidateTag } from "next/cache";
 revalidatePath("/blog");
-revalidateTag("posts");
+// Next.js 16: revalidateTag 需要第二个参数指定 cacheLife profile,
+// 单参数写法已废弃并会触发 TypeScript 报错
+revalidateTag("posts", "max");
 ```
+
+> Next.js 16 的缓存失效 API 有调整: `revalidateTag(tag, profile)` 标记为过期 (stale-while-revalidate, 用户先看到旧数据再后台刷新) ; 若需要"写后立即读到最新值" (read-your-writes) , 改用 Server Action 专用的 `updateTag(tag)` (同请求内立即过期并刷新) ; 客户端路由刷新则用 `refresh()`。`cacheLife`、`cacheTag` 也已去掉 `unstable_` 前缀转正。
 
 ---
 
@@ -889,7 +894,7 @@ export { Dialog } from "./Dialog";
 当你写 `import { Check } from 'lucide-react'` 时:
 
 1. 打包器需要解析 `lucide-react` 的入口文件
-2. 入口文件 re-export 了上千个图标模块 (Vercel 优化博客实测为 1583 个模块; 本站安装的 lucide-react 1.49.0 已有 1857 个图标组件, 数量随版本持续增长)
+2. 入口文件 re-export 了上千个图标模块 (Vercel 优化博客实测为 1583 个模块; 本机 `/Users/hangtiancheng/github/26autumn/node_modules/lucide-react` (版本 1.49.0) 的 `dist/esm/dynamicIconImports.mjs` 导出映射实测为 2121 个图标组件, 数量随版本持续增长, 且 package.json 标记 `"sideEffects": false` 以便摇树)
 3. 即使你只用 1 个图标, 开发模式下也需要加载所有模块
 4. 运行时开销: 200-800ms 的冷启动时间
 
@@ -1629,7 +1634,9 @@ Compiler 解决"组件级记忆化", 不解决"架构级性能".
 | Full Route Cache    | 整页 HTML      | 跨请求   | revalidate/dynamic |
 | Router Cache        | 客户端路由缓存 | 用户会话 | 导航/refresh       |
 
-注意: 自 Next.js 15 起, fetch 默认不再缓存 (相当于 no-store) , Data Cache 需要显式 opt-in (cache: "force-cache" 或 next.revalidate) . Next.js 16 引入可选的 Cache Components (cacheComponents 配置, 即 PPR 演进方向) , 通过 use cache 指令声明缓存边界, 正在把缓存从"默认全开"转变为"显式声明"模型.
+注意: 自 Next.js 15 起, fetch 默认不再持久缓存. 在 Next.js 16.3.7 中默认行为被明确表述为 `auto no cache`: 开发态每次请求都重新拉取, `next build` 时因路由会被静态预渲染而只拉取一次; 若路由检测到请求期 API (如 `cookies()`/`headers()`) 则每次请求都拉取. 它与 `no-store` 的区别在于: `no-store` 强制每次请求都拉取, 而 `auto no cache` 在静态预渲染场景下构建期仍会缓存一次. Data Cache 需要显式 opt-in (`cache: "force-cache"` 或 `next: { revalidate }` / `next: { tags }` 配合 `revalidateTag`)。同一渲染过程内、URL 与选项相同的 GET fetch 会被自动 memoization 去重 (仅持续单次渲染, Route Handler 中不生效) 。
+
+Next.js 16 移除了实验性的 `ppr` 与 `dynamicIO`/`useCache` 开关, 统一由顶层 `cacheComponents` 配置承接 (即原 PPR 的演进方向) : 开启后通过 `"use cache"` 指令声明缓存边界, 把缓存从"默认全开"转变为"显式声明"模型, 未缓存的数据若不在 `<Suspense>` 内会触发构建错误. `cacheComponents` 在 16.3.7 中已是顶层配置 (`experimental.cacheComponents` 与 `experimental.ppr` 均标记 deprecated)。
 
 补充缓存:
 
@@ -1644,10 +1651,54 @@ fetch(url, { cache: "force-cache" });
 fetch(url, { cache: "no-store" });
 // 定时重验证
 fetch(url, { next: { revalidate: 3600 } });
-// 标签重验证
+// 标签重验证 (Next.js 16 需传 cacheLife profile)
 fetch(url, { next: { tags: ["posts"] } });
-revalidateTag("posts");
+revalidateTag("posts", "max");
 ```
+
+---
+
+## 十三、Next.js 16 关键变化
+
+以下事实对照本机 `/Users/hangtiancheng/github/26autumn/node_modules/next` (版本 16.3.7) 自带的官方文档 (`dist/docs/`) 与类型声明 (`dist/server/config-shared.d.ts`) 核实, 是升级与面试的高频考点.
+
+### 13.1 Turbopack 成为 dev 与 build 的默认打包器
+
+Next.js 16 起 Turbopack 转为稳定, `next dev` 与 `next build` 默认都使用 Turbopack, 不再需要 `--turbopack` 标志. 仍可用 `--webpack` 显式退回 Webpack (例如"dev 用 Turbopack、build 用 Webpack")。若项目存在自定义 `webpack` 配置又直接跑默认的 `next build`, 构建会失败以防止误配置. Turbopack 相关配置从 `experimental.turbopack` 提升为顶层 `turbopack` 选项, 并默认开启文件系统缓存 (`experimental.turbopackFileSystemCacheForDev` / `ForBuild`) 以加速重启.
+
+### 13.2 `middleware` 更名为 `proxy`
+
+`middleware.ts` 文件名已废弃, 更名为 `proxy.ts`, 以强调其网络边界与路由职责. 官方 `upgrade` codemod 会自动迁移.
+
+### 13.3 请求期 API 全面异步化 (Breaking change)
+
+Next.js 15 引入的异步请求 API 在 16 中彻底移除了同步兼容写法. 以下只能 `await` 异步访问:
+
+- `cookies()`、`headers()`、`draftMode()`
+- `layout.js`/`page.js`/`route.js`/`default.js` 及 `opengraph-image`/`twitter-image`/`icon`/`apple-icon` 中的 `params`
+- `page.js` 中的 `searchParams`
+- 图片生成函数 (`opengraph-image` 等) 的 `params` 与 `id` 也变为 Promise; `generateImageMetadata` 仍收同步 `params`
+
+配套可用 `npx next typegen` 生成 `PageProps<'/blog/[slug]'>`、`LayoutProps`、`RouteContext` 等全局类型助手, 让 `await props.params` 获得类型安全.
+
+### 13.4 React Compiler 转为稳定 (默认不开启)
+
+跟随 React Compiler 1.0, Next.js 16 的 `reactCompiler` 配置从 `experimental` 提升为顶层稳定选项 (`reactCompiler: true`) , 需安装 `babel-plugin-react-compiler`. 出于对构建性能的持续观测, 它默认不启用; 开启后因依赖 Babel, dev 与 build 编译时间会上升.
+
+### 13.5 运行时与浏览器要求
+
+| 要求       | 变化                                                  |
+| ---------- | ----------------------------------------------------- |
+| Node.js    | 最低 20.9.0 (LTS) , 不再支持 18                       |
+| TypeScript | 最低 5.1.0                                            |
+| 浏览器     | Chrome 111+ / Edge 111+ / Firefox 111+ / Safari 16.4+ |
+
+### 13.6 其他值得注意的变化
+
+- `next/image` 多项默认值收紧 (如 `minimumCacheTTL`、`imageSizes`、`qualities`) , `next/legacy/image` 与 `images.domains` 配置标记废弃.
+- 移除 AMP 支持、`next lint` 命令 (改用 ESLint CLI) 、运行时配置 (`serverRuntimeConfig`/`publicRuntimeConfig`) 、`unstable_rootParams` (改用 `next/root-params`)。
+- 路由与导航重构: 布局去重 (共享 layout 只下载一次) 与增量预取 (只预取缓存中缺失的部分) , 无需改代码, 代价是单个预取请求数可能变多但总传输量更小.
+- 静态导出仍以 `output: 'export'` 配置, 产物为纯静态 HTML; Server Components 会渲染进静态 HTML, 但依赖动态服务端能力 (Route Handler、`cookies()` 等) 的特性不被支持.
 
 ---
 

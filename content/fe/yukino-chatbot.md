@@ -61,7 +61,7 @@ yukino-chatbot 是一个基于 pnpm workspace 的全栈 LLM 聊天应用, 采用
 
 2. TanStack React Query (服务端状态): 管理 sessions 列表、聊天历史等需要与后端同步的数据. 利用其缓存失效、后台重新获取、乐观更新等能力.
 
-3. 组件本地 state (高频瞬态状态): 主聊天页面中的 messages 数组、streaming 状态等使用 `useState`, 避免高频更新穿透到全局 store.
+3. 组件本地 state (高频瞬态状态): 主聊天页面中的 messages 数组、streaming 状态等使用 `useState`, 避免高频更新穿透到全局 store. 另有一个未被消费的死代码模块: `stores/chat.ts` 定义了 sessionsAtom / currentSessionIdAtom / tempSessionAtom / currentMessagesAtom / selectedModelAtom / isStreamingAtom / loadingAtom 一整组聊天 atom, 全仓无任何组件引用, 实际聊天状态全部由 AiChat 页面本地 state 承载.
 
 这种分层设计确保了: 低频全局状态用 atom 共享, 服务端数据用 Query 自动同步, 高频渲染状态局部隔离.
 
@@ -646,7 +646,8 @@ if (agent) {
   -> multer 接收, CRC32 命名去重, 存入 uploads/{username}/
 
 用户发送消息 (model_type = "openai-rag")
-  -> DocumentLoader.loadFromDirectory() 读取用户目录下所有文件
+  -> DocumentLoader.loadFromDirectory() 读取用户目录下 .md/.txt/.json 文件
+     (rag/index.ts:47 按扩展名过滤, 与上传白名单一致)
   -> RecursiveCharacterTextSplitter 分块 (chunkSize=1000, overlap=200)
   -> OpenAIEmbeddings (默认模型 nomic-embed-text) 向量化
   -> MemoryVectorStore.fromDocuments() 构建内存向量索引

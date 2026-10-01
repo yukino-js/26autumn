@@ -3,7 +3,7 @@ title: "OpenSpec 调研文档"
 description: "Fission AI OpenSpec 调研: 规格驱动开发的协议层定位、CLI 命令与 schema 体系、proposal/specs/tasks artifacts 工作流、50 个 AI 编码工具的集成方式"
 ---
 
-仓库路径: https://github.com/Fission-AI/openspec (本机克隆位于 $HOME/Downloads/openspec, 本文按 main @ c879d13d, 2026-09-29 的源码核对; 本机克隆现为浅克隆 3a34ea3, 2026-09-30, 其间 5 个提交仅涉及 1.14.0 版本发布、website 依赖锁与 status/zsh 补全修复, 不影响本文结论)
+仓库路径: https://github.com/Fission-AI/openspec (本机克隆位于 $HOME/Downloads/openspec, 本文按 main @ c879d13d, 2026-09-29 的源码核对; 本机克隆现为浅克隆 3a34ea3, 2026-09-30, package.json 版本 1.14.0, 其间 5 个提交仅涉及 1.13.2 → 1.14.0 版本发布、website 依赖锁、changesets 与 status/zsh 补全小修, 不影响本文结论)
 
 ## 一、OpenSpec 是什么
 
@@ -34,11 +34,11 @@ scalable from personal projects to enterprises — 从个人项目到企业团�
 
 与同类工具的定位区别:
 
-| 对比对象        | 特点                              | OpenSpec 的差异                   |
-| --------------- | --------------------------------- | --------------------------------- |
-| GitHub Spec Kit | 重量级, 刚性阶段门禁, Python 依赖 | OpenSpec 更轻, 无门禁, 自由迭代   |
-| Kiro (AWS)      | 锁定特定 IDE 和 Claude 模型       | OpenSpec 支持 30+ AI 工具, 不锁定 |
-| 什么都不用      | 模糊提示, 不可预测结果            | OpenSpec 在代码前建立可预测性     |
+| 对比对象        | 特点                              | OpenSpec 的差异                                                |
+| --------------- | --------------------------------- | -------------------------------------------------------------- |
+| GitHub Spec Kit | 重量级, 刚性阶段门禁, Python 依赖 | OpenSpec 更轻, 无门禁, 自由迭代                                |
+| Kiro (AWS)      | 锁定特定 IDE 和 Claude 模型       | OpenSpec 内置 50 个工具适配目标 (含通用 .agents 目标) , 不锁定 |
+| 什么都不用      | 模糊提示, 不可预测结果            | OpenSpec 在代码前建立可预测性                                  |
 
 ## 三、目录结构与核心概念
 
@@ -76,7 +76,7 @@ specs/ 描述"现在是什么样", changes/ 描述"打算改成什么样". 归�
 
 1. Specs 是真相
 
-用结构化需求 (Requirement) 和场景 (Scenario) 描述系统行为. 使用 RFC 2119 关键词 (SHALL/MUST/SHOULD/MAY) 表达强度. Spec 是行为契约, 不是实现方案.
+用结构化需求 (Requirement) 和场景 (Scenario) 描述系统行为. 规范性语句遵循 RFC 2119 关键词, 但校验器只检测 SHALL 与 MUST 两个词 (正则 `\b(SHALL|MUST)\b`, src/core/parsers/requirement-text.ts 的 containsShallOrMust) , schema 指令还明确要求避免 should/may. 校验强度: change 的 delta spec 缺关键词时默认给 guidance 级提示, --strict 模式升级为错误; 主 spec 缺关键词给 WARNING 提示 (整段 body 缺失才是 ERROR) . 每条 Requirement 必须至少带一个 `#### Scenario:` 块 (四级井号, 三级或列表会静默失效) , 否则 validate 直接报错. Spec 是行为契约, 不是实现方案.
 
 ```markdown
 ### Requirement: Session Expiration
@@ -242,9 +242,11 @@ AI CHAT    /opsx:archive              ← delta 合并进 specs, change 归档
 | Claude Code, Gemini CLI        | /opsx:propose           | 冒号分隔                                            |
 | Cursor, Copilot, Devin Desktop | /opsx-propose           | 连字符分隔                                          |
 | Amazon Q                       | @opsx-propose           | @ 前缀                                              |
-| Codex                          | $openspec-propose       | $ 前缀                                              |
-| Kimi Code                      | /skill:openspec-propose | skill 前缀                                          |
+| Codex                          | $openspec-propose       | skill 调用, $ 前缀                                  |
+| Kimi Code                      | /skill:openspec-propose | skill 调用, /skill: 前缀                            |
 | Code Studio (Syncfusion)       | /opsx-propose           | prompt 文件 (.codestudio/prompts/opsx-\*.prompt.md) |
+
+两类形态要分清: Claude Code/Gemini、Cursor/Copilot/Devin、Amazon Q、Code Studio 这几行是"命令文件", 由 src/core/command-generation/ 下 34 个工具适配器生成, 命名规则决定调用形态 — 写成 `opsx/<id>.md` 的工具 (Claude Code, Gemini, Crush 等) 注册成 `/opsx:<id>`, 写成 `opsx-<id>.md` 的工具 (Cursor, Copilot, Devin Desktop, Code Studio 等) 注册成 `/opsx-<id>`, 前缀默认是 `/`, 只有 Amazon Q 声明为 `@`; Codex 与 Kimi Code 属于 skills-only 工具, 不生成命令文件, 只写 skills, 对应两行是各自的 skill 调用语法 (skill 名为 openspec-propose 等, 与仓库 skills/ 目录一一对应) .
 
 ## 五、Schemas: 可定制的工作流
 
@@ -271,6 +273,8 @@ artifacts:
     generates: tasks.md
     requires: [specs, design]
 ```
+
+以上是骨架摘要. 真实的 schemas/spec-driven/schema.yaml 还包含: 顶层 version: 1 与 description; 每个 artifact 的 description、template (指向 templates/ 下的模板文件) 和 instruction (给 AI 的详细写作指令, spec-driven 的四段 instruction 就是"spec 是行为契约"、"delta 四区段格式"、"design 何时需要"等规则的出处) ; 以及文件末尾的 apply 块 (requires: [tasks], tracks: tasks.md) , 声明实现阶段的前置 artifacts 与进度追踪文件.
 
 ### 5.2 自定义 Schema
 
@@ -303,10 +307,11 @@ artifacts:
     requires: [proposal]
 ```
 
-Schema 存放位置:
+Schema 存放位置 (src/core/artifact-graph/resolver.ts 的三级解析顺序) :
 
-- 项目级: `openspec/schemas/` (随代码版本控制, 推荐)
-- 用户全局: `$XDG_DATA_HOME/openspec/schemas/` (遵循 XDG Base Directory 规范; Unix/macOS 默认回退 `~/.local/share/openspec/schemas/`, Windows 为 `%LOCALAPPDATA%/openspec/schemas/`)
+- 项目级: `<projectRoot>/openspec/schemas/<name>/schema.yaml` (随代码版本控制, 优先级最高, 推荐)
+- 用户全局: `$XDG_DATA_HOME/openspec/schemas/<name>/` (遵循 XDG Base Directory 规范; Unix/macOS 默认回退 `~/.local/share/openspec/`, Windows 为 `%LOCALAPPDATA%/openspec/`)
+- npm 包内置: 随包发布的 `schemas/` 目录 (spec-driven 就在这里, 兜底)
 
 ### 5.3 Schema 解析优先级
 
@@ -342,11 +347,13 @@ operations:
       - Keep the completion summary concise
 ```
 
-注入机制:
+注入机制 (src/core/project-config.ts 与 src/commands/workflow/instructions.ts) :
 
-- context 注入到所有 artifact 的 AI 提示中 (用 `<context>` 标签包裹)
-- rules 只注入到对应 artifact 的提示中 (用 `<rules>` 标签包裹)
-- operations guidance 在 apply/archive 执行时注入
+- context 注入到所有 artifact 的 AI 提示中 (用 `<context>` 标签包裹) , 硬上限 50KB, 超限整段忽略并告警
+- rules 只注入到对应 artifact 的提示中 (用 `<rules>` 标签包裹) ; rules 的 key 会对照所有可用 schema 的 artifact id 校验, 未知 id 给出警告
+- operations guidance 在 openspec instructions apply / archive 执行时以 "Operation Guidance (advisory)" 注入
+
+除这三个字段外, config.yaml 还认识: store: (声明本项目默认使用的 store id) 、references: (引用的 store 列表, 字符串或 \{id, remote\} 形式) 、githubCopilot: (目前只有 cloudAgent 布尔开关) ; 文件名 config.yaml 优先, 不存在时才回退 config.yml.
 
 ## 七、Stores (beta): 跨仓库规划
 
@@ -546,19 +553,26 @@ Full spec (高风险场景):
 ## 十一、CLI 命令速查
 
 ```bash
-# 初始化 (--language 可指定 artifacts 语言, --tools 非交互选择工具)
+# 初始化 (--language 可指定 artifacts 语言, --tools 非交互选择工具, --profile 覆盖全局 profile)
 openspec init
 
-# 查看活跃 changes
-openspec list
+# 查看版本与更新可用性 (--check 查询 npm registry, --json 机器可读)
+openspec version [--check] [--json]
 
-# 查看 change 详情
+# 查看活跃 changes (--specs 列出主 specs, --archived/--all 含归档, --json 机器可读)
+openspec list [--specs]
+
+# 查看 change 或 spec 详情 (重名时用 --type change|spec 消歧)
 openspec show <name>
+
+# 旧的名词式命令组 (deprecated, 提示改用 list/show/validate 顶层命令)
+openspec spec list | spec show <id> | spec validate <id>
+openspec change show | change list | change validate
 
 # 查看状态 (JSON, 供 agent 消费)
 openspec status --change <name> --json
 
-# 获取 artifact 创建指令
+# 获取 artifact 创建指令 (也接受 apply / archive 两个操作 id)
 openspec instructions <artifact-id> --change <name> --json
 
 # 创建 change 脚手架 (工作流模板要求走它创建, 不要手建目录)
@@ -582,6 +596,7 @@ openspec templates [--schema <name>]
 # Schema 管理
 openspec schemas
 openspec schema fork spec-driven my-workflow
+openspec schema init <name>
 openspec schema validate my-workflow
 openspec schema which <name>          # 查看 schema 从哪里解析 (调试优先级)
 
@@ -598,11 +613,22 @@ openspec workset create <name> --member <path> --tool <id>
 openspec workset list
 openspec workset open <name>
 
+# 全局配置 (profile/delivery/defaultStore/telemetry 等)
+openspec config list | get <key> | set <key> <value> | unset <key> | reset | edit
+openspec config profile [core]        # 交互式选择 delivery 与 workflows
+
+# shell 补全
+openspec completion generate <shell>  # bash/zsh/fish/powershell, 输出到 stdout
+openspec completion install <shell>
+
 # 健康检查
 openspec doctor
 
-# 工作上下文
+# 工作上下文 (agent 简报, 可顺带生成 .code-workspace)
 openspec context --json
+
+# 向维护者提交反馈 (GitHub issue)
+openspec feedback "<message>" [--body <text>]
 
 # 更新 agent 指令 (升级后执行; 会顺带检查 npm registry 上是否有新版)
 openspec update
@@ -626,14 +652,14 @@ openspec update
 
 - 自由度的代价是纪律: 没有门禁意味着需要自己保持 change 聚焦
 - Spec 只描述可观察行为: 实现细节属于 design.md, 两者不混
-- 没有自动同步: Store 的共享完全靠 git, OpenSpec 永远不会自动 clone/pull/push store (CLI 的网络行为只有匿名遥测上报和 npm registry 版本检查, 后者发生在 openspec update 与 openspec version --check, 可用 OPENSPEC_NO_UPDATE_CHECK 跳过)
+- 没有自动同步: Store 的共享完全靠 git, OpenSpec 永远不会自动 clone/pull/push store (store 代码里唯一的 git 写操作是 setup 时可选的 git init + 初始 commit, 见 src/core/store/git.ts) . 被动网络行为只有两种: 匿名遥测上报和 npm registry 版本检查 (后者发生在 openspec update 与 openspec version --check, 可用 OPENSPEC_NO_UPDATE_CHECK 跳过) ; 唯一的主动联网命令是 openspec feedback, 它经 gh CLI 创建 GitHub issue, gh 不可用时降级为打印一个预填好的 issue URL 让用户手动提交
 
 ## 十三、技术细节
 
 - 运行时要求: Node.js >= 20.19.0
 - 安装: `npm install -g @fission-ai/openspec@latest`
-- 包管理: 也支持 pnpm, yarn, bun, nix
-- 遥测: 只收集命令名和版本 (无参数、路径、内容或 PII), CI 环境自动禁用; 可通过 `openspec config set telemetry.enabled false`、`OPENSPEC_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭
+- 包管理: 也支持 Homebrew, pnpm, yarn, bun, nix (仓库含 flake.nix)
+- 遥测: 只收集命令名和版本 (无参数、路径、内容或 PII, 事件里显式设置 $ip: null 关闭 IP 追踪) , CI 环境自动禁用; 首次运行的隐私提示未展示过之前什么都不上报 (noticeSeen 机制) ; 事件发往自家域名 edge.openspec.dev 反代的 PostHog batch 接口; 可通过 `openspec config set telemetry.enabled false`、`OPENSPEC_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭
 - 多语言: `openspec init --language "<语言>"` 会把语言指令写入 config.yaml 的 context, 之后 artifacts 用该语言生成; 结构性标题和 SHALL/MUST 关键词保持英文 (校验依赖它们), 已有项目则直接编辑 context 字段
 - 推荐模型: 高推理能力模型 (文档推荐 Codex 5.5 和 Opus 4.7)
 - 上下文卫生: 建议在开始实现前清理上下文窗口

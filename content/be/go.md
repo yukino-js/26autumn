@@ -1,9 +1,9 @@
 ---
 title: "Go 技术笔记"
-description: "Go 语言核心知识点与底层原理: slice/map/interface、GMP 调度、channel、context、sync、内存分配与 GC, 结合 yukino.go 中经核实的真实源码模式"
+description: "Go 语言核心知识点与底层原理: slice/map/interface、GMP 调度、channel、context、sync、错误处理、内存分配与 GC, 以 Go 1.26 为基准标注版本差异, 结合 yukino.go 中经核实的真实源码模式"
 ---
 
-> 本文由"Golang 知识点"与"底层原理专题"两份文档合并而成, 覆盖语言基础、slice/map/string/interface、GMP 调度、channel、context、sync、内存模型、内存分配与逃逸、GC、defer/panic/recover、跨平台编译、泛型、工程实践、死锁、工具链与高频编码题. 文中运行时行为以 Go 1.22+ 为基准, 并标注关键版本差异
+> 本文由"Golang 知识点"与"底层原理专题"两份文档合并而成, 覆盖语言基础、slice/map/string/interface、GMP 调度、channel、context、sync、内存模型、内存分配与逃逸、GC、defer/panic/recover 与错误处理、跨平台编译、泛型与迭代器、工程实践、死锁、工具链与高频编码题. 文中运行时行为以 Go 1.26 (2026-02 发布) 为基准, 并标注关键版本差异; 涉及 1.22 循环变量、1.23 timer/迭代器、1.24 Swiss Table map、1.25 容器感知 GOMAXPROCS、1.26 Green Tea GC 等新行为处均以官方 release notes 为准; Go 1.27 (2026-08 发布) 已面世, 版本要点见 §20.5
 
 ## 1. Go 语言基础
 
@@ -30,11 +30,13 @@ description: "Go 语言核心知识点与底层原理: slice/map/interface、GMP
 `make` 和 `new` 都是内存分配的内建函数, 但场景不同:
 
 1. `make`: 只能用于 `slice`、`map`、`channel` 三种引用类型, 返回初始化后的数据结构本身 (不是指针). 这三种类型的内部结构必须经过运行时初始化才能使用.
-2. `new`: 可用于任何类型, 分配内存并返回指向零值的指针, 不做额外初始化.
+2. `new(T)`: 可用于任何类型, 分配内存并返回指向零值的指针, 不做额外初始化.
+3. `new(expr)` (Go 1.26 起): `new` 的操作数允许是表达式, 分配内存并以该表达式的值初始化, 返回指针——为 `*int`、`*string` 这类"可选值指针"字段赋值不再需要辅助函数或临时变量, 序列化/协议缓冲区场景尤其顺手.
 
 ```go
-s := make([]int, 5) // 长度 5 的 slice, 元素为零值
-p := new(int)       // *int, 指向 0
+s := make([]int, 5)   // 长度 5 的 slice, 元素为零值
+p := new(int)         // *int, 指向 0
+q := new(len("abc"))  // *int, 指向 3 (Go 1.26+)
 ```
 
 ### 1.5 数组和切片的区别
@@ -109,7 +111,7 @@ Go 字符串底层是 UTF-8 字节序列, `for range` string 按 rune 解码迭�
 
 struct tag 为字段附加元数据, 由反射在运行时读取 (见第 6 节):
 
-1. `json:"name,omitempty"`: 序列化字段名与选项.
+1. `json:"name,omitempty"`: 序列化字段名与选项; `omitzero` (Go 1.24+) 按零值省略, 支持 `IsZero()` 判定, 能正确处理零值 `time.Time` (这是 `omitempty` 的常见坑), 二者可同时使用.
 2. `db:"column"`: sqlx/GORM 等 ORM 的列映射.
 3. `form:"field"`: gin 等框架的请求参数绑定.
 4. `binding:"required"`: 配合参数绑定做必填校验.
@@ -144,7 +146,7 @@ fmt.Printf("%#v\n", a) // &main.student{id:1, name:"tom"}
 
 在 `main()` 之前. 初始化顺序由依赖关系决定 (不是 import 书写顺序): 被依赖的包先初始化. 每个包先初始化包级常量、变量 (常量优先), 再执行该包的 `init()`, 即 `import → const → var → init() → main()`.
 
-`init()` 无参数无返回值, 不能被显式调用; 同一个包/文件可以有多个 `init()`, 其执行顺序不作保证. 匿名导入 `import _ "pkg"` 就是只为触发其 `init()` (如注册数据库驱动).
+`init()` 无参数无返回值, 不能被显式调用; 同一个包/文件可以有多个 `init()`. 同一文件内的 `init()` 按源码顺序执行, 跨文件按编译器接收文件的顺序执行 (cmd/go 按文件名排序), 规范不要求跨工具链稳定, 因此代码不应依赖多个 `init()` 之间的相对顺序. 匿名导入 `import _ "pkg"` 就是只为触发其 `init()` (如注册数据库驱动).
 
 ### 1.15 两个 interface 可以比较吗
 
@@ -178,7 +180,7 @@ Go 只有值传递: 无论传什么类型, 形参都是实参的拷贝. slice/ma
 
 ### 1.19 多返回值是如何实现的
 
-编译器在调用方 (caller) 栈帧上为所有返回值预留连续空间, 被调函数 return 时把值拷贝进预留区, 返回后调用方直接从自己栈帧读取. 多返回值因此只是一次结构体级别的拷贝, 没有额外的堆分配.
+Go 1.17 起采用寄存器传参 ABI (基于 register-based calling convention): 足够小的参数与返回值直接通过寄存器传递, 寄存器不够用或类型过大时, 编译器在调用方 (caller) 栈帧上为参数/返回值预留连续内存区, 被调函数 return 时把值写入约定位置, 调用方直接读取. 无论走寄存器还是栈, 多返回值都是一次整体拷贝级别的开销, 没有额外的堆分配; 这也是 Go 鼓励用返回值 (而不是 out 参数/异常) 表达错误的底层原因.
 
 ### 1.20 Go 语言中 "\_" 的作用
 
@@ -406,7 +408,7 @@ A: `mapassign` 时检查两个条件:
 
 搬迁是渐进式的: 扩容瞬间只分配新桶数组并把旧桶挂到 `oldbuckets`, 之后每次对某个 key 的写/删操作顺带搬迁其所在旧桶 (`growWork` 每次最多搬 2 个桶), 把 O(n) 成本摊薄到多次操作上, 避免大 map 一次性搬迁造成的延迟毛刺——和 Redis rehash 的思路一致. 翻倍扩容时旧桶 i 的元素按哈希新增位分流到新桶 i 和 i+2^B (称 x/y 两半).
 
-推论: map 只增不缩. delete 全部 key 后桶数组仍在, 长期持有的大 map 想释放内存只能整个换新 map (`m = make(map[K]V)`).
+推论: map 只增不缩. delete 全部 key 后桶数组仍在, 长期持有的大 map 想释放内存只能整个换新 map (`m = make(map[K]V)`); 只想清空内容可先用 `clear(m)` (Go 1.21+ 内建函数, 删除全部键值对, 但同样不归还底层存储).
 
 ### 3.3 Go 1.24 的 Swiss Table 重写
 
@@ -414,10 +416,11 @@ A: `mapassign` 时检查两个条件:
 
 A: Go 1.24 (2025.02) 把内置 map 从链式桶实现替换为基于 Swiss Table (Google Abseil 的开放寻址方案) 的实现:
 
-- 每组 (group) 8 个槽位, 配一个 64 位控制字 (每槽 1 字节元数据, 存哈希高 7 位 + 状态), 查找时对控制字做整字 (SWAR/SIMD 式) 并行比对, 一次比较 8 个槽.
-- 开放寻址替代溢出链, 内存局部性更好; 整体大 map 按目录 (directory) 拆成多个独立扩容的子表, 避免一次性巨型搬迁.
-- 官方数据: 热点 map 操作平均提速 10%~35%, 负载因子上限更高 (7/8), 内存占用更省.
-- 语义完全不变 (迭代仍随机、并发写仍 fatal), 属纯运行时替换; 依赖 `//go:linkname` 摸 hmap 内部的黑科技代码会被破坏.
+- 哈希值拆成两段: 高位 (h1) 选组, 低 7 位 (h2) 存入控制字. 每组 (group) 8 个槽位配一个 64 位控制字, 每槽 1 字节 = 最高位编码状态 (empty/deleted/full) + 低 7 位存 h2; 查找时对控制字做整字并行比对 (amd64 用 SIMD 指令, 其他架构用 SWAR 式算术/位运算模拟), 一次比较 8 个槽, h2 命中 (1/128 误报率) 再比对完整 key.
+- 开放寻址 (线性探测, 以组为步长) 替代溢出链, 内存局部性更好; 平均负载因子上限提高到 7/8 (旧实现为 6.5/8), 内存占用更省.
+- 为保留 Go map 的渐进扩容语义 (Abseil 原设计是一次性翻倍), 每个 map 按目录 (directory) 拆成多个独立子表: 哈希的可变数量高位选择子表 (可扩展哈希), 单个子表最多约 1024 个条目, 某子表增长时只搬迁自己——单次插入的搬迁开销有上界, 尾延迟可控. 迭代中增长也有专门处理: 迭代器钉住旧子表决定顺序, 返回条目前再查新子表取最新值/确认未删除.
+- 官方数据 (Go blog "Faster Go maps with Swiss Tables"): 微基准下 map 操作最高提速约 60%, 完整应用基准的 CPU 时间几何平均改善约 1.5%, 内存足迹随负载因子上限提高而下降.
+- 语言语义不变 (迭代顺序仍不保证、遍历中增删仍按规范行为、并发写仍 fatal), 属纯运行时替换; 依赖 `//go:linkname` 摸 hmap 内部结构的代码会被破坏 (1.24 曾提供 `GOEXPERIMENT=noswissmap` 回退).
 
 补充: 先讲透经典 hmap (涉及基本功), 再主动提 1.24 Swiss Table (涉及技术追踪), 是值得关注的补充.
 
@@ -443,7 +446,7 @@ A: 运行时通过 `hmap.flags` 的 `hashWriting` 位做检测, 发现并发读�
 方案对比:
 
 1. `map + sync.RWMutex`: 默认首选, 语义清晰, 性能可预测.
-2. `sync.Map`: 内部是 read (原子只读 map) + dirty (加锁 map) 两层, 读命中 read 时完全无锁; misses 累计到阈值后 dirty 升级为 read. 适合两类场景: key 集合基本稳定的读多写少 (如按连接/服务名缓存的元数据), 或各 goroutine 读写的 key 不相交. 写多或 key 频繁变化时比 RWMutex 更慢且内存翻倍. 内部细节 (read/dirty 关系、nil 与 expunged 两种删除状态) 见 10.3.
+2. `sync.Map`: ≤1.23 的实现是 read (原子只读 map) + dirty (加锁 map) 两层, 读命中 read 时完全无锁; misses 累计到阈值后 dirty 升级为 read. Go 1.24 起重写为基于哈希 trie (hash-trie) 的实现: 读依旧无锁, 写按子树局部加锁, 不同 key 集合的并发修改几乎不互相竞争, 且不再有 read/dirty 预热 (ramp-up) 期. 适合两类场景: key 集合基本稳定的读多写少 (如按连接/服务名缓存的元数据), 或各 goroutine 读写的 key 不相交. 写多且集中时仍不如 RWMutex. 内部细节 (≤1.23 的 read/dirty 关系、nil 与 expunged 两种删除状态) 见 10.3.
 3. 分片锁 (sharded map): 按 key 哈希拆 N 把锁, 写多时的高并发方案. 分布式缓存的本地存储层常用这个思路降低锁竞争 (见 3.6 的真实实现).
 
 ### 3.6 分片锁并发 map 的实现要点
@@ -472,7 +475,7 @@ func (s *ShardedMap) shardOf(key string) *shard {
 设计细节 (理解难点所在):
 
 1. 分片数取 2 的幂, 用 `hash & mask` 代替 `hash % n` (除法慢一个量级). yukino_cache 的 `lruStore` 是完整的真实实现: `MaskOfNextPowOf2(BucketCount)` 把配置的桶数向上取整为 2 的幂, 读写入口 `idx := HashBKRD(key) & s.mask` 定位分片, 每个分片一把独立 `sync.Mutex` 保护该分片的两级 LRU.
-2. 哈希函数要快且均匀: 字符串常用 BKDR/FNV-1a/xxhash; 不需要加密强度. 注意不要用 Go 内置 map 的 hash (不可导出), 但 1.19+ 可用 `maphash`.
+2. 哈希函数要快且均匀: 字符串常用 BKDR/FNV-1a/xxhash; 不需要加密强度. 注意不要用 Go 内置 map 的 hash (不可导出), 但 1.19+ 可用 `maphash`, 1.24+ 的 `maphash.Comparable` 还能直接给任意可比较值算哈希 (与内置 map 同一哈希函数).
 3. 跨分片操作是弱点: `Len()` 要遍历全部分片累加 (或另维护 atomic 计数); `Range` 只能逐分片加锁快照, 不是一致性视图; 不支持跨分片事务. 设计 API 时明确这些语义.
 4. 分片数选择: 经验值为 CPU 核数的 2~8 倍 (如 32/64/128); 分片太少竞争仍高, 太多浪费内存且 cache 不友好. 固定分片数, 不做动态 resharding (那是分布式一致性哈希该干的事).
 5. 每个分片内可以不只是 map: yukino_cache 分片内挂的是两级 LRU + 字节预算, 锁的粒度与数据结构一起下沉.
@@ -568,7 +571,7 @@ func main() {
 }
 ```
 
-A: interface 判 nil 是判 `tab` 和 `data` 两个字段都为 nil. 这里返回时发生了 `*MyErr → error` 的装箱, itab 已经填上了类型信息, 所以 `err != nil` 成立, 尽管里面装的指针是 nil, 调用 `err.Error()` 还会 panic (方法用指针接收者解引用 nil).
+A: interface 判 nil 是判 `tab` 和 `data` 两个字段都为 nil. 这里返回时发生了 `*MyErr → error` 的装箱, itab 已经填上了类型信息, 所以 `err != nil` 成立, 尽管里面装的指针是 nil. 注意后续行为取决于方法实现: 上例的 `Error()` 没有解引用接收者, 调用它返回 "boom" 并不会 panic; 但典型 Error() 实现要访问字段 (即解引用 nil 接收者), 那才会在调用处 panic——这正是"判空失效 + 延迟爆炸"危害最大的地方.
 
 ```go
 var c Coder          // 动态类型、动态值都 nil, c == nil 为 true
@@ -599,7 +602,7 @@ A: 成本有三层:
 | 失败后果 | 编译不过                            | 运行时 panic (单返回值形式), 或 ok=false (comma-ok 形式) |
 | 底层实现 | 内存重新解释或格式调整              | 查 itab / \_type (runtime 类型系统)                      |
 
-实际开发中一律用安全形式 `v, ok := i.(T)`.
+实际开发中一律用安全形式 `v, ok := i.(T)`. 两个例外补充: 数值转换的溢出是静默截断而非 panic; 切片转数组指针 `(*[4]byte)(s)` 是转换语法, 但 `len(s) < 4` 时在运行期 panic (Go 1.20 起才允许这种转换).
 
 ### 5.5 interface 的应用场景
 
@@ -621,6 +624,8 @@ A: 成本有三层:
 
 `reflect.TypeOf` 和 `reflect.ValueOf` 从接口变量中分别取出类型元信息 (`reflect.Type`, 本身是接口) 和值 (`reflect.Value`). 反向地, `reflect.Value.Interface()` 可以还原回接口. 由此可以在运行时遍历结构体字段、读取 tag、调用方法、修改可寻址的值.
 
+近年 API 演进: `reflect.TypeAssert[T]` (1.25+) 把 `Value` 直接转为具体类型 T, 等价于对 `Interface()` 结果做类型断言, 但省掉装箱分配; `Type.Fields()/Methods()/Ins()/Outs()` 与 `Value.Fields()/Methods()` (1.26+) 返回迭代器, 替代 `NumField()+Field(i)` 式的手工索引循环 (见 16.2 的迭代器机制).
+
 ### 6.3 反射的典型应用
 
 1. JSON 序列化: `encoding/json` 靠反射读取字段与 tag 完成任意类型的编解码.
@@ -628,7 +633,7 @@ A: 成本有三层:
 3. 参数绑定: gin 的 `ShouldBind` 把 HTTP 参数按 tag 绑定到结构体.
 4. 配置解析 (Viper)、RPC 方法注册、测试断言库 (DeepEqual) 等.
 
-代价: 反射调用无法内联、涉及装箱逃逸、错误推迟到运行时, 只应在框架/通用代码中使用, 业务热路径避免.
+代价: 反射调用无法内联、涉及装箱逃逸、错误推迟到运行时, 只应在框架/通用代码中使用, 业务热路径避免. 标准库自己也在演进: `encoding/json/v2` (配套底层 `encoding/json/jsontext` 包) 从 Go 1.25 的实验特性 (`GOEXPERIMENT=jsonv2`) 于 Go 1.27 转正, 且 `encoding/json` (v1 API) 内部已切到 v2 实现——编解码行为保留、错误消息文本可能不同, 遇兼容问题可用 `GOEXPERIMENT=nojsonv2` 构建回退到原 v1 实现; 解码显著快于 v1 且大幅减少反射开销, 是反射型编解码库性能优化的官方方向.
 
 ### 6.4 如何比较两个对象完全相同
 
@@ -682,7 +687,7 @@ A:
 为什么需要 P (对比早期 GM 模型): Go 1.0 只有 G 和 M, 所有 G 挂在一个全局队列上, 锁竞争严重、无数据局部性、M 阻塞时其队列无法转移. P 引入后 (Go 1.1, Dmitry Vyukov 的设计):
 
 1. 运行队列拆到每个 P, 本地入队出队无锁;
-2. mcache 从 M 挪到 P, 内存分配无锁 (M 可能有 1 万个而 P 只有核数个);
+2. 内存分配缓存 mcache 挂在 P 上而非 M 上 (这一步在 Go 1.15 完成), 分配无锁且缓存数量与核数一致 (M 可能有 1 万个而 P 只有核数个);
 3. M 阻塞时把 P 整体交接 (handoff) 给别的 M, 运行队列随 P 走, 不丢调度能力.
 
 延伸 ("GMP 能不能去掉 P"): 去掉即退回 GM 模型, 所有 M 争抢全局队列的全局锁, 高并发下 CPU 大量耗在等锁上; P 的价值正是无锁的本地调度.
@@ -763,7 +768,7 @@ Go 1.3 之前用分段栈 (segmented stack), 栈不够时链一个新段. 缺点
 
 A: `GOMAXPROCS` 默认取机器逻辑 CPU 数. 容器场景的经典问题: Pod limit 2 核, 宿主机 64 核, Go 1.24 及以前默认 GOMAXPROCS=64 → 64 个 P 的调度开销、GC 标记并行度失衡、CFS 配额下频繁被内核限流 (throttling), P99 明显劣化. 解法:
 
-- Go 1.25+: 运行时原生感知 cgroup CPU 配额 (cgroup v1 和 v2 均支持), 自动设置合理的 GOMAXPROCS, 并能在配额变化时动态调整;
+- Go 1.25+: 运行时原生感知容器 CPU 配额——Linux 上读取 cgroup 的 CPU 带宽限制 (对应 Kubernetes 的 CPU limit, 不看 requests), 低于逻辑核数时以其为默认 GOMAXPROCS; 且运行时会周期性跟随配额/核数变化动态调整 (P 可热增减). 手动设置 GOMAXPROCS 环境变量或调用 `runtime.GOMAXPROCS(n)` 会关闭这两项行为, 可用 `runtime.SetDefaultGOMAXPROCS()` 恢复; GODEBUG `containermaxprocs=0` / `updatemaxprocs=0` 可分别关闭.
 - 旧版本: `uber-go/automaxprocs` 或部署层显式注入 `GOMAXPROCS` 环境变量.
 
 ### 7.8 sysmon 与 goroutine 状态机
@@ -809,7 +814,7 @@ P 与 M 的创建时机: P 在 `schedinit()` 调 `procresize(GOMAXPROCS)` 时一
 
 描述 channel 的运行时结构, 以及一次 send 的完整路径.
 
-A: `make(chan T, n)` 在堆上分配一个 `runtime.hchan` (channel 用于跨 goroutine 通信, 生命周期不可能局限在单个函数内, 所以一律堆分配):
+A: `make(chan T, n)` 分配一个 `runtime.hchan`. channel 的典型用途是跨 goroutine 通信, 生命周期超出创建函数, 所以通常堆分配; 但并非"一律堆分配"——编译器逃逸分析能证明 channel 不逃逸 (如仅在当前函数内收发/select) 时, hchan 与缓冲区可以栈上分配:
 
 ```text
   hchan 结构
@@ -929,6 +934,8 @@ A: 泄漏的本质是 G 永久阻塞在 channel/锁上, 无人唤醒, 其栈和�
 
 - 编码规约: 启动 goroutine 时必须能回答"它何时退出、谁负责让它退出" (结构化并发思想); 对外暴露的阻塞 API 一律接收 ctx.
 - 排查: `pprof /debug/pprof/goroutine?debug=1` 看数量与堆栈聚类; `runtime.NumGoroutine()` 打点监控趋势; 测试中用 `goleak` (uber-go) 在每个 test 结束时断言无泄漏.
+- goroutineleak profile: Go 1.26 以实验形式引入, Go 1.27 起已默认开启 (转正): `goroutineleak` profile 在 `runtime/pprof` 直接可用, `net/http/pprof` 暴露 `/debug/pprof/goroutineleak` 端点, `GOEXPERIMENT=goroutineleakprofile` 构建开关随之删除. 原理是借用 GC 的可达性分析, 找出阻塞在"不可能再被任何可运行 goroutine 解除"的并发原语上的 G——即结构性泄漏; 它检测不了通过全局变量仍可达的原语上的阻塞, 与 pprof 数量趋势观察互补.
+- Go 1.25 的 `testing/synctest` 是并发逻辑测试的正规武器: `synctest.Test` 在隔离"气泡"里跑测试, 气泡内时间是虚拟时钟 (全部阻塞时瞬间推进), 测试结束时若气泡内仍有未退出的 goroutine 直接判失败——泄漏检测内建于测试框架, 详见 20.3.
 
 ### 8.6 channel 高频并发模式
 
@@ -1157,7 +1164,7 @@ Once: `done atomic.Bool` + Mutex 双检查. 快路径原子读 done 为 true 直
 
 Cond: `Wait` 必须在持锁下调用且用 for 循环重检条件 (虚假唤醒与竞态). 工程上 90% 的 Cond 场景可以用 channel 或减小粒度的锁替代, Cond 无法与 select/ctx 组合是其硬伤.
 
-sync.Map 深入: sync.Map 是"读写分离"的两层结构, 核心是空间换时间:
+sync.Map 深入 (以下为 ≤1.23 的经典实现, 1.24+ 见本节末尾): sync.Map 是"读写分离"的两层结构, 核心是空间换时间:
 
 ```go
 type Map struct {
@@ -1174,6 +1181,8 @@ type entry struct { p unsafe.Pointer } // 指向 value; nil=逻辑删除, expung
 - 删除设计成两态标记而非物理删除: `Delete` 把 entry.p 原子置 nil (逻辑删除, 读直接返回 false); 下次从 read 重建 dirty 时, nil 进一步标记为 expunged (不再复制进 dirty). 重新 Store expunged key 需先回退为 nil 并写回 dirty. 这样避免了每次删除都加锁复制 map.
 - misses 计数: 每次 read 未命中转查 dirty 就 +1, 累计到 `len(dirty)` 时把 dirty 整体晋升为新 read, 摊销同步成本.
 - 适用场景: key 集合稳定的读多写少, 或各 goroutine 读写 key 不相交; 写多时退化为互斥锁 + map 且内存翻倍. 无泛型, 1.20+ 提供 `CompareAndSwap` 系列.
+
+Go 1.24 起该实现被整体重写为哈希 trie (hash-trie, 可通过 `GOEXPERIMENT=nosynchashtriemap` 回退): 键的哈希按层分段逐层下探, 每棵子树独立加锁——读仍是无锁的原子快照遍历, 写只锁住目标子树, 不相交 key 集合的并发修改几乎零竞争; 且新实现没有 read/dirty 晋升的预热期, 冷启动读延迟同样低. 适用场景判断不变 (仍是"读多写少/key 不相交"占优), 但"写多时内存翻倍"的旧缺陷已大幅缓解.
 
 ### 10.4 sync.Pool 与 victim cache
 
@@ -1264,7 +1273,7 @@ A: 数据竞争 = 两个 goroutine 并发访问同一内存位置, 至少一个�
 4. atomic 操作构成全序且是同步操作.
 5. WaitGroup: Done HB Wait 返回. goroutine 创建: `go` 语句 HB goroutine 内第一行; goroutine 退出不 HB 任何事件 (不能靠"它肯定跑完了"来推可见性).
 
-重要认知: `race detector` 检测的是实际执行到的竞争, 测试没覆盖的路径查不出来; 生产旁路实例开 `-race` (约 2-10 倍减速、5-10 倍内存) 是大厂常见做法. "benign race" (良性竞争) 在 Go 里不存在, 包括双检锁裸读布尔位——要么 atomic, 要么锁.
+重要认知: `race detector` 检测的是实际执行到的竞争, 测试没覆盖的路径查不出来; 生产旁路实例开 `-race` (官方口径: 典型程序执行时间增加 2~20 倍、内存增加 5~10 倍) 是大厂常见做法. "benign race" (良性竞争) 在 Go 里不存在, 包括双检锁裸读布尔位——要么 atomic, 要么锁.
 
 ---
 
@@ -1280,7 +1289,7 @@ A: Go 分配器脱胎于 tcmalloc, 按大小三条路:
 2. 小对象 (16B ~ 32KB): 映射到约 68 个 size class, 从当前 P 的 mcache (每 P 私有, 无锁) 对应 class 的 mspan 分配; mcache 空了找 mcentral (全局、按 class 分桶、有锁但锁粒度细) 换一个 span; mcentral 也没了找 mheap (页堆) 切新 span; mheap 不够向 OS `mmap` (按 heapArena 64MB 粒度管理).
 3. 大对象 (大于 32KB): 绕过 cache/central, 直接从 mheap 分配整数页.
 
-其他要点: span 内空闲槽位用 bitmap + `allocCache` (64 位缓存, CTZ 指令找空位) 加速; 每个 span 关联 GC 标记位. 分配路径无锁化 (mcache per-P) 是 Go 高并发分配吞吐的根基, 与 GMP 的 P 设计一体两面.
+其他要点: span 内空闲槽位用 bitmap + `allocCache` (64 位缓存, CTZ 指令找空位) 加速; 每个 span 关联 GC 标记位. 分配路径无锁化 (mcache per-P) 是 Go 高并发分配吞吐的根基, 与 GMP 的 P 设计一体两面. 安全侧补充: Go 1.26 起 64 位平台的堆基址在启动时随机化 (heap base randomization), 提高 cgo 场景下攻击者预测内存地址的难度.
 
 ### 12.2 逃逸分析的判定规则
 
@@ -1291,7 +1300,7 @@ A: 原则: 编译器能证明变量生命周期不超出栈帧且大小编译期
 1. 返回局部变量指针 (生命周期超出函数).
 2. 变量被 interface 装箱 (`fmt.Println(x)`、往 `[]any` 里放).
 3. 闭包捕获并在函数返回后仍可能被调用.
-4. 栈上放不下: 编译期大小未知 (`make([]byte, n)` 的 n 是变量) 或超过阈值 (隐式栈分配上限, 大对象直接堆上).
+4. 栈上放不下: 编译期大小未知或超过阈值 (隐式栈分配上限, 大对象直接堆上). 注意版本演进: Go 1.25 起编译器把更多非常量长度的 `make` 切片支撑数组分配到栈上, 1.26 进一步扩大该优化的适用范围——只要 slice 不逃逸且长度可控, 即便 n 是变量也能留在栈上 (该优化可用 `-gcflags=all=-d=variablemakehash=n` 关闭排查问题).
 5. 发送指针到 channel、赋值给逃逸对象的字段 (逃逸具有传染性).
 6. 调用未内联的函数并传指针, 编译器无法跨函数证明时保守逃逸 (内联因此间接影响逃逸).
 
@@ -1306,6 +1315,8 @@ A: 原则: 编译器能证明变量生命周期不超出栈帧且大小编译期
 讲讲 Go GC 的完整流程、写屏障的作用, 以及调优手段.
 
 A: Go 使用并发三色标记-清除 (非分代、非压缩、非移动). 常见 GC 实现方式有标记清扫、标记整理、增量式、分代式、引用计数等, 均属于追踪式 GC 与引用计数两大族的混合; Go 选择了其中最适合低延迟目标的组合.
+
+版本演进: Go 1.25 引入实验性 Green Tea GC (`GOEXPERIMENT=greenteagc`), Go 1.26 起成为默认收集器 (可用 `GOEXPERIMENT=nogreenteagc` 关闭; 该开关至 Go 1.27 仍未移除——1.27 官方 release notes 未提及任何 Green Tea GC 相关变更). Green Tea 仍是并发三色标记-清除, 不改变本节讲述的写屏障/阶段模型, 改进点在标记的局部性与 CPU 可扩展性: 标记队列按内存顺序处理对象, 扫描小对象时在支持的 amd64 平台 (Intel Ice Lake / AMD Zen 4 及更新) 用向量指令一次扫多字. 官方预期重度依赖 GC 的真实程序 GC 开销下降 10%~40%.
 
 三色抽象: 白 (未访问, 终态即垃圾)、灰 (自身可达, 子引用未扫完)、黑 (自身与直接子引用都处理完). 标记从根对象 (全局变量、各 goroutine 执行栈上的变量与指针、寄存器中的指针值) 出发: 所有对象初始为白, 根可达者标灰, 反复把灰对象的白色子引用标灰、自身转黑, 直到灰队列为空——可视为以灰色为波面不断推进的过程. 不变式: 黑色对象不得直接指向白色对象 (强三色不变式), 否则并发期间用户程序 (mutator) 改指针会把活对象漏标.
 
@@ -1335,7 +1346,7 @@ Q (延伸一): 为什么 Go GC 不做分代、不做压缩?
 
 A: 这是刻意的工程取舍, 不是能力不足:
 
-1. 分代收益被逃逸分析稀释: 分代假说 (多数对象朝生夕死) 在 Go 里同样成立, 但大量短命对象已经被逃逸分析留在栈上, 函数返回即整体释放, 根本不进堆——堆里的"年轻代"比例天然低于 Java. 而分代需要记录跨代引用 (write barrier 常驻开销), Go 选择只在 GC 标记期开屏障. 官方做过分代原型 (ROC), 收益不达预期而放弃.
+1. 分代收益被逃逸分析稀释: 分代假说 (多数对象朝生夕死) 在 Go 里同样成立, 但大量短命对象已经被逃逸分析留在栈上, 函数返回即整体释放, 根本不进堆——堆里的"年轻代"比例天然低于 Java. 而分代需要记录跨代引用 (write barrier 常驻开销), Go 选择只在 GC 标记期开屏障. Go 团队也做过分代式 GC 实验, 因收益不达预期而未采纳.
 2. 压缩/移动的代价是读屏障: 并发移动对象要求所有指针访问经过 read barrier, 拖慢所有程序 (不止 GC 期间); 而不移动对象让 Go 指针可以安全传给 cgo/syscall, 指针值稳定也简化了运行时.
 3. 碎片问题由分配器兜底: tcmalloc 式 size class 分桶 (12.1) 保证同 span 内对象等大, 外部碎片有限, 且 span 可整体归还 OS——压缩的主要收益已被分配器设计吃掉.
 
@@ -1349,7 +1360,7 @@ A: 三个触发源:
 2. 定时兜底: sysmon 发现超过 2 分钟没 GC, 强制一轮 (forcegc).
 3. 手动: `runtime.GC()` (阻塞到本轮完成, 测试/基准里常用来隔离干扰).
 
-回收时机的常见误区: 标记结束不等于内存立刻归还——清扫是惰性的, 且归还 OS 由 scavenger 渐进执行 (Linux 上用 `MADV_FREE`/`MADV_DONTNEED`, 前者 RSS 下降不及时是"内存没降"的常见假象). 带 finalizer 的对象至少要两轮 GC 才能释放 (第一轮执行 finalizer, 第二轮回收); `runtime.SetFinalizer` 语义脆弱 (顺序不保证、循环引用失效), 1.24+ 的 `runtime.AddCleanup` 与 `weak` 包是更可控的替代.
+回收时机的常见误区: 标记结束不等于内存立刻归还——清扫是惰性的, 且归还 OS 由 scavenger 渐进执行 (Linux 上用 `MADV_FREE`/`MADV_DONTNEED`, 前者 RSS 下降不及时是"内存没降"的常见假象). 带 finalizer 的对象至少要两轮 GC 才能释放 (第一轮执行 finalizer, 第二轮回收); `runtime.SetFinalizer` 语义脆弱 (顺序不保证、循环引用失效), 1.24+ 的 `runtime.AddCleanup` 与 `weak` 包是更可控的替代 (AddCleanup 支持一对象多清理函数、可挂内部指针、不成环泄漏, 1.25 起清理函数并行执行; `GODEBUG=checkfinalizers=1` 可诊断 finalizer/cleanup 的常见问题).
 
 ### 13.2 GC 关注的指标
 
@@ -1363,7 +1374,7 @@ A: 三个触发源:
 GC 只能回收"不可达"的内存; 泄漏的本质是预期很快释放的内存生命期被意外延长, 仍然被根可达. Go 中典型场景:
 
 1. goroutine 泄漏 (最常见): goroutine 永久阻塞 (channel 无数据、死循环无退出条件) 后, 其栈与引用的对象永不回收.
-2. channel 泄漏: 生产者退出但未 close, 消费者永久等待; 未停止的 `time.After`/`time.NewTimer` 同理.
+2. channel 泄漏: 生产者退出但未 close, 消费者永久等待; 未停止的 `time.After`/`time.NewTimer` 同理 (1.23 起 timer 不再依赖运行时全局队列, 未被引用的 timer/ticker 可直接被 GC, "忘记 Stop 导致泄漏"已大幅缓解, 但触发前仍占用内存, 循环内高频 `time.After` 依旧要避免).
 3. slice 引用大数组: 小切片持有整个底层数组 (2.3), 应 copy 出独立副本.
 4. map 只增不缩: delete 只标记不缩容 (3.2), 曾经的大 map 内存不释放, 需换新 map.
 5. 局部变量被全局结构 (如全局 map) 引用而无法快速释放.
@@ -1382,22 +1393,22 @@ GC 只能回收"不可达"的内存; 泄漏的本质是预期很快释放的内�
 
 ```bash
 $ GODEBUG=gctrace=1 ./main
-gc 2 @0.001s 2%: 0.018+1.1+0.029 ms clock, 0.22+0.047/0.074/0.048+0.34 ms cpu, 4->7->3 MB, 3 MB stacks, 1 MB globals, 5 MB goal, 12 P
+gc 2 @0.001s 2%: 0.018+1.1+0.029 ms clock, 0.22+0.047/0.074/0.048+0.34 ms cpu, 4->7->3 MB, 5 MB goal, 3 MB stacks, 1 MB globals, 12 P
 scvg: inuse: 3, idle: 60, sys: 63, released: 57, consumed: 7 (MB)
 ```
 
-gc 行字段含义:
+gc 行字段含义 (字段顺序以官方 runtime 文档为准, gctrace 输出不是稳定接口):
 
-| 字段                         | 含义                                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------------------- |
-| gc 2                         | 第 2 个 GC 周期                                                                             |
-| @0.001s 2%                   | 程序启动后时刻; 该周期 GC 的 CPU 占比                                                       |
-| 0.018+1.1+0.029 ms clock     | 标记开始 STW + 并发标记 + 标记终止 STW 的实际耗时                                           |
-| 0.22+.../.../...+0.34 ms cpu | 各阶段的 CPU 时间 (中间三段为 标记辅助/并发标记/GC 空闲)                                    |
-| `4->7->3 MB`                 | 标记开始堆大小 → 标记结束堆大小 → 存活对象大小                                              |
-| 3 MB stacks, 1 MB globals    | 栈内存与全局变量内存 (Go 1.22+ 输出)                                                        |
-| 5 MB goal                    | 本轮 GC 的堆目标 (heap goal), 约为上轮存活堆 x (1+GOGC/100), 下一轮目标在本轮结束时重新计算 |
-| 12 P                         | P 的数量                                                                                    |
+| 字段                         | 含义                                                                                                                                   |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| gc 2                         | 第 2 个 GC 周期                                                                                                                        |
+| @0.001s 2%                   | 程序启动后时刻; 该周期 GC 的 CPU 占比                                                                                                  |
+| 0.018+1.1+0.029 ms clock     | 标记开始 STW + 并发标记 + 标记终止 STW 的实际耗时                                                                                      |
+| 0.22+.../.../...+0.34 ms cpu | 各阶段的 CPU 时间 (中间三段为 标记辅助/并发标记/GC 空闲)                                                                               |
+| `4->7->3 MB`                 | 标记开始堆大小 → 标记结束堆大小 → 存活对象大小                                                                                         |
+| 5 MB goal                    | 本轮 GC 的堆目标 (heap goal, 即 runtime/metrics 的 /gc/heap/goal:bytes), 约为上轮存活堆 x (1+GOGC/100), 下一轮目标在本轮结束时重新计算 |
+| 3 MB stacks, 1 MB globals    | 待扫描的栈内存与全局变量内存估计 (/gc/scan/stack:bytes、/gc/scan/globals:bytes)                                                        |
+| 12 P                         | P 的数量                                                                                                                               |
 
 scvg 行是 scavenger 归还 OS 的统计: inuse (在用)、idle (空闲待归还)、sys (从 OS 取得)、released (已归还)、consumed (净消耗), 单位 MB.
 
@@ -1407,7 +1418,9 @@ scvg 行是 scavenger 归还 OS 的统计: inuse (在用)、idle (空闲待归�
 
 ---
 
-## 14. defer、panic 与 recover
+## 14. defer、panic/recover 与错误处理
+
+### 14.1 defer 的执行时机与性能演进
 
 defer 的执行时机与性能演进? recover 为什么必须直接写在 defer 函数里?
 
@@ -1437,6 +1450,32 @@ panic/recover:
 3. 跨 goroutine 不可 recover: 任何一个 goroutine 未被 recover 的 panic 都会崩掉整个进程. 所以服务框架在两处必须兜底 recover: 请求处理入口的中间件 (如 HTTP 框架的 recovery 中间件把 panic 转 500 并打印堆栈), 以及自己启动的每个后台 goroutine 顶部.
 4. 不可恢复的是 `runtime.fatal`/`throw` (并发写 map、栈溢出、所有 G 死锁 "all goroutines are asleep"), recover 无效.
 5. 语义规约: panic 只用于程序性错误 (不可能到达的分支、初始化失败), 业务错误一律返回 error.
+
+### 14.2 error 错误处理体系
+
+Go 没有异常机制, 错误处理靠多返回值 + `error` 接口. 核心是四个问题: 怎么造、怎么传、怎么判、怎么聚.
+
+A:
+
+1. error 只是接口值. `type error interface { Error() string }`, 任何实现了该方法的类型都是 error——所以错误处理的本质就是接口动态类型判断, 这也是 5.2 nil 陷阱与"typed nil 装箱"问题的共同根源.
+
+2. 两类错误风格:
+   - 哨兵错误 (sentinel): 包级变量 `var ErrNotFound = errors.New("not found")`, 调用方用 `errors.Is(err, ErrNotFound)` 判定. 适合"错误本身即信息"的场景.
+   - 结构化错误 (typed): 自定义类型携带上下文, 如 `type PathError struct { Op, Path string; Err error }`, 调用方用 `errors.As(err, &pe)` 取出字段. 需要错误携带数据 (路径、操作名、重试次数) 时用这个.
+
+3. 包装与错误链 (Go 1.13 引入 `%w`): `fmt.Errorf("read config %s: %w", name, err)` 生成一个实现 `Unwrap() error` 的包装错误, 原始错误挂进链里. 判定一律走 `errors.Is`/`errors.As` (沿链递归解包), 不要用 `==` 比哨兵 (会漏掉链上的包装层), 更不要用 `err.Error()` 字符串匹配.
+
+4. 多错误聚合 (Go 1.20): `errors.Join(errs...)` 把多个错误合成一个 (其 `Unwrap() []error` 返回全部), `errors.Is/As` 能识别链上任意成员. 并发任务收集全部失败 (而非首错) 时的标准做法, 与 10.7 errgroup 的"首错返回"形成互补.
+
+5. 泛型版断言 (Go 1.26): `errors.AsType[*MyError](err)` 是 `errors.As` 的类型安全替代——编译期确定目标类型, 无需声明 `var target *MyError` 再取地址, 内部也更快; 新代码优先使用.
+
+6. 工程规约:
+   - 包装只发生在"能提供新上下文"的层 (`open config: %w`), 每层加一句, 最终堆栈式可读; 不改变错误语义时不要为了包装而包装.
+   - 错误是值: 不静默忽略——直接丢弃返回值会被 vet 的 unusedresult (针对 `errors.New`/`fmt.Errorf` 等)、staticcheck SA4006 或 errcheck 拦截; 有意忽略时显式 `_ = f()` 并注释原因.
+   - 不拿 error 做控制流: 预期的分支状态 (如缓存 miss) 用显式布尔/哨兵值表达, 别让调用方靠解析 error 区分.
+   - 跨层/跨网络边界返回的 error 文本会进日志和响应, 注意不要泄漏内部细节; 面向 API 的错误码与内部 error 分离.
+   - 与 ctx 配合: 超时/取消统一用 `ctx.Err()` (Canceled/DeadlineExceeded) 判别, 不要自造 timeout 错误类型 (9.1).
+   - panic 与 error 的边界见 14.1 第 5 条; `defer recover` 兜底把 panic 转成 error 返回是框架层的最后一道防线, 业务层不应依赖它.
 
 ---
 
@@ -1480,7 +1519,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o app
 
 - `CGO_ENABLED=0` 后, `net` 包用纯 Go DNS 解析器、`os/user` 用纯 Go 实现, 二进制不依赖 glibc——glibc 版本兼容性问题 (老系统跑新编译产物报 `GLIBC_2.xx not found`) 和 alpine (musl) 兼容问题一并消失. 这是"FROM scratch 镜像 + 单二进制"部署模式的基础.
 - 注意默认值: 本机构建 CGO 默认开启, 但交叉编译时 CGO 默认自动关闭——所以"在 mac 上编 linux 版没问题, 在 linux 上本机编却动态链接了"是常见困惑.
-- CGO 调用本身的代价: 每次 C 调用需切换到系统栈、保存调度状态 (约几十 ns, 比普通调用慢 1~2 个数量级); C 代码阻塞会占死 M (运行时看不见 C 内部), 大量并发 CGO 调用导致线程暴涨; C 内存不受 GC 管理, 跨界传指针受 cgo pointer passing 规则约束 (Go 指针不能被 C 长期持有).
+- CGO 调用本身的代价: 每次 C 调用需切换到系统栈、保存调度状态 (约几十 ns, 比普通调用慢 1~2 个数量级); C 代码阻塞会占死 M (运行时看不见 C 内部), 大量并发 CGO 调用导致线程暴涨; C 内存不受 GC 管理, 跨界传指针受 cgo pointer passing 规则约束 (Go 指针不能被 C 长期持有). 官方持续在压缩这层开销: 1.24 新增 `#cgo noescape`/`#cgo nocallback` 注解 (声明 C 函数不逃逸参数/不回调 Go, 编译器可省去栈切换的部分工作), 1.26 又把 cgo 调用的基线运行时开销再降约 30%.
 - 需要 CGO 的场景 (SQLite、部分压缩/加密库): 优先找纯 Go 替代 (如 modernc.org/sqlite); 必须 CGO 就用 musl 工具链或 zig cc 做静态交叉编译.
 
 ### 15.3 构建约束: build tags 与文件后缀
@@ -1520,11 +1559,13 @@ go build -trimpath \
 - `-X pkg.var=value`: 注入版本号/commit, 配合 `app --version` 与监控上报. 1.18+ 也可用 `runtime/debug.ReadBuildInfo` 直接读 VCS 信息.
 - 多平台发布: goreleaser 或 Makefile 矩阵循环 GOOS/GOARCH; 容器多架构用 `docker buildx --platform linux/amd64,linux/arm64`, Dockerfile 中利用 `TARGETOS/TARGETARCH` 参数传给 go build (交叉编译比 QEMU 模拟构建快一个量级).
 - 版本一致性: go.mod 的 toolchain 指令 (1.21+) 锁定工具链版本, CI 与本地一致.
-- 可选 PGO (1.21+ 正式可用): 把生产 pprof profile 放到 `default.pgo`, 编译器按真实热点做内联/去虚化, 典型收益 2%~7%.
+- 可选 PGO (1.20 实验性, 1.21+ 正式可用): 把生产 pprof profile 放到 `default.pgo`, 编译器按真实热点做内联/去虚化; 官方口径的收益区间 1.21 约 2%~7%, 1.22 扩大去虚化覆盖面后为 2%~14%.
 
 ---
 
-## 16. 泛型要点
+## 16. 泛型与迭代器
+
+### 16.1 泛型的实现方式与取舍
 
 Go 泛型的实现方式? 和 C++ 模板、Java 泛型的区别? 什么时候不该用泛型?
 
@@ -1533,6 +1574,37 @@ A:
 1. 实现是 GC Shape Stenciling + 字典的混合方案: 按"GC 形状" (大小 + 指针布局) 分组实例化——所有指针类型共享一份代码 (`*int`、`*Foo` 同 shape), 差异信息 (方法地址、类型元数据) 通过隐藏的字典参数运行时传入. 对比: C++ 模板对每个类型完整单态化 (零运行时开销、代码膨胀、编译慢); Java 类型擦除 (全部装箱, 运行时无类型); Go 取中间: 避免膨胀, 但同 shape 类型经字典的间接调用可能无法内联, 性能敏感处泛型未必快于接口, 更不如手写具体类型.
 2. 类型约束 (constraint) 是接口的扩展: 类型集合语法 `~int | ~string` (`~` 表示底层类型匹配)、`comparable` 内置约束. 约束只用于编译期检查与方法集推导.
 3. 何时用: 容器/数据结构 (`slices`、`maps` 包)、算法骨架 (Map/Filter/Reduce)、类型安全的池与缓存 (`Pool[T]`). 何时不用: 仅一两个类型的场景直接写两份; 行为抽象 (多态) 仍然用接口——接口抽象"行为", 泛型抽象"类型", 泛型不是接口的替代品.
+
+### 16.2 迭代器与 range over func/int
+
+1.22 起 `for range 10` 直接按整数迭代; range over func 在 1.22 以 `GOEXPERIMENT=rangefunc` 实验性提供, 1.23 正式支持, 把"遍历"抽象成一对标准签名:
+
+```go
+// iter 包的两个核心类型
+type Seq[V any] func(yield func(V) bool)
+type Seq2[K, V any] func(yield func(K, V) bool)
+```
+
+`for v := range seq` 编译为对 `seq(yield)` 的调用, 循环体即 yield 闭包; yield 返回 false (break) 时迭代器应停止产生. 价值:
+
+1. 标准库全面迭代器化: `slices`/`maps` 包 (1.21 的函数 + 1.23 的 `All/Values/Keys/Collect` 等迭代器族)、`strings.Lines`、`bytes.Lines/SplitSeq/FieldsSeq` 等, 惰性求值、不产生中间切片.
+2. 自定义数据结构获得一等公民的遍历语法: 树、跳表、游标式 DB 扫描都可实现 `Seq`, 调用方写 `for k, v := range tree.Entries()` 即可, 支持 break/continue/defer 语义 (与回调 forEach 的本质区别).
+3. 双向互转: `slices.Collect`/`slices.AppendSeq` 在迭代器与 slice 间转换; `maps.Keys(m)` 返回 `iter.Seq[K]`, 配合 `slices.Sorted` 一行得到有序 key 序列, 配合 `iter.Filter`/`slices.Collect` 链式过滤.
+
+代价认知: 迭代器调用经过函数指针, 编译器内联后通常与手写循环持平, 但不保证更快; 热路径上以基准实测为准. 反射的迭代器 API (6.2) 与 `go/types` 的迭代器方法都建立在这套机制上.
+
+### 16.3 泛型的版本演进 (1.24-1.26)
+
+- 1.24: 泛型类型别名正式支持 (`type Set[T comparable] = map[T]struct{}` 的参数化别名).
+- 1.26: 解除"类型参数不得引用正在定义的泛型类型自身"的限制, F-边界约束可用:
+
+```go
+type Adder[A Adder[A]] interface {
+    Add(A) A
+}
+```
+
+- 1.26: 内建 `new` 接受表达式初始值 (`new(len("abc"))` 得 `*int` 指向 3), 补齐了泛型/序列化场景中"临时取地址"的长期痛点 (见 1.4).
 
 ---
 
@@ -1555,6 +1627,13 @@ go tool pprof -http=:8081 "http://svc:6060/debug/pprof/profile?seconds=30"
 goroutine 上涨: `/debug/pprof/goroutine?debug=1` 按创建点聚类, 一眼看到几万个 G 卡在同一行 channel recv/send —— 回到 8.5 的四种泄漏模式对号入座. 测试期用 goleak 拦截.
 
 竞态: CI 全量 `go test -race ./...` 强制门禁; 复现困难的偶发数据损坏, 优先怀疑 data race 而不是"灵异问题".
+
+近两年工具链的排查能力演进 (值得纳入排查路径):
+
+1. `runtime/trace.FlightRecorder` (Go 1.25): 持续把执行 trace 写入内存环形缓冲, 异常发生时调 `WriteTo` 把最近几秒落盘——常驻 trace 终于便宜到可以开着, 专门捕捉低频的调度/GC/网络毛刺.
+2. goroutineleak profile (Go 1.26 实验性, 1.27 起已默认开启/转正, `GOEXPERIMENT=goroutineleakprofile` 开关已删除): 见 8.5, 结构性 goroutine 泄漏的直接证据.
+3. `go tool pprof -http` 的 web UI 从 1.26 起默认展示火焰图 (旧图形视图在 View → Graph).
+4. `runtime/metrics` 新增调度器指标 (1.26): `/sched/goroutines` 前缀下各状态的 G 计数、`/sched/threads:threads` 线程数、`/sched/goroutines-created:goroutines` 累计创建数, 比 NumGoroutine 单点采样更适合做监控大盘.
 
 ---
 
@@ -1712,10 +1791,10 @@ A: Go modules 用 MVS (Minimal Version Selection, 最小版本选择): 构建时
 1. 确定性来自算法而非锁文件: 同一份 go.mod 在任何机器上解析出同一版本集合. `go.sum` 不是锁文件, 只是模块内容的哈希校验清单 (防篡改/防上游偷换 tag), 删掉重新生成不改变版本选择.
 2. 升级是显式动作: `go get -u ./...` (升 minor/patch)、`go get pkg@v1.5.0` (指定)、`go get pkg@none` (移除).
 3. 语义导入版本 (SIV): v2+ 主版本必须在模块路径带后缀 (`github.com/x/y/v2`), 不同主版本是不同模块可共存——这是"import 兼容性规则": 同一导入路径必须始终向后兼容.
-4. 常用指令: `go mod tidy` (增删依赖并同步 go.sum)、`go mod why -m <mod>` (谁引入的)、`go mod graph` (依赖图)、`go mod vendor`; `replace` 本地调试多仓库 (只对主模块生效, 库发布前必须删)、`exclude` 排除坏版本、`retract` (模块作者撤回自己发的坏版本).
+4. 常用指令: `go mod tidy` (增删依赖并同步 go.sum)、`go mod why -m <mod>` (谁引入的)、`go mod graph` (依赖图)、`go mod vendor`; `replace` 本地调试多仓库 (只对主模块生效, 库发布前必须删)、`exclude` 排除坏版本、`retract` (模块作者撤回自己发的坏版本). 1.24+ 另有 `tool` 指令声明工具依赖 (替代 tools.go 空导入 hack, 配合 `go get -tool`、`go tool <name>` 与 `tool` meta-pattern); 1.25+ 的 `ignore` 指令可让 go 命令在匹配 `./...` 等模式时跳过指定目录.
 5. 多模块本地开发用 go.work (1.18+ workspace): 替代满屏 replace, `go work use ./yukino_cache ./yukino_rpc` 即可联调, go.work 不提交仓库.
-6. 环境三件套: `GOPROXY` (国内 goproxy.cn; `direct` 回源)、`GOSUMDB` (哈希透明日志校验)、`GOPRIVATE` (私有仓库跳过 proxy 与 sumdb).
-7. `toolchain` 指令 (1.21+): go.mod 声明所需工具链版本, 本地 go 自动下载切换, 锁定 CI 与开发机一致.
+6. 环境三件套: `GOPROXY` (国内 goproxy.cn; `direct` 回源)、`GOSUMDB` (哈希透明日志校验)、`GOPRIVATE` (私有仓库跳过 proxy 与 sumdb); 1.24+ 的 `GOAUTH` 为私有模块拉取提供可插拔认证 (见 `go help goauth`).
+7. `toolchain` 指令 (1.21+): go.mod 声明所需工具链版本, 本地 go 自动下载切换, 锁定 CI 与开发机一致. 1.25 起 go 命令更新 go 行时不再自动追加 toolchain 行; 1.26 起 `go mod init` 默认生成比当前工具链低一个版本的 go 指令 (1.26 工具链生成 `go 1.25.0`), 鼓励新模块兼容仍在支持期内的版本.
 
 ### 20.2 go vet 与静态检查体系
 
@@ -1723,18 +1802,21 @@ go vet 能查出哪些 bug? 它和编译器、race detector 的分工?
 
 A: vet 做编译器不管的语义检查——代码合法但大概率是 bug 的模式. 与本文各章直接相关的检查项:
 
-| 检查器                       | 抓什么                                             | 对应章节 |
-| ---------------------------- | -------------------------------------------------- | -------- |
-| `printf`                     | 格式动词与参数类型不匹配                           | -        |
-| `copylocks`                  | 值拷贝含 `sync.Mutex/WaitGroup` 的结构 (noCopy)    | 10.3     |
-| `lostcancel`                 | `WithCancel/WithTimeout` 返回的 cancel 未调用      | 9.2      |
-| `loopclosure`                | 循环变量被闭包捕获 (1.22 后基本退役)               | 18-Q1    |
-| `atomic`                     | `x = atomic.AddInt64(&x, 1)` 这类误用              | 10.5     |
-| `structtag`                  | json/db tag 语法错误                               | -        |
-| `unusedresult`               | 忽略了必须使用的返回值 (如 `errors.New`)           | -        |
-| `nilfunc/unreachable/shadow` | nil 函数比较、死代码、变量遮蔽 (shadow 需显式开启) | -        |
+| 检查器                       | 抓什么                                                                                | 对应章节 |
+| ---------------------------- | ------------------------------------------------------------------------------------- | -------- |
+| `printf`                     | 格式动词与参数类型不匹配; 1.24 起还报 `fmt.Printf(s)` 这类非常量格式串调用            | -        |
+| `copylocks`                  | 值拷贝含 `sync.Mutex/WaitGroup` 的结构 (noCopy); 1.24 起覆盖三子句 for 循环变量拷贝锁 | 10.3     |
+| `lostcancel`                 | `WithCancel/WithTimeout` 返回的 cancel 未调用                                         | 9.2      |
+| `loopclosure`                | 循环变量被闭包捕获 (1.22 后基本退役)                                                  | 18-Q1    |
+| `atomic`                     | `x = atomic.AddInt64(&x, 1)` 这类误用                                                 | 10.5     |
+| `structtag`                  | json/db tag 语法错误                                                                  | -        |
+| `unusedresult`               | 忽略了必须使用的返回值 (如 `errors.New`)                                              | -        |
+| `tests` (1.24+)              | 测试/基准/模糊/示例的函数名或签名错误, 导致用例根本不会跑                             | 20.3     |
+| `waitgroup` (1.25+)          | `WaitGroup.Add` 位置错误 (在 goroutine 内部 Add)                                      | 19.2     |
+| `hostport` (1.25+)           | `fmt.Sprintf("%s:%d", host, port)` 拼地址 (IPv6 会炸), 建议 `net.JoinHostPort`        | -        |
+| `nilfunc/unreachable/shadow` | nil 函数比较、死代码、变量遮蔽 (shadow 需显式开启)                                    | -        |
 
-要点: `go test` 会自动运行 vet 的高置信子集 (atomic/bool/buildtags/errorsas/printf 等), 所以 CI 跑了 test 不等于跑全了 vet, 应显式 `go vet ./...`. 分工: 编译器管合法性, vet 管"合法但可疑" (静态、零成本、有漏报), race detector 管动态数据竞争 (11 节, 有运行时成本、只覆盖执行到的路径). 更强的工程配置: `staticcheck` / `golangci-lint` 聚合数百条检查; 自定义规则用 `golang.org/x/tools/go/analysis` 框架写 analyzer, 可直接挂进 `go vet -vettool=`.
+要点: `go test` 会自动运行 vet 的高置信子集 (atomic/bool/buildtags/errorsas/printf/tests 等), 所以 CI 跑了 test 不等于跑全了 vet, 应显式 `go vet ./...`. 分工: 编译器管合法性, vet 管"合法但可疑" (静态、零成本、有漏报), race detector 管动态数据竞争 (11 节, 有运行时成本、只覆盖执行到的路径). 更强的工程配置: `staticcheck` / `golangci-lint` 聚合数百条检查; 自定义规则用 `golang.org/x/tools/go/analysis` 框架写 analyzer, 可直接挂进 `go vet -vettool=`. 1.26 起 `go fix` 基于同一 analysis 框架重写为 modernizers 之家: 不只诊断, 还能一键把代码升级到新惯用法与新标准库 API (如替换为 `slices`/`maps` 函数、`b.Loop` 基准写法), 并支持 `//go:fix inline` 指令让用户自动化自己的 API 迁移.
 
 ### 20.3 go test 高级用法
 
@@ -1775,6 +1857,11 @@ func TestParse(t *testing.T) {
 4. 常用开关: `-race` (必须进 CI)、`-short` + `testing.Short()` 跳慢用例、`-run 'TestParse/empty'` 正则选例、`-shuffle=on` 打乱顺序暴露测试间依赖、`t.Setenv` (自动恢复且禁止与 Parallel 混用)、`-timeout`.
 5. Fuzzing (1.18+): `func FuzzParse(f *testing.F)` + `f.Add` (种子) + `f.Fuzz(func(t *testing.T, in string))`, 覆盖率引导变异; 崩溃样本落盘 `testdata/fuzz` 自动转为回归用例. 对 yukino_rpc 的 `PacketBuffer.Read` 这类手写二进制拆帧逻辑 (魔数重同步、长度字段边界), fuzz 是性价比最高的测试手段.
 6. 覆盖率: `go test -coverprofile=c.out ./... && go tool cover -html=c.out`; 1.20+ 支持集成测试覆盖率 (`go build -cover` + `GOCOVERDIR` 收集编译进二进制的插桩数据).
+7. 近年测试 API 演进:
+   - `T.Context()` / `B.Context()` (1.24): 返回与测试生命周期绑定的 ctx, 测试结束、清理函数执行前自动取消——被测代码接收 ctx 时直接用, 省去手工 WithTimeout 样板.
+   - `T.Chdir()` / `B.Chdir()` (1.24): 临时切换工作目录并自动恢复 (与 `t.Parallel` 互斥), 替代手写 os.Chdir + defer.
+   - `T.ArtifactDir()` 等 (1.26): 测试产物 (截图、dump、快照) 的正规输出目录, 配合 `go test -artifacts` 落到 `-outputdir` 下, 否则是测试结束即删除的临时目录.
+   - `testing/synctest` (1.24 实验性 GOEXPERIMENT=synctest, 1.25 转正): `synctest.Test(t, f)` 在隔离气泡内执行 f, 气泡内 time 包使用虚拟时钟且全员阻塞时瞬间快进, f 返回后气泡内仍有未退出 goroutine 即测试失败——time.Sleep/超时代码可毫秒级测完, goroutine 泄漏内建检测 (8.5). `t.Setenv`/`AllocsPerRun` 等旧 API 与并行测试的冲突仍要注意.
 
 ### 20.4 benchmark 写法与陷阱
 
@@ -1807,11 +1894,26 @@ func BenchmarkEncodeLoop(b *testing.B) {
 机制与陷阱:
 
 1. b.N 自适应: 框架先跑 N=1, 按耗时逐步放大 N 直到总时长达标 (默认 1s), 所以循环体必须与 N 无关——在循环里 `append` 到同一个 slice 会让后期迭代越来越慢, 测出假数据.
-2. 死代码消除 (DCE): 结果不被使用, 编译器可能把整个调用优化掉, 测出 0.3ns/op 的"神话". 对策: 结果赋给包级 `sink` 变量. 1.24 的 `b.Loop` 从根上解决: 循环体内的函数调用参数与结果自动保活, 且不允许内联穿透, 同时首次迭代自动重置计时器.
+2. 死代码消除 (DCE): 结果不被使用, 编译器可能把整个调用优化掉, 测出 0.3ns/op 的"神话". 对策: 结果赋给包级 `sink` 变量. 1.24 的 `b.Loop` 从根上解决: 首次迭代自动重置计时器, 循环体内函数调用的参数与结果自动保活防止被优化掉 (1.26 起赋值变量也保活). 注意早期 1.24/1.25 的 `b.Loop` 曾强制禁止循环体内联, 反而带来额外分配与更慢的基准; 1.26 取消了该限制, 官方口径是旧 b.N 基准可无损转换为 b.Loop 写法.
 3. 统计学: 单次结果无意义, `-count=10` + `benchstat` 看均值与 p 值 (±方差大说明环境噪声: 关 turbo boost、固定 CPU 频率、空闲机器). 对比优化前后必须 benchstat 给显著性, 不能看单次 3% 的"提升".
 4. `b.StopTimer/StartTimer` 包住循环内不可避免的准备逻辑 (代价高, 尽量重构避免); 并发基准用 `b.RunParallel(func(pb *testing.PB) { for pb.Next() {...} })`——测 mutex/atomic/sync.Map 竞争 (10.1、10.3 的结论都应该用它验证).
 5. 微基准的边界: ns 级操作受内联/缓存影响巨大, 结论不能外推到真实负载; 关键路径优化要以 pprof (17 节) 在真实流量下的火焰图为准, 微基准只用来对比同一操作的两种实现.
 6. 配套 profile: `go test -bench=. -cpuprofile=cpu.out -memprofile=mem.out`, 直接 `go tool pprof` 分析基准本身的热点.
+
+### 20.5 近年版本要点速查 (1.22-1.27)
+
+面试与升级评估都常问"最近几个版本改了什么", 按主题归类 (均以官方 release notes 为准):
+
+| 版本           | 语言                                                                                | 运行时/GC                                                                                                                                   | 工具链/标准库                                                                                                                                                                          |
+| -------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.22 (2024.02) | 循环变量每轮新实例; range over int                                                  | -                                                                                                                                           | math/rand/v2; net/http.ServeMux 方法+通配路由                                                                                                                                          |
+| 1.23 (2024.08) | range over func 转正 (1.22 rangefunc 实验, iter.Seq/Seq2)                           | timer/ticker 重做: timer 可被 GC, time.After 泄漏大幅缓解                                                                                   | unique 包; slices/maps/strings/bytes 迭代器函数 (All/Keys/Lines/SplitSeq 等)                                                                                                           |
+| 1.24 (2025.02) | 泛型类型别名                                                                        | Swiss Table map; 运行时整体 CPU 开销降 2~3%                                                                                                 | go.mod tool 指令; os.Root; runtime.AddCleanup; weak 包; B.Loop; T.Context; json omitzero; synctest 实验                                                                                |
+| 1.25 (2025.08) | (规范层面移除 core type 概念)                                                       | 容器感知 GOMAXPROCS + 动态调整; Green Tea GC 实验                                                                                           | WaitGroup.Go; testing/synctest 转正; trace.FlightRecorder; json/v2 实验; vet waitgroup/hostport                                                                                        |
+| 1.26 (2026.02) | new(expr); 自引用类型约束 (F-边界)                                                  | Green Tea GC 默认; cgo 开销 -30%; 堆基址随机化; goroutineleak profile 实验                                                                  | go fix modernizers; errors.AsType; reflect 迭代器; T.ArtifactDir; B.Loop 允许内联; pprof 默认火焰图                                                                                    |
+| 1.27 (2026.08) | 泛型方法 (方法可声明自己的类型参数); 结构体字面量键可用字段选择器; 函数类型推断泛化 | goroutineleak profile 转正; 尺寸特化 malloc (<80B 小分配最高快 30%); asynctimerchan GODEBUG 永久移除; traceback 头部带 pprof goroutine 标签 | encoding/json v1 内部切到 v2 实现 (json/v2 与 jsontext 转正, 可用 nojsonv2 回退); crypto/mldsa 后量子签名 + TLS 1.3 支持; uuid 新包; 实验性 simd 包; strings/bytes CutLast; Unicode 17 |
+
+使用姿势: 语言级新特性 (循环变量、range over func、new(expr)、自引用约束) 按 go.mod 的 go 指令版本门控; 运行时/工具行为多数直接生效, 个别提供 GODEBUG/GOEXPERIMENT 回退开关 (如 `noswissmap`、`nogreenteagc`、`containermaxprocs=0`). 升级前跑全量 `-race` 测试 + `go vet` + `gofmt -l` 是标准动作.
 
 ---
 
@@ -2165,24 +2267,26 @@ func main() {
 
 ## 附: 速答卡片 (30 秒版本)
 
-| 问题             | 30 秒答案骨架                                                                                 |
-| ---------------- | --------------------------------------------------------------------------------------------- |
-| slice 扩容       | 期望容量 (小于 256 翻倍, 否则 ~1.25x 平滑) → roundupsize 对齐 size class → mallocgc + memmove |
-| map 并发写       | hashWriting 标志位检测 → fatal 不可 recover → RWMutex / sync.Map / 分片锁                     |
-| GMP 为什么要 P   | 无锁本地队列 + per-P mcache + 阻塞时 handoff 整体交接                                         |
-| 抢占             | 1.14 前协作式 (函数序言检查), 1.14+ SIGURG 信号异步抢占                                       |
-| channel send     | 有等待接收者直传栈 → 缓冲有空写 buf → 挂 sendq gopark                                         |
-| context 取消     | close(done) 广播 + 递归 cancel children, 只向下传播, defer cancel 防泄漏                      |
-| Mutex 饥饿       | 等待超 1ms 转饥饿模式, 锁直接移交队首, 牺牲吞吐换尾延迟公平                                   |
-| GC               | 并发三色标记 + 混合写屏障 (旧值新值都标灰) 免重扫栈, STW 亚毫秒; 调 GOGC/GOMEMLIMIT           |
-| 逃逸             | 返回指针 / interface 装箱 / 闭包捕获 / 编译期大小未知; -gcflags=-m 观测                       |
-| 交叉编译         | GOOS/GOARCH 一条命令; CGO_ENABLED=0 得纯静态二进制进 scratch 镜像                             |
-| sync.Map 结构    | read 只读层无锁读 + dirty 加锁层, misses 达阈值 dirty 晋升; 读多写少或 key 不相交             |
-| 分片锁 map       | 2 的幂分片 + hash&mask 定位, 每片独立锁; Len/Range 无一致性视图                               |
-| sysmon           | 不绑 P 的监控线程: retake 抢占、netpoll 兜底、2min 强制 GC                                    |
-| 死锁检测         | 仅全体 G 休眠才 fatal; 部分死锁不报 → goroutine dump 按栈聚类找互等环                         |
-| RWMutex 读锁重入 | 持 RLock 再 RLock, 写者在中间插队 → 死锁; 递归读锁被文档明令禁止                              |
-| GC 不分代原因    | 逃逸分析把短命对象留在栈上, 分代收益低; 不压缩换免读屏障 + cgo 指针稳定                       |
-| errgroup         | WaitGroup + 首错记录 + ctx 取消 + SetLimit 限流; 不杀 goroutine 只取消 ctx                    |
-| go mod MVS       | 取所有 require 的最小满足版本, 算法即确定性; go.sum 是哈希校验不是锁文件                      |
-| benchmark 防坑   | b.N 循环体与 N 无关 + sink 防 DCE (1.24 用 b.Loop) + benchstat -count=10 看显著性             |
+| 问题             | 30 秒答案骨架                                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| slice 扩容       | 期望容量 (小于 256 翻倍, 否则 ~1.25x 平滑) → roundupsize 对齐 size class → mallocgc + memmove                                                          |
+| map 并发写       | hashWriting 标志位检测 → fatal 不可 recover → RWMutex / sync.Map / 分片锁                                                                              |
+| GMP 为什么要 P   | 无锁本地队列 + per-P mcache + 阻塞时 handoff 整体交接                                                                                                  |
+| 抢占             | 1.14 前协作式 (函数序言检查), 1.14+ SIGURG 信号异步抢占                                                                                                |
+| channel send     | 有等待接收者直传栈 → 缓冲有空写 buf → 挂 sendq gopark                                                                                                  |
+| context 取消     | close(done) 广播 + 递归 cancel children, 只向下传播, defer cancel 防泄漏                                                                               |
+| Mutex 饥饿       | 等待超 1ms 转饥饿模式, 锁直接移交队首, 牺牲吞吐换尾延迟公平                                                                                            |
+| GC               | 并发三色标记 + 混合写屏障 (旧值新值都标灰) 免重扫栈, STW 亚毫秒; 1.26 起默认 Green Tea GC (标记局部性 + 向量化扫描, 开销 -10%~40%); 调 GOGC/GOMEMLIMIT |
+| 逃逸             | 返回指针 / interface 装箱 / 闭包捕获 / 编译期大小未知 (1.25+ 变长 make 也更多留栈); -gcflags=-m 观测                                                   |
+| 交叉编译         | GOOS/GOARCH 一条命令; CGO_ENABLED=0 得纯静态二进制进 scratch 镜像                                                                                      |
+| sync.Map 结构    | ≤1.23: read 只读层无锁读 + dirty 加锁层, misses 达阈值 dirty 晋升; 1.24+ hash-trie 按子树加锁、无预热期; 读多写少或 key 不相交                         |
+| 分片锁 map       | 2 的幂分片 + hash&mask 定位, 每片独立锁; Len/Range 无一致性视图                                                                                        |
+| sysmon           | 不绑 P 的监控线程: retake 抢占、netpoll 兜底、2min 强制 GC                                                                                             |
+| 死锁检测         | 仅全体 G 休眠才 fatal; 部分死锁不报 → goroutine dump 按栈聚类找互等环; goroutineleak profile (1.26 实验, 1.27 转正) 补位                               |
+| RWMutex 读锁重入 | 持 RLock 再 RLock, 写者在中间插队 → 死锁; 递归读锁被文档明令禁止                                                                                       |
+| GC 不分代原因    | 逃逸分析把短命对象留在栈上, 分代收益低; 不压缩换免读屏障 + cgo 指针稳定                                                                                |
+| 错误处理         | error 是接口值; %w 包装成链, Is/As 沿链判定, Join 聚合, AsType (1.26) 类型安全断言; panic 只用于程序性错误                                             |
+| 迭代器           | 1.23+ range over func (iter.Seq/Seq2); 标准库 slices/maps/strings 迭代器化; 支持 break/defer, 与回调的本质区别                                         |
+| errgroup         | WaitGroup + 首错记录 + ctx 取消 + SetLimit 限流; 不杀 goroutine 只取消 ctx                                                                             |
+| go mod MVS       | 取所有 require 的最小满足版本, 算法即确定性; go.sum 是哈希校验不是锁文件                                                                               |
+| benchmark 防坑   | b.N 循环体与 N 无关 + sink 防 DCE; 1.24+ 用 b.Loop (1.26 起允许内联, 可放心转换) + benchstat -count=10 看显著性                                        |
