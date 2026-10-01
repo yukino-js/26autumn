@@ -5,11 +5,11 @@ description: "基于代码事实梳理 yukino-chat 的 Hono/Prisma/PostgreSQL �
 
 > 本机器路径 `$HOME/github/yukino-chat`
 
-yukino-chat 是一个自托管实时聊天平台: 单聊/群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个 Yukino AI coding agent 作为一等聊天参与者. 前端是 React 19 + Vite 8 的 SPA (`client/`), 后端是 TypeScript/Hono 服务 (`server/`), 数据落 PostgreSQL (Prisma 7), 缓存走 Redis (可降级进程内存). 本文所有结论均以仓库源码为准; 需要特别指出的是, 仓库内 README.md、AGENTS.md 与 Docker 物料仍描述一个 Go + MongoDB 后端, 而当前代码树中没有任何 `.go` 文件, server 是对该 Go 版本的逐语义 TypeScript 移植 (源码注释中大量 "Go parity" 标注), 文中对不一致处逐一注明.
+yukino-chat 是一个自托管实时聊天平台: 单聊/群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个 Yukino AI coding agent 作为一等聊天参与者. 前端是 React 19 + Vite 8 的 SPA (`client/`), 后端是 TypeScript/Hono 服务 (`server/`), 数据落 PostgreSQL (Prisma 7), 缓存走 Redis (可降级进程内存). 本文所有结论均以仓库源码为准; 需要特别指出的是, README.md 曾长期描述一个 Go + MongoDB 后端 (与代码树中 0 个 `.go` 文件的事实不符), 已于 2026-10-01 的 `a850cce` 提交整体重写为与 TypeScript 工作区一致; 而 AGENTS.md 与 `client/` 下的 Docker 物料仍停留在 Go 版描述. server 是对旧 Go 版本的逐语义 TypeScript 移植 (源码注释中大量 "Go parity" 标注), 文中对残留不一致处逐一注明.
 
 ## 一、项目快照
 
-本机仓库 2026-09-30 核实 (`git log`): HEAD 为 `f198caf` "feat: Update npm registry [skip ci]", 提交日期 2026-09-30 13:26:20 +0800; 仓库共两个提交 (`28b789b` Initial commit, 2026-09-30 13:01:41 +0800 与 `f198caf`); remote 为 `git@github.com:hangtiancheng/yukino-chat.git`, 分支 `main`, 工作区干净. 初始提交即包含全部代码, 其中 0 个 `.go` 文件.
+本机仓库 2026-10-01 核实 (`git log`): HEAD 为 `a850cce` "docs: rewrite README to match the TypeScript workspace layout", 提交日期 2026-10-01 01:29:02 +0800; 仓库共三个提交 (`28b789b` Initial commit, 2026-09-30 13:01:41 +0800; `f198caf` "feat: Update npm registry [skip ci]", 2026-09-30 13:26:20 +0800; `a850cce`, 仅改写 README.md, +171/-135 行); remote 为 `git@github.com:hangtiancheng/yukino-chat.git`, 分支 `main`, 工作区干净. 全部代码在初始提交引入, 其中 0 个 `.go` 文件.
 
 | 维度         | 内容                                                                                                                             |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -62,16 +62,17 @@ yukino-chat/
     └── tests/              # vitest 单测 + http/ws smoke 脚本
 ```
 
-### 与 README/AGENTS.md 的不一致 (以代码为准)
+### 与 AGENTS.md / Docker 物料的不一致 (以代码为准)
 
-| README/AGENTS.md 的说法                                      | 代码事实                                                                                                                                                             |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Go 1.26 后端, `yukino_http`/`yukino_orm`/`yukino_cache`      | 无任何 `.go` 文件; Hono 4 + Prisma 7 的 TS 服务 (server/package.json description: "yukino-chat backend (TypeScript/Hono)")                                           |
-| MongoDB 7 存储                                               | PostgreSQL (`datasource db { provider = "postgresql" }`, server/prisma/schema.prisma:6-8)                                                                            |
-| 项目结构 `src/` 为前端、`server/cmd`+`server/internal` 为 Go | 前端在 `client/src/`, 后端在 `server/src/`; `server/cmd`、`server/internal` 不存在                                                                                   |
-| "WebSocket endpoints do not validate tokens"                 | `/wss` 与 `/agent/ws` 均以 query token 验签, `/wss` 还校验 `client_id` 与 token uuid 一致 (server/src/routes/ws-chat-route.ts:19-28); `/dashboard/ws` 额外要求 admin |
-| `pnpm dev` 启动 Vite                                         | 根 package.json 没有 dev 脚本 (仅 git:commit/git:push), 需分别在 client/server 下执行各自脚本                                                                        |
-| AGENTS.md 推荐 skills: yukino-http / yukino-orm              | 对应 Go 栈, 当前 TS 代码无从使用                                                                                                                                     |
+README.md 已在 `a850cce` 重写为与代码一致: 技术栈表 (React 19 + Vite 前端、Node.js 24 + Hono 后端、PostgreSQL/Prisma 7、Redis/ioredis、`@yukino.js/yukino` 进程内嵌入)、pnpm workspace 的 Getting Started、`server/.env` 完整环境变量表、`~/.yukino/config.yaml` 优先 + `YUKINO_AI_*` 回退的 agent 配置、三个 WS 端点的 JWT 鉴权与 `/login`/`/register`/`/user/update-password` 的按 IP 限流 (10/10/5 每分钟)、agent_sessions 持久化与重启再水化, 均已如实描述; README 还自报 `client/` 下 Docker 物料是 Go + MongoDB 遗留物. 当前仍与代码不符的只剩 AGENTS.md 与 Docker 物料:
+
+| AGENTS.md / Docker 物料的说法                                                                                 | 代码事实                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AGENTS.md: "./server is Go backend project: @server/cmd/main.go", 推荐 skills yukino-http / yukino-orm        | 无任何 `.go` 文件; Hono 4 + Prisma 7 的 TS 服务 (server/package.json description: "yukino-chat backend (TypeScript/Hono)"), `server/cmd` 不存在, 推荐的 Go skills 无从使用 |
+| AGENTS.md: "./server/internal/yukino -- the Yukino agent embedded in the chat server via @server/internal/ws" | `server/internal` 不存在; agent 实现在 `server/src/agent/`, 以 `@yukino.js/yukino` 0.0.4 库形式进程内嵌入                                                                  |
+| `client/Dockerfile` Stage 2 `COPY server/go.mod server/go.sum` + `go build ./cmd`                             | 这些文件在当前代码树不存在, 构建必然失败; `client/docker-compose.yml` 编排 mongo:7 + Go server + nginx, `client/docker/config.docker.json` 也是 Go 版形态                  |
+
+重写前旧 README 的历史性错误 (Go 1.26 后端 + `yukino_http`/`yukino_orm`/`yukino_cache`、MongoDB 7 存储、`src/` 为前端 + `server/cmd`+`server/internal` 为 Go 的目录结构、"WebSocket endpoints do not validate tokens"、根目录 `pnpm dev` 启动 Vite) 均已随 `a850cce` 修正. 其中 WS 鉴权的代码事实是: `/wss` 与 `/agent/ws` 均以 query token 验签, `/wss` 还校验 `client_id` 与 token uuid 一致 (server/src/routes/ws-chat-route.ts:19-28), `/dashboard/ws` 额外要求 admin —— 与新 README 的 Security 描述一致.
 
 代码中的移植痕迹非常密集: `coerceFrame` 注释 "Like Go's json.Unmarshal" (server/src/hub/message-pipeline.ts:543), JWT 头字节 "Same raw-base64url header bytes as the Go implementation" (server/src/common/jwt.ts:9), 缓存注释 "mirroring the Go server's two groupcache groups" (server/src/cache/cache-service.ts:4), 响应封装 "Go builds lists by appending to a nil slice: an empty result serializes as null" (server/src/common/envelope.ts:39-42), Prisma schema 注释 "the Go semantics (e.g. contact statuses 0-7) are load-bearing" (server/prisma/schema.prisma:10-12). server/.env 中还残留 "relative to the server2 working directory" 的注释, 暗示 TS 版曾被称为 server2.
 
@@ -262,7 +263,7 @@ UI 层 `store/call.ts` 维护 `phase: idle|ringing|dialing|active` 状态机, �
 
 ## 七、每用户 Yukino Agent: AgentManager 与 AgentRuntime
 
-这是本项目与纯 LLM 聊天应用的本质区别: 集成的不是 "调一次补全接口", 而是完整的 Yukino coding agent (工具执行、MCP、权限、计划模式、上下文压缩), 以 `@yukino.js/yukino` 0.0.4 库的形式嵌入服务进程. README 说的 "Go agent embedded via ws / spawns" 子进程模型与代码不符 —— 没有 spawn, 全部在进程内.
+这是本项目与纯 LLM 聊天应用的本质区别: 集成的不是 "调一次补全接口", 而是完整的 Yukino coding agent (工具执行、MCP、权限、计划模式、上下文压缩), 以 `@yukino.js/yukino` 0.0.4 库的形式嵌入服务进程. 旧 README 曾把 agent 描述为经 ws/spawn 挂接的 Go 子进程, 与代码不符 —— 没有 spawn, 全部在进程内; `a850cce` 重写后的 README 已如实写明 "embedded in-process via @yukino.js/yukino" (每用户一个 runtime, 工作区 `.yukino/chat/<uid>`, 空闲 30 分钟回收). 仍指向旧布局的是 AGENTS.md ("./server/internal/yukino ... via @server/internal/ws").
 
 ### 配置发现 (yukino-config.ts)
 
@@ -410,12 +411,12 @@ AI agent 侧的关系则是直接的: Go 版内嵌的是 Go 语言 Yukino agent,
 
 - 实际运行方式: server `pnpm dev` (tsx watch) 或 `pnpm build && pnpm start` (先 `prisma migrate` 建表); client `pnpm dev` (Vite, 默认 5173) 或构建后任意静态托管; `VITE_API_URL` 构建期内联 (client/src/env.ts, 默认 http://localhost:8000), `VITE_WS_URL` 可选, 缺省把 http 换成 ws
 - Docker 物料过时: `client/Dockerfile` 的 Stage 2 `COPY server/go.mod server/go.sum` 与 `go build ./cmd` 在当前代码树下必然失败 (这些文件不存在); `client/docker-compose.yml` 编排 mongo:7 + Go server + nginx, 与 PostgreSQL/Hono 现状不符; `client/docker/config.docker.json` 也是 Go 版 config.json 形态. 若需容器化 TS 版需重写 (node:24 + prisma migrate deploy + node dist/index.js)
-- 单实例约束仍然成立 (README 该节结论对 TS 版同样适用): ChatHub 连接表、CallManager 房间、MessagePipeline 串行链、AgentManager runtime 表全部在进程内存, 无跨实例总线
+- 单实例约束仍然成立 (重写后的 README "Deployment Constraints" 一节已明确 "Single instance only"): ChatHub 连接表、CallManager 房间、MessagePipeline 串行链、AgentManager runtime 表全部在进程内存, 无跨实例总线
 - 无 TLS: 明文 HTTP/WS, 需前置网关终结
 - `/user/update-password` 免鉴权按手机号重置, 公网暴露前必须加验证步骤 (README Deployment Constraints 与 user-service.ts 注释均承认)
 - WebRTC 无 STUN/TURN, 跨 NAT 通话打不通
 - 声明未消费的依赖: server 的 `minio` 8.0.7 与 `archiver` 7.0.1 在 server/src 与 tests 中零引用; env 的 `AGENT_WS_MAX_MESSAGE_BYTES` 未被路由读取
-- `.npmrc` 当前指向 registry.npmjs.org, 注释行保留 npmmirror —— HEAD 提交 "feat: Update npm registry [skip ci]" 改的正是这个文件
+- `.npmrc` 当前指向 registry.npmjs.org, 注释行保留 npmmirror —— `f198caf` 提交 "feat: Update npm registry [skip ci]" 改的正是这个文件
 - 其余杂项: 根 package.json 只有 git 便捷脚本; `client/package.json` 的 `dual` 脚本用 concurrently 把 `pnpm dev` 跑两遍 (双开联调用途); 仓库还提交了 `.playwright-cli/` 快照与 `server/static/` 下的示例上传文件
 
 ## 十四、小结

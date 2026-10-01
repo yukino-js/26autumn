@@ -38,10 +38,10 @@ git@github.com:hangtiancheng/yukino-chatbot.git
 main
 
 == /Users/hangtiancheng/github/yukino-chat
-HEAD: f198caf 2026-09-30 feat: Update npm registry [skip ci]
+HEAD: a850cce 2026-10-01 docs: rewrite README to match the TypeScript workspace layout
 git@github.com:hangtiancheng/yukino-chat.git
 main
-(仅 2 个提交: 28b789b Initial commit + f198caf; pnpm workspace: client + server。注意: README/AGENTS.md/Dockerfile/docker-compose 仍停留在 "Go 后端 + MongoDB" 版本, 与代码不符 —— 仓库内 0 个 .go 文件, server 是 Go 版的 TypeScript 移植 (Hono 4.13.10 + Prisma 7.10.0 + PostgreSQL + ioredis, schema 注释自述 Go semantics), agent 以 @yukino.js/yukino@0.0.4 进程内嵌入而非子进程。撰写文档一律以代码为准。镜像同步于 2026-10-01 01:55)
+(共 3 个提交: 28b789b Initial commit + f198caf feat: Update npm registry [skip ci] + a850cce docs: rewrite README (仅改 README.md, +171/-135); pnpm workspace: client + server。注意: a850cce 已把 README.md 重写为与 TypeScript 工作区一致 (React 19 + Vite 前端, Node 24 + Hono 后端, PostgreSQL/Prisma 7, Redis/ioredis, @yukino.js/yukino 进程内嵌入, 三个 WS 端点 JWT 鉴权 + 按 IP 限流, config.yaml/YUKINO_AI_* 配置, Deployment Constraints 自报单实例/无 TLS/update-password 免鉴权/Docker 物料为 Go+MongoDB 遗留)。仍与代码不符的只剩 AGENTS.md (称 server 为 Go 后端 @server/cmd/main.go, 指向 server/internal/yukino, 推荐 yukino-http/yukino-orm skills) 与 client/ 下 Docker 物料 (Dockerfile go build ./cmd、docker-compose mongo:7)。仓库内 0 个 .go 文件, server 是 Go 版的逐语义 TypeScript 移植 (Hono 4.13.10 + Prisma 7.10.0 + PostgreSQL + ioredis, schema 注释自述 Go semantics)。撰写文档一律以代码为准。镜像 README 同步于 2026-10-01)
 
 == /Users/hangtiancheng/github/yukino-sentry
 HEAD: da4dc3e 2026-09-30 feat: Update npm registry
