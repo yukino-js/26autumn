@@ -1,23 +1,25 @@
 ---
 title: "LangChain.js 调研: 1.x Monorepo、Runnable 内核与 createAgent 中间件体系"
-description: "基于本机克隆 51b3b7b84 梳理 LangChain.js 的 monorepo 结构、langchain-core 核心抽象、32 个 provider 集成、createAgent 中间件体系与构建测试设施"
+description: "基于本机克隆 41098120e 梳理 LangChain.js 的 monorepo 结构、langchain-core 核心抽象、32 个 provider 集成、createAgent 中间件体系与构建测试设施"
 ---
 
 仓库路径: https://github.com/langchain-ai/langchainjs (本机克隆位于 $HOME/Downloads/langchainjs)
 
-## 一、项目快照 (本机克隆 2026-09-30)
+## 一、项目快照 (本机克隆 2026-10-01)
 
 | 指标            | 数值                                                                                                                                                                                                                                            |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| HEAD            | 51b3b7b84, 提交时间 2026-09-29 11:54:53 -0700, 提交信息 `refactor(mcp-adapters): drop config guards that only served 1.x upgrades (#11768)`                                                                                                     |
+| HEAD            | 41098120e, 提交时间 2026-10-01 09:14:49 +0100, 提交信息 `feat(anthropic,openai): support tool changes in system messages (#11707)`                                                                                                              |
 | 分支            | main, 与 origin/main 一致; remote 为 git@github.com:langchain-ai/langchainjs.git                                                                                                                                                                |
 | 定位            | README 自称 "The agent engineering platform", 一个用于构建 LLM 应用的 TypeScript 框架                                                                                                                                                           |
-| 核心包版本      | @langchain/core 1.2.13、langchain 1.5.14、@langchain/classic 1.0.50、@langchain/mcp-adapters 1.1.4、@langchain/textsplitters 1.0.2                                                                                                              |
+| 核心包版本      | @langchain/core 1.2.14、langchain 1.5.15、@langchain/classic 1.0.51、@langchain/mcp-adapters 2.0.0、@langchain/textsplitters 1.0.2                                                                                                              |
 | License         | MIT (根 LICENSE 与各 libs 包 package.json 的 license 字段)                                                                                                                                                                                      |
 | 运行时要求      | 各包 package.json 的 engines 均为 node >= 20 (mcp-adapters 为 >= 20.10.0); README 列明支持 Node.js 20.x/22.x/24.x (ESM 与 CommonJS)、Cloudflare Workers、Vercel/Next.js (Browser、Serverless、Edge)、Supabase Edge Functions、浏览器、Deno、Bun |
 | Monorepo 工具链 | pnpm 10.14.0 (packageManager 字段) + Turborepo ^2.10.12 + TypeScript ^7.0.2 + tsdown ^0.22.14 + oxlint ^1.80.0 / oxfmt ^0.65.0 + Changesets @changesets/cli ^3.0.0                                                                              |
 | 测试            | langchain-core 使用 vitest ^4.1.11 (scripts.test 为 `vitest run`); 根 devDependencies 另有 @types/jest ^30.0.0, standard-tests 的 README 示例用 @jest/globals                                                                                   |
 | Workspace 声明  | pnpm-workspace.yaml: libs/_、libs/providers/_、examples、internal/*                                                                                                                                                                             |
+
+相比上一快照 (51b3b7b84), main 前进 5 个 commit, 其中携带实质改动的有: 56a7f0b19 (#11767) 准备 @langchain/mcp-adapters 2.0.0 发布 (MCP SDK 2 迁移、README 与导出面重构), 417ddcf50 (#11749 version packages) 消费 changesets 正式发布 11 个包的新版本 (含 mcp-adapters 2.0.0, 明细见 2.2 与 2.3 表格), bbed27359 (#11771) 给 ModelProfile 增加 fileMimeTypes 字段并在 @langchain/openai 侧填充, 41098120e (#11707) 让 anthropic 与 openai 支持 SystemMessage 上的工具变更块; 63ca83e58 (#11786) 只是 dependabot 把 langchain 包 devDependencies 里的 hono 从 ^4.13.5 升到 ^4.13.7。
 
 README 的生态位表述值得原样记录: LangChain.js 是主框架; Deep Agents 是构建在它之上的高层 agent 包 (规划、子 agent、文件系统); LangGraph.js 是低层 agent 编排与可控工作流框架, 用于需要更高级定制的场景; LangSmith 是配套的开发者平台 (调试、评测、可观测)。Python 侧对应仓库为 langchain-ai/langchain。
 
@@ -46,25 +48,25 @@ README 的生态位表述值得原样记录: LangChain.js 是主框架; Deep Age
 
 ### 2.2 核心包
 
-| 包                           | 版本   | package.json 描述                                      | 要点                                                                   |
-| ---------------------------- | ------ | ------------------------------------------------------ | ---------------------------------------------------------------------- |
-| @langchain/core              | 1.2.13 | (无 description)                                       | Runnable/LCEL、消息、工具、提示词、回调、输出解析等全部核心抽象        |
-| langchain                    | 1.5.14 | (无 description)                                       | createAgent、initChatModel、middleware、hub、storage                   |
-| @langchain/classic           | 1.0.50 | Old abstractions from LangChain.js                     | v1.0 从主包拆出的 0.x 代码: 旧式 chains、agents、memory、retrievers 等 |
-| @langchain/mcp-adapters      | 1.1.4  | LangChain.js adapters for Model Context Protocol (MCP) | 依赖 @modelcontextprotocol/client 与 core ^2.1.0, zod ^4.4.3           |
-| @langchain/textsplitters     | 1.0.2  | Various implementations of LangChain.js text splitters | 文本切分                                                               |
-| create-langchain-integration | 0.0.12 | 脚手架                                                 | 未声明 license 与 type 字段                                            |
+| 包                           | 版本   | package.json 描述                                      | 要点                                                                                                                                          |
+| ---------------------------- | ------ | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| @langchain/core              | 1.2.14 | (无 description)                                       | Runnable/LCEL、消息、工具、提示词、回调、输出解析等全部核心抽象                                                                               |
+| langchain                    | 1.5.15 | (无 description)                                       | createAgent、initChatModel、middleware、hub、storage                                                                                          |
+| @langchain/classic           | 1.0.51 | Old abstractions from LangChain.js                     | v1.0 从主包拆出的 0.x 代码: 旧式 chains、agents、memory、retrievers 等                                                                        |
+| @langchain/mcp-adapters      | 2.0.0  | LangChain.js adapters for Model Context Protocol (MCP) | 依赖 @modelcontextprotocol/client 与 core ^2.2.0、zod ^4.4.3; peer 依赖 @langchain/core ^1.2.6 与 @langchain/langgraph ^1.4.13, 均非 optional |
+| @langchain/textsplitters     | 1.0.2  | Various implementations of LangChain.js text splitters | 文本切分                                                                                                                                      |
+| create-langchain-integration | 0.0.12 | 脚手架                                                 | 未声明 license 与 type 字段                                                                                                                   |
 
 ### 2.3 libs/providers 下 32 个集成包
 
 | 包                             | 版本   | package.json description                                            |
 | ------------------------------ | ------ | ------------------------------------------------------------------- |
-| @langchain/openai              | 1.6.0  | OpenAI integrations for LangChain.js                                |
+| @langchain/openai              | 1.6.1  | OpenAI integrations for LangChain.js                                |
 | @langchain/anthropic           | 1.5.11 | Anthropic integrations for LangChain.js                             |
 | @langchain/aws                 | 1.4.6  | LangChain AWS integration                                           |
 | @langchain/cohere              | 1.1.0  | Cohere integration for LangChain.js                                 |
-| @langchain/deepseek            | 1.1.15 | Deepseek integration for LangChain.js                               |
-| @langchain/fireworks           | 0.2.15 | Fireworks integration for LangChain.js                              |
+| @langchain/deepseek            | 1.1.16 | Deepseek integration for LangChain.js                               |
+| @langchain/fireworks           | 0.2.16 | Fireworks integration for LangChain.js                              |
 | @langchain/google              | 0.2.8  | Google integrations for LangChain.js                                |
 | @langchain/google-common       | 2.3.2  | Core types and classes for Google services                          |
 | @langchain/google-gauth        | 2.3.2  | Google auth based authentication support for Google services        |
@@ -76,15 +78,15 @@ README 的生态位表述值得原样记录: LangChain.js 是主框架; Deep Age
 | @langchain/ibm                 | 0.2.0  | IBM watsonx.ai integrations for LangChain.js                        |
 | @langchain/mistralai           | 1.2.0  | MistralAI integration for LangChain.js                              |
 | @langchain/ollama              | 1.3.0  | Ollama integration for LangChain.js                                 |
-| @langchain/openrouter          | 0.4.15 | OpenRouter integration for LangChain.js                             |
+| @langchain/openrouter          | 0.4.16 | OpenRouter integration for LangChain.js                             |
 | @langchain/perplexity          | 0.3.0  | Perplexity integration (chat models、Search retriever、Search tool) |
-| @langchain/together-ai         | 0.2.15 | Together AI integrations for LangChain.js                           |
-| @langchain/xai                 | 1.4.15 | xAI integration for LangChain.js                                    |
+| @langchain/together-ai         | 0.2.16 | Together AI integrations for LangChain.js                           |
+| @langchain/xai                 | 1.4.16 | xAI integration for LangChain.js                                    |
 | @langchain/cloudflare          | 1.1.0  | Cloudflare integration for LangChain.js                             |
 | @langchain/exa                 | 1.0.2  | Exa integration for LangChain.js                                    |
 | @langchain/tavily              | 1.2.0  | Tavily integration for LangChain.js                                 |
 | @langchain/mongodb             | 1.3.1  | Sample integration for LangChain.js                                 |
-| @langchain/neo4j               | 0.1.22 | Neo4j integrations for LangChain.js                                 |
+| @langchain/neo4j               | 0.1.23 | Neo4j integrations for LangChain.js                                 |
 | @langchain/pgvector            | 0.0.1  | LangChain.js integration for PostgreSQL pgvector                    |
 | @langchain/pinecone            | 1.0.3  | LangChain integration for Pinecone's vector database                |
 | @langchain/qdrant              | 1.0.3  | LangChain.js integration for the Qdrant vector database             |
@@ -781,6 +783,11 @@ export abstract class BaseChatOpenAI<
 
 可见 provider 包的集成模式: 继承 core 的 BaseChatModel, 把厂商 SDK 的调用参数映射为类字段, 通过 _generate/_streamResponseChunks 等钩子接入生成与流式, 并声明 lc_secrets 把 apiKey 映射到环境变量 (该映射由 lcSecretsPlugin 生成文档, 见第十二节)。
 
+快照之后的两个提交落在本小节覆盖的 provider 上, 行为值得记录:
+
+- #11771 (bbed27359): ModelProfile 新增可选字段 `fileMimeTypes?: readonly string[]`, 声明模型接受的通用文件 MIME 类型集合 (libs/langchain-core/src/language_models/profile.ts:86)。@langchain/openai 用自动生成的 profiles.ts 内置 Responses API 接受为 input_file 的 MIME 类型清单 (FILE_MIME_TYPES, libs/providers/langchain-openai/src/chat_models/profiles.ts); ChatOpenAIResponses 与 AzureChatOpenAIResponses 的 profile 恒带该清单, ChatOpenAI 与 AzureChatOpenAI 仅在实例选用 Responses API (useResponsesApi、reasoning.summary 或模型本身偏好 Responses API) 且 profile 有 pdfInputs 时携带 (utils/file_mime_types.ts 的 withoutFileMimeTypesUnlessSupported), Chat Completions 的 profile 不变 (三个类各自 override profile getter: chat_models/responses.ts 恒保留、chat_models/index.ts 依 _useResponsesApi(undefined) 判定、chat_models/completions.ts 恒剥离)。
+- #11707 (41098120e): SystemMessage 上的工具变更支持。OpenAI 侧, SystemMessage 的 additional_tools 块被提升为 Responses API 顶层 input item, non_standard 包裹的 configuration_update 与 mcp_approval_response 块同样提升 (converters/responses.ts, toHoistedInputItem); Chat Completions 路径不再静默丢弃, 而是经 assertAdditionalToolsPlacement 直接抛错 (converters/completions.ts, 辅助函数 unwrapNonStandard 与 assertAdditionalToolsPlacement 在 utils/misc.ts)。Anthropic 侧, SystemMessage 可携带 tool_addition / tool_removal 块 (支持内联工具定义), _buildMessagesRequest (chat_models.ts) 依消息转换结果自动追加 beta header: 按引用变更工具加 mid-conversation-tool-changes-2026-07-01, 内联定义工具时加 inline-tools-2026-09-15; _formatSystemContent (utils/message_inputs.ts) 把 system 内容收窄为 Anthropic 接受的闭集 (text 与工具变更块, non_standard 包裹先经 _unwrapNonStandard 解包), 其余块被丢弃, 收窄后为空则整个 system 字段置空。
+
 ### 8.3 initChatModel 与 ConfigurableModel
 
 libs/langchain/src/chat_models/universal.ts 提供运行时按名称实例化模型的能力:
@@ -799,7 +806,7 @@ internal/standard-tests (@langchain/standard-tests 0.0.23) 提供 ChatModelUnitT
 
 ### 9.1 包面
 
-langchain 1.5.14 的 src 结构: agents/ (核心)、chat_models/universal.ts (initChatModel)、hub/ (LangChain Hub 提示词拉取)、load/ (序列化加载)、prompts/ (对 core 提示词的再导出加 selectors)、storage/ (InMemoryStore、LocalFileStore、EncoderBackedStore)、tools/headless.ts、browser.ts (浏览器入口)、index.ts。package.json 的 exports 子路径: .、./browser、./chat_models/universal、./hub、./hub/node、./load、./load/serializable、./storage/encoder_backed、./storage/file_system、./storage/in_memory、./tools、./package.json。
+langchain 1.5.15 的 src 结构: agents/ (核心)、chat_models/universal.ts (initChatModel)、hub/ (LangChain Hub 提示词拉取)、load/ (序列化加载)、prompts/ (对 core 提示词的再导出加 selectors)、storage/ (InMemoryStore、LocalFileStore、EncoderBackedStore)、tools/headless.ts、browser.ts (浏览器入口)、index.ts。package.json 的 exports 子路径: .、./browser、./chat_models/universal、./hub、./hub/node、./load、./load/serializable、./storage/encoder_backed、./storage/file_system、./storage/in_memory、./tools、./package.json。
 
 ### 9.2 createAgent 与 ReactAgent
 
@@ -876,7 +883,7 @@ accessExternalContext.ts 开头的注释把 Context 与 State 的边界定义得
 
 ## 十、langchain-classic: v0.x 遗留抽象的归宿
 
-@langchain/classic 1.0.50 的 README 第一段说明定位: 这是 v1.0 发布时从主包迁出的 v0.x 功能, 用于向后兼容。README 列明适用场景: 维护使用旧式 chains (LLMChain、ConversationalRetrievalQAChain、RetrievalQAChain) 的代码、依赖 indexing API、依赖原从 langchain 再导出的 @langchain/community 功能; 并明确新项目应使用 langchain v1.0 的 createAgent。
+@langchain/classic 1.0.51 的 README 第一段说明定位: 这是 v1.0 发布时从主包迁出的 v0.x 功能, 用于向后兼容。README 列明适用场景: 维护使用旧式 chains (LLMChain、ConversationalRetrievalQAChain、RetrievalQAChain) 的代码、依赖 indexing API、依赖原从 langchain 再导出的 @langchain/community 功能; 并明确新项目应使用 langchain v1.0 的 createAgent。
 
 src 目录是 0.x 时代的完整地图: agents/ (agent.ts 的 AgentRunnableSequence 继承 RunnableSequence, executor.ts 的 AgentExecutor, react/、chat/、chat_convo/、xml/、openai_functions/、toolkits/)、chains/、memory/、retrievers/、vectorstores/、document_loaders/、document_transformers/、evaluation/、experimental/ (autogpt、openai_assistant、plan_and_execute 等)、smith/、indexes/、cache/、output_parsers/、prompts/、tools/、hub/、storage/、stores/、sql_db.ts、text_splitter.ts。
 
@@ -884,14 +891,18 @@ dependencies 也反映了它的身份: @langchain/openai 与 @langchain/textspli
 
 ## 十一、langchain-mcp-adapters: MCP 适配器
 
-@langchain/mcp-adapters 1.1.4 把 MCP 工具接入 LangChain 工具协议, 依赖 @modelcontextprotocol/client 与 @modelcontextprotocol/core ^2.1.0、zod ^4.4.3, engines 要求 node >= 20.10.0。
+@langchain/mcp-adapters 2.0.0 把 MCP 工具接入 LangChain 工具协议。2.0.0 由 56a7f0b19 (#11767) 准备、经 417ddcf50 (#11749 version packages) 正式发布: 迁移到 MCP SDK 2 (@modelcontextprotocol/client 与 core 均升到 ^2.2.0, zod ^4.4.3), 同一适配器内可混用 modern 与 legacy 协议的服务器 (每个服务器独立协商, mode 取 "auto"、"modern"、"legacy"); peerDependencies 为 @langchain/core ^1.2.6 与 @langchain/langgraph ^1.4.13, 均非 optional; engines 仍要求 node >= 20.10.0。这是 major 版本, 包内 CHANGELOG.md 的 2.0.0 条目给出完整迁移说明 (官方迁移页在 docs.langchain.com 的 migrate/langchain-mcp-adapters)。
 
 index.ts 的公开导出:
 
-- MCPAdapter 与 MultiServerMCPClient 均出自 client.ts — 后者实为别名导出 (client.ts:1219: `export { MCPAdapter as MultiServerMCPClient };`), MCPAdapter 类定义在 client.ts:62。HEAD 提交本身 (refactor(mcp-adapters): drop config guards that only served 1.x upgrades) 也是针对该包删除只为 1.x 升级服务的配置守卫。
-- tools.ts 导出 loadMcpTools、ToolException、isToolException; hooks.ts 定义 ToolHooks、ToolCallRequest、ToolCallModification、ToolResult。
-- 连接类型: StdioConnection、HTTPConnection、StreamableHTTPConnection、SSEConnection 及各自 Resolved 变体, 配 zod schema (StdioConnectionSchema、HTTPConnectionSchema、ConnectionSchema)。
-- elicitation.ts 提供 MCP elicitation 协议支持 (MCPElicitationRequest/Answer/Context/Handler 与 createMCPElicitationResume)。
+- MCPAdapter 类定义在 client.ts:61; MultiServerMCPClient 是同一实现的别名导出 (client.ts:1187) 且已标 @deprecated, 新代码用 MCPAdapter 与 `{ servers: { ... } }` 配置, 配置类型 ClientConfig 对应改名 MCPAdapterConfig。
+- 工具发现双入口: listTools() 返回可执行的 DynamicStructuredTool 扁平列表 (client.ts:334-339), listToolsets() 按服务器分组 (client.ts:196); getTools() 与 initializeConnections() 保留为 deprecated 别名 (client.ts:349-356、204-205)。
+- 工具名默认带服务器名前缀: prefixToolNameWithServerName 默认 true (types.ts:934, client.ts:159-160 处生效), docs 服务器上名为 search 的工具暴露为 docs__search; 关闭前缀时, 两个服务器暴露同名工具或同一服务器重复列名都会抛 MCPClientError (client.ts:1206、1211)。独立辅助函数 loadMcpTools 保持不加前缀的旧默认 (tools.ts:472)。
+- 配置经 zod 4 严格校验: 未知的 adapter/server 选项、与服务器 mode 或 transport 不匹配的选项、空 server 映射、同时设置 servers 与 mcpServers 均抛错 (types.ts 的 clientConfigSchema/mcpAdapterConfigSchema/adapterConfigSchema)。
+- tools.ts 导出 loadMcpTools (483) 与 convertMcpTools (495), 并再导出 ToolException 与 isToolException (tools.ts:62, 定义于 utils/errors.ts:26); MCPClientError 出自 utils/errors.ts:7。hooks.ts 定义 ToolCallRequest (12)、ToolCallModification (46) 与 ToolHooks (131); 1.x 的 ToolResult 类型已移除, afterToolCall 钩子的结果参数改用 content.ts 的 ToolResultBefore (hooks.ts:5、115), state 参数类型为 unknown。
+- 连接类型: StdioConnection、StreamableHTTPConnection、SSEConnection、HTTPConnection 与统一的 Connection、ResolvedConnection; index 仅再导出 HTTPConnectionSchema 一个 zod schema, StdioConnectionSchema (types.ts:643)、StreamableHTTPConnectionSchema (692)、ConnectionSchema (732) 等仍在 types.ts 定义但不再从包入口导出。SSE 保留为 legacy 传输, 拒绝 mode: "modern"、elicitation 与 logLevel。
+- elicitation: modern MCP elicitation 默认开启, 服务器请求用户输入时以 LangGraph interrupt 暂停运行 (elicitation.ts:19-23 从 @langchain/langgraph 引入 interrupt、isGraphInterrupt 与 Interrupt 类型); index 导出 MCPElicitationContext、MCPElicitationHandler、MCPElicitationInterrupt、MCPElicitationResponses、MCPElicitationResume 五个类型与 createMCPElicitationResume (elicitation.ts:183), 恢复值按产生 interrupt 的任务 id 组键, 配合 LangGraph Command 使用; 仅当工具真正请求输入时才需要 checkpointer, 恢复后工具从头重跑 (含 beforeToolCall)。
+- 工具结果与错误: MCP 服务器返回 isError 的结果时, agent 场景的工具调用得到 status: "error" 的 ToolMessage, 直接调用仍抛 ToolException (error.result 携带 MCP 响应); 图像/音频内容转成标准 LangChain 内容块, resource link 变 file 块; structuredContent 与 _meta 保留在 artifact 的 mcp_structured_content 与 mcp_meta 条目 (content.ts:179、185)。
 - 还从 @modelcontextprotocol/client 转导出 OAuth 相关类型 (AuthProvider、OAuthClientProvider、UnauthorizedError)。
 
 ## 十二、构建、测试与发布设施

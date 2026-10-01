@@ -79,7 +79,7 @@ listpack 替换 ziplist 的原因 (级联更新问题):
 
 | 类型 | 紧凑编码                     | 转换条件 (任一不满足即转换)                                                                 | 通用编码             |
 | ---- | ---------------------------- | ------------------------------------------------------------------------------------------- | -------------------- |
-| hash | listpack                     | 字段数量 <= 512 (`hash-max-listpack-entries`) 且每个字段/值 <= 64 字节                      | hashtable            |
+| hash | listpack                     | 字段数量 <= 128 (`hash-max-listpack-entries`) 且每个字段/值 <= 64 字节                      | hashtable            |
 | set  | intset (全整数时) / listpack | 全整数且成员数 <= 512 (`set-max-intset-entries`); 非全整数时成员数 <= 128 且成员 <= 64 字节 | hashtable            |
 | zset | listpack                     | 成员数量 <= 128 (`zset-max-listpack-entries`) 且每个成员 <= 64 字节                         | skiplist + hashtable |
 
@@ -87,7 +87,7 @@ listpack 替换 ziplist 的原因 (级联更新问题):
 
 1. 编码转换是单向的, 转成通用编码后即使数据变少也不会转回紧凑编码
 2. zset 的通用编码是双结构: skiplist 按分数排序支撑范围查询 (`zrange`), hashtable 保存 member 到 score 的映射支撑 O(1) 的 `zscore`
-3. 参数命名与默认值随版本演进: Redis 7.0 将 ziplist 系参数更名为 listpack 系 (如 hash-max-ziplist-entries 更名为 hash-max-listpack-entries), 表中采用新名; 部分默认值在 7.0 同时调大 (如 hash 的 entries 阈值从 128 调至 512), set 的 listpack 编码也是 7.0 新增, 7.0 之前版本需按旧名旧值理解
+3. 参数命名与默认值随版本演进: Redis 7.0 将 ziplist 系参数更名为 listpack 系 (如 hash-max-ziplist-entries 更名为 hash-max-listpack-entries), 表中采用新名; set 的 listpack 编码是 7.0 新增 (set-max-listpack-entries / set-max-listpack-value, 默认 128 / 64, 与 hash/zset 一致), 7.0 之前非全整数 set 只能转为 hashtable; hash/zset 阈值历来是 128 / 64 未变 (表中 set 行的 512 是 intset 的阈值), 7.0 之前版本需按旧名理解
 
 ### 跳表 (skiplist) 的原理是什么? zset 为什么用跳表而不用红黑树或 B+ 树?
 
@@ -228,6 +228,8 @@ AOF 日志随写命令持续膨胀 (对同一 key 的 100 次 incr 会记录 100
 3. 重写期间主进程的写命令同时追加到「AOF 缓冲区」和「AOF 重写缓冲区」 (解决重写期间的增量数据不一致)
 4. 子进程完成后通过 IPC 通知主进程
 5. 主进程将「AOF 重写缓冲区」的增量命令追加到新 AOF 文件, 然后原子 rename 替换旧文件 (这一步在主线程, 是短暂阻塞点)
+
+版本说明: 以上是 Redis 7.0 之前的经典流程. Redis 7.0 引入多部分 AOF (manifest + base + incr 文件), AOF 重写缓冲区被移除——重写期间的增量命令直接写入新的 incr 文件, 重写完成时主进程只需更新 manifest 并切换文件, 不再有"追加重写缓冲区"这一步.
 
 用子进程而非线程的原因: 写时复制 (Copy-on-Write)
 
@@ -377,7 +379,7 @@ key -> CRC16(key) % 16384 (0x4000) -> 槽 -> 某个主节点
 ```
 
 - key 到槽的映射永远固定, 与节点数量无关; 节点变化时只需迁移部分槽及其数据
-- 例: 2 个分片时 M1 负责槽 0-0x1fff, M2 负责 0x2000-0x3fff; 扩到 3 个分片只需把 M1、M2 的部分槽迁给 M3, 迁移期间集群持续可用 (访问迁移中的槽会收到 ASK 重定向, 访问已迁走的槽收到 MOVED 重定向)
+- 例: 2 个分片时 M1 负责槽 0-0x1fff, M2 负责 0x2000-0x3fff; 扩到 3 个分片只需把 M1、M2 的部分槽迁给 M3, 迁移期间集群持续可用 (迁移过程中, 已迁往新节点的 key 在源节点会返回 ASK 重定向; 迁移完成后槽归属变更, 访问收到 MOVED 重定向)
 - 若用传统 `hash % 节点数`, 节点数变化时几乎所有 key 都要重新分布
 
 为什么是 16384 而不是 65536:

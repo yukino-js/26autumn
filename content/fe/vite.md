@@ -1,5 +1,6 @@
 ---
 title: "前端构建工具与工程化技术笔记 (Vite + Webpack)"
+description: "Vite 与 Webpack 核心原理对比: dev 冷启动与按需编译、HMR 机制、Rolldown 构建、代码分割与 Tree Shaking、Monorepo 与工程化实践"
 ---
 
 ## 一、构建工具核心原理
@@ -78,7 +79,7 @@ Vite 7 及之前版本的分工:
 2. 插件生态: Rollup 插件生态成熟, Vite 大量能力 (如 legacy 降级、SSR 处理) 依赖插件链的灵活介入.
 3. 输出质量: Rollup 的 Tree Shaking 更精细, Scope Hoisting 产物更紧凑; 应用构建对产物质量的要求高于对构建速度的要求.
 
-这个权衡的结局是: Vite 团队没有继续二选一, 而是用 Rust 重写了兼具两者能力的新引擎 Rolldown, 在 Vite 8 中统一了 dev 与 build, "双引擎"正式成为历史. 另外, Vite 6 引入的 Environment API (为不同运行环境提供独立的模块图与配置) 在 Vite 8 仍处实验阶段, 官方正在推进稳定化.
+这个权衡的结局是: Vite 团队没有继续二选一, 而是用 Rust 重写了兼具两者能力的新引擎 Rolldown, 在 Vite 8 中统一了 dev 与 build, "双引擎"正式成为历史. 另外, Vite 6 引入的 Environment API (为不同运行环境提供独立的模块图与配置) 在 Vite 8 官方定位为 Release Candidate: 大版本之间承诺保持 API 稳定, 但仍有部分具体 API 标记为实验性, 完全稳定化计划在未来某个大版本完成.
 
 ### Vite 依赖预构建 (optimizeDeps) 的原理是什么? 遇到过哪些坑?
 
@@ -93,7 +94,7 @@ Vite 7 及之前版本的分工:
 
 1. 运行时才发现的新依赖: 动态 import 的依赖在首次扫描中漏掉, 运行时触发"new dependencies optimized"并整页 reload, 体验很差. 解决: 用 `optimizeDeps.include` 显式声明.
 2. CJS/ESM 互操作: 某些包的 `exports` 字段配置不规范, 预构建后 default 导出行为与 Webpack 下不一致 (`esModuleInterop` 差异), 需要 `optimizeDeps.needsInterop` 或让包方修复.
-3. monorepo 内部包: workspace 链接的内部包默认不做预构建 (被视为源码), 如果内部包是 CJS 产物就会报错, 需要将其加入 `optimizeDeps.include` 并在 `build.commonjsOptions.include` 同步配置.
+3. monorepo 内部包: workspace 链接的内部包默认不做预构建 (被视为源码), 如果内部包是 CJS 产物就会报错, 需要将其加入 `optimizeDeps.include` 并在 `build.commonjsOptions.include` 同步配置 (此为 Vite 7 及之前的做法; Vite 8 起 `build.commonjsOptions` 已废弃且不再生效).
 4. 模块联邦场景: 在给 @module-federation/vite 提 PR 时发现, 原实现对每个 shared 依赖单独执行一次 optimizeDeps, 依赖多时预构建耗时很长, 我将多个 shared 依赖合并为一次调用, 预构建时间从约 12 秒降到 3 秒.
 
 ### Webpack HMR 和 Vite HMR 的实现原理有何不同?
@@ -195,7 +196,7 @@ build: {
 
 注意点: manualChunks 手动分组容易引入循环加载问题 (chunk A 的初始化依赖 chunk B 中的模块), Rollup 会警告 circular chunk, 需要保证分组边界与依赖方向一致.
 
-Vite 8 中的变化: `build.rollupOptions` 的类型已切换为 RolldownOptions, Rollup 的 manualChunks 不复存在, 对应能力由声明式的 `output.codeSplitting` 提供 (按 name/test 等条件分组), 过渡期 API `output.advancedChunks` 在 Rolldown 中已标记废弃.
+Vite 8 中的变化: `build.rollupOptions` 的类型已切换为 RolldownOptions (并整体标记废弃, 更名为 `build.rolldownOptions`), manualChunks 的对象写法已被移除, 函数写法虽保留但已标记废弃, 对应能力由声明式的 `output.codeSplitting` 提供 (按 name/test 等条件分组), 过渡期 API `output.advancedChunks` 在 Rolldown 中同样已标记废弃.
 
 ### Source Map 有哪些类型? 生产环境如何选择与管理?
 

@@ -1,5 +1,6 @@
 ---
 title: "A2UI Express DSL"
+description: "A2UI Express DSL 实验性提案调研: 更低成本生成 A2UI 的 DSL 语法规则、编译到 v1.0 wire protocol、Python 参考实现与 Gemma 小模型评测"
 ---
 
 本机路径: $HOME/Downloads/a2ui/specification/proposals/express (上游: github.com/a2ui-project/a2ui)
@@ -229,7 +230,7 @@ no_btn = Button(no_btn_text, _, Event("decline"))
 </a2ui>
 ```
 
-编译输出要点: 邻接表扁平化后 root 引用 "main*column", Column 的 justify 为 null、align 为 "center" ( * 占位的结果), Icon 绑定 \{path: "/icon"\}, Button 的 action 编译为 \{event: \{name: "accept", context: \{\}}\}; 全部组件 (含被引用的 Text) 位于同一个 components 扁平数组。
+编译输出要点: 邻接表扁平化后 root 引用 "main\_column", Column 的 justify 为 null、align 为 "center" (\_ 占位的结果), Icon 绑定 \{path: "/icon"\}, Button 的 action 编译为 \{event: \{name: "accept", context: \{\}}\}; 全部组件 (含被引用的 Text) 位于同一个 components 扁平数组。
 
 编译示例二 (官方 FlightStatus 飞机行程卡片, 评测文章引用):
 

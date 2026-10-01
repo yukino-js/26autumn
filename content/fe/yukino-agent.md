@@ -1,5 +1,6 @@
 ---
 title: "Yukino Agent 技术笔记"
+description: "yukino-agent 源码级问答: Next.js 16 + Vercel AI SDK v7 的 AI OnCall 助手架构、RAG 知识库检索、ReAct 与 Plan-Execute-Replan 编排、A2UI 界面生成、Prometheus 告警分析与前端监控桥接"
 ---
 
 > 本机器路径 `$HOME/github/yukino-agent`
@@ -373,7 +374,7 @@ HNSW(Hierarchical Navigable Small World) 是一种基于图的近似最近邻 (A
 
 主流原因:① 召回率高: 在标准 benchmark 上可达 95%+ recall@10, 接近暴力检索; ② 查询快: 对数级复杂度, 百万级向量毫秒响应; ③ 支持增量插入, 不像 IVF 类索引需要定期重训练聚类中心.
 
-本项目中 RediSearch 创建 HNSW 索引(`client.ts:92-106`), 未显式调参 (用默认 M/ef)——对万级以下数据量, 默认值下 HNSW 与暴力结果几乎无差. 代价是内存: 图结构开销约为原始向量的 1.2~1.5 倍, Redis 又是纯内存存储, 数据规模大时需要评估 (这也呼应「为什么用 Redis Stack 做向量库」的选型权衡) .
+本项目中 RediSearch 创建 HNSW 索引(`client.ts:91-105`), 未显式调参 (用默认 M/ef)——对万级以下数据量, 默认值下 HNSW 与暴力结果几乎无差. 代价是内存: 图结构开销约为原始向量的 1.2~1.5 倍, Redis 又是纯内存存储, 数据规模大时需要评估 (这也呼应「为什么用 Redis Stack 做向量库」的选型权衡) .
 
 ---
 
@@ -1202,7 +1203,7 @@ A2UI(Agent-to-UI) v0.9 是一套声明式 UI 协议: LLM 在 markdown 回答之�
 3. 流式过滤 (`extract.ts:87-132`):`createA2uiStreamFilter()` 是有状态过滤器——普通文本立即放行, 但会扣留"可能是被 chunk 切断的开标签前缀"的尾部 (`partialTagSuffixLength`, `extract.ts:74-82`), 标签块内容静默缓冲到闭合标签出现; 流结束时未闭合的块还原开标签交给上层按无效块处理 (`chat.ts:205-212`), 避免裸 JSON 泄漏进可见文本;
 4. 纠错 (`correct.ts`): 校验失败时把"原对话 + 无效输出 + 校验错误"回放给模型做一次无工具重试 (`correct.ts:10-39`), 仍失败则降级为诚实的 notice 提示 (`chat.ts:186-191`)——绝不编造 UI 数据.
 
-客户端消费: SSE 的 a2ui 事件解析为非空数组后追加到消息的 `a2ui` 字段 (`use-chat.ts:302-325`), msg-list 用 `@yukino.js/a2ui-shadcn` 的 `A2uiView` 渲染 (`msg-list.tsx:186-191`); `/gallery` 是无需后端的 catalog 验证页, 用固定消息集渲染全部扩展组件 (`app/gallery/page.tsx:1-35`).
+客户端消费: SSE 的 a2ui 事件解析为非空数组后追加到消息的 `a2ui` 字段 (`use-chat.ts:302-325`), msg-list 用本地组件 `components/a2ui-view.tsx` 的 `A2uiView` 渲染 (`msg-list.tsx:186-191`, 内部由 `@a2ui/web_core/v0_9` 的 `MessageProcessor` + `@a2ui/react/v0_9` 的 `A2uiSurface` 配合本地 `catalog/` 的 shadcnCatalog 驱动); `/gallery` 是无需后端的 catalog 验证页, 用固定消息集渲染全部扩展组件 (`app/gallery/page.tsx:1-35`).
 
 ---
 
@@ -1223,7 +1224,7 @@ AI Ops 报告另有一处"UI 化"后处理: replanner 判定完成后, `uiifyRep
 
 本项目自身就是 yukino-sentry SDK 的接入方与指标后端, 链路三段:
 
-1. 浏览器端 (`components/sentry-provider.tsx`):`init({ dsn: "/api/log", projectId: "yukino-agent" })` (`sentry-provider.tsx:23-33`), 启用 PerformancePlugin + ExposurePlugin; `beforePushEventList` 丢弃超过 50KB 的单事件 (`MAX_EVENT_BYTES`, `sentry-provider.tsx:16, 28-31`)——注释说明动机: 超大事件 (rrweb ScreenRecord、dev 页数百模块的 ResourceList) 会把 batch 顶过 fetch-keepalive 的 64KB body 上限, 永久卡死重试; ReactErrorBoundary 提供兜底 fallback (`sentry-provider.tsx:40-55`); SSR 守卫 `isBrowser()` (`sentry-provider.tsx:19-21`), 因为 client 组件模块在 SSR 时也会被求值;
+1. 浏览器端 (`components/sentry-provider.tsx`):`init({ dsn: "/api/log", projectId: "yukino-agent" })` (`sentry-provider.tsx:23-33`), 启用 PerformancePlugin + ExposurePlugin; `beforeSendBatch` 丢弃超过 50KB 的单事件 (`MAX_EVENT_BYTES`, `sentry-provider.tsx:16, 28-31`)——注释说明动机: 超大事件 (rrweb ScreenRecord、dev 页数百模块的 ResourceList) 会把 batch 顶过 fetch-keepalive 的 64KB body 上限, 永久卡死重试; ReactErrorBoundary 提供兜底 fallback (`sentry-provider.tsx:40-55`); SSR 守卫 `isBrowser()` (`sentry-provider.tsx:19-21`), 因为 client 组件模块在 SSR 时也会被求值;
 2. 上报端点 (`app/api/log/route.ts`):请求体先 `JSON.parse` 再过 `reportBatchSchema` (looseObject 数组, `metrics.ts:17-27`), 非法 JSON 或非法批次记 `recordInvalidReportBatch` 并返回 400, 合法则 `recordReportBatch` 逐条分发 (`route.ts:20-45`);
 3. 指标桥 (`lib/metrics.ts`):27 个 `yukino_sentry_*` 指标 (`metrics.ts:122-155` 的 SentryMetrics 接口逐一定义) 覆盖除 ScreenRecord 外的全部上报类型 (按 `item.type` 分发, `metrics.ts:568-611`; ScreenRecord 只带 rrweb blob, 仅计入 events_total), 外加 prom-client 默认指标覆盖不到的 Node/V8 运行时指标——heap_size_limit、heap used ratio (OOM 余量)、detached contexts (内存泄漏指纹)、event loop utilization、page faults、context switches、fs operations (`metrics.ts:347-497`).
 

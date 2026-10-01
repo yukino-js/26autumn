@@ -1,5 +1,6 @@
 ---
 title: "Priority Hints 与 Fetch Priority API 教程"
+description: "Priority Hints 与 Fetch Priority API 教程: fetchpriority 属性的标准化演进、浏览器内置优先级模型、各资源类型的调度行为与优化实践"
 ---
 
 ## 1. 概述
@@ -18,13 +19,13 @@ Priority Hints 是一项 Web 平台特性, 允许开发者向浏览器传达资�
 
 以 Chrome 为例, 资源被分为以下几个优先级层级 (从高到低) :
 
-| 优先级  | 典型资源                                                            |
-| ------- | ------------------------------------------------------------------- |
-| Highest | 主 HTML 文档、关键 CSS (阻塞渲染的样式表)、字体 (`@font-face` 引用) |
-| High    | 同步脚本、`<img>` 在视口内时                                        |
-| Medium  | 较晚发现的 CSS 与脚本、部分图片                                     |
-| Low     | `async` / `defer` 脚本、视口外的图片、音视频资源                    |
-| Lowest  | `prefetch` 资源                                                     |
+| 优先级  | 典型资源                                                       |
+| ------- | -------------------------------------------------------------- |
+| Highest | 主 HTML 文档、关键 CSS (阻塞渲染的样式表)                      |
+| High    | 同步脚本、视口内的 `<img>`、被可见文本引用的 `@font-face` 字体 |
+| Medium  | 较晚发现的 CSS 与脚本、部分图片                                |
+| Low     | `async` / `defer` 脚本、视口外的图片、音视频资源               |
+| Lowest  | `prefetch` 资源                                                |
 
 这个模型在大多数情况下运作良好, 但存在局限:
 

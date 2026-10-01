@@ -32,7 +32,7 @@ Tiktok 搜索推荐平台是一个 React SPA, 页面报错后排查链路长: �
 
 本质上是用「持续低成本录制 + 定长内存缓冲」把「预测错误时机」的问题转化成了「取快照」的问题.
 
-监控与现场还原能力的实现参考自研项目 @yukino.js/sentry (github.com/hangtiancheng/yukino-sentry), 下文知识点均结合该项目的真实实现展开.
+监控与现场还原能力的实现参考自研项目 @yukino.js/sentry (github.com/hangtiancheng/yukino-sentry, 本机位于 $HOME/github/yukino-sentry), 下文知识点均结合该项目的真实实现展开.
 
 ### JSError 上报应该携带哪些错误信息?
 
@@ -785,14 +785,14 @@ export default Card;
 
 三种方案对比:
 
-| 维度         | Webpack 插件          | Babel 插件                       | Vite/Rollup 自定义插件    |
-| ------------ | --------------------- | -------------------------------- | ------------------------- |
-| 接入成本     | 极低 (一行配置)       | 极低 (一行配置)                  | 中等 (需添加插件文件)     |
-| 维护状态     | 活跃 (支持 Webpack 5) | 已停更 (约 8 年未更新)           | 自主可控                  |
-| 兼容性风险   | 低                    | 中 (可能不兼容新版 Babel)        | 低 (依赖稳定)             |
-| 可定制性     | 中 (include/exclude)  | 低                               | 高 (完全自主)             |
-| 适用构建工具 | 仅 Webpack            | Webpack + Vite (需切 Babel 模式) | Vite / Rollup             |
-| 性能影响     | 小                    | 小                               | 小 (可加预检跳过无关文件) |
+| 维度         | Webpack 插件                 | Babel 插件                       | Vite/Rollup 自定义插件    |
+| ------------ | ---------------------------- | -------------------------------- | ------------------------- |
+| 接入成本     | 极低 (一行配置)              | 极低 (一行配置)                  | 中等 (需添加插件文件)     |
+| 维护状态     | 停更于 2022 (支持 Webpack 5) | 已停更 (约 8 年未更新)           | 自主可控                  |
+| 兼容性风险   | 低                           | 中 (可能不兼容新版 Babel)        | 低 (依赖稳定)             |
+| 可定制性     | 中 (include/exclude)         | 低                               | 高 (完全自主)             |
+| 适用构建工具 | 仅 Webpack                   | Webpack + Vite (需切 Babel 模式) | Vite / Rollup             |
+| 性能影响     | 小                           | 小                               | 小 (可加预检跳过无关文件) |
 
 选型建议:
 
@@ -825,11 +825,11 @@ sourcemap 的还原能力边界:
 
 补充: componentStack 与 CodeGraph 的配合 (运行时组件栈 + 静态代码图)
 
-本节分析 componentStack 与本地代码知识图谱 CodeGraph (见 docs/docs/codegraph) 的互补关系. 结论: 两者结构性互补, 不是简单的「能接上」.
+本节分析 componentStack 与本地代码知识图谱 CodeGraph (见 /docs/codegraph) 的互补关系. 结论: 两者结构性互补, 不是简单的「能接上」.
 
 1. 信息形态同构: 组件栈字符串本身就是图上的一条路径
 
-componentStack 的本质是「出错组件一路向上到 ErrorBoundary 的组件名序列」. CodeGraph 恰好把组件建模为一等节点 (NodeKind 含 component 节点), 且 callback-synthesizer 专门生成 JSX 子组件边 (见 docs/docs/codegraph). 因此 componentStack 里的每一行都能映射成图上一个节点和一条父链边——两者是同一结构信息的两种表示: 一个是运行时 React 打印的文本, 一个是静态图里可查询的路径. agent 拿到 componentStack, 等于拿到一条现成的图遍历起点序列, 不需要再 grep 找入口.
+componentStack 的本质是「出错组件一路向上到 ErrorBoundary 的组件名序列」. CodeGraph 恰好把组件建模为一等节点 (NodeKind 含 component 节点), 且 callback-synthesizer 专门生成 JSX 子组件边 (见 /docs/codegraph). 因此 componentStack 里的每一行都能映射成图上一个节点和一条父链边——两者是同一结构信息的两种表示: 一个是运行时 React 打印的文本, 一个是静态图里可查询的路径. agent 拿到 componentStack, 等于拿到一条现成的图遍历起点序列, 不需要再 grep 找入口.
 
 2. 查询入口互补: 覆盖 CodeGraph 的多种命中方式
 
@@ -900,7 +900,7 @@ return {
   userId,
   projectId,
   sdkVersion,
-  deviceInfo, // UA 解析 + 屏幕分辨率 + Canvas 指纹
+  deviceInfo, // UA 解析 + 屏幕分辨率等 (浏览器指纹另走 anonymousId, 默认关闭)
   payload, // 原始采集数据整体保留
 };
 ```
@@ -1811,7 +1811,7 @@ Lab 用 headless 浏览器运行页面, 收集运行时数据, 产出性能指�
 
 #### 1. 大模型调用: eino 框架
 
-大模型调用方式参考 yukino_agent (internal/ai/models), 使用字节 cloudwego 的 eino 框架:
+大模型调用方式参考 yukino_agent (本机 $HOME/github/yukino.go/yukino_agent, internal/ai/models), 使用字节 cloudwego 的 eino 框架:
 
 - eino 核心库定义统一的 model.ChatModel 接口和 schema.Message 消息结构
 - eino-ext/components/model/openai 提供任意 OpenAI 兼容端点的实现 (base_url 原样使用, 通常带 /v1)

@@ -1,5 +1,6 @@
 ---
 title: "CSS 技术笔记"
+description: "55 个 CSS 核心知识点: 选择器优先级与新选择器、Flex/Grid 布局、BFC 与渲染流水线、响应式设计、动画与性能优化、跨端与现代 CSS 特性"
 ---
 
 本文档收录 55 个 CSS 核心知识点, 覆盖选择器、布局、工程化、渲染原理、性能优化、响应式、动画、跨端与现代 CSS 新特性等方向, 内容兼顾原理深度与工程实践, 适合深入学习参考.
@@ -388,7 +389,7 @@ A:
 - 单行文本垂直居中: `line-height` 等于容器高度 + `text-align: center`
 - 表格方案: 父 `display: table-cell; vertical-align: middle; text-align: center;`
 
-选择建议: 现代项目优先 flex/grid, 语义清晰且对子元素数量、尺寸变化健壮; 需要兼容老浏览器或弹窗居中常用 absolute + transform; transform 方案会创建合成层, 对动画友好, 但可能引发模糊 (亚像素渲染), 必要时对尺寸取整.
+选择建议: 现代项目优先 flex/grid, 语义清晰且对子元素数量、尺寸变化健壮; 需要兼容老浏览器或弹窗居中常用 absolute + transform; transform 方案会创建层叠上下文, 对动画友好, 但可能引发模糊 (亚像素渲染), 必要时对尺寸取整.
 
 ### 9. 介绍 flex 布局和 grid 布局
 
@@ -402,7 +403,7 @@ flex 容器属性:
 - `flex-wrap`: 是否换行, `nowrap`(默认) / `wrap`
 - `justify-content`: 主轴对齐, `flex-start` / `center` / `flex-end` / `space-between` / `space-around` / `space-evenly`
 - `align-items`: 交叉轴对齐 (单行), `stretch`(默认) / `center` / `baseline` 等
-- `align-content`: 多行时行与行之间的分布, 单行无效
+- `align-content`: 多条 flex 行之间分配交叉轴剩余空间; 单行时行仍会被整体定位 (center 居中, space-around/space-evenly 同为居中, space-between 靠起点), 只有默认 stretch 会把单行拉伸占满容器
 - `gap`: 项目间距, 替代子元素 margin 的方案
 
 flex 项目属性:
@@ -412,7 +413,7 @@ flex 项目属性:
 - `flex-basis`: 主轴上的初始基准尺寸, 默认 `auto` (取 width/height)
 - `flex` 缩写: `flex: 1` 等价于 `flex: 1 1 0%`, 常见于均分剩余空间; 默认值是 `flex: 0 1 auto`
 - `align-self`: 单个项目覆盖交叉轴对齐
-- `order`: 改变视觉顺序 (不影响 DOM 顺序与无障碍顺序)
+- `order`: 改变视觉顺序, 不改变 DOM 顺序; 规范同样规定它不影响 Tab 等顺序导航与读屏遍历顺序, 视觉序与键盘/读屏序的错位本身就是无障碍风险 (MDN 明确警告勿用于逻辑重排)
 
 grid 容器核心属性:
 
@@ -926,7 +927,7 @@ A:
 }
 ```
 
-延伸: 如何画带边框的三角形": border 法做不到, 常用双层叠加 (两个伪元素三角形错位 1px, 底色三角形稍大露边) 或方法四的旋转正方形方案.
+延伸: 如何画带边框的三角形 — border 法做不到, 常用双层叠加 (两个伪元素三角形错位 1px, 底色三角形稍大露边) 或方法四的旋转正方形方案.
 
 ### 18. 移动端 1px 问题是什么? 如何实现 0.5px 边框?
 
@@ -995,7 +996,7 @@ A:
 - `clip-path: inset(50%)` 或 `clip: rect(0 0 0 0)`: 裁剪隐藏, 无障碍场景常用的 visually-hidden 模式
 - `height: 0; overflow: hidden;`: 高度塌陷隐藏, 常配合过渡做手风琴
 - `z-index: -1` 或背景色遮挡: 不是真正隐藏, 只是盖住
-- `hidden` 属性 / `aria-hidden="true"`: 语义层面隐藏
+- `hidden` 属性: 经 UA 样式等价于 `display: none` (可被 CSS 覆盖), 语义与视觉双重隐藏; `aria-hidden="true"` 只对无障碍树隐藏, 元素视觉上仍可见, 二者不可混用
 
 选择建议: 要过渡动画选 `opacity`/`visibility`; 彻底移除且不需要读屏选 `display: none`; 无障碍隐藏文本 (如图标按钮的文字说明) 用 visually-hidden 方案 (`clip-path` + 1px 尺寸 + 溢出裁剪) 而不是 `display: none`.
 
@@ -1228,7 +1229,7 @@ customElements.define("my-card", MyCard);
 注意点:
 
 - `mode: 'closed'` 时 `element.shadowRoot` 返回 null, 外部脚本无法访问影子树, 隔离更强但调试与扩展更难
-- 全局 reset、字体、`@font-face` 不会自动进入影子树, 需要每个组件内自行引入或通过 adoptedStyleSheets 注入
+- 全局样式表的规则 (如 `* { margin: 0 }` 类 reset) 不会命中影子树内部节点, 需要组件自带样式或通过 adoptedStyleSheets 注入; 但 `font-family` 等可继承属性会随宿主继承进入影子树, `@font-face` 声明按规范是文档级全局的, 文档中定义的字体在影子树内可直接引用 (在组件内声明 `@font-face` 的兼容性不佳, 建议放在文档层)
 - 与 iframe 对比: Shadow DOM 是"样式与 DOM 作用域"隔离, 共享同一文档与 JS 上下文; iframe 是完整的浏览上下文隔离, 更彻底但通信成本高
 
 ### 25. scss 是什么? 有什么用? scss 的 mixin 等常用语法有哪些?
@@ -2119,7 +2120,7 @@ ul:has(li:nth-child(6)) { ... }
 
 注意事项:
 
-- `:has()` 内不允许嵌套伪元素; 早期规范禁止 `:has()` 内再嵌套 `:has()` (避免循环与指数级匹配成本), 该限制现已放开, Chrome 126+ 等现代浏览器已支持嵌套 `:has()`
+- `:has()` 内不允许嵌套伪元素 (多数伪元素条件性存在, 查询会引入循环); 现行规范同样禁止 `:has()` 内再嵌套 `:has()` (Selectors 4 明确 `:has()` is not valid within `:has()`, MDN 同步标注不支持) — 由于参数是容错选择器列表, 嵌套的内层 `:has()` 会被静默丢弃而不是报错, 容易让人误以为已支持
 - 性能: 浏览器为 `:has()` 做了缓存与快照优化, 常规使用无碍, 但在超大 DOM 上写 `:has(*)` 这类宽泛参数仍应避免
 - 浏览器支持: 2023 年底起全主流支持, 可用 `@supports selector(:has(a))` 做特性检测与降级
 
@@ -2491,6 +2492,8 @@ container.addEventListener("scrollsnapchange", (e) => {
 container.scrollTo({ left: 0, behavior: "smooth" });
 ```
 
+`scrollsnapchange` / `scrollsnapchanging` 是较新的事件 (Chromium 129+ 实现, 其他引擎使用前需特性检测), 事件对象上提供 `snapTargetInline`/`snapTargetBlock` 等吸附目标信息; `scrollTo` 则是通用 API.
+
 与第三方轮播库的对比:
 
 - scroll-snap 是原生 CSS, 无需 JavaScript, 性能更好
@@ -2532,7 +2535,7 @@ el.animate(
 );
 ```
 
-选择建议: 状态过渡/hover/loading 等用 CSS; 需要交互驱动 (拖拽、滚动进度)、复杂时序编排用 rAF 或 WAAPI; 库层面 GSAP 等底层也是 rAF + WAAPI 思路.
+选择建议: 状态过渡/hover/loading 等用 CSS; 需要交互驱动 (拖拽、滚动进度)、复杂时序编排用 rAF 或 WAAPI; 库层面 GSAP 用自建 rAF ticker 逐帧驱动, Motion One 等则以 WAAPI 为底层.
 
 ### 48. transition 和 animation 有什么区别?
 
@@ -2727,7 +2730,7 @@ CSS Houdini 是一组开放浏览器渲染引擎底层能力的 API 集合:
 - Typed OM: `el.attributeStyleMap.set('width', CSS.px(100))`, 用类型化对象替代字符串读写样式, 减少解析开销
 - Layout API / Animation Worklet: 自定义布局算法与脱离主线程的动画, 仍处于实验阶段
 
-要点: Houdini 的价值是"把过去只能靠 JS 模拟或等浏览器实现的能力, 下放为可编程的渲染管线钩子"; 目前生产可用的主要是 @property 与 Typed OM, Paint API 需要按浏览器支持渐进增强.
+要点: Houdini 的价值是"把过去只能靠 JS 模拟或等浏览器实现的能力, 下放为可编程的渲染管线钩子"; 目前跨浏览器生产可用的是 @property (Chrome 85+/Safari 16.4+/Firefox 128+), Typed OM 与 Paint API 仍为 Chromium 系独有, 需按支持情况渐进增强.
 
 ### 55. View Transitions 与滚动驱动动画是什么?
 

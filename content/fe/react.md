@@ -1,5 +1,6 @@
 ---
 title: "React 核心知识点"
+description: "React 核心知识点问答: 闭包陷阱、Fiber 架构、Virtual DOM 与 Diff、Hooks 原理、setState 批处理、并发调度与性能优化体系"
 ---
 
 > 本文档涵盖运行时机制、性能优化、Hooks 原理等核心主题. 每个知识点均附详细解析.
@@ -324,16 +325,16 @@ React 对列表采用两轮遍历:
 
 ### 5.1 渲染优化
 
-| 策略                | 适用场景                        | 注意事项                                 |
-| ------------------- | ------------------------------- | ---------------------------------------- |
-| `React.memo`        | 纯展示组件, props 变化频率低    | 需配合 `useCallback`/`useMemo`, 否则无效 |
-| `useMemo`           | 缓存计算密集型结果              | 有内存开销, 勿滥用                       |
-| `useCallback`       | 缓存传递给子组件的回调          | 仅对 memo 子组件有意义                   |
-| 状态下沉            | 高频变化的 state 仅影响局部 UI  | 最本质的优化, 减少渲染范围               |
-| 组合模式 (children) | 父组件 state 变化不应影响子组件 | 利用 children 引用稳定性                 |
-| `useDeferredValue`  | 大列表搜索、输入联想            | React 18 并发特性                        |
-| `useTransition`     | 非紧急状态更新                  | 标记为 transition, 可被打断              |
-| 虚拟化列表          | 长列表 (>1000 条)               | react-window / react-virtuoso            |
+| 策略                | 适用场景                        | 注意事项                                     |
+| ------------------- | ------------------------------- | -------------------------------------------- |
+| `React.memo`        | 纯展示组件, props 变化频率低    | 需配合 `useCallback`/`useMemo`, 否则无效     |
+| `useMemo`           | 缓存计算密集型结果              | 有内存开销, 勿滥用                           |
+| `useCallback`       | 缓存传递给子组件的回调          | 主要对 memo 子组件或其他 Hook 的依赖项有意义 |
+| 状态下沉            | 高频变化的 state 仅影响局部 UI  | 最本质的优化, 减少渲染范围                   |
+| 组合模式 (children) | 父组件 state 变化不应影响子组件 | 利用 children 引用稳定性                     |
+| `useDeferredValue`  | 大列表搜索、输入联想            | React 18 并发特性                            |
+| `useTransition`     | 非紧急状态更新                  | 标记为 transition, 可被打断                  |
+| 虚拟化列表          | 长列表 (>1000 条)               | react-window / react-virtuoso                |
 
 ### 5.2 内存优化
 

@@ -7,8 +7,8 @@ description: "结合 yukino-codegen 客户端源码与 @webcontainer/api 1.6.4 �
 
 文中引用的代码有三处来源，均为真实产物，非示意代码：
 
-- yukino-codegen 仓库（github.com/hangtiancheng/yukino-codegen）的 client 端源码，这是官方 WebContainer API 的一个完整生产级集成；
-- @webcontainer/api 1.6.4 的 npm 发布产物（dist/index.js 等），即 StackBlitz 官方 SDK 的实际实现（client/node_modules 下的安装版本即为 1.6.4）；
+- yukino-codegen 仓库（github.com/hangtiancheng/yukino-codegen, 本机克隆位于 $HOME/github/yukino-codegen）的 client 端源码，这是官方 WebContainer API 的一个完整生产级集成；
+- @webcontainer/api 1.6.4 的 npm 发布产物（dist/index.js 等），即 StackBlitz 官方 SDK 的实际实现（$HOME/github/yukino-codegen/client/node_modules 下的安装版本即为 1.6.4）；
 - yukino-codegen 仓库曾随附一份根目录调研报告 yukino-codegen.md，其中包含对某同类产品自研 "webc" 运行时的线上实测证据（Service Worker 注册表、网络请求清单、控制台日志），用于对照官方方案与自研方案；该文件现已不在仓库中，下文引用的实测数据均来自这份归档报告。
 
 涉及实现细节但缺乏一手证据的地方，文中会明确标注"官方说法"或"推断"。
@@ -357,7 +357,7 @@ Service Worker 是浏览器在页面之外运行的一段脚本，注册时声�
 
 ### 5.2 官方方案：独立子域
 
-@webcontainer/api 的 server-ready 事件回调签名是 `(port, url)`，url 指向 StackBlitz 托管的预览子域（yukino-codegen 使用的 credentialless 模式下为 \*.local-credentialless.webcontainer-api.io，require-corp 模式下为 \*.webcontainer.io）。结构上是：预览 iframe 挂在官方预览域上，SW 注册并拦截该源的全部请求，URL 到容器端口的映射由该源的子域约定完成。同源 iframe 才能被本源 SW 覆盖，因此容器"必须"拥有自己的源，这也是 WebContainer 对宿主页要求 COI 头、对子域做独立部署的根本原因。
+@webcontainer/api 的 server-ready 事件回调签名是 `(port, url)`，url 指向 StackBlitz 托管的预览子域（yukino-codegen 使用的 credentialless 模式下为 \*.local-credentialless.webcontainer-api.io，require-corp 模式下为 \*.webcontainer.io）。预览子域的具体命名来自官方运行时的线上实测与公开资料——本地 SDK 产物中不含这些域名常量，url 由运行时在 boot 后动态下发。结构上是：预览 iframe 挂在官方预览域上，SW 注册并拦截该源的全部请求，URL 到容器端口的映射由该源的子域约定完成。同源 iframe 才能被本源 SW 覆盖，因此容器"必须"拥有自己的源，这也是 WebContainer 对宿主页要求 COI 头、对子域做独立部署的根本原因。
 
 ### 5.3 实测：自研同源方案
 
@@ -588,4 +588,4 @@ SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页�
 - MDN：Cross-Origin-Embedder-Policy（developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cross-Origin-Embedder-Policy）
 - Emscripten 文档：Pthreads support（emscripten.org/docs/porting/pthreads.html）
 - StackBlitz 博客：Cross-Browser support with Cross-Origin isolation（blog.stackblitz.com/posts/cross-browser-with-coop-coep/）
-- 本机源码：yukino-codegen 仓库 client/src（boot.ts、vite.config.ts、webcontainer-runtime.ts、webcontainer-fs.ts、use-workspace-controller.ts、use-visual-editor.ts）；@webcontainer/api 1.6.4 dist（index.js、entities.d.ts、preview-message-types.d.ts、internal/iframe-url.js、internal/constants.js）；曾存放于 yukino-codegen 仓库根目录的调研报告 yukino-codegen.md（webc 运行时实测证据，已从仓库移除，第三、四、五节转引其中数据）
+- 本机源码：$HOME/github/yukino-codegen 仓库 client/src（shared/webcontainer/boot.ts、vite.config.ts、pages/app-chat/workspace/webcontainer-runtime.ts、pages/app-chat/workspace/webcontainer-fs.ts、pages/app-chat/workspace/use-workspace-controller.ts、pages/app-chat/use-visual-editor.ts）；$HOME/github/yukino-codegen/client/node_modules/@webcontainer/api 1.6.4 dist（index.js、entities.d.ts、preview-message-types.d.ts、internal/iframe-url.js、internal/constants.js）；曾存放于 yukino-codegen 仓库根目录的调研报告 yukino-codegen.md（webc 运行时实测证据，已从仓库移除，第三、四、五节转引其中数据）

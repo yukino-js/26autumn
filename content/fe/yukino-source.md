@@ -77,7 +77,7 @@ Yukino 是一个**终端 AI 编码代理**（terminal-based AI coding agent）�
 4. **manageContext（第 1 层自动压缩）**：token 超阈值就先压缩。
 5. **发起流式请求**：`client.stream(conversation, toolSchemas, abortSignal)`，处理 text/thinking/tool_call/usage 事件。
 6. **自愈**：`ContextTooLongError` → `forceCompact` 重试；`RateLimitError` → 按 `Retry-After` 退避重试（最多 3 次）；`max_tokens` → 先抬升输出上限一次，再多轮续写恢复（最多 3 次）。
-7. **执行工具**：`executeTools` 按「只读可并行 / 写与命令串行」分批（`partitionToolCalls`），经权限检查、pre/post hook、`StreamingExecutor` 执行。
+7. **执行工具**：`executeTools` 分批（`partitionToolCalls`）——安全性按实参判定：工具自带 `isConcurrencySafe(args)`（Bash 复用权限层 `isSafeCommand` 只读命令白名单）优先，缺省回退 `category === "read"`；连续安全调用并入并行批，变更类调用与未知工具单独成批串行。每批经权限检查、pre/post hook、`StreamingExecutor` 执行。
 8. **工具结果预算**：单结果超 50000 字符溢出到磁盘（`tool-result`），整批再做聚合预算（`applyBudget`）。
 9. **记忆 recall 注入**：预取的 `memoryRecallPromise` 已 settle 就注入。
 10. **持久化**：每条消息 `persistLastMessage` 写入会话 JSONL。
@@ -232,15 +232,15 @@ interface Tool {
 
 #### 委派 / 团队类
 
-| 工具              | category | 描述（摘）                                        | 参数                                                                                                                                                                         | 能力要点                                                                   |
-| ----------------- | -------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| **Agent**         | read     | 启动 subagent 处理复杂多步任务                    | `description`(必)、`prompt`(必)、`subagent_type`(角色枚举，省略= fork 当前会话快照)、`model`、`run_in_background`、`isolation:"worktree"`、`plan_mode_required`、`team_name` | 前台内联返回；后台返回 task ID；team_name 生成持久 teammate；worktree 隔离 |
-| **TeamCreate**    | read     | 创建团队（同时最多一个团队，新建会清掉其他）      | `team_name`(必)、`description`                                                                                                                                               | 单团队不变式                                                               |
-| **SpawnTeammate** | read     | 在团队里后台生成一个 teammate                     | `team`(必)、`name`(必)、`task`(必)                                                                                                                                           | 结果经团队频道送达                                                         |
-| **SendMessage**   | read     | 向 teammate 邮箱发消息；`to:"*"` 广播             | `to`(必)、`content`(必)、`type`(text/shutdown_request/shutdown_response/plan_approval_response)、`request_id`、`approve`                                                     | 结构化消息带 requestId 关联请求/响应                                       |
-| **ListTeams**     | read     | 列出团队及成员                                    | 无                                                                                                                                                                           | —                                                                          |
-| **TeamDelete**    | read     | 删除团队并停止成员                                | `name`(必)                                                                                                                                                                   | —                                                                          |
-| **TaskStop**      | command  | 停止 teammate 或后台任务（Agent/Bash/PowerShell） | `teammate` 或 `task_id`（二选一）                                                                                                                                            | 优先用当前循环的 taskManager                                               |
+| 工具              | category | 描述（摘）                                        | 参数                                                                                                                                                                                                              | 能力要点                                                                   |
+| ----------------- | -------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **Agent**         | read     | 启动 subagent 处理复杂多步任务                    | `description`(必)、`prompt`(必)、`subagent_type`(角色枚举，省略= fork 当前会话快照)、`model`、`name`(配合 team_name 的稳定成员名)、`run_in_background`、`isolation:"worktree"`、`plan_mode_required`、`team_name` | 前台内联返回；后台返回 task ID；team_name 生成持久 teammate；worktree 隔离 |
+| **TeamCreate**    | read     | 创建团队（同时最多一个团队，新建会清掉其他）      | `team_name`(必)、`description`                                                                                                                                                                                    | 单团队不变式                                                               |
+| **SpawnTeammate** | read     | 在团队里后台生成一个 teammate                     | `team`(必)、`name`(必)、`task`(必)                                                                                                                                                                                | 结果经团队频道送达                                                         |
+| **SendMessage**   | read     | 向 teammate 邮箱发消息；`to:"*"` 广播             | `to`(必)、`content`(必)、`type`(text/shutdown_request/shutdown_response/plan_approval_response)、`request_id`、`approve`                                                                                          | 结构化消息带 requestId 关联请求/响应                                       |
+| **ListTeams**     | read     | 列出团队及成员                                    | 无                                                                                                                                                                                                                | —                                                                          |
+| **TeamDelete**    | read     | 删除团队并停止成员                                | `name`(必)                                                                                                                                                                                                        | —                                                                          |
+| **TaskStop**      | command  | 停止 teammate 或后台任务（Agent/Bash/PowerShell） | `teammate` 或 `task_id`（二选一）                                                                                                                                                                                 | 优先用当前循环的 taskManager                                               |
 
 #### 任务追踪类（todo，`todo/tools.ts`）
 
@@ -314,7 +314,7 @@ interface Tool {
 - **加载路径**（`skills/catalog.ts`）：`~/.agents/skills/<name>/SKILL.md`（用户级）+ `<workDir>/.agents/skills/<name>/SKILL.md`（项目级，优先）。**当前代码只有这两层**——README 提到的「built-in」层在现版本代码里没有实现，仓库本身也不附带任何 SKILL.md。
 - **SKILL.md frontmatter**：`name`(必)、`description`、`mode`(inline/fork)、`model`、`fork_context`(full/recent/none)。`context: fork` 等价于 `mode: fork`（兼容其他生态）。
 - **热重载**：目录 mtime 变化触发 `reload()`；单文件 mtime 变化在 `get()` 时惰性重读。
-- **渐进披露**：系统提示词里只放技能元数据清单（`buildSkillSection` 生成 `<available-skills>` XML），正文由 `LoadSkill` 按需载入，避免污染缓存前缀。
+- **渐进披露**：技能元数据清单不进系统提示词，而是经首条 system-reminder 注入（`buildSkillSection` 生成 `<available-skills>` XML，由 `Agent.restoreContext → injectLongTermMemory` 走 reminder 通道），正文由 `LoadSkill` 按需载入，避免污染跨项目缓存前缀。
 - **执行模式**（`skills/executor.ts`）：
   - **inline**：`runInline` 把 SOP 正文经 host 激活进当前会话。
   - **fork**：`runFork` 在隔离 subagent 里跑，只回传结果；`fork_context` 决定是否附带父上下文（recent=最近 5 条，full=最近 100 条，none=不带）。
@@ -391,7 +391,7 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 1. **缓存共享路径** `callSummaryWithCacheSharing`：保留原消息列表不序列化，把摘要指令作为**最后一条 user 消息**追加给 LLM——前缀与主对话最后一次调用一致，从而命中 prompt cache（Anthropic 9 折、OpenAI 5 折等）。
 2. **PTL 重试路径** `requestSummaryWithPTLRetry`：若报 `ContextTooLongError`，把前缀序列化成文本（图像块变占位符），按「API 轮次分组」从头部丢弃（`truncateHeadForPTL`），最多重试 3 次。
 
-摘要要求输出 `<analysis>`（草稿，丢弃）+ `<summary>`（保留）；`formatCompactSummary` 抽取 `<summary>`，缺失或不闭合则判为失败。
+摘要只要求输出完整的 `<summary>`；`formatCompactSummary` 抽取 `<summary>`，缺失时剥掉模型自发输出的 `<analysis>` 块回退其余文本，标签未闭合或结果为空则判为失败。
 
 ### 6.5 压缩提示词（`SUMMARY_INSTRUCTIONS`，中文翻译）
 
@@ -585,13 +585,13 @@ fork 用 `cloneRegistryForFork`：只剥 `MAIN_AGENT_ONLY_TOOLS`，保留 Agent�
 
 `detectBackend()`：Windows 恒 in-process；否则看环境变量 `TMUX`→tmux、`ITERM_SESSION_ID`→iterm，都不满足则 in-process。
 
-| backend        | 形态                                     | 取消方式                    |
-| -------------- | ---------------------------------------- | --------------------------- |
-| **in-process** | 同进程后台任务，idle-poll-continue 循环  | `AbortController.abort()`   |
-| **tmux**       | `tmux new-window/new-session` 起独立进程 | `tmux kill-session`         |
-| **iterm**      | osascript 驱动 iTerm2 开新 tab           | 无编程句柄，靠邮箱 shutdown |
+| backend        | 形态                                            | 取消方式                    |
+| -------------- | ----------------------------------------------- | --------------------------- |
+| **in-process** | 同进程后台任务，idle-poll-continue 循环         | `AbortController.abort()`   |
+| **tmux**       | 每 teammate 一个 `tmux new-session -d` 独立会话 | `tmux kill-session`         |
+| **iterm**      | osascript 驱动 iTerm2 开新 tab                  | 无编程句柄，靠邮箱 shutdown |
 
-外部 backend 拉起命令：`node run <entry> --teammate --team-dir <mailboxDir> --team-name <team> --member-name <name> --task <task> [--provider-base-url ...]`（对应 `teammate.ts` 的 `parseTeammateFlags`）。外部启动失败会回退 in-process。
+外部 backend 拉起命令：`node <entry> --teammate --team-dir <mailboxDir> --team-name <team> --member-name <name> --task <task> [--provider-index <N>]`（对应 `teammate.ts` 的 `parseTeammateFlags`；provider-index 缺省时跟随 `default_provider`）。外部启动失败会回退 in-process。
 
 ### 10.3 通信机制：文件邮箱（`file-mailbox.ts`）
 
@@ -682,7 +682,7 @@ while active:
 - **大结果溢出**（`tool-result/`）：单结果 >50000 字符写盘留预览+路径；并行批做聚合预算；readback 豁免再溢出。
 - **@引用**（`conversation/at-expand.ts`）：用户消息里 `@path`（可带 `#L3-10`）内联文件内容/图片；剪贴板图片存到 file-history 目录。
 - **worktree**（`worktree/`）：`createAgentWorktree`/`removeAgentWorktree`/`hasWorktreeChanges`/`buildWorktreeNotice`。
-- **code-review**（`code-review/`）：`/code-review` 管理评审团队、创建评审请求、评论、critic 评估。
+- **code-review**（`code-review/`）：`/code-review` 重构后的「确定性管线 + 隔离子代理评审」——确定性选文件 → LLM 语义分组（失败回退确定性分块）→ 每组独立子代理并发评审 → 独立 fact-checker 过滤（默认批准）→ 评论定位逐级降级（diff 内 → 跨文件 → LLM）→ 严重度分级报告。
 
 ---
 

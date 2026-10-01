@@ -1,5 +1,6 @@
 ---
 title: "A2UI"
+description: "A2UI 协议调研: v0.9/v0.9.1 规范的组件与函数目录、扩展机制、Dart/Swift/TypeScript 多语言 SDK、A2A 集成与 restaurant_finder 示例的源码级走读"
 ---
 
 仓库路径: https://github.com/a2ui-project/a2ui (本机克隆位于 $HOME/Downloads/a2ui, 2026-10-01 pull 至 HEAD 8d75b7901dcbb78dded6449036a6f17bf52c62c1)
@@ -223,7 +224,7 @@ A2UI 是 JSON 流式 UI 协议: 服务端 (Agent) 向客户端 (Renderer) 发送
 
 ### 版本家族
 
-- v0.8: 面向支持 structured output 的 LLM, legacy, 新 SDK 不再支持
+- v0.8: 面向支持 structured output 的 LLM, legacy (规范已冻结不再维护); 新语言 SDK (Dart 等) 未实现, 但 TypeScript web_core 与 React/Lit 渲染器仍保留 v0_8 入口
 - v0.9: prompt-first 协议族首个稳定版, SDK 已实现
 - v0.9.1: 当前生产版本, 与 v0.9 差异极小 (见 evolution_guide), 多语言 SDK/渲染器/示例均以此为准
 - v1.0: 候选规范 (草案期名为 v0.10), 待足够多渲染器移植后转稳定
@@ -369,7 +370,7 @@ theme 正式支持三个属性: primaryColor (主色), iconUrl 和 agentDisplayN
 - 对比 OpenAI ChatKit: 设计哲学相近 (基础组件 + 可配置声明式抽象层) , 但 A2UI 平台无关, 面向跨 web/移动/桌面自建 agentic 界面, 以及需要跨信任边界渲染的多 Agent 系统
 - 采用案例: Google 内部团队、AG2 多 Agent 框架 (A2UIAgent, 可经 A2A 服务 Flutter GenUI 客户端) 、CopilotKit 生态应用等
 
-渲染器生态: 官方渲染器覆盖 React、Lit、Angular、Markdown (仓库 renderers/ 目录) 与 Flutter (GenUI SDK, 独立仓库 flutter/genui); 仓库内另有面向 Apple 平台的 Swift SDK (swift/core 的 A2UICore + BasicCatalog, swift/swiftui 的 SwiftUI 适配层与示例 App, 对齐 v0.9.1 规范) 与 Dart SDK (模型层 dart/a2ui_core、agent 层 dart/a2ui_agent; dart/a2ui_flutter 目前是占位包, 官方 Flutter 渲染器仍指向 GenUI SDK), kotlin/ 目录只剩 agent_sdk_legacy; 社区有基于 shadcn 的 React 渲染器 (如 @xpert-ai/a2ui-react、本文的 @yukino.js/a2ui-shadcn) 及实验性 3D 渲染器. 配套工具: A2UI Composer (可视化编辑器, 无需安装即可生成 A2UI JSON) 、A2UI Theater (预置流式场景的演示场) .
+渲染器生态: 官方渲染器覆盖 React、Lit、Angular、Markdown (仓库 renderers/ 目录) 与 Flutter (GenUI SDK, 独立仓库 flutter/genui); 仓库内另有面向 Apple 平台的 Swift SDK (swift/core 的 A2UICore + BasicCatalog, swift/swiftui 的 SwiftUI 适配层 A2UISwiftUI, 示例 Gallery App 位于 swift/sample (A2UISampleClient), 对齐 v0.9.1 规范) 与 Dart SDK (模型层 dart/a2ui_core、agent 层 dart/a2ui_agent; dart/a2ui_flutter 目前是占位包, 官方 Flutter 渲染器仍指向 GenUI SDK), kotlin/ 目录只剩 agent_sdk_legacy; 社区有基于 shadcn 的 React 渲染器 (如 @xpert-ai/a2ui-react、本文的 @yukino.js/a2ui-shadcn) 及实验性 3D 渲染器. 配套工具: A2UI Composer (可视化编辑器, 无需安装即可生成 A2UI JSON) 、A2UI Theater (预置流式场景的演示场) .
 
 ## 完整流程 (React + v0.9)
 
@@ -392,17 +393,17 @@ Server 使用 A2A 协议暴露 HTTP 端点 (restaurant_finder 示例, Python ADK
 ```js
 // 伪代码, 对应 samples/agent/adk/restaurant_finder
 const agent = new RestaurantAgent(); // Agent, 包含 systemPromptBuilder + tools
-const executor = new AgentExecutor(agent); // 封装 Agent Loop 的执行器
-const handler = new DefaultRequestHandler(executor); // A2A JSON-RPC 请求处理器
-const app = new A2AHttpApplication(handler); // HTTP 应用
+const executor = new RestaurantAgentExecutor(agent); // 封装 Agent Loop 的执行器
+const handler = new DefaultRequestHandler(executor); // A2A JSON-RPC 请求处理器 (配 InMemoryTaskStore)
+const app = new A2AStarletteApplication(agent, handler); // Starlette HTTP 应用, uvicorn 运行
 
-app.listen(10002, "0.0.0.0");
+app.listen(10002, "localhost"); // CLI 默认 --port 10002 / --host localhost, 均可覆盖
 ```
 
-Server 启动后提供两个端点:
+Server 启动后提供以下端点:
 
-- `GET /.well-known/agent-card.json` AgentCard, 声明 Server 能力 (支持的 A2A 扩展、MIME 类型等)
-- `POST /a2a` A2A JSON-RPC 端点, 处理 `message/send` / `message/stream` 请求
+- `GET /.well-known/agent-card.json` AgentCard, 声明 Server 能力 (支持的 A2A 扩展、MIME 类型等); AgentCard.url 指向服务根地址 (默认 http://localhost:10002)
+- JSON-RPC 端点, 处理 `message/send` / `message/stream` 请求 —— 请求发往 AgentCard.url 声明的地址 (本例为 POST 到根路径); 注意 `/a2a` 是 Vite 开发中间件的浏览器侧入口 (见阶段 5), 不是 Server 端点
 
 AgentCard 中声明支持的 A2UI 扩展 (例如 `https://a2ui.org/a2a-extension/a2ui/v0.9`), Client 通过读取 AgentCard 得知 Server 支持 A2UI.
 
@@ -651,9 +652,9 @@ export const plugin = (): Plugin => ({
         };
       }
 
-      // 懒初始化 A2A Client (读取 Server 的 AgentCard)
+      // 懒初始化 A2A Client (模块级单例, 读取 Server 的 AgentCard)
       const client = await A2AClient.fromCardUrl(
-        "/.well-known/agent-card.json",
+        "http://localhost:10002/.well-known/agent-card.json",
         { fetchImpl: fetchWithCustomHeader },
       );
 
@@ -1050,7 +1051,7 @@ GenericBinder 绑定属性时读取组件的 Zod schema, 将属性分类处理:
 
 ### 阶段 12: React 渲染器内部机制
 
-@a2ui/react/v0_9 把 web_core 的模型层桥接到 React, 核心是 NodeResolver / NodeView 的 node layer 架构 (renderers/react/src/v0_9/A2uiSurface.tsx:119-167): A2uiSurface 构造一个 NodeResolver (由 @a2ui/web_core/v0_9 导出, 实现在 typescript/web_core/src/resolution/node-resolver.ts), 渲染它维护的已解析 ComponentNode 树. 组件解析、数据作用域与属性绑定全部下沉到 web_core 的 node layer, React 侧只做分发渲染:
+@a2ui/react/v0_9 把 web_core 的模型层桥接到 React, 核心是 NodeResolver / NodeView 的 node layer 架构 (renderers/react/src/v0_9/A2uiSurface.tsx:119-166): A2uiSurface 构造一个 NodeResolver (由 @a2ui/web_core/v0_9 导出, 实现在 typescript/web_core/src/resolution/node-resolver.ts), 渲染它维护的已解析 ComponentNode 树. 组件解析、数据作用域与属性绑定全部下沉到 web_core 的 node layer, React 侧只做分发渲染:
 
 ```tsx
 // A2uiSurface: 入口, 用 useSyncExternalStore 订阅 NodeResolver 的 rootNode
@@ -1220,6 +1221,8 @@ at address "40 E Broadway, New York, NY 10002". They want to make a reservation.
 {
   "id": "submit-button",
   "component": "Button",
+  "child": "submit-reservation-text",
+  "variant": "primary",
   "action": {
     "event": {
       "name": "submit_booking",
@@ -1227,7 +1230,8 @@ at address "40 E Broadway, New York, NY 10002". They want to make a reservation.
         "restaurantName": { "path": "/restaurantName" },
         "partySize": { "path": "/partySize" },
         "reservationTime": { "path": "/reservationTime" },
-        "dietary": { "path": "/dietary" }
+        "dietary": { "path": "/dietary" },
+        "imageUrl": { "path": "/imageUrl" }
       }
     }
   }
@@ -1238,18 +1242,9 @@ at address "40 E Broadway, New York, NY 10002". They want to make a reservation.
 
 ### 阶段 14: Session 管理
 
-多轮对话通过 A2A 协议的 contextId 管理:
+多轮对话在 A2A 协议中通过 contextId 标识: 同一 contextId 下的消息共享对话历史. Server 端的 restaurant_finder 直接消费这个标识 —— agent_executor.py 把 task.context_id 作为 session_id 传给 RestaurantAgent.stream, agent 侧 InMemorySessionService 按 session_id 不存在则创建、存在则复用会话, DirectJsonStreamParser 也按 session_id 缓存; 一旦 contextId 稳定, LLM 就能在后续轮次看到之前的对话上下文 (包括之前生成的 A2UI 消息和工具调用结果).
 
-```ts
-sendParams = {
-  message: { messageId: crypto.randomUUID(), role: "user", parts: [...] },
-  configuration: {
-    contextId: sessionId, // 同一 contextId 下的消息共享对话历史
-  },
-};
-```
-
-Server 端的 ADK Session 通过 contextId 关联, 确保 LLM 在后续轮次中能看到之前的对话上下文 (包括之前生成的 A2UI 消息和工具调用结果).
+需要说明: 本仓库两个 shell 的中间件都没有显式传 contextId —— 每次请求只携带新的 messageId, 不附加 configuration.contextId, 也不捕获 Server 返回的 contextId 复用, 因此 demo 中每一轮实际都是全新上下文, 多轮连续性 (列表 -> 表单 -> 确认) 不依赖服务端会话记忆, 而是靠 action 消息的 context 自带全部所需数据 (restaurantName / address / imageUrl / 表单字段值等). 显式传递 `configuration: { contextId }` (或把 status-update 中获得的 contextId 在后续请求回传) 共享对话历史是 A2A 的通用能力, 生产接入需自行实现.
 
 ## 组件加载时的 Loading (骨架) 实现
 

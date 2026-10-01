@@ -200,6 +200,8 @@ B+ 树 vs 跳表: 跳表 (Redis zset 使用) 是链表 + 多级索引, 层高不
 create table t (
   id bigint unsigned auto_increment,
   name varchar(64) not null,
+  a int not null default 0,
+  b int not null default 0,
   primary key (id) using btree,          -- 主键索引
   unique key uk_name (name),             -- 唯一索引
   index idx_name_prefix (name(10))       -- 前缀索引
@@ -858,7 +860,7 @@ MySQL 5.7+ 将 commit 细分为三个阶段, 每阶段一个队列, 各阶段可
 
 部分页写问题 (partial page write): InnoDB 页 16KB, 而磁盘原子写单位通常是 4KB, 刷脏刷到一半宕机, 页就"半新半旧"损坏了. redo log 记录的是基于完好页的增量修改, 页本身损坏时 redo 无从重放.
 
-Doublewrite Buffer: 刷脏页时先把页顺序写到共享表空间的 doublewrite 区域 (2MB), fsync 后再写到真正的表空间位置. 崩溃恢复时若发现某页校验失败 (File Trailer 校验), 就用 doublewrite 中的完整副本还原该页, 再重放 redo log. 代价是每页写两次, 但第一次是顺序写, 开销约 5%~10%.
+Doublewrite Buffer: 刷脏页时先把页顺序写到共享表空间的 doublewrite 区域 (2MB, 8.0.20 起 doublewrite 移出系统表空间, 改为独立的 doublewrite 目录文件), fsync 后再写到真正的表空间位置. 崩溃恢复时若发现某页校验失败 (File Trailer 校验), 就用 doublewrite 中的完整副本还原该页, 再重放 redo log. 代价是每页写两次, 但第一次是顺序写, 开销约 5%~10%.
 
 ### 误删数据后如何恢复? redo log 为什么不能用于恢复被删的库?
 
@@ -1120,10 +1122,10 @@ show global status like 'Com_%';        -- Com_select / Com_insert / ...
 -- 2. 慢查询日志 (配置 /etc/my.cnf)
 -- slow_query_log=1, long_query_time=2, 日志: localhost-slow.log
 
--- 3. profiling: 单条 SQL 各阶段耗时 (MySQL 5.7 起废弃, 8.0 已移除;
---    8.0 请改用 performance_schema.events_statements_history 等表)
-select @@have_profiling;
-set session profiling = 1;
+-- 3. profiling: 单条 SQL 各阶段耗时 (5.6.7 起废弃; have_profiling 变量
+--    已在 8.0 移除, SHOW PROFILE / SHOW PROFILES / profiling 变量在 8.4 移除;
+--    新版本请改用 performance_schema.events_statements_history 等表)
+set session profiling = 1;            -- 8.0 中仍可用但已废弃
 show profiles;                        -- 各 SQL 的 queryID 与总耗时
 show profile for query <queryID>;     -- 各阶段耗时
 show profile cpu for query <queryID>; -- 各阶段 CPU

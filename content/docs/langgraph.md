@@ -1,28 +1,28 @@
 ---
 title: "LangGraph.js 调研: Pregel 超步执行引擎、通道状态模型与检查点持久化体系"
-description: "基于 langgraphjs@cca48067 本机克隆: 拆解 monorepo 包布局、StateGraph/Pregel BSP 执行循环、channels 与 reducers、checkpointer 生态、human-in-the-loop 与流式输出"
+description: "基于 langgraphjs@73437686 本机克隆: 拆解 monorepo 包布局、StateGraph/Pregel BSP 执行循环、channels 与 reducers、checkpointer 生态、human-in-the-loop 与流式输出"
 ---
 
 仓库路径: https://github.com/langchain-ai/langgraphjs (本机克隆位于 $HOME/Downloads/langgraphjs)
 
-## 一、项目快照 (本机克隆 2026-09-30)
+## 一、项目快照 (本机克隆 2026-10-01)
 
-本机克隆于 2026-09-30 核实, 分支 main, 工作区干净 (仅含本地未跟踪的 .codegraph 索引目录)。
+本机克隆于 2026-10-01 核实, 分支 main, 与 origin/main 一致, 工作区干净 (仅含本地未跟踪的 .codegraph 索引目录)。
 
-| 指标        | 数值                                                                                                                           |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| HEAD commit | cca48067 (完整哈希 cca48067b78fa9e3dc632c02a3431e74ff3f91b1)                                                                   |
-| 提交日期    | 2026-09-29 18:07:09 -0400                                                                                                      |
-| 提交信息    | fix(sdk): reconcile stream buffer with server state after cancelling a run (#2882)                                             |
-| 分支        | main                                                                                                                           |
-| 定位        | Low-level orchestration framework for building stateful agents (README.md 标语)                                                |
-| 主 npm 包   | @langchain/langgraph 1.4.18, 源码位于 libs/langgraph-core; 根目录 README.md 是指向 libs/langgraph-core/README.md 的符号链接    |
-| 规范包名    | langgraph 1.0.47 (libs/langgraph), 无 scope 便捷包装, 全量 re-export 主包                                                      |
-| License     | MIT (LICENSE: Copyright (c) 2024 LangChain)                                                                                    |
-| 运行时      | 仓库 engines: node ^22.11 或 ^24 或 26 及以上 (根 package.json); @langchain/langgraph 自身 engines: node 18 及以上             |
-| 包管理      | pnpm@10.27.0 (packageManager 字段); workspace 范围为 docs、examples 下全部、libs 下全部、internal 下全部 (pnpm-workspace.yaml) |
-| 构建工具    | turbo ^2.10.8; devDependencies 含 TypeScript ^4.9.5 或 ^5.4.5、@swc/core、oxlint ^1.55.0、oxfmt ^0.42.0、@changesets/cli       |
-| 发布        | changesets (根 release 脚本 changeset publish; libs 下各包带 CHANGELOG.md)                                                     |
+| 指标        | 数值                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| HEAD commit | 73437686 (完整哈希 7343768628570b864dc50f25d0f2b38bf825ccb8)                                                                               |
+| 提交日期    | 2026-10-01 01:37:09 +0200                                                                                                                  |
+| 提交信息    | fix(sdk): don't retry 4xx on protocol SSE streams, keep HTTP status on errors, reset reconnect attempts after a successful connect (#2918) |
+| 分支        | main                                                                                                                                       |
+| 定位        | Low-level orchestration framework for building stateful agents (README.md 标语)                                                            |
+| 主 npm 包   | @langchain/langgraph 1.4.18, 源码位于 libs/langgraph-core; 根目录 README.md 是指向 libs/langgraph-core/README.md 的符号链接                |
+| 规范包名    | langgraph 1.0.47 (libs/langgraph), 无 scope 便捷包装, 全量 re-export 主包                                                                  |
+| License     | MIT (LICENSE: Copyright (c) 2024 LangChain)                                                                                                |
+| 运行时      | 仓库 engines: node ^22.11 或 ^24 或 26 及以上 (根 package.json); @langchain/langgraph 自身 engines: node 18 及以上                         |
+| 包管理      | pnpm@10.27.0 (packageManager 字段); workspace 范围为 docs、examples 下全部、libs 下全部、internal 下全部 (pnpm-workspace.yaml)             |
+| 构建工具    | turbo ^2.10.8; devDependencies 含 TypeScript ^4.9.5 或 ^5.4.5、@swc/core、oxlint ^1.55.0、oxfmt ^0.42.0、@changesets/cli                   |
+| 发布        | changesets (根 release 脚本 changeset publish; libs 下各包带 CHANGELOG.md)                                                                 |
 
 自我定位写在 README 首段: LangGraph 是构建可控 agent 的低层编排框架, 声称被 Replit、Uber、LinkedIn、GitLab 等使用; LangChain 提供集成与可组合组件, LangGraph 负责 agent 编排, 提供可定制架构、长期记忆与 human-in-the-loop。README 末尾的致谢明确了设计血统: 受 Google Pregel 与 Apache Beam 启发, 公开接口借鉴 NetworkX; 由 LangChain Inc 构建, 但可以脱离 LangChain 单独使用。
 
@@ -30,7 +30,7 @@ description: "基于 langgraphjs@cca48067 本机克隆: 拆解 monorepo 包布�
 
 ## 二、Monorepo 包结构
 
-libs/ 下共 20 个包 (以下版本均来自各包 package.json 的 version 字段, 2026-09-30 核实):
+libs/ 下共 20 个包 (以下版本均来自各包 package.json 的 version 字段, 2026-10-01 核实):
 
 核心执行与状态:
 
@@ -664,7 +664,7 @@ prebuilt/ 目录的导出面 (prebuilt/index.ts): createAgentExecutor、createFu
 
 ### SDK
 
-@langchain/langgraph-sdk (libs/sdk) 的 `Client` 类在 libs/sdk/src/client/index.ts:10, 按资源域拆分 assistants、threads、runs、crons、store 等子客户端; `threads.updateState` 以 POST /threads/:id/state 提交 values/checkpoint/as_node (client/threads/index.ts:319-342)。子路径导出覆盖 ui、client、auth、react、logging、react-ui、stream。流式客户端核心是 `StreamController` (libs/sdk/src/stream/controller.ts:214): 负责 SSE 解析、interrupt 收集 (`collectActiveInterruptsFromTasks`、`#recordInterrupt`) 与断线/取消后的状态对账 (`#reconcilePendingInterruptsFromServer`)——本次 HEAD 提交 (#2882) 修复的正是取消 run 后流缓冲与服务端状态的对账问题。schema.ts 定义 ThreadState、Interrupt、Config 等协议类型。
+@langchain/langgraph-sdk (libs/sdk) 的 `Client` 类在 libs/sdk/src/client/index.ts:10, 按资源域拆分 assistants、threads、runs、crons、store 等子客户端; `threads.updateState` 以 POST /threads/:id/state 提交 values/checkpoint/as_node (client/threads/index.ts:319-342)。子路径导出覆盖 ui、client、auth、react、logging、react-ui、utils、stream。流式客户端核心是 `StreamController` (libs/sdk/src/stream/controller.ts:214): 负责 SSE 解析、interrupt 收集 (`collectActiveInterruptsFromTasks`、`#recordInterrupt`) 与断线/取消后的状态对账 (`#reconcilePendingInterruptsFromServer`)。上一快照的 HEAD (#2882) 修复的正是取消 run 后流缓冲与服务端状态的对账; 本次 HEAD 提交 (#2918) 改的是协议 SSE 传输适配器 `ProtocolSseTransportAdapter` (libs/sdk/src/client/stream/transport/http.ts:58) 的重试语义, 三点变化: 4xx 响应不再进入重连循环——`isNonRetryableHttpError` (http.ts:44, 判据为 4xx 且排除 408 与 429) 命中时立即以该错误终结事件流, 不消耗重连预算; `request()` 抛出的错误现在携带 `status` 与响应体 `text` 字段 (消息格式不变); 重连计数在每次成功 (重) 连接后归零, 重置发生在 `onConnected` 回调之后以便其仍能汇报本次重连所用次数, 原先仅靠收到事件才重置的逻辑 (receivedEvent 标志) 随之移除。schema.ts 定义 ThreadState、Interrupt、Config 等协议类型。
 
 ### 前端框架集成
 
@@ -739,5 +739,5 @@ README 明确立场: LangGraph 由 LangChain Inc 构建但可脱离 LangChain �
 | Store               | libs/checkpoint/src/store/base.ts (BaseStore:385), store/memory.ts (InMemoryStore:49)                                                                                                                       |
 | 流协议              | libs/langgraph-core/src/stream/types.ts (StreamTransformer:145), pregel/stream.ts (StreamChunk:31)                                                                                                          |
 | 远程图              | libs/langgraph-core/src/pregel/remote.ts (RemoteGraph:196)                                                                                                                                                  |
-| SDK                 | libs/sdk/src/client/index.ts (Client:10), stream/controller.ts (StreamController:214), utils/stream.ts (IterableReadableStream:353)                                                                         |
+| SDK                 | libs/sdk/src/client/index.ts (Client:10), stream/controller.ts (StreamController:214), utils/stream.ts (IterableReadableStream:353), client/stream/transport/http.ts (ProtocolSseTransportAdapter:58)       |
 | 前端 hook           | libs/sdk-react/src/use-stream.ts:461                                                                                                                                                                        |

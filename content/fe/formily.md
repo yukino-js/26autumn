@@ -1,5 +1,6 @@
 ---
 title: "Formily 新手入门教程与原理解析"
+description: "基于本机 formily@d9a4644 源码核对的 Formily 入门与原理: Schema 驱动能力地图、@formily/reactive 响应式引擎、@formily/core 表单与字段体系、json-schema 编译与 react 渲染层"
 ---
 
 本机器路径: $HOME/Downloads/formily (上游仓库 git@github.com:alibaba/formily.git, 本文按 HEAD d9a4644, 2025-06-21 的源码核对)
@@ -248,7 +249,7 @@ npm install @formily/core @formily/react @formily/next @alifd/next
 import React from "react";
 import { createForm } from "@formily/core";
 import { FormProvider, Field } from "@formily/react";
-import { Input, FormItem } from "@formily/antd";
+import { Input, Password, FormItem } from "@formily/antd";
 
 const form = createForm();
 
@@ -266,7 +267,7 @@ export default () => (
       title="密码"
       required
       decorator={[FormItem]}
-      component={[Input.Password]}
+      component={[Password]}
     />
     <button onClick={() => form.submit(console.log)}>提交</button>
   </FormProvider>
@@ -285,10 +286,10 @@ export default () => (
 import React from "react";
 import { createForm } from "@formily/core";
 import { createSchemaField, FormProvider } from "@formily/react";
-import { Input, FormItem, FormLayout } from "@formily/antd";
+import { Input, Password, FormItem, FormLayout } from "@formily/antd";
 
 const SchemaField = createSchemaField({
-  components: { Input, FormItem, FormLayout },
+  components: { Input, Password, FormItem, FormLayout },
 });
 
 const form = createForm();
@@ -309,7 +310,7 @@ const schema = {
       title: "密码",
       required: true,
       "x-decorator": "FormItem",
-      "x-component": "Input.Password",
+      "x-component": "Password",
     },
   },
 };
@@ -534,10 +535,7 @@ set(target, key, value, receiver) {
 }
 ```
 
-runReactionsFromTargetKey 会从 RawReactionsMap 中查出所有依赖了 target[key] 的 reactions, 然后:
-
-- 如果在批处理中 (BatchCount > 0) , 加入 PendingReactions 队列, 等批处理结束统一执行
-- 否则立即执行
+runReactionsFromTargetKey 会从 RawReactionsMap 中查出所有依赖了 target[key] 的 reactions, 将它们加入 PendingReactions 队列, 等批处理结束时统一执行. 注意 runReactionsFromTargetKey 自身也用 batchStart/batchEnd 包裹, 所以即使外部没有显式 batch, 更新也会经过这个队列 (源码中"立即执行"的分支标注了 never reach) .
 
 ### 4.5 autorun 与 Tracker
 
@@ -721,11 +719,11 @@ Field 的 value 是一个 computed 属性:
 
 ```ts
 get value() {
-  return this.form.values[this.path]  // 从 form.values 中按路径读取
+  return this.form.getValuesIn(this.path); // 从 form.values 中按路径读取
 }
 
 set value(value) {
-  this.form.setValuesIn(this.path, value)  // 写入 form.values
+  this.setValue(value); // setValue 最终调用 form.setValuesIn(this.path, value) 写入 form.values
 }
 ```
 
@@ -756,7 +754,7 @@ export const Field = (props) => {
 };
 ```
 
-注意: form.createField 是幂等的. 如果同一路径的字段已经存在, 会复用已有实例并更新 props, 而不是创建新实例.
+注意: form.createField 是幂等的. 如果同一路径的字段已经存在, 会直接复用已有实例, 不再创建新实例 (仅当 form.props.designable 为 true 时才会重新创建) .
 
 ### 5.5 makeReactive: 响应式联动
 
@@ -764,10 +762,18 @@ Field 的 makeReactive 方法建立了多条响应式链路:
 
 ```ts
 protected makeReactive() {
-  // 1. 值变化 -> 发布事件 + 触发校验
+  // 1. 值变化 -> 发布事件 + 触发校验 (display 为 none 时还会兜底缓存并删除值)
   createReaction(() => this.value, (value) => {
     this.notify(LifeCycleTypes.ON_FIELD_VALUE_CHANGE)
-    if (this.selfModified) validateSelf(this)
+    if (isValid(value)) {
+      if (this.selfModified && !this.caches.inputting) {
+        validateSelf(this)
+      }
+      if (!isEmpty(value) && this.display === 'none') {
+        this.caches.value = toJS(value)
+        this.form.deleteValuesIn(this.path)
+      }
+    }
   })
 
   // 2. 初始值变化 -> 发布事件
@@ -775,19 +781,31 @@ protected makeReactive() {
     this.notify(LifeCycleTypes.ON_FIELD_INITIAL_VALUE_CHANGE)
   })
 
-  // 3. display 变化 -> 处理值的缓存与恢复
+  // 3. display 变化 -> 处理值的缓存与恢复; none/hidden 时清空错误反馈
   createReaction(() => this.display, (display) => {
-    if (display === 'none') {
-      this.caches.value = toJS(this.value)  // 缓存值
-      this.form.deleteValuesIn(this.path)   // 从 values 中删除
-    } else {
-      if (this.caches.value !== undefined) {
-        this.setValue(this.caches.value)    // 恢复值
+    const value = this.value
+    if (display !== 'none') {
+      if (value === undefined && this.caches.value !== undefined) {
+        this.setValue(this.caches.value)
+        this.caches.value = undefined
       }
+    } else {
+      this.caches.value = toJS(value) ?? toJS(this.initialValue)
+      this.form.deleteValuesIn(this.path)
+    }
+    if (display === 'none' || display === 'hidden') {
+      this.setFeedback({ type: 'error', messages: [] })
     }
   })
 
-  // 4. 执行用户定义的 reactions
+  // 4. pattern 变化 -> 非 editable 时清空错误反馈
+  createReaction(() => this.pattern, (pattern) => {
+    if (pattern !== 'editable') {
+      this.setFeedback({ type: 'error', messages: [] })
+    }
+  })
+
+  // 5. 执行用户定义的 reactions
   createReactions(this)
 }
 ```
@@ -1024,7 +1042,7 @@ const ReactiveInternal = (props) => {
   return renderDecorator(renderComponent());
 };
 
-export const ReactiveField = observer(ReactiveInternal);
+export const ReactiveField = observer(ReactiveInternal, { forwardRef: true });
 ```
 
 关键点: 由于 observer 的存在, 只有当这个字段自己的 value、display、componentProps 等属性变化时, 这个组件才会重渲染. 其他字段的变化不会影响它. 这就是"字段分布式渲染"的实现原理.
@@ -1245,7 +1263,8 @@ const getUserReactions = (schema, options) => {
 x-reactions 中的 `{{...}}` 语法会被 compiler.ts 编译为 JavaScript 函数:
 
 ```ts
-// "{{ $deps[0] === 'yes' }}" -> new Function('$deps', "return $deps[0] === 'yes'")
+// "{{ $deps[0] === 'yes' }}"
+// -> new Function('$root', "with($root) { return ($deps[0] === 'yes'); }")(scope)
 ```
 
 编译时可用的作用域变量:
@@ -1362,13 +1381,14 @@ createReaction(
 
 ```ts
 interface IFieldFeedback {
-  type: "error" | "warning" | "success";
-  messages: string[];
-  triggerType: "onInput" | "onFocus" | "onBlur";
+  triggerType?: "onInput" | "onFocus" | "onBlur" | (string & {});
+  type?: "error" | "success" | "warning";
+  code?: FieldFeedbackCodeTypes;
+  messages?: FeedbackMessage; // any[]
 }
 ```
 
-field.errors 是一个 computed 属性, 过滤出 type === 'error' 的 feedbacks. form.errors 则聚合所有字段的 errors.
+form.errors 是一个 computed 属性, 聚合所有字段 type === 'error' 的 feedbacks; field.errors 再从 form.errors 中过滤出属于该字段及其子字段 (按 address 前缀匹配) 的错误; field.selfErrors 则只过滤字段自身 feedbacks 中的错误.
 
 ---
 
@@ -1479,23 +1499,28 @@ const handleSubmit = async () => {
 };
 ```
 
-form.submit 的内部流程:
+form.submit 的内部流程 (packages/core/src/shared/internals.ts 的 batchSubmit) :
 
 ```
-submit()
-  +-- 发布 ON_FORM_SUBMIT_START
+submit(onSubmit?)
   +-- setSubmitting(true)
-  +-- validate()  -> 全量校验
-  |   +-- 遍历所有字段
-  |   +-- 对每个字段执行 validator
-  |   +-- 收集所有 errors
-  +-- 如果校验通过:
-  |   +-- 调用 props.onSubmit(values)
+  |   +-- 发布 ON_FORM_SUBMIT_START
+  +-- 发布 ON_FORM_SUBMIT_VALIDATE_START
+  +-- validate() -> 全量校验
+  |   +-- 遍历所有非 void 字段, 对每个字段执行 validator
+  |   +-- 成功: 发布 ON_FORM_SUBMIT_VALIDATE_SUCCESS
+  |   +-- 失败: 发布 ON_FORM_SUBMIT_VALIDATE_FAILED
+  +-- 发布 ON_FORM_SUBMIT_VALIDATE_END
+  +-- 如果 form.invalid 为真, 抛出 form.errors, 进入失败分支
+  +-- 调用 onSubmit(values) (传入 submit 的回调; 未传则直接返回 values)
   |   +-- 发布 ON_FORM_SUBMIT_SUCCESS
-  +-- 如果校验失败:
+  +-- 失败分支 (校验未通过或 onSubmit 拒绝):
+  |   +-- setSubmitting(false) -> 发布 ON_FORM_SUBMIT_END
   |   +-- 发布 ON_FORM_SUBMIT_FAILED
-  +-- setSubmitting(false)
-      +-- 发布 ON_FORM_SUBMIT_END
+  |   +-- 发布 ON_FORM_SUBMIT, 重新抛出错误
+  +-- 成功分支:
+      +-- setSubmitting(false) -> 发布 ON_FORM_SUBMIT_END
+      +-- 发布 ON_FORM_SUBMIT
 ```
 
 ### 12.5 FormConsumer

@@ -297,8 +297,8 @@ tsup（清空 dist，产出 dist/main.js）
   → vite + vite-plugin-singlefile（emptyOutDir: false，产出自包含的 dist/mcp-app.html）
 ```
 
-- UI 依赖（react / tailwind / daisyui / ext-apps）全部进 devDependencies——它们只参与打包，服务器运行时不需要；
-- `build:ui` 单独成脚本，`dev` / `test` 都先跑它，保证源码运行时读到的也是构建产物；
+- UI 依赖（react / tailwind / daisyui / vite-plugin-singlefile）全部进 devDependencies——它们只参与打包，服务器运行时不需要；ext-apps 是例外：服务端 tool.ts 运行时 import `@modelcontextprotocol/ext-apps/server` 的 registerAppTool / registerAppResource / RESOURCE_MIME_TYPE，因此位于 dependencies；
+- `build:fe`（vite build）单独成脚本，`dev` / `test` 都先跑它，保证源码运行时读到的也是构建产物；
 - 服务端从 `dist/` 读 HTML：打包后取 `dist/main.js` 的同级文件，tsx 源码运行时取包级 `dist/mcp-app.html`；文件缺失时抛错而不是降级——静默返回占位 HTML 会把"没构建"伪装成"渲染成功"。
 
 ### 4.4 测试与验证
@@ -317,7 +317,7 @@ tsup（清空 dist，产出 dist/main.js）
 
 ## 5. 宿主与生态现状
 
-MCP Apps 是核心 MCP 规范之外的扩展，宿主支持是可选的。当前支持矩阵（ext-apps README 的 Supported Clients 一节）：ChatGPT（OpenAI Apps SDK in ChatGPT）、Claude（网页）、Claude Desktop、VS Code GitHub Copilot、Goose、Postman、MCPJam、mcp-use inspector；Microsoft 365 Copilot 与 Archestra.AI 未见于本地 README，未能本地核实。定位上最接近的同类物：
+MCP Apps 是核心 MCP 规范之外的扩展，宿主支持是可选的。当前支持矩阵（本地 v1.7.5 ext-apps README 的 Supported Clients 一节）：ChatGPT（OpenAI Apps SDK in ChatGPT）、Claude、VS Code、Goose、Postman、MCPJam、mcp-use inspector；Microsoft 365 Copilot 与 Archestra.AI 未见于本地 README，未能本地核实。定位上最接近的同类物：
 
 - Claude Artifacts：体验相似，但 Artifacts 是宿主内建功能、无法由第三方 Server 提供；MCP App 把这个能力开放给了整个 MCP 生态。
 - OpenAI Apps SDK：同为"工具返回 UI"，MCP Apps 走开放规范路线，社区已有从 `window.openai` / skybridge 迁移到 MCP Apps 的指南。

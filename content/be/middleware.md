@@ -60,7 +60,7 @@ etcd 中的 Raft 优化
 - PreVote: 节点在发起选举前先进行 PreVote, 避免网络分区恢复后扰乱集群
 - CheckQuorum: Leader 定期检查是否仍与多数节点连通, 否则主动下台
 - Learner 角色: 非投票成员, 用于新节点加入时先同步数据再提升为 Voter
-- Joint Consensus: 成员变更采用两阶段 (C_old + C_new), 避免脑裂
+- 成员变更: etcd 3.3 及之前采用两阶段 Joint Consensus (C_old + C_new) 变更成员; 3.4 起改为单服务器简单变更 (simple membership change), 不再使用联合配置
 
 ### etcd 的 MVCC 多版本并发控制是如何实现的?
 
@@ -457,7 +457,7 @@ topic-a-0/
 
 查找过程: 文件名定位 Segment -> .index 二分查找 -> .log 顺序扫描.
 
-Segment 滚动: log.segment.bytes=1GB 或 log.roll.ms=7天, 满足任一触发.
+Segment 滚动: log.segment.bytes=1GB 或 log.roll.hours=168 (7 天, 毫秒级可用 log.roll.ms 设置), 满足任一触发.
 
 ### Kafka 的 Controller 机制和元数据管理(KRaft)是怎样的?
 

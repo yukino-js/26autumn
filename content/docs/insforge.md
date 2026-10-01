@@ -199,7 +199,7 @@ OAuth 面 (auth.yaml paths + backend/src/api/routes/auth/oauth.routes.ts / custo
 
 ### 6.1 系统迁移: 67 个 SQL 文件
 
-backend/src/infra/database/migrations/ 下 67 个 .sql (编号 000 至 064, 其中 033 与 047 各有两个同号文件) + bootstrap 目录 (bootstrap-migrations.js 与 baseline-migrations.js)。迁移工具是 node-pg-migrate, npm scripts 固定参数 --migrations-schema system --migrations-table migrations, migrate:up 前先跑 migrate:bootstrap; migrate:create 生成新迁移, scripts/check-migration-duplicates.js 查重复编号。完整清单:
+backend/src/infra/database/migrations/ 下 67 个 .sql (编号 000 至 064, 其中 033 与 047 各有两个同号文件) + bootstrap 目录 (bootstrap-migrations.js 与 baseline-migrations.js)。迁移工具是 node-pg-migrate, npm scripts 固定参数 --migrations-schema system --migrations-table migrations, migrate:up 前先跑 migrate:bootstrap; migrate:create 生成新迁移, backend/scripts/check-migration-duplicates.js 查重复编号。完整清单:
 
 ```text
 000_create-base-tables                        001_create-helper-functions
@@ -349,7 +349,7 @@ cloud-hosting 目录含 CloudHostingDashboard.tsx、partner.service.ts、useClou
 
 ### 10.2 packages/dashboard: 可发布的共享 dashboard
 
-@insforge/dashboard 版本 0.0.0-dev.11 (尚未 1.0, 但 publishConfig access public 且定位是"self-hosting 与 cloud-hosting 两种宿主的共享 dashboard 包"), package.json 用 Node subpath imports 组织内部结构: #app/_、#components/_、#features/_、#layout/_、#lib/_、#navigation/_、#router/_、#types/_, exports 仅 "." 与 "./styles.css" (sideEffects 声明样式表)。
+@insforge/dashboard 版本 0.0.0-dev.11 (尚未 1.0, 但 publishConfig access public 且定位是"self-hosting 与 cloud-hosting 两种宿主的共享 dashboard 包"), package.json 用 Node subpath imports 组织内部结构: #app/_、#assets/_、#components(/)、#features/_、#layout/_、#lib/_、#navigation/_、#router/*、#types(/), exports 仅 "." 与 "./styles.css" (sideEffects 声明样式表)。
 
 src/features 按产品域切 15 个目录: ai, analytics, auth, compute, dashboard, database, deployments, functions, login, logs, payments, realtime, storage, visualizer, webscraper。路由在 src/router/AppRoutes.tsx: /dashboard/login 与 /cloud/login 两个公开页, 其余全部包在 RequireAuth 里; AuthenticatedRoutes 内 /dashboard 嵌套数据库子路由 (migrations、backups 等), /dashboard/sql-editor 与 /dashboard/storage 各有独立 Layout; 首页组件由 PostHog feature flag DASHBOARD_V4_EXPERIMENT 决定 (D_TEST 变体渲染 DTestDashboardPage) — dashboard 在做 A/B 改版。数据访问统一走 src/lib/api/client.ts 的 ApiClient (apiClient.request + withAccessToken), 例如 compute 服务层全部以 /compute/services 前缀请求。编辑器组件依赖 CodeMirror (lang-javascript/lang-python/lang-sql) 与 Radix UI 原语。测试配置分 unit/component 两套 vitest config 外加 playwright.config.ts; 构建为 vite build + tsc -p tsconfig.build.json 双步。
 
@@ -383,7 +383,7 @@ openapi/ 下 17 个 YAML 共 15007 行, 全部 OpenAPI 3.0.3, 按产品域拆分
 | dashboard.yaml   | 55   | dashboard 事件                                                                                                                                         |
 | health.yaml      | 29   | 健康检查                                                                                                                                               |
 
-这些 YAML 与 docs/ 目录 (Mintlify 站点, docs.json 为配置, 主色 #07C983, 默认深色) 一起构成"agent 可读文档面": 后端 /api/docs 路由直接从磁盘读 mdx 返回给调用方。backend/src/api/routes/docs/index.routes.ts 两级端点: GET /api/docs/:docType 走 LEGACY_DOCS_MAP (zod 枚举校验 docType), GET /api/docs/:docFeature/:docLanguage 走 SDK_DOCS_MAP (feature 如 realtime/payments, language 如 typescript/kotlin/rest-api); 文件路径做安全校验 — resolve 后必须落在 docs/ 或 .agents/docs 内, 否则 403; 返回前 processSnippets 展开 mdx 的 snippet 引用。docs/sdks 下有 typescript、kotlin、swift、rest 四种语言的 SDK 文档 (swift 在 docs 目录存在但不在后端 SDK_DOCS_MAP 的映射组合内); docs 站点有 es、zh、zh-Hant 三个 i18n 目录, scripts/check-docs-i18n-parity.sh 与 build-docs-langs.py 维护多语言同步。core-concepts 目录按 12 个产品域组织 (ai、analytics、authentication、compute、database、functions、messaging、payments、realtime、sites、storage、webscraper)。
+这些 YAML 与 docs/ 目录 (Mintlify 站点, docs.json 为配置, 主色 #07C983, 默认深色) 一起构成"agent 可读文档面": 后端 /api/docs 路由直接从磁盘读 mdx 返回给调用方。backend/src/api/routes/docs/index.routes.ts 两级端点: GET /api/docs/:docType 走 LEGACY_DOCS_MAP (zod 枚举校验 docType), GET /api/docs/:docFeature/:docLanguage 走 SDK_DOCS_MAP (feature 如 realtime/payments, language 如 typescript/kotlin/rest-api); 文件路径做安全校验 — resolve 后必须落在 docs/ 或 .agents/docs 内, 否则 403; 返回前 processSnippets 展开 mdx 的 snippet 引用。docs/sdks 下有 typescript、kotlin、swift、rest 四种语言的 SDK 文档, 后端 SDK_DOCS_MAP 在 db、storage、functions、auth、ai、realtime 六个 feature 上都映射了全部四种语言, 仅 payments 只有 typescript 一种; docs 站点有 es、zh、zh-Hant 三个 i18n 目录, scripts/check-docs-i18n-parity.sh 与 build-docs-langs.py 维护多语言同步。core-concepts 目录按 12 个产品域组织 (ai、analytics、authentication、compute、database、functions、messaging、payments、realtime、sites、storage、webscraper)。
 
 MCP 的 fetch-docs 工具就是打 GET /api/docs/instructions, fetch-sdk-docs 打 feature/language 组合端点 — 后端把"教 agent 用自己"的文档做成了 API。
 
@@ -564,7 +564,7 @@ OAuth 流程本体 (oauth-manager.ts): 对 MCP 客户端做标准授权码 + PKC
 | openapi 17 文件 15007 行, auth.yaml 38 路径                          | openapi/ 目录 wc -l 与 grep 实测                                                                                                               |
 | docs 路由路径穿越防护限 docs/ 与 .agents/docs                        | backend/src/api/routes/docs/index.routes.ts 安全检查段                                                                                         |
 | runner 镜像 CMD 先迁移后 exec node                                   | 根 Dockerfile runner 阶段                                                                                                                      |
-| setup.sh 生成五个 secret、幂等、不启动服务                           | deploy/setup.sh 头注释; README Quickstart                                                                                                      |
+| setup.sh 生成六个 secret (含两个 access key)、幂等、不启动服务       | deploy/setup.sh gen_secret 调用与头注释; README Quickstart                                                                                     |
 | 单测 197 个                                                          | backend/tests/unit/*.test.ts glob 计数                                                                                                         |
 | MCP bin 三入口与 start 命令                                          | insforge-mcp/package.json bin/scripts                                                                                                          |
 | 健康检查 10s 超时且失败即终止注册                                    | insforge-mcp/src/shared/tools/index.ts fetchBackendVersion/registerInsforgeTools                                                               |

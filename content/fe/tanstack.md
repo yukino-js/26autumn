@@ -33,8 +33,10 @@ TanStack Query 解决的是服务端状态 (Server State) 问题, 而不是传�
 | jotai                   | 2.20.3   | yukino-chatbot                 |
 | react                   | 19.3.0   | yukino-chatbot, yukino-codegen |
 
-以下为 `$HOME/github/leetcode/package.json` 中声明的 TanStack 生态依赖 (版本均写作 latest, 仅展示生态面貌, 与上表的实际安装版本无关):
+以下为 `$HOME/github/leetcode/package.json` 中声明的 TanStack 生态依赖 (除 @tanstack/router-cli 外版本均写作 latest, 仅展示生态面貌, 与上表的实际安装版本无关):
 
+    "@tanstack/devtools-event-client": "latest",
+    "@tanstack/devtools-vite": "latest",
     "@tanstack/match-sorter-utils": "latest",
     "@tanstack/query-db-collection": "latest",
     "@tanstack/react-db": "latest",
@@ -48,9 +50,10 @@ TanStack Query 解决的是服务端状态 (Server State) 问题, 而不是传�
     "@tanstack/react-start": "latest",
     "@tanstack/react-store": "latest",
     "@tanstack/react-table": "latest",
+    "@tanstack/router-cli": "^1.167.39",
     "@tanstack/store": "latest",
 
-注意 @tanstack/react-virtual 声明版本是 3.14.13, 而它实际解析到的 @tanstack/virtual-core 是 3.17.11, 这是 pnpm 按 semver 范围解析传递依赖的正常结果, 也是 TanStack 生态各包独立发版、版本并不同步的体现.
+另外注意上表中 @tanstack/react-virtual 的安装版本是 3.14.13, 而它依赖的 @tanstack/virtual-core 是 3.17.11——react-virtual 3.14.13 的 package.json 中对 virtual-core 声明的就是精确版本 3.17.11, 两者版本号不对齐是 TanStack 生态各包独立发版的体现: core 包与框架适配包各自迭代, 版本并不同步.
 
 ## 二、核心对象模型: QueryClient、QueryCache、MutationCache
 
@@ -176,7 +179,7 @@ MutationCache 收集 `useMutation` 产生的 Mutation 实例. Mutation 的状态
 | success | mutationFn 成功返回       | `src/mutation.ts:488` |
 | error   | mutationFn 抛出或重试耗尽 | `src/mutation.ts:499` |
 
-与 Query 不同, Mutation 默认不进缓存池长期存活, 也不参与失效匹配 (除非设置 mutationKey 并用 `invalidateQueries` 的 mutation 过滤), 它的职责是承载一次写操作的生命周期回调 (onMutate/onSuccess/onError/onSettled) 与全局状态查询 (`useMutationState`).
+与 Query 不同, Mutation 默认不进缓存池长期存活, 也不参与 `invalidateQueries` 的失效匹配 (该 API 只作用于查询缓存); 设置 mutationKey 后, 可以用 `useMutationState` 或 `MutationCache.findAll` 按 key/状态过滤变更实例. Mutation 的职责是承载一次写操作的生命周期回调 (onMutate/onSuccess/onError/onSettled) 与全局状态查询 (`useMutationState`).
 
 ### gc: 缓存回收
 
@@ -232,7 +235,7 @@ staleTime 为 0 意味着: 默认配置下每次组件挂载、每次窗口重�
 本机安装的 5.104.0 源码中有几处值得注意的演进:
 
 1. staleTime 除数字外还支持字面量 `'static'`, 表示"永不视为过期" (`@tanstack/query-core/src/query.ts:418-424`, 判断走 `resolveQueryValue(observer.options.staleTime, this) === 'static'`).
-2. `fetchQuery`、`prefetchQuery`、`ensureQueryData`、`prefetchInfiniteQuery` 均已标记 `@deprecated` (`src/queryClient.ts:196`、`src/queryClient.ts:607`、`src/queryClient.ts:641`、`src/queryClient.ts:700`), 取而代之的是新的 `queryClient.query()` 与 `queryClient.infiniteQuery()`. 新方法语义合并: 缓存未过期时直接返回缓存数据, 过期时拉取; 传 `staleTime: 'static'` 等价于旧的 `ensureQueryData`, 吞错误用 `.catch(noop)` 等价于旧的 `prefetchQuery`.
+2. `ensureQueryData`、`fetchQuery`、`prefetchQuery`、`fetchInfiniteQuery`、`prefetchInfiniteQuery` 均已标记 `@deprecated` (`src/queryClient.ts:196`、`src/queryClient.ts:607`、`src/queryClient.ts:641`、`src/queryClient.ts:700`、`src/queryClient.ts:723`), 取而代之的是新的 `queryClient.query()` 与 `queryClient.infiniteQuery()`. 新方法语义合并: 缓存未过期时直接返回缓存数据, 过期时拉取; 传 `staleTime: 'static'` 等价于旧的 `ensureQueryData`, 吞错误用 `.catch(noop)` 等价于旧的 `prefetchQuery`.
 3. 命令式 `query()` 默认 `retry: false` (`src/queryClient.ts:583-584`), 因为没有组件来承接重试.
 
 ### 条件拉取: enabled
@@ -479,7 +482,7 @@ await queryClient.query({
 });
 ```
 
-行为要点 (源码 `src/queryClient.ts` `query` 方法): 先 `queryCache.build` 拿到 (或创建) Query, 再用 `isStaleByTime` 判断是否过期, 未过期直接返回 `query.state.data`, 过期才 `query.fetch`; 命令式调用默认 `retry: false`. React 侧还提供 `usePrefetchQuery` 组件式写法 (`@tanstack/react-query/src/usePrefetchQuery.tsx`) 与 `queryOptions` 辅助函数 (`src/queryOptions.ts`), 后者让同一份选项同时服务于 `useQuery` 与命令式 API, 是 v5 推荐的做法.
+行为要点 (源码 `src/queryClient.ts` `query` 方法): 先 `queryCache.build` 拿到 (或创建) Query, 再用 `isStaleByTime` 判断是否过期, 未过期直接返回 `query.state.data`, 过期才 `query.fetch`; 命令式调用默认 `retry: false`. React 侧还提供渲染期预取 Hook `usePrefetchQuery` (`@tanstack/react-query/src/usePrefetchQuery.tsx`) 与 `queryOptions` 辅助函数 (`src/queryOptions.ts`), 后者让同一份选项同时服务于 `useQuery` 与命令式 API, 是 v5 推荐的做法.
 
 ### SSR hydration
 

@@ -1,8 +1,9 @@
 ---
 title: "OpenSpec 调研文档"
+description: "Fission AI OpenSpec 调研: 规格驱动开发的协议层定位、CLI 命令与 schema 体系、proposal/specs/tasks artifacts 工作流、50 个 AI 编码工具的集成方式"
 ---
 
-仓库路径: https://github.com/Fission-AI/openspec (本机克隆位于 $HOME/Downloads/openspec)
+仓库路径: https://github.com/Fission-AI/openspec (本机克隆位于 $HOME/Downloads/openspec, 本文按 main @ c879d13d, 2026-09-29 的源码核对; 本机克隆现为浅克隆 3a34ea3, 2026-09-30, 其间 5 个提交仅涉及 1.14.0 版本发布、website 依赖锁与 status/zsh 补全修复, 不影响本文结论)
 
 ## 一、OpenSpec 是什么
 
@@ -199,14 +200,14 @@ Delta 的好处: 清晰 (一眼看出改了什么)、避免冲突 (两个 change
 
 ### 4.2 Core Profile (默认安装)
 
-| 命令          | 作用                                                                                                          |
-| ------------- | ------------------------------------------------------------------------------------------------------------- |
-| /opsx:explore | 无风险的思考伙伴: 读代码、比较方案、厘清需求, 默认不创建任何文件 (除非用户明确要求把探索结论捕获为 artifacts) |
-| /opsx:propose | 一步创建 change 并生成全部规划 artifacts (proposal + specs + design + tasks)                                  |
-| /opsx:apply   | 按 tasks.md 逐项实现, 勾选 checkbox                                                                           |
-| /opsx:update  | 修订已有 artifacts 并保持连贯性 (不写代码, 不创建缺失 artifact)                                               |
-| /opsx:sync    | 将 delta specs 合并进主 specs (不归档, change 保持活跃)                                                       |
-| /opsx:archive | 完成变更: 合并 delta + 移入 archive/                                                                          |
+| 命令          | 作用                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------- |
+| /opsx:explore | 无风险的思考伙伴: 读代码、比较方案、厘清需求, 默认不创建任何文件 (写入需用户逐项确认或明确要求捕获结论) |
+| /opsx:propose | 一步创建 change 并生成全部规划 artifacts (proposal + specs + design + tasks)                            |
+| /opsx:apply   | 按 tasks.md 逐项实现, 勾选 checkbox                                                                     |
+| /opsx:update  | 修订已有 artifacts 并保持连贯性 (不写代码, 不创建缺失 artifact)                                         |
+| /opsx:sync    | 将 delta specs 合并进主 specs (不归档, change 保持活跃)                                                 |
+| /opsx:archive | 完成变更: 合并 delta + 移入 archive/                                                                    |
 
 ### 4.3 Expanded Profile (手动开启)
 
@@ -481,7 +482,7 @@ $ openspec instructions specs --change "add-auth" --json
 /opsx:explore ──> /opsx:propose ──> /opsx:apply ──> /opsx:archive
 ```
 
-explore 默认不创建任何文件, 纯粹是思考: 读代码、分析瓶颈、比较方案; 例外是用户明确要求把探索结论捕获为 change/artifacts 时 (当前版本 skill 的约定). 当想法清晰后自然过渡到 propose.
+explore 默认不创建任何文件, 纯粹是思考: 读代码、分析瓶颈、比较方案; 要把探索结论捕获为 change/artifacts, 需要用户明确要求, 或由 agent 说明写入范围并得到用户的 yes/no 确认 (当前版本 skill 的约定) . 当想法清晰后自然过渡到 propose.
 
 ### 9.3 并行变更
 
@@ -625,7 +626,7 @@ openspec update
 
 - 自由度的代价是纪律: 没有门禁意味着需要自己保持 change 聚焦
 - Spec 只描述可观察行为: 实现细节属于 design.md, 两者不混
-- 没有自动同步: Store 的共享完全靠 git, OpenSpec 永远不会自动 clone/pull/push store (CLI 仅有的网络行为是匿名遥测上报和 openspec update 的 npm registry 版本检查, 后者可用 OPENSPEC_NO_UPDATE_CHECK 跳过)
+- 没有自动同步: Store 的共享完全靠 git, OpenSpec 永远不会自动 clone/pull/push store (CLI 的网络行为只有匿名遥测上报和 npm registry 版本检查, 后者发生在 openspec update 与 openspec version --check, 可用 OPENSPEC_NO_UPDATE_CHECK 跳过)
 
 ## 十三、技术细节
 

@@ -22,7 +22,7 @@ yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScr
 | 向量库      | 可选 Milvus Standalone (`@zilliz/milvus2-sdk-node` 3.0.6); 缺省为进程内检索                                                |
 | 校验/日志   | zod 4.6.5, pino 10.3.1 + pino-pretty, ajv 8.20.0 (工具参数校验)                                                            |
 | 协议/可观测 | `@modelcontextprotocol/server` 与 `client` 2.2.0, Langfuse 5.11.1 (over OpenTelemetry `@opentelemetry/sdk-node` 0.222.0)   |
-| 测试        | Vitest 5.0.2 (16 个测试文件, 66 个用例)                                                                                    |
+| 测试        | Vitest 5.0.2 (16 个测试文件, 59 个用例)                                                                                    |
 | 前端        | `fe/` 子包: Lit 3.3.3 + `@yukino.js/lit-jsx` + Vite 8.3.1 + Tailwind CSS 4.3.3                                             |
 | 包管理      | pnpm workspace (`pnpm-workspace.yaml` 声明 `packages: [fe]`)                                                               |
 | 启动        | `pnpm dev` (tsx watch) 或 `node main.js dev` (先拉起两个 MCP mock 服务再 `pnpm dev`)                                       |
@@ -152,7 +152,7 @@ export const chatRequestSchema = z.object({
 
 ### 图拓扑
 
-`buildGraph(checkpointer)` (`src/graph/build.ts:10`) 用 `StateGraph` 定义 11 个节点:
+`buildGraph(checkpointer)` (`src/graph/build.ts:10`) 用 `StateGraph` 定义 12 个节点:
 
 ```text
 START -> resolve_reference -> classify_intent
@@ -257,7 +257,7 @@ score = 0.5 * clip01(top1_score)          # 最高 rerank 分
       + 0.1 * key_clause_hit              # top3 是否命中关键条款词 (KEY_TERMS)
 ```
 
-权重常量在 `src/core/confidence.ts:10-15`; `KEY_TERMS` 定义于 `src/kb/documents.ts:4` (refund/return/timeframe/shipping fee/warranty 等). 得分低于 `EVIDENCE_CONFIDENCE_THRESHOLD` (默认 0.26) 即判弱证据, 走 fallback 并记录 `retrieval_low_conf`. 2. 模型门: `selfcheck.checkSufficient` (`src/core/selfcheck.ts:23`) 用 structured output 让模型判断证据是否足够; 注释明确失败一律按"不足"处理 (门禁的职责就是拦住无依据回答). 不通过则记 `self_check`.
+权重常量在 `src/core/confidence.ts:10-15`; `KEY_TERMS` 定义于 `src/kb/documents.ts:4` (refund/return/timeframe/shipping fee/warranty 等). 得分低于 `EVIDENCE_CONFIDENCE_THRESHOLD` (默认 0.26) 即判弱证据, 走 fallback 并记录 `retrieval_low_conf`. 2. 模型门: `selfcheck.checkSufficient` (`src/core/selfcheck.ts:22`) 用 structured output 让模型判断证据是否足够; 注释明确失败一律按"不足"处理 (门禁的职责就是拦住无依据回答). 不通过则记 `self_check`.
 
 弱证据出口 `fallbackReply` 除回复兜底话术外, 还会把问题写入低置信池 (`low_confidence_questions`), 供数据飞轮后续消化 (`src/graph/nodes.ts:181-184` 注释).
 
@@ -514,14 +514,14 @@ sliding = min(CONTEXT_BUDGET_TURNS * steady_per_turn, window - fixed - peak)    
 
 ### Vitest
 
-`pnpm test` (vitest run) 覆盖 16 个测试文件共 66 个用例, 均不走真实上游. 代表性文件:
+`pnpm test` (vitest run) 覆盖 16 个测试文件共 59 个用例 (按源码 it/test 块静态统计), 均不走真实上游. 代表性文件:
 
 | 文件                                                                                                                                                 | 关注点                                                     |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | api-contracts.test.ts                                                                                                                                | Hono 应用级契约 (含 /api/agent, /api/chat 的 400/404 行为) |
 | retrieval-pipeline.test.ts / retrieval-helpers.test.ts                                                                                               | 检索管线与 rerank 组装                                     |
 | kb-store.test.ts                                                                                                                                     | 进程内 BM25/稠密/混合检索 (含 tokenize)                    |
-| confidence.test.ts                                                                                                                                   | 置信度公式与信号 (10 个用例)                               |
+| confidence.test.ts                                                                                                                                   | 置信度公式与信号 (4 个用例)                                |
 | memory.test.ts / budget.test.ts                                                                                                                      | 分层窗口裁剪与预算分账                                     |
 | tool-engine.test.ts                                                                                                                                  | 执行引擎校验/权限/审计                                     |
 | dualwrite.test.ts / chunking.test.ts / dedup.test.ts / repository.test.ts / json.test.ts / model-guard.test.ts / read-notes.test.ts / config.test.ts | KB 双写、切分、去重、仓储、JSON 安全、模型护栏等           |

@@ -1,5 +1,6 @@
 ---
 title: "前端技术笔记: JavaScript、DOM、BOM、浏览器与网络"
+description: "JavaScript 语言核心、DOM/BOM、浏览器原理与网络知识笔记: 类型检测与语言语义、事件循环与原型继承、浏览器渲染与网络协议、性能与工程实践"
 ---
 
 本文档梳理 JavaScript 语言、DOM/BOM、浏览器原理与网络的核心知识点, 内容由浅入深, 力求准确、专业, 并覆盖常见的延伸方向.
@@ -1510,7 +1511,7 @@ Hydration (注水) : 客户端 JS 加载后不重建 DOM, 而是复用服务端 
 常见问题与对策:
 
 - Hydration mismatch: 服务端与客户端渲染结果不一致 (随机数、Date.now、仅客户端可知的状态如登录态/窗口宽度) 导致告警甚至整树重建. 对策: 把不确定内容延迟到挂载后渲染 (useEffect 后再显示) 、双端使用相同的数据快照.
-- 双端环境差异: 服务端没有 window/document, 需要守卫或依赖注入; 数据请求在服务端完成后要序列化进 HTML (注意 XSS: JSON 注入需转义 <) 交给客户端复用, 避免二次请求.
+- 双端环境差异: 服务端没有 window/document, 需要守卫或依赖注入; 数据请求在服务端完成后要序列化进 HTML (注意 XSS: JSON 注入需转义 `<`) 交给客户端复用, 避免二次请求.
 - 性能问题: TTI 滞后于 FCP ("能看不能点") , 大型页面 hydration 本身是长任务. 演进方案: 流式 SSR (renderToPipeableStream 边生成边下发) 、选择性/渐进 hydration (React 18 Suspense 分块, 交互优先) 、islands 架构 (Astro, 只 hydrate 交互岛屿) 、React Server Components (服务端组件的代码与数据不进客户端 bundle) .
 - 与 SSG/ISR 的取舍: 内容稳定用构建期静态化, 个性化强才用请求期 SSR, 中间态用增量静态再生.
 
@@ -2407,7 +2408,7 @@ A: TypeScript 编译器 (tsc) 本质是一个"带类型擦除的转译器", 从�
    - 类型擦除: 删除所有类型标注、接口、类型别名、as 断言、! 非空断言 (纯删除, 零运行时成本) ;
    - TS 独有语法展开: enum -> IIFE 生成双向映射对象; namespace -> IIFE 闭包; 参数属性 (constructor(private x)) -> 构造体内赋值语句;
    - 装饰器 (旧版) : 类与方法调用改写为 \_\_decorate([...], target, key, descriptor) 辅助函数调用; emitDecoratorMetadata 额外注入 Reflect.metadata("design:type", ...);
-   - 语法降级: async/await -> \_\_awaiter + 生成器状态机 (target < ES2017, ES2017 及以上保留原生 async) ; class -> 函数 + 原型赋值 (<=ES5) ; ?. / ?? -> 临时变量 + 三元表达式;
+   - 语法降级: async/await -> \_\_awaiter + 生成器状态机 (target `<` ES2017, ES2017 及以上保留原生 async) ; class -> 函数 + 原型赋值 (`<=ES5`) ; ?. / ?? -> 临时变量 + 三元表达式;
    - 模块转换: ESM import/export -> CJS 的 require/exports.x (module: commonjs 时) .
 
 6. 发射 (Emitter) : 变换后 AST -> 输出文本, 三种产物:
@@ -2450,7 +2451,7 @@ A: 隐藏类 (Hidden Class / Map / Shape) :
 
 ### ES 新特性核心要点
 
-A: 尾调用优化 (PTC, ES6 规范) : 严格模式下 return f(...) 复用当前栈帧——理论上递归阶乘可 O(1) 栈. 现实: 只有 Safari/JSC 实现, V8 曾实现后移除——要记住"规范有、引擎没普及, 别依赖".
+A: 尾调用优化 (PTC, ES6 规范) : 严格模式下 return f(...) 复用当前栈帧——理论上递归阶乘可 O(1) 栈. 现实: 只有 Safari/JSC 正式发布, V8 与 SpiderMonkey 从未落地——要记住"规范有、引擎没普及, 别依赖".
 
 BigInt: 任意精度整数 (123n) ; 不能与 Number 混算 (显式转换) ; typeof 1n === 'bigint'; JSON 序列化抛错; BigInt.asIntN(64, x) 固定位宽截断. 应用: 雪花 ID、时间戳纳秒、区块链数值.
 
@@ -2464,8 +2465,8 @@ BigInt: 任意精度整数 (123n) ; 不能与 Number 混算 (显式转换) ; typ
 - Object.groupBy / Map.groupBy (ES2024; 原 Array.prototype.group 提案最终改为静态方法落地) ; Promise.withResolvers (ES2024) ; structuredClone (注意它是 HTML 标准的 Web API 而非 ECMAScript 特性) .
 - 正则 d 标志 (indices, 捕获组起止下标) 、命名捕获组、后行断言.
 - ES2025 已落地 (2025-06 定稿): Set 集合方法 (union/intersection/difference 等) 、Iterator Helpers (Iterator.prototype.map/filter/take 等) 、Promise.try、RegExp.escape、Float16Array, 现代浏览器基本都已原生支持.
-- import attributes (`import ... with` 语法) 与 JSON modules 未列入 ES2025 正式清单, 但已获跨浏览器支持 (MDN Baseline 2025, 2025-04 起) , 正式收入 ECMA-262 版本稍晚.
-- 在途提案: Temporal (取代 Date, 仍处 Stage 3; Chrome 144+/Firefox 139+ 已原生提供, Safari 尚未) 、Record & Tuple (#\{...\} 深不可变 + 值相等 ===) 、Decorator (Stage 3, 已落地 TS 5) 、Pattern Matching.
+- import attributes (`import ... with { type: 'json' }` 语法) 与 JSON modules 均已收入 ES2025 (两者都在 TC39 finished proposals 清单中) ; Chrome 123+、Safari 17.4+ 已支持 `with` 语法, 早期的 `assert` 写法已废弃.
+- 提案动态: Temporal (取代 Date 的新标准, 已达 Stage 4, 将随 ES2027 并入 ECMA-262; Chrome 144+/Firefox 139+ 已原生提供, Node 26 跟进, Safari 尚未) 、Decorator (已落地 TS 5.0, TC39 新设 Stage 2.7 做实现验证, 提案现处该阶段) 、Pattern Matching 演进为 Extractors 提案 (Stage 2) ; Record & Tuple 已归档, 值类型方向由 Composites 等新提案探索.
 
 ### 正则引擎与灾难性回溯
 

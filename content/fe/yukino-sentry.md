@@ -676,12 +676,10 @@ if (hasSkeleton) {
 
 FSP (First Screen Paint) 实现在 `plugins/performance/first-screen-paint.ts`, 是一个自定义指标.
 
-实现原理:
+实现原理 (MutationObserver 收集新增节点, IntersectionObserver 判定视口内可见性, 二者协作) :
 
 ```typescript
-export function getFirstScreenPaint(
-  callback: (value: number) => void,
-): Cleanup {
+export function getFirstScreenPaint(callback: Callback): Cleanup {
   // 能力降级: 无 MutationObserver 时立即回调 0
   if (typeof globalThis.MutationObserver !== "function") {
     callback(0);
@@ -690,49 +688,78 @@ export function getFirstScreenPaint(
 
   const excludedElementNames = new Set(["link", "script", "style"]);
   let latestRenderTime = 0; // 只维护一个「最晚的视口内渲染时间」
+  let hasObservedTarget = false;
 
-  const observer = new MutationObserver((mutationList) => {
-    // 过滤条件:
-    // 1. mutation.target 是 HTMLElement 且有新增节点 (addedNodes.length > 0)
-    // 2. 父节点在视口内
-    // 3. 新增节点是 HTMLElement、不是 link/script/style、且在视口内
-    if (hasInViewportAddition(mutationList)) {
-      latestRenderTime = performance.now();
+  // 主路径: 新增节点逐个交给 IntersectionObserver 观测
+  const intersectionObserver =
+    typeof globalThis.IntersectionObserver === "function"
+      ? new globalThis.IntersectionObserver((entries) => {
+          for (const entry of entries) {
+            intersectionObserver.unobserve(entry.target);
+            if (entry.isIntersecting) {
+              // 可见时间取 IntersectionObserverEntry 自带的 entry.time
+              latestRenderTime = Math.max(latestRenderTime, entry.time);
+            }
+          }
+        })
+      : null;
+
+  const processMutations = (mutationList: readonly MutationRecord[]) => {
+    if (!intersectionObserver) {
+      // 回退路径 (无 IntersectionObserver): 对每个 mutation 用
+      // hasInViewportAddition 逐节点 getBoundingClientRect 判定视口
+      if (hasInViewportAddition(mutationList)) {
+        latestRenderTime = globalThis.performance.now();
+      }
+      return;
     }
-  });
-  observer.observe(document, { childList: true, subtree: true });
+    for (const mutation of mutationList) {
+      for (const node of mutation.addedNodes) {
+        // 新增节点是 HTMLElement 且不是 link/script/style 才观测
+        if (
+          isHTMLElement(node) &&
+          !excludedElementNames.has(node.tagName.toLowerCase())
+        ) {
+          hasObservedTarget = true;
+          intersectionObserver.observe(node);
+        }
+      }
+    }
+  };
+  const mutationObserver = new MutationObserver(processMutations);
+  mutationObserver.observe(document, { childList: true, subtree: true });
 
-  // rAF 轮询: 文档 complete 时断开 observer 并回调最晚渲染时间
+  // rAF 轮询: 文档 complete 时收尾 —— 先 drain mutation 残留记录,
+  // 若存在已观测目标则再等一帧让 IntersectionObserver 结算记录,
+  // 随后断开两个 observer 并回调 latestRenderTime
   const waitForPageReady = () => {
     if (document.readyState === "complete") {
-      observer.disconnect();
-      callback(latestRenderTime);
+      beginFinish();
       return;
     }
     requestId = requestAnimationFrame(waitForPageReady);
   };
   waitForPageReady();
 
-  // 返回 cleanup: 插件 destroy 时取消未完成的观测 (不再回调)
+  // 返回 cleanup: 插件 destroy 时置 done 并取消未完成的观测 (不再回调)
   return () => {
-    observer.disconnect();
-    cancelAnimationFrame(requestId);
+    /* done = true; disconnect; cancelAnimationFrame */
   };
 }
 ```
 
-视口判定 (isInViewport) : `getBoundingClientRect()` 与视口相交 (`right > 0 && bottom > 0 && left < innerWidth && top < innerHeight`) .
+视口判定分两种形态: 主路径由 IntersectionObserver 完成 (entry.isIntersecting + entry.time) ; 回退路径的 `isInViewport` 用 `getBoundingClientRect()` 与视口相交 (`right > 0 && bottom > 0 && left < innerWidth && top < innerHeight`) 逐节点判定, 仅在环境不支持 IntersectionObserver 时启用.
 
 FSP vs LCP 对比:
 
-| 维度     | FSP (自定义)                             | LCP (Web Vitals 标准)                             |
-| -------- | ---------------------------------------- | ------------------------------------------------- |
-| 定义     | 首屏所有可视 DOM 元素完成渲染的时间      | 视口内最大内容元素完成渲染的时间                  |
-| 关注点   | 首屏整体完成度                           | 单个最大元素                                      |
-| 实现方式 | MutationObserver 追踪所有视口内 DOM 变化 | PerformanceObserver 监听 largest-contentful-paint |
-| 排除元素 | link/script/style                        | 由浏览器自动判定                                  |
-| 终止条件 | `document.readyState === "complete"`     | 用户交互或页面完全加载                            |
-| 适用场景 | SPA 首屏、SSR 页面                       | 通用页面                                          |
+| 维度     | FSP (自定义)                                                                                                | LCP (Web Vitals 标准)                             |
+| -------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| 定义     | 首屏所有可视 DOM 元素完成渲染的时间                                                                         | 视口内最大内容元素完成渲染的时间                  |
+| 关注点   | 首屏整体完成度                                                                                              | 单个最大元素                                      |
+| 实现方式 | MutationObserver 收集新增节点 + IntersectionObserver 判定视口可见 (无 IO 时回退 getBoundingClientRect 判定) | PerformanceObserver 监听 largest-contentful-paint |
+| 排除元素 | link/script/style                                                                                           | 由浏览器自动判定                                  |
+| 终止条件 | `document.readyState === "complete"`                                                                        | 用户交互或页面完全加载                            |
+| 适用场景 | SPA 首屏、SSR 页面                                                                                          | 通用页面                                          |
 
 设计意图:
 
@@ -1396,7 +1423,7 @@ TypeScript 配置:
 
 Monorepo 结构:
 
-仓库为 pnpm workspace, 包含 `sentry` (SDK 本体) 、`client` (React demo) 、`server` (日志接收/反解服务) 三个包, SDK 独立构建发布.
+仓库为 pnpm workspace (`pnpm-workspace.yaml`: `sentry` / `client` / `server` / `docs`), 包含 `sentry` (SDK 本体) 、`client` (React demo) 、`server` (日志接收/反解服务) 、`docs` (文档站) 四个包, SDK 独立构建发布.
 
 ---
 
@@ -1709,7 +1736,7 @@ globalThis.addEventListener("pagehide", () => {
 
 - Web Worker 上报: 将 JSON 序列化、gzip 压缩移到 Worker 线程, 避免阻塞主线程 (当前 pako 压缩在主线程执行)
 - 批量 DOM 查询优化: 白屏检测每轮做 18 次 `elementFromPoint`, 该 API 依赖布局结果, 布局处于脏状态 (pending layout) 时调用会强制同步回流 (forced reflow); 可做的优化: 循环内保持连续只读、不穿插样式写入或 DOM 修改 (整批最多回流一次); 无骨架模式下发现首个非空点即可短路结束本轮, 不必查满 18 点; 采样整体已用 `requestIdleCallback` 调度到主线程空闲期执行, 避免阻塞渲染
-- FSP MutationObserver 节流: 当前每次 DOM 变化都检查 `isInViewport` (触发 getBoundingClientRect) , 可以用 IntersectionObserver 替代视口判断
+- FSP 视口判定: 主路径已把新增节点交给 IntersectionObserver 判定 (可见时间取 entry.time, MutationObserver 不再逐节点 getBoundingClientRect) , 仅环境不支持 IO 时回退 `hasInViewportAddition` 逐节点判定; 回退模式下可做的优化是命中首个视口内节点即短路本轮 mutation 遍历
 - rrweb 加载时机: rrweb 已通过 `import()` 动态加载 (recorder.ts) , 但 ScreenRecordPlugin 的 init 会立即触发加载; 可以进一步推迟到首次出现录屏标记时再加载, 让未发生错误的会话完全不付出加载代价
 
 2. 可靠性优化:

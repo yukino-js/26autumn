@@ -23,7 +23,7 @@ yukino-chat 是一个自托管实时聊天平台: 单聊/群聊、WebRTC 音视�
 | Agent 集成   | `@yukino.js/yukino` 0.0.4 以库形式嵌入服务进程 (非子进程), 每用户一个 AgentRuntime, 工作区 `.yukino/chat/<uid>`                  |
 | 前端框架     | React 19.3.0 + react-router-dom 7.18.4 + TypeScript 6.0.3 + Vite 8.3.1 + Tailwind CSS 4.3.3 + shadcn/ui (Base UI 1.8.0)          |
 | 前端状态     | Zustand 5.0.15 (auth/ws/call/agent/dashboard/preferences) + TanStack React Query 5.104.0 / Form 1.33.5 / Virtual 3.14.13         |
-| 富文本/渲染  | TipTap 3.31.3 (输入) + Streamdown 2.6.0 (消息渲染, cjk/code/math/mermaid 插件)                                                   |
+| 富文本/渲染  | TipTap (@tiptap/core 3.31.3, react/starter-kit 等钉 3.30.5) (输入) + Streamdown 2.6.0 (消息渲染, cjk/code/math/mermaid 插件)     |
 | 可观测       | `@yukino.js/sentry` 0.0.1 (仅 DEV 初始化, Vite 插件收集报告到 logs/*.jsonl)                                                      |
 | PWA          | vite-plugin-pwa 1.3.0, `registerType: "autoUpdate"`                                                                              |
 | 测试         | Vitest 4.1.11 单测 4 个文件 + 2 个对运行中服务器的 smoke 脚本 (server/tests)                                                     |
@@ -337,7 +337,7 @@ flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取
 
 ### 转录与 overlay 的缝合 (pages/chat.tsx)
 
-聊天页把 agent items 按锚点缝进消息流 (chat.tsx:80-96): 落库消息 uuid 集合为 `storedUuids`; anchor 命中的 items 归入 `overlayByAnchor`, 经 `MessageBubble` 的 `renderAfter(uuid)` 回调渲染在该气泡之后; 未命中的进 `trailingOverlay` 渲染在列表尾部. 流式气泡的交接零闪烁: `stream` 项一旦其 messageId 出现在 storedUuids (即 /wss 已把落库消息推来), 该 overlay 项被跳过, 由真实消息气泡接管 (chat.tsx:85-87 注释 "A streamed bubble hands over to its stored message"). 助手会话的 composer 关闭附件 (`allowAttachments={false}`, 服务端对非文本也只回一句话), streaming 时显示 Stop 按钮接 `session/cancel`, 斜杠命令菜单由 `session/commands` 驱动.
+聊天页把 agent items 按锚点缝进消息流 (chat.tsx:80-96): 落库消息 uuid 集合为 `storedUuids`; anchor 命中的 items 归入 `overlayByAnchor`, 经 `MessageBubble` 的 `renderAfter(uuid)` 回调渲染在该气泡之后; 未命中的进 `trailingOverlay` 渲染在列表尾部. 流式气泡的交接零闪烁: `stream` 项一旦其 messageId 出现在 storedUuids (即 /wss 已把落库消息推来), 该 overlay 项被跳过, 由真实消息气泡接管 (chat.tsx:77-87, 注释 "A streamed bubble hands over to its stored message"). 助手会话的 composer 关闭附件 (`allowAttachments={false}`, 服务端对非文本也只回一句话), streaming 时显示 Stop 按钮接 `session/cancel`, 斜杠命令菜单由 `session/commands` 驱动.
 
 `components/agent/agent-item.tsx` 渲染五类 item: stream (复用 MessageContent/Streamdown, 流式光标)、thinking (Collapsible 折叠)、tool (按工具名映射图标 Bash->Terminal、Grep/Glob->Search、Read/Write/Edit->FileText, args 预览取 command/file_path/pattern/path/url 首个非空键, 输出截断 5000 字符, agent-item.tsx:37-58)、permission 卡 (allow/deny/allowAlways)、question 卡 (多问题多选项).
 
@@ -364,7 +364,7 @@ flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取
 ### UI 要点
 
 - 路由 (client/src/app.tsx:41-64): `createBrowserRouter`, `/` 由 loader 鉴权 (`requireAuth` 未登录 redirect /login), AppShell 布局下 `/chat/sessions`、`/chat/contacts`、`/chat/profile`、`/chat/:id`、`/manager` 五个子路由, `/dashboard` 独立于 AppShell; login/register 已登录反向重定向
-- 消息渲染: `MessageContent` 用 Streamdown `mode="static"` + cjk/code/math/mermaid 四插件 (message-content.tsx), 因携带 shiki/katex/mermaid 体积大, 在气泡与 agent item 中都以 `lazy()` 单独成 chunk (message-bubble.tsx:15-19 注释)
+- 消息渲染: `MessageContent` 用 Streamdown `mode="static"` + cjk/code/math/mermaid 四插件 (message-content.tsx), 因携带 shiki/katex/mermaid 体积大, 在气泡与 agent item 中都以 `lazy()` 单独成 chunk (message-bubble.tsx:13-18 注释)
 - 气泡列表: 日期分隔条、motion 入场动画、`use-stick-to-bottom` 贴底滚动 (chat.tsx:98-101)
 - 输入器: TipTap StarterKit 关掉全部 mark 与输入规则, 让字面 markdown 原样入库、由渲染端还原 (message-composer.tsx:24-46 注释); Enter 发送/Shift+Enter 换行/输入法组字中不发送; 斜杠命令菜单用 `@tanstack/react-virtual` 虚拟化, 键盘导航与 hover 高亮分离 (menuKeyRef 经 ref 读最新闭包, message-composer.tsx:239-273); 拖拽上传用 react-dropzone, 助手会话干脆不挂 dropzone props (禁用会让 Stop 按钮也被读作 aria-disabled, message-composer.tsx:286-289 注释)
 - identicon 头像: FNV-1a 播种 xorShift32 PRNG, canvas 画 5x5 镜像格, memoize (utils/avatar.ts)
@@ -386,7 +386,7 @@ flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取
 ## 十一、测试
 
 - Vitest 单测 4 个文件 (server/tests, `vitest run`, 环境强制 `REDIS_URL=""` 走内存缓存、不触 DB, vitest.config.ts 注释): `common.test.ts` (JWT 往返/错密钥/畸形、randomId、sanitizeFilename)、`call-manager.test.ts` (房间 id 派生、忙状态、leave 返回剩余成员、空房解散)、`event-adapter.test.ts` (流文本累积与 tool_use 触发 flush、回合计数)、`interaction-broker.test.ts` (fake timers 验证权限超时 fail-closed 等)
-- Smoke 脚本 2 个 (对运行中的服务器, 默认 :8000): `http-smoke.mjs` 31 次请求覆盖注册/登录/错误路径/联系人/群组/会话/消息全流程; `ws-smoke.mjs` 覆盖聊天 WS 握手、在线状态、单聊/群聊扇出、顶号驱逐、call_failed、agent WS 握手+ping+私聊分发、dashboard WS (文件头注释)
+- Smoke 脚本 2 个 (对运行中的服务器, 默认 :8000): `http-smoke.mjs` 30 次请求覆盖注册/登录/错误路径/联系人/群组/会话/消息全流程; `ws-smoke.mjs` 覆盖聊天 WS 握手、在线状态、单聊/群聊扇出、顶号驱逐、call_failed、agent WS 握手+ping+私聊分发、dashboard WS (文件头注释)
 
 ## 十二、与 yukino.go 栈的关系
 
@@ -417,7 +417,7 @@ AI agent 侧的关系则是直接的: Go 版内嵌的是 Go 语言 Yukino agent,
 - WebRTC 无 STUN/TURN, 跨 NAT 通话打不通
 - 声明未消费的依赖: server 的 `minio` 8.0.7 与 `archiver` 7.0.1 在 server/src 与 tests 中零引用; env 的 `AGENT_WS_MAX_MESSAGE_BYTES` 未被路由读取
 - `.npmrc` 当前指向 registry.npmjs.org, 注释行保留 npmmirror —— `f198caf` 提交 "feat: Update npm registry [skip ci]" 改的正是这个文件
-- 其余杂项: 根 package.json 只有 git 便捷脚本; `client/package.json` 的 `dual` 脚本用 concurrently 把 `pnpm dev` 跑两遍 (双开联调用途); 仓库还提交了 `.playwright-cli/` 快照与 `server/static/` 下的示例上传文件
+- 其余杂项: 根 package.json 只有 git 便捷脚本; `client/package.json` 的 `dual` 脚本用 concurrently 把 `pnpm dev` 跑两遍 (双开联调用途); 仓库还提交了 `server/.playwright-cli/` 快照与 `server/static/` 下的示例上传文件
 
 ## 十四、小结
 

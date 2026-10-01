@@ -1,5 +1,6 @@
 ---
 title: "React + Next.js 技术笔记"
+description: "React 与 Next.js 渲染模型笔记: CSR/SSR/SSG/ISR 对比、水合机制、请求瀑布流消除、Bundle 体积优化、Server Components 与客户端数据获取、重渲染优化"
 ---
 
 ## 一、React 核心概念与渲染机制
@@ -888,7 +889,7 @@ export { Dialog } from "./Dialog";
 当你写 `import { Check } from 'lucide-react'` 时:
 
 1. 打包器需要解析 `lucide-react` 的入口文件
-2. 入口文件 re-export 了 1583 个图标模块
+2. 入口文件 re-export 了上千个图标模块 (Vercel 优化博客实测为 1583 个模块; 本站安装的 lucide-react 1.49.0 已有 1857 个图标组件, 数量随版本持续增长)
 3. 即使你只用 1 个图标, 开发模式下也需要加载所有模块
 4. 运行时开销: 200-800ms 的冷启动时间
 

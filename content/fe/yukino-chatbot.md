@@ -1,5 +1,6 @@
 ---
 title: "Yukino-Chatbot 技术笔记"
+description: "yukino-chatbot 源码级问答: pnpm workspace 全栈 LLM 聊天应用架构、JWT 认证与会话管理、AI 管理器热切换、RAG 检索链路、SSE 流式输出与前端工程化"
 ---
 
 > 本机器路径 `$HOME/github/yukino-chatbot`

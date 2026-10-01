@@ -27,7 +27,7 @@ generic-pool 是一个零运行时依赖的 Node.js 通用资源池库, README (
 | Lint          | eslint ^4.9.0 + prettier ^1.7.4 (README:381 亦有说明)                 |
 | 关键词        | pool / pooling / throttle (package.json keywords)                     |
 
-CHANGELOG 中 3.9.0 一节记录了两处修复: 给 index.d.ts 补上 ready 函数声明; 给 pool 内部的 setTimeout 加 `.unref()` (对应现在 Pool.js:157 与 Pool.js:405 两处)。
+CHANGELOG 中 3.9.0 一节记录了两处修复: 给 index.d.ts 补上 ready 函数声明; 给 pool 内部的 setTimeout 加 `.unref()`。需要说明的是, 该 unref 修复 (提交 e94fd37) 只改了驱逐定时器 Pool.js:405 一处; 现在 Pool.js:157 的另一处 unref 是 2021 年引入 destroyTimeoutMillis 特性时 (提交 ea53332) 就自带的, 随 v3.8.0 发布。
 
 lib/ 目录 18 个文件与职责 (行数为 `wc -l` 实测):
 
@@ -423,7 +423,7 @@ README:222-226 提醒: 这两个事件没有监听器时错误会被静默丢弃
 
 ## 十三、类型定义与测试工程
 
-index.d.ts 头三行注明其派生自 DefinitelyTyped 的 generic-pool 类型 (标注对应 node-pool 3.1)。类型面的要点: `Pool<T>` 继承 EventEmitter; `Factory<T>` 接口要求 create 与 destroy, validate 可选; Options 接口列出全部 14 个可配置项; IEvictor、IDeque、IPriorityQueue 三个接口与构造函数注入的参数一一对应; PooledResourceStateEnum 以字符串枚举导出。HEAD 提交 ee5db9d 合并的 PR #301 (regevbr/types) 正是类型相关整理, 说明 v3.9.0 标签之后仓库最后的活跃方向是 TypeScript 体验。
+index.d.ts 头三行注明其派生自 DefinitelyTyped 的 generic-pool 类型 (标注对应 node-pool 3.1)。类型面的要点: `Pool<T>` 继承 EventEmitter; `Factory<T>` 接口要求 create 与 destroy, validate 可选; Options 接口列出 13 个可配置项 (未收录 testOnReturn 与 Promise); IEvictor、IDeque、IPriorityQueue 三个接口与构造函数注入的参数一一对应; PooledResourceStateEnum 以字符串枚举导出。HEAD 提交 ee5db9d 合并的 PR #301 (regevbr/types) 正是类型相关整理, 说明 v3.9.0 标签之后仓库最后的活跃方向是 TypeScript 体验。
 
 test/ 目录 8 个文件, 跑在 tap 上:
 

@@ -239,7 +239,7 @@ GROUP BY hour, event_type;
 
 关键特性:
 
-- 物化视图只处理 INSERT 之后的新数据, 历史数据需要手动 `INSERT INTO hourly_stats SELECT ...`
+- 物化视图只处理 INSERT 之后的新数据, 历史数据需要手动 `INSERT INTO hourly_stats SELECT ...` (也可在创建物化视图时附加 POPULATE 一次性回填, 但回填期间新写入的数据会丢失, 需另行处理)
 - 源表删除数据不会级联删除目标表中已聚合的结果 (聚合不可逆)
 - 多个物化视图可以挂在同一张源表上, 各自独立增量计算
 - 与 AggregatingMergeTree 配合可以存更复杂的中间状态 (如 HyperLogLog 的 sketch)
@@ -524,7 +524,7 @@ Eager 协议的问题:
 
 - Stop-the-world: Rebalance 期间所有消费者停止消费, 等待重新分配
 - 重复消费: 消费者在 Rebalance 前未提交的 offset 会被重新分配给其他消费者
-- 频繁 Rebalance: 消费者处理慢导致心跳超时 (`session.timeout.ms` 默认 45s, Kafka 3.0 之前为 10s), 被 Coordinator 认为死亡, 触发 Rebalance, 形成恶性循环
+- 频繁 Rebalance: 消费者处理慢导致心跳超时 (`session.timeout.ms` 默认 45s, Kafka 2.1 之前为 10s), 被 Coordinator 认为死亡, 触发 Rebalance, 形成恶性循环
 
 优化:
 
