@@ -5,11 +5,11 @@ description: "基于代码事实梳理 yukino-agent2 的 Hono HTTP 层、LangGra
 
 > 本机器路径 `$HOME/github/yukino-agent2`
 
-yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScript 实现, 由一个 Python 版本迁移而来 (`README.md` 首段: "This is the migrated backend of the Python project in `~/Downloads/python`"). 后端品牌为 Yukino Select, 客服人设名为 Meow (`AGENTS.md` 中固化为项目规范, 且声明 "Yukino Agent2 is a pure English project", 知识库语料为英文). 本文所有结论均基于仓库真实源码, 关键处给出相对仓库根的文件路径与函数名引用.
+yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScript 实现. 后端品牌为 Yukino Select, 客服人设名为 Yukino (`AGENTS.md` 中固化为项目规范: Project Brand Name / Project Agent Persona). 知识库语料为英文 Markdown, system prompt 亦要求以英文作答 (`src/core/prompts.ts` 的 "answer in English" 规则). 本文所有结论均基于仓库真实源码, 关键处给出相对仓库根的文件路径与函数名引用.
 
 ## 一、项目快照
 
-本机仓库 2026-10-02 核实 (`git log -1`): HEAD 为 `d0d6e30` (完整哈希 `d0d6e30e68b03e3af82dd7ffc61ee30ff9ad57b2`), 提交日期 2026-10-02, 提交信息 "Initial commit". 该仓库于 2026-10-02 00:05 被整体重建: 旧提交历史 (一路到 `87b14a2` "feat: Update npm registry") 已被这单个 Initial commit 替换, 旧提交哈希已不在本地对象库中, 无法再 `git show`. 与重建前的工作树相比, 本轮实质差异极小: 仅一批依赖版本上浮 (根 `package.json` 的 `@hono/node-server`/`hono`/`openai`/`pg`/`vitest`, `fe/package.json` 的 `lucide-static`/`motion`), 另有 `.agents/` 目录与 `skills-lock.json` 从工作树移除; `src/`、`fe/app`、`prisma/schema.prisma`、`tests/` 源码未变, 正文中的源码结论均已按新快照复核仍然成立.
+本机仓库路径 `$HOME/github/yukino-agent2`, 分支 `main`, HEAD `44bc785` (2026-10-02).
 
 | 维度        | 内容                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -33,7 +33,7 @@ yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScr
 
 ```text
 yukino-agent2/
-├── main.js               # 任务运行器 (替代旧 Makefile): dev / mcp-up / milvus-up / kb-* / eval-*
+├── main.js               # 任务运行器: dev / mcp-up / milvus-up / kb-* / eval-*
 ├── src/
 │   ├── index.ts          # 入口: 校验必填配置 -> scanBuiltin -> startServer
 │   ├── server.ts         # Hono 应用装配与启动/关停生命周期
@@ -238,11 +238,11 @@ log -> END
 - 分词器 `tokenize` (`src/kb/store.ts:49`): 正则 `/[a-z0-9]+|[\u4e00-\u9fff]+/g` 分段 —— ASCII 词/数字整词保留, CJK 连续段切成字符 bigram (单字保留). 这是无外部分词器依赖下对中文检索的务实方案.
 - BM25: 经典公式, 常数 `K1 = 1.5`, `B = 0.75` (`src/kb/store.ts:17-18`), IDF 用 `log(1 + (N - df + 0.5) / (df + 0.5))`, 每次查询现算 avgdl 与 df, 全量打分后取正分 topK (`bm25Search`, 159 行).
 - 稠密检索: 手写 cosine (`denseSearch`, 136 行).
-- hybrid: 两路各召回 recall 条后做 RRF, 平滑常数 K = 60 (`hybridSearch`, 206 行), 与 Milvus 模式及 Python 原版的 RRFRanker 默认值对齐 (`src/kb/milvus.ts:40-42` 注释).
+- hybrid: 两路各召回 recall 条后做 RRF, 平滑常数 K = 60 (`hybridSearch`, 206 行), 与 Milvus 模式服务端融合的 `RRF_K` 一致 (`src/kb/milvus.ts:42`).
 
 ### Rerank 上游
 
-`src/core/rerank.ts` 封装两种协议: `RERANK_PROTOCOL=jina` 时请求 `POST {base}/rerank` (Jina/Cohere 形态, Python 原版对接 SiliconFlow 的形态); `dashscope` 时剥掉 `/v1`、`/compatible-mode` 等后缀, 走阿里网关原生路径 `{gateway}/api/v1/services/rerank/text-rerank/text-rerank` (`rerankUrl()`, 18-43 行). 重试策略: 429/500/502/503/504 触发, 最多 3 次, 退避 1500ms (`rerank.ts:10-12`). 返回按 `relevance_score` 降序, 输出 `[index, score]` 对供 `searchKnowledge` 回填 `rerank_score`.
+`src/core/rerank.ts` 封装两种协议: `RERANK_PROTOCOL=jina` (默认) 时请求 `POST {base}/rerank` (Jina/Cohere 形态); `dashscope` 时剥掉 `/v1`、`/compatible-mode` 等后缀, 走阿里网关原生路径 `{gateway}/api/v1/services/rerank/text-rerank/text-rerank` (`rerankUrl()`, 18-43 行). 重试策略: 429/500/502/503/504 触发, 最多 3 次, 退避 1500ms (`rerank.ts:10-12`). 返回按 `relevance_score` 降序, 输出 `[index, score]` 对供 `searchKnowledge` 回填 `rerank_score`.
 
 ### 证据置信度与两道门禁
 
@@ -290,24 +290,24 @@ score = 0.5 * clip01(top1_score)          # 最高 rerank 分
 
 - 维度模型无关: 从第一条 upsert 的 embedding 长度推断, 不硬编码 (注释: embedding 模型可通过上游配置更换).
 - Strong 一致性: 保证双写对账 (PG done 数 === Milvus count) 与写后即读确定性.
-- 字段: `id` (Int64 主键, autoID false), `dense` (FloatVector), `text` (VarChar 16384, `enable_analyzer: true`, `analyzer_params: { type: "standard" }` —— 注释说明 Python 原版中文库用 chinese analyzer, 本库是英文语料故用 standard), `sparse` (SparseFloatVector, `is_function_output: true`), 加 question/answer/section_path/content_type/category 五个标量字段.
+- 字段: `id` (Int64 主键, autoID false), `dense` (FloatVector), `text` (VarChar 16384, `enable_analyzer: true`, `analyzer_params: { type: "standard" }` —— 注释说明 analyzer 与语料语言匹配, 本库语料为英文故用 standard), `sparse` (SparseFloatVector, `is_function_output: true`), 加 question/answer/section_path/content_type/category 五个标量字段.
 - BM25 Function: `text_bm25`, 输入 `text` 输出 `sparse`, 服务端派生, upsert 从不直接写 sparse.
 - 索引: dense 用 AUTOINDEX + COSINE, sparse 用 SPARSE_INVERTED_INDEX + BM25, 随后 loadCollection.
 - 跨进程竞争: 服务器与 vectorize 任务可能并发建集合, 因此 create/createIndex 失败时只要集合最终可用即容忍 (`src/kb/milvus.ts:205-208` 注释).
 
-旧版只有 dense 路径的集合会被 `assertBm25Schema` (`src/kb/milvus.ts:168`) 检测出缺少 `text`/`sparse` 字段并抛错, 错误信息直接给出重建命令: `node main.js kb-reset && node main.js kb-build && node main.js kb-vectorize`.
+缺少 `text`/`sparse` 字段的集合会被 `assertBm25Schema` (`src/kb/milvus.ts:168`) 检测并抛错, 错误信息直接给出重建命令: `node main.js kb-reset && node main.js kb-build && node main.js kb-vectorize`.
 
 ### 搜索 API
 
 - `search()` (321 行): dense ANN, `metric_type: "COSINE"`, category 过滤用布尔表达式且 `quote()` 转义防逃逸.
 - `bm25Search()` (348 行): `data: text` 直接传原始查询文本到 `sparse` 字段 (SDK 识别 function-output 字段自动发文本占位符).
-- `hybridSearch()` (378 行): 两路子请求 (COSINE + BM25) 各召回 `max(topK, recall)` 条, `rerank: { strategy: RANKER_TYPE.RRF, params: { k: 60 } }` 服务端融合, 与 Python 原版 `hybrid_search([dense_req, sparse_req], RRFRanker())` 形态一致.
+- `hybridSearch()` (378 行): 两路子请求 (COSINE + BM25) 各召回 `max(topK, recall)` 条, `rerank: { strategy: RANKER_TYPE.RRF, params: { k: 60 } }` 服务端融合.
 
 ### 双写与预热
 
-`vectorizePending()` (`src/kb/dualwrite.ts:70`) 是两种模式共用的向量化批处理: 批大小 64 (对齐 Python 原版 upsert 粒度), 但 embed 请求拆成 20 条一批 (阿里云 embed 网关单请求上限), 两个粒度解耦 (`src/kb/dualwrite.ts:57-68`). 每个 chunk 的 `text = category + "\n" + questions + "\n" + answer` —— 同一字符串既被 embed 成 dense, 又作为 BM25 Function 的输入 (`src/kb/dualwrite.ts:79-83`). Milvus 模式 upsert 后统一 `flush()`, 再逐条 `markChunkVectorizedExternal`; legacy 模式逐条写回 embedding 列.
+`vectorizePending()` (`src/kb/dualwrite.ts:70`) 是两种模式共用的向量化批处理: 批大小 64, 但 embed 请求拆成 20 条一批 (阿里云 embed 网关单请求上限), 两个粒度解耦 (`src/kb/dualwrite.ts:57-68`). 每个 chunk 的 `text = category + "\n" + questions + "\n" + answer` —— 同一字符串既被 embed 成 dense, 又作为 BM25 Function 的输入 (`src/kb/dualwrite.ts:79-83`). Milvus 模式 upsert 后统一 `flush()`, 再逐条 `markChunkVectorizedExternal`; legacy 模式逐条写回 embedding 列.
 
-服务器启动时 `warmupMilvus()` (`src/server.ts:90`) 预热: Milvus 集合 load 是异步的, 未就绪的集合搜索会静默返回空, 因此循环用 `bm25Search("shipping fee", 1, null)` 探测直到有命中, 最多 15 秒, 失败只 warn 不阻塞启动 (best-effort, 与 Python 原版 lifespan 探针对齐).
+服务器启动时 `warmupMilvus()` (`src/server.ts:90`) 预热: Milvus 集合 load 是异步的, 未就绪的集合搜索会静默返回空, 因此循环用 `bm25Search("shipping fee", 1, null)` 探测直到有命中, 最多 15 秒, 失败只 warn 不阻塞启动 (best-effort).
 
 ### main.js 的 milvus-up / milvus-down
 
@@ -492,7 +492,7 @@ sliding = min(CONTEXT_BUDGET_TURNS * steady_per_turn, window - fixed - peak)    
 
 ### main.js 命令表 (节选)
 
-`main.js` 是替代旧 Makefile 的任务运行器 (头注自述), 分两类命令: 前台一次性任务 (spawnSync 流式 stdio, 透传退出码, 额外参数追加, 如 `node main.js eval-rag --skip-gen`) 与后台守护服务.
+`main.js` 是任务运行器, 分两类命令: 前台一次性任务 (spawnSync 流式 stdio, 透传退出码, 额外参数追加, 如 `node main.js eval-rag --skip-gen`) 与后台守护服务.
 
 | 命令                                                                                        | 作用                                                   |
 | ------------------------------------------------------------------------------------------- | ------------------------------------------------------ |

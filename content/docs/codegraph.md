@@ -509,7 +509,7 @@ cg.watch();
 
 本文更新基于以下一手材料 (首次调研 2026-08-12, 2026-08-26 复核, 2026-09-30 对照克隆核实, 2026-10-01 对照新 HEAD 复核) :
 
-- 仓库克隆 colbymchenry/codegraph, 本轮核实时的状态: HEAD 34ede4de (main, 2026-10-01 第二次 pull, 完整哈希 34ede4de888c55aab170c3d6349c60d8dc56e7f2, package.json 1.6.1, CHANGELOG Unreleased 区块含 #2170~#2248 共 134 条解析精度修复条目) , 源码级阅读; 2026-10-01 当天较早状态为 aa0c73c (完整哈希 aa0c73c41608e3f52aa2650e5e2cb436602714a7) , 2026-09-30 轮基于 HEAD 791ae39, 首轮核实基于 @ 44e1812 (2026-08-22 推送)
+- 仓库克隆 colbymchenry/codegraph, HEAD 34ede4de (main, 完整哈希 34ede4de888c55aab170c3d6349c60d8dc56e7f2, package.json 1.6.1, CHANGELOG Unreleased 区块含 #2170~#2248 共 134 条解析精度修复条目), 源码级阅读
 - GitHub API / gh CLI: stars 66,003、forks 4,156、contributors 42、open issues 409、created 2026-01-18、release 列表 (v0.9.5 至 v1.5.0) (2026-08 时点)
 - 2026-08-26 复核 (GitHub API 与 npm registry) : stars 68,137、forks 4,336、open issues 448、最近推送 2026-08-25; 当时最新 release 与 npm 包均为 v1.5.0, License MIT
 - 关键文件: package.json、README.md、CHANGELOG.md (当前 33 个块) 、CLAUDE.md、TELEMETRY.md、BUNDLING.md、src/db/schema.sql、src/db/migrations.ts、src/mcp/tools.ts、src/mcp/server-instructions.ts、src/types.ts、src/extraction/kernel/、src/resolution/name-matcher.ts、src/resolution/frameworks/ (含 name-heuristic.ts) 、codegraph-kernel/Cargo.toml 及 build.rs、src/bin/codegraph.ts、src/sync/watcher.ts、ui/ 与 src/ui-server/、docs/design/native-extraction-kernel.md、docs/design/rust-kernel-migration-plan.md、docs/design/framework-coverage.md、docs/design/generated-file-detection.md、docs/design/codegraph-ui-design-spec.md、docs/benchmarks/residual-context-occupancy.md、scripts/build-bundle.sh、.github/workflows/release.yml、install.sh

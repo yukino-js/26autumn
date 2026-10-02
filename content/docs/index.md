@@ -10,4 +10,4 @@ description: "实习与工作期间的技术记录、开源项目调研与源码
 - Coding Agent 调研: 编码智能体与 AI 工程工具的源码级调研——CodeGraph 代码知识图谱、Claude Code、Codex、pi、OpenCodeReview AI 代码评审 CLI。
 - AI 框架与平台调研: LangChain.js 的 Runnable 内核与 createAgent 中间件体系、LangGraph.js 的 Pregel 执行引擎与检查点持久化、insforge 开源 BaaS 平台与其 MCP Server。
 
-调研类文档均标注本机克隆路径, 并注明撰写时点与当前状态的差异。
+调研类文档均标注本机克隆路径与核对时的 HEAD 快照, 内容只呈现该快照下的当前事实。

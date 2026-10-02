@@ -384,12 +384,12 @@ Python SDK 实现: python/a2ui_agent/src/a2ui/inference_formats/experimental/exp
 
 ## 10. 与 a2ui.md 主线 (v0.9 direct-json) 的关系
 
-- 版本基线不同: a2ui.md 主线 (@yukino.js/a2ui-shadcn + yukino-agent) 固定 A2UI v0.9, 渲染端消费 createSurface / updateComponents / updateDataModel 三类消息; Express 面向 v1.0 wire protocol, 编译产物是内嵌 components + dataModel 的单 createSurface。现有 v0.9 渲染链路不能直接消费 Express 编译产物, 需等 v1.0 渲染器或做协议转换
-- 推理格式同源: a2ui.md 记录 @yukino.js/a2ui-shadcn/prompt 移植了 Python agent SDK 的四种推理格式提示词生成器 (DirectJson / Elemental / Atom / Express), 其中的 Express 与本目录 experimental/express 是同名推理格式, 两边实现是否同步需以各自仓库代码为准
+- 版本基线不同: a2ui.md 主线 (yukino-agent 应用案例) 固定 A2UI v0.9 (依赖经 @a2ui/web_core/v0_9 子路径消费, prompt 内嵌 v0.9 协议 schema), 渲染端消费 createSurface / updateComponents / updateDataModel 三类消息; Express 面向 v1.0 wire protocol, 编译产物是内嵌 components + dataModel 的单 createSurface。现有 v0.9 渲染链路不能直接消费 Express 编译产物, 需等 v1.0 渲染器或做协议转换
+- 推理格式同源: a2ui.md 记录 yukino-agent ($HOME/github/yukino-agent) 仓内 vendored 的 lib/a2ui/prompt 移植了 Python agent SDK 的四种推理格式提示词生成器 (DirectJson / Elemental / Atom / Express, 分别在 direct-json.ts / elemental.ts / atom.ts / express.ts), 其中的 Express 与本目录 experimental/express 是同名推理格式 (该移植版把 catalog schema 编译为紧凑的位置签名纯文本, 但未移植 few-shot 示例到 Express DSL 的反编译), 两边实现是否同步需以各自仓库代码为准
 - 生命周期错误消除: Express 的 surface() 指令把 createSurface/updateComponents 的区分移到编译器按会话状态处理, 模型侧不再产生 "缺 createSurface / 杂散 createSurface" 这类生命周期失败 (对应 a2ui.md 降级策略一节的失败形态第五类)
 - 更细粒度的纠错: micro-refinement (行级隔离 + 单行快模型修正 + 热替换) 是比 correctA2uiBlock 整块重试更细的 L2 修复, 可作为降级策略的演进方向
-- prompt 契约同构: ExpressPromptGenerator 的 catalog -> 位置签名编译, 与 @yukino.js/a2ui-shadcn 的 "组件实现 -> zod schema -> catalog.json -> LLM prompt" 单一事实源链路是同一思想 (catalog 契约驱动 prompt), 差别只在目标语法
-- 与 macros 的组合 (2026-10-01 快照新增): Python Agent SDK 新增 macros 可编程组件与类型强制引擎 (transformers/macros, @macro 装饰器 + MacroExpander, 详见 a2ui.md 的 macros 一节), 社区示例 samples/community/macros 直接把 Express DSL 用作模型输出格式——MacroAgentRuntime 组合 ExpressFormat 与 MacroExpander, 模型输出的 DSL 可引用注册的高层宏 (如 root = UserProfile("usr_101", "Alice Smith", "Lead Architect")), parser.compile 之后由 transform_to_transport 在服务端同步展开为原语组件子树再下发 v0.9.1 wire 消息, 客户端仍只见标准 basic catalog 组件。Express 压缩语法层 token, macros 压缩组件层语义空间, 二者正交可叠加
+- prompt 契约同构: ExpressPromptGenerator 的 catalog -> 位置签名编译, 与 yukino-agent ($HOME/github/yukino-agent) vendored lib/a2ui/prompt 的 "schemas/catalog.json -> LLM prompt" 契约驱动链路是同一思想 (catalog 契约驱动 prompt), 差别只在目标语法; 注意该 catalog.json 现为静态 vendored 契约 (与客户端 catalog/index.ts 同一 catalogId), 与组件实现的同步需手工维护
+- 与 macros 的组合: Python Agent SDK 提供 macros 可编程组件与类型强制引擎 (transformers/macros, @macro 装饰器 + MacroExpander, 详见 a2ui.md 的 macros 一节), 社区示例 samples/community/macros 直接把 Express DSL 用作模型输出格式——MacroAgentRuntime 组合 ExpressFormat 与 MacroExpander, 模型输出的 DSL 可引用注册的高层宏 (如 root = UserProfile("usr_101", "Alice Smith", "Lead Architect")), parser.compile 之后由 transform_to_transport 在服务端同步展开为原语组件子树再下发 v0.9.1 wire 消息, 客户端仍只见标准 basic catalog 组件。Express 压缩语法层 token, macros 压缩组件层语义空间, 二者正交可叠加
 
 ## 11. 总结
 

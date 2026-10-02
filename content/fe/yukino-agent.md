@@ -1,11 +1,11 @@
 ---
 title: "Yukino Agent 技术笔记"
-description: "yukino-agent 源码级问答: Next.js 16 + Vercel AI SDK v7 的 AI OnCall 助手架构、RAG 知识库检索、ReAct 与 Plan-Execute-Replan 编排、A2UI 界面生成、Prometheus 告警分析与前端监控桥接"
+description: "yukino-agent 源码级问答: Next.js 16 + Vercel AI SDK v7 的 AI OnCall 助手架构、RAG 知识库检索、ReAct 与基于 LangGraph 的 Plan-Execute-Replan 编排、Langfuse/OTEL 可观测性、A2UI 界面生成、Prometheus 告警分析与前端监控桥接"
 ---
 
-> 本机器路径 `$HOME/github/yukino-agent`
+> 本机器路径 `$HOME/github/yukino-agent`, 分支 `main`, HEAD `536ed8c`, 2026-10-02; 正文行号引用均以该源码快照为准.
 
-> 项目: `yukino-agent` —— 基于 Next.js 16 + React 19 + Vercel AI SDK v7 的 AI OnCall 智能助手, 支持 RAG 知识库检索、ReAct 对话 Agent、Plan-Execute-Replan 运维编排、A2UI 交互界面生成、Prometheus 告警分析、MCP 日志工具接入、yukino-sentry 前端监控桥接.
+> 项目: `yukino-agent` —— 基于 Next.js 16 + React 19 + Vercel AI SDK v7 的 AI OnCall 智能助手, 支持 RAG 知识库检索、ReAct 对话 Agent、基于 LangGraph StateGraph 的 Plan-Execute-Replan 运维编排、Langfuse/OTEL 可观测性、A2UI 交互界面生成、Prometheus 告警分析、MCP 日志工具接入、yukino-sentry 前端监控桥接.
 >
 > 本文档问题覆盖架构设计、LLM 工程、RAG、Agent 编排、流式输出、React 工程化、性能与安全等方向. 所有回答均基于项目真实源码, 关键结论附 `文件:行号` 引用.
 
@@ -13,13 +13,14 @@ description: "yukino-agent 源码级问答: Next.js 16 + Vercel AI SDK v7 的 AI
 
 ### 请介绍一下 Yukino Agent 的整体架构, 它是如何分层的?
 
-Yukino Agent 是一个 Next.js 16 App Router 全栈应用, 前后端同仓同进程, 整体可分为五层:
+Yukino Agent 是一个 Next.js 16 App Router 全栈应用, 前后端同仓同进程, 整体可分为六层:
 
 1. 接入层 (`app/api/*`): 七个 Route Handler, 核心四个为 `chat` (非流式对话) 、`chat_stream`(SSE 流式对话) 、`ai_ops`(Plan-Execute-Replan 运维分析) 、`upload` (知识库文件上传) ; 另有 `log` (接收 yukino-sentry 前端监控上报并转为 Prometheus 指标) 、`metrics` (暴露 Prometheus 抓取端点) 、`a2ui_action` (A2UI 界面动作原地更新) . 统一响应结构 `{ message, data }` (`app/api/chat/route.ts:1` 注释, 规范见 `AGENTS.md:39`).
-2. 编排层 (`lib/ai/pipelines/*`): 三条管线——`chat.ts`(RAG + ReAct agent)、`plan-execute-replan/` (规划-执行-重规划循环) 、`knowledge-index.ts` (知识库索引构建) .
-3. 能力层 (`lib/ai/*`、`lib/redis/*`): 模型工厂 (`models.ts` 双模型双 provider)、Embedding 封装 (`embedder.ts` openai-compatible 单 provider)、工具系统 (`tools/` 三层分离) 、A2UI 界面生成与纠错 (`a2ui/` 四文件) 、Redis Stack 向量存取 (`client.ts`/`indexer.ts`/`retriever.ts`)、会话记忆 (`memory.ts` 内存 LRU); 另有 `lib/metrics.ts` 把 yukino-sentry 上报桥接为 Prometheus 指标.
-4. 配置层 (`lib/config.ts`): 集中读取 `.env`, 导出 `as const` 的 `config` 对象. 向量维度不做静态配置, 而在启动时通过 `embedText("dimension probe")` 运行时探测 (`client.ts:46`).
-5. 表现层 (`app/page.tsx`、`components/*`、`hooks/use-chat.ts`): React 19 客户端组件 + 单一 `useChat` 状态中枢 + localStorage 历史持久化, Tailwind v4 原子类样式, markdown 渲染用 Streamdown (流式原生 react-markdown 替代品).
+2. 编排层 (`lib/ai/pipelines/*`): 三条管线——`chat.ts`(RAG + ReAct agent)、`plan-execute-replan/` (Plan-Execute-Replan 运维编排: `graph.ts` 把 planner → executor → replanner 循环编码为 LangGraph StateGraph, `index.ts` 是薄驱动) 、`knowledge-index.ts` (知识库索引构建) .
+3. 能力层 (`lib/ai/*`、`lib/redis/*`): 模型工厂 (`models.ts` 双模型双 provider)、Embedding 封装 (`embedder.ts` openai-compatible 单 provider)、工具系统 (`tools/` 三层分离) 、A2UI 界面生成与纠错 (`a2ui/` 四文件) 、Redis Stack 向量存取 (`client.ts`/`indexer.ts`/`retriever.ts`)、会话记忆 (`memory.ts` 内存 LRU).
+4. 观测层 (`lib/observability.ts`、`lib/metrics.ts`、`lib/ai/callbacks.ts`): Langfuse/OTEL 追踪——OTEL NodeSDK + LangfuseSpanProcessor, 每次 AI Ops 图运行记录一条 trace、每次 LLM 调用记录为带 token 用量的 generation, `LANGFUSE_*` 三个环境变量齐备才启用, 否则全部 no-op 降级 (`observability.ts:24-30`); yukino-sentry 上报桥接为 Prometheus 指标 (`metrics.ts`); 管线生命周期 start/end 的 console 打点 (`callbacks.ts:2-8`).
+5. 配置层 (`lib/config.ts`): 集中读取 `.env`, 导出 `as const` 的 `config` 对象, 含 langfuse 配置块 (`config.ts:62-67`). 向量维度不做静态配置, 而在启动时通过 `embedText("dimension probe")` 运行时探测 (`client.ts:46`).
+6. 表现层 (`app/page.tsx`、`components/*`、`hooks/use-chat.ts`): React 19 客户端组件 + 单一 `useChat` 状态中枢 + localStorage 历史持久化, Tailwind v4 原子类样式, markdown 渲染用 Streamdown (流式原生 react-markdown 替代品).
 
 分层的关键设计约束是: Route Handler 只做参数校验和响应包装, 所有 AI 逻辑下沉到 pipelines;pipelines 不感知 HTTP, 只依赖能力层的模型/工具/检索接口. 这使得管线可以被 API 路由、脚本或未来的其他入口复用.
 
@@ -42,13 +43,13 @@ Yukino Agent 是一个 Next.js 16 App Router 全栈应用, 前后端同仓同进
 
 两条管线对应两类任务复杂度, 是刻意的双轨设计:
 
-| 维度     | Chat 管线 (ReAct)                                                                                       | Plan-Execute-Replan 管线                                                                                    |
-| -------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 入口     | `/api/chat`、`/api/chat_stream`                                                                         | `/api/ai_ops`                                                                                               |
-| 模型     | `quickModel` 单模型                                                                                     | `thinkModel` (规划) + `quickModel` (执行)                                                                   |
-| 控制流   | LLM 自主决定何时调工具、何时收尾, `stopWhen: isStepCount(25)` 兜底 (`lib/ai/pipelines/chat.ts:103,160`) | 显式的 Planner → Executor → Replanner 循环, 最多 20 轮 (`lib/ai/pipelines/plan-execute-replan/index.ts:20`) |
-| 适用任务 | 开放问答、单点查询, 目标边界模糊                                                                        | 有明确 SOP 的多步骤运维任务 (查告警 → 查文档 → 查日志 → 出报告)                                             |
-| 可观测性 | 只产出文本流                                                                                            | 产出结构化事件流 (plan_created/step_start/step_done/replan/done/error)                                      |
+| 维度     | Chat 管线 (ReAct)                                                                                       | Plan-Execute-Replan 管线                                                                                                                                                                                                        |
+| -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 入口     | `/api/chat`、`/api/chat_stream`                                                                         | `/api/ai_ops`                                                                                                                                                                                                                   |
+| 模型     | `quickModel` 单模型                                                                                     | `thinkModel` (规划) + `quickModel` (执行)                                                                                                                                                                                       |
+| 控制流   | LLM 自主决定何时调工具、何时收尾, `stopWhen: isStepCount(25)` 兜底 (`lib/ai/pipelines/chat.ts:103,160`) | LangGraph StateGraph 把 planner → executor → replanner 编码为节点与条件边, replan 轮次预算 `MAX_ITERATIONS = 20` (`lib/ai/pipelines/plan-execute-replan/graph.ts:39,291-299`)                                                   |
+| 适用任务 | 开放问答、单点查询, 目标边界模糊                                                                        | 有明确 SOP 的多步骤运维任务 (查告警 → 查文档 → 查日志 → 出报告)                                                                                                                                                                 |
+| 可观测性 | 只产出文本流                                                                                            | 经 LangGraph custom 流产出结构化事件流 (plan_created/step_start/step_done/replan/done/error), 并每次运行写入一条 Langfuse trace (图/节点 span + 每次 LLM 调用的 generation 与 token 用量, `lib/observability.ts:70-81,101-109`) |
 
 选型的本质判断是:当任务有确定性 SOP 时, 把"流程控制权"从 LLM 手里收回一部分, 用代码约束执行骨架, 只把局部决策留给模型. ReAct 灵活但轨迹不可控, 25 步内可能跑偏或提前收尾; Plan-Execute-Replan 用 think 模型先显式产出计划, 执行后由 replanner 校验目标达成度, 对 OnCall 这种"漏掉一个告警就是事故"的场景, 可控性和覆盖率比灵活性重要. 反之闲聊/问答场景, 规划开销 (两次 think 模型调用) 纯属浪费, ReAct 性价比更高.
 
@@ -56,10 +57,10 @@ Yukino Agent 是一个 Next.js 16 App Router 全栈应用, 前后端同仓同进
 
 ### 项目为什么用 Redis Stack 做向量库, 而不是 Milvus / pgvector / 专用向量数据库?
 
-代码注释明确记录了这次迁移: "`lib/redis/*` Replaces `lib/milvus/*`", 并伴随数据模型升级: Milvus BinaryVector + HAMMING → Redis FLOAT32 + HNSW + COSINE(`lib/redis/client.ts:1-3`). 选型理由:
+向量库实现集中在 `lib/redis/*` 三个文件: 存原生 Float32 向量, HNSW 索引 + COSINE 度量 (`lib/redis/client.ts:1-3`). 选型理由:
 
 1. 运维合并:OnCall 栈本来就需要 Redis (缓存/锁) , 用 Redis Stack 的 RediSearch 模块顺带承担向量检索, 比单独维护一套 Milvus 集群 (依赖 etcd + MinIO) 轻量得多. `docker-compose.yml` 一个 `redis/redis-stack:latest` 镜像即可.
-2. 精度升级: 旧方案把向量二值化后用 HAMMING 距离, 精度损失大; 新方案存原生 FLOAT32,COSINE 度量是文本 embedding 的标准做法, 检索质量显著提升.
+2. 精度: 存原生 FLOAT32,COSINE 度量是文本 embedding 的标准做法, 检索质量高; 相比之下, 把向量二值化后用 HAMMING 距离的方案精度损失大.
 3. 数据规模匹配: 知识库是"内部文档按 `#` 标题切分"的 chunk, 量级在千~万级. HNSW 在这个规模下召回率与暴力检索几乎一致, 毫秒级延迟, 完全够用; Redis 的纯内存特性还带来极低的 P99.
 4. 事务与生态:`MULTI/EXEC` 批量写入 (`lib/redis/indexer.ts:26-37`)、`SET NX EX` 分布式锁 (`indexer.ts:52`)、TAG 字段过滤删除, 都是 Redis 原生能力, 无需引入新组件.
 
@@ -86,13 +87,13 @@ Yukino Agent 是一个 Next.js 16 App Router 全栈应用, 前后端同仓同进
 
 ### 这个项目是从 Go 项目重写而来的, 重写过程中如何保证行为对齐? 这种"对照式重写"有哪些工程价值?
 
-代码中留有可追溯的移植对照痕迹: `lib/redis/*` 三个文件头注释记录了从 Milvus 到 Redis Stack 的迁移("Replaces lib/milvus/client.ts", `client.ts:1-3`, retriever/indexer 同款注释) ;`models.ts:102` 注明 extended thinking 的 providerOptions "mirrors yukino/src/llm/anthropic.ts L310-322";`knowledge-index.ts:19` 注明切分参数 "match the proven yukino-chatbot RAG setup";`AGENTS.md:24` 记录 Go 后端 sentry_metrics_handler.go 暴露字节级相同的 `yukino_sentry_*` 指标名;`memory.ts:1` 保留 "window size 6, drop in pairs" 语义.
+代码中留有可追溯的移植对照痕迹: `models.ts:102` 注明 extended thinking 的 providerOptions "mirrors yukino/src/llm/anthropic.ts L310-322";`knowledge-index.ts:19` 注明切分参数 "match the proven yukino-chatbot RAG setup";`AGENTS.md:22` 记录 Go 后端 sentry_metrics_handler.go 暴露字节级相同的 `yukino_sentry_*` 指标名;`memory.ts:1` 注明 "window size 6, drop in pairs" 语义.
 
 保证行为对齐的手段:
 
 1. 语义级移植而非字面翻译: 保留关键不变量——如记忆窗口成对丢弃以保持 user/assistant 对齐 (`memory.ts:39-40` 注释与 `41-48` 实现)、Prometheus 告警同名去重只保留首次出现 (`operations.ts:75-89`)、MCP 不可用时降级为空工具表 (`query-log.ts:49-57`).
 2. 显式记录偏差: 有意的行为差异都在注释中声明, 例如 MySQL 工具注释 "Executes directly without an interactive confirmation prompt"(`operations.ts:125`)——Web 版去掉了交互确认直接执行.
-3. 修复可追溯: 重写过程中的修复以 `P1-x/P2-x/P3-x` 编号注释标记 (如 P1-8 Redis 单例失败重试 `client.ts:12`、P2-17 executor 补 providerOptions `executor.ts:11`、P2-13 距离转相似度 `retriever.ts:45`), 每个编号对应一条 review 发现, 形成完整的决策痕迹.
+3. 修复可追溯: 重写过程中的修复以 `P1-x/P2-x/P3-x` 编号注释标记 (如 P1-8 Redis 单例失败重试 `client.ts:12`、P2-17 executor 补 providerOptions `executor.ts:18`、P2-13 距离转相似度 `retriever.ts:45`), 每个编号对应一条 review 发现, 形成完整的决策痕迹.
 
 工程价值: 对照注释让 review 者能逐条核对"这个行为是故意的还是漏掉的";P 编号把"重写"同时变成了一次系统性代码审计——很多 bug (内存无限增长、维度不匹配静默失败) 是在重写时才被发现并修复的.
 
@@ -102,11 +103,11 @@ Yukino Agent 是一个 Next.js 16 App Router 全栈应用, 前后端同仓同进
 
 ### 项目用了 AI SDK 的 `generateText`、`streamText` 两个核心 API, 结构化输出怎么实现? 选用依据是什么?
 
-| API                                | 返回                                       | 本项目用途                                                                                                | 选用依据                                                                  |
-| ---------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `generateText`                     | 完整文本 (Promise)                         | 非流式 chat(`chat.ts:95`)、plan 步骤执行 (`executor.ts:17`)                                               | 不需要逐字输出时最简单; 配合 `tools + stopWhen` 自动完成多轮 tool-calling |
-| `streamText`                       | 文本流 (`textStream` AsyncIterable)        | SSE 流式 chat(`chat.ts:152`)                                                                              | 边生成边推送, 降低首 token 感知延迟; 服务端把 chunk 转成 SSE 事件         |
-| `generateText` + `Output.object()` | 按 zod schema 校验的结构化对象 (`.output`) | Planner 产出步骤数组、Replanner 产出 `{done, remaining, summary}`(`plan-execute-replan/index.ts:116,139`) | 编排循环的控制信号必须是机器可解析的, 不能依赖自由文本                    |
+| API                                | 返回                                       | 本项目用途                                                                                                         | 选用依据                                                                  |
+| ---------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `generateText`                     | 完整文本 (Promise)                         | 非流式 chat(`chat.ts:95`)、plan 步骤执行 (`executor.ts:24`)、图内 Planner/Replanner/uiify (`graph.ts:117,180,230`) | 不需要逐字输出时最简单; 配合 `tools + stopWhen` 自动完成多轮 tool-calling |
+| `streamText`                       | 文本流 (`textStream` AsyncIterable)        | SSE 流式 chat(`chat.ts:152`)                                                                                       | 边生成边推送, 降低首 token 感知延迟; 服务端把 chunk 转成 SSE 事件         |
+| `generateText` + `Output.object()` | 按 zod schema 校验的结构化对象 (`.output`) | Planner 产出步骤数组、Replanner 产出 `{done, remaining, summary}`(`plan-execute-replan/graph.ts:119,182`)          | 编排循环的控制信号必须是机器可解析的, 不能依赖自由文本                    |
 
 关键洞察:文本是给"人"看的, 对象是给"程序"用的. Planner/Replanner 的输出要驱动 for 循环和分支判断, 如果用 `generateText` 再 `JSON.parse`, 就要处理模型输出 markdown 围栏、尾逗号、解释性废话等各种解析失败; `Output.object({schema})` 在协议层 (多数 provider 走 tool/function calling 通道强制 schema) 保证输出可解析, 结果通过 `.output` 属性获取. 注意 AI SDK v7 中独立的 `generateObject` 已标记废弃, 项目遵循 AGENTS.md 规范统一使用 `generateText` + `output: Output.object({schema})` 的组合.
 
@@ -156,7 +157,7 @@ providerOptions = {
 
 1. 协议差异:extended thinking 是 Anthropic 独有特性, 不属于 OpenAI 兼容协议, 因此必须走 AI SDK 的 `providerOptions` 逃生舱传递, 且仅在 `LLM_PROVIDER=anthropic` 时注入 (还可用 `ANTHROPIC_THINKING=false` 显式关闭, `config.ts:36`), OpenAI 路径为 `undefined`.
 2. budgetTokens 语义: 它是 thinking block 的最大 token 数, 且必须小于 `max_tokens` (否则 API 报错) . 项目取 `maxOutputTokens - 1`(8192-1), 即"除 1 个 token 外几乎全部预算留给思考"——这是 planner 场景的选择: 计划质量优先, 正式回答可以很短.
-3. 一致性修复: 注释 P2-17 记录了一个 bug——最初 executor 没传 `providerOptions`, 导致同一编排循环里 planner 有思考能力而 executor 没有, 行为不一致; 修复后 chat/planner/executor 三处统一注入 (`executor.ts:11-22`).
+3. 一致性: 所有 LLM 调用点统一注入 `providerOptions`——chat、`executeStep` (注释 P2-17 位于 `executor.ts:18-19`, 传参在 `executor.ts:29`) 与图内 planner/replanner/uiify 三处 (`graph.ts:121,184,234`), 保证同一编排循环里的思考能力行为一致.
 
 ---
 
@@ -202,7 +203,7 @@ LLM 调用的错误与传统 API 不同: 错误信息往往不在 `message` 里,
 
 ### Embedding 层如何做 provider 抽象? 维度管理有什么坑?
 
-抽象方式(`lib/ai/embedder.ts`): 现只有单一 provider —— openai-compatible embedding (`config.openaiEmbedding`, 默认模型 `text-embedding-v4`, baseURL 默认阿里云 OpenAI 兼容网关 `https://openai.aliyuncs.com/compatible-mode/v1`, `lib/config.ts:43-49`) . `createEmbeddingProvider()` 用 `@ai-sdk/openai-compatible` 的 `createOpenAICompatible({name: "openai", baseURL, apiKey})` 产出统一 `EmbeddingModel` (`embedder.ts:8-16`) , 上层只调 `embed()`/`embedMany()` —— 批量时按 `EMBED_BATCH_SIZE = 10` 分片 (兼容端点单次输入条数上限, SDK 默认 2048 会报 "batch size is invalid", `embedder.ts:26-41`) . 由于适配的是 OpenAI 兼容 `/v1/embeddings` 端点, 换服务只需改 baseURL/apiKey/model 三个环境变量. 旧版的 DashScope/Ollama 双 provider 分支已删除: `EMBEDDING_PROVIDER` 只保留 `"openai"` (`lib/config.ts:64-65`, 类型即 `"openai"`) , 不再有传 `"ollama"` 占位 key 的逻辑, Ollama 相关变量只在 `.env` 里留有注释.
+抽象方式(`lib/ai/embedder.ts`): 单一 provider —— openai-compatible embedding (`config.openaiEmbedding`, 默认模型 `text-embedding-v4`, baseURL 默认阿里云 OpenAI 兼容网关 `https://openai.aliyuncs.com/compatible-mode/v1`, `lib/config.ts:43-49`) . `createEmbeddingProvider()` 用 `@ai-sdk/openai-compatible` 的 `createOpenAICompatible({name: "openai", baseURL, apiKey})` 产出统一 `EmbeddingModel` (`embedder.ts:8-16`) , 上层只调 `embed()`/`embedMany()` —— 批量时按 `EMBED_BATCH_SIZE = 10` 分片 (兼容端点单次输入条数上限, SDK 默认 2048 会报 "batch size is invalid", `embedder.ts:26-41`) . `EMBEDDING_PROVIDER` 只有唯一合法值 `"openai"` (`lib/config.ts:70-71`, 类型即 `"openai"`, 仓库 `AGENTS.md:18` 固化为 '"openai" only') . 由于适配的是 OpenAI 兼容 `/v1/embeddings` 端点, 换服务只需改 baseURL/apiKey/model 三个环境变量.
 
 维度管理的坑与对策:
 
@@ -234,14 +235,81 @@ ReAct(Reasoning + Acting) 是让 LLM 在"思考 → 调用工具 → 观察结�
 
 ### 完整描述 Plan-Execute-Replan 管线的执行流程.
 
-入口 `runPlanExecuteReplan(query = AI_OPS_QUERY)`(`plan-execute-replan/index.ts:106-108`), 是一个 `AsyncGenerator<PlanExecuteEvent>`:
+入口 `runPlanExecuteReplan(query = AI_OPS_QUERY)`(`plan-execute-replan/index.ts:35-37`) 是 `AsyncGenerator<PlanExecuteEvent>`, 循环骨架由 LangGraph StateGraph `opsGraph` 编码 (`graph.ts:301-317`): 五个节点 (planner/executor/replanner/uiify/exhausted) + 三组条件边. 驱动以 `streamMode: "custom"` 跑图, 节点通过 `getWriter()` 把 `PlanExecuteEvent` 发布到 custom 流 (`graph.ts:108-110`), 驱动对每个 chunk 做 `PlanExecuteEventSchema.safeParse` 重校验后才 yield, 解析失败静默丢弃 (`index.ts:54-61`). 执行流程由条件边决定:
 
-1. Plan:think 模型 + `generateText` + `Output.object({schema: planSchema})` 把任务分解为有序步骤, 结果从 `.output.steps` 获取, 产出 `plan_created` 事件;
-2. Execute: 外层循环最多 `MAX_ITERATIONS = 20` 轮; 每轮内按序遍历 plan 中每个步骤, 调 `executeStep()`——quick 模型 + 全量工具 + `stopWhen: isStepCount(10)`, 即单个计划步骤内部还可以跑 10 步工具调用小循环(`executor.ts:17-23`). 每步产出 `step_start`/`step_done` 事件, 结果文本 push 进 `detail[]`;
-3. Replan: 一轮执行完, think 模型 + `generateText` + `Output.object({schema: replanSchema})` 评估: 输入包含原始任务、原始计划、已完成步骤、各步结果全文. 若 `done=true` → 先跑一次可选的 `uiifyReport()` 后处理 (think 模型、无工具, 把报告渲染成 A2UI 界面, 失败不影响报告, `index.ts:65-104`), 产出 `done` 事件 (`result=summary`, `detail=全部步骤输出`, 可带 `a2ui`) 并 return; 否则 `plan = remaining`, 进入下一轮;
-4. 兜底:20 轮耗尽仍未 done, 产出 `done`(`result="Max iterations reached"`); 任何异常被捕获并产出 `error` 事件; `finally` 里 `logEnd` 打点.
+1. Plan (planner 节点, `graph.ts:112-137`): think 模型 + `generateText` + `Output.object({schema: planSchema})`(`graph.ts:70-72`) 把任务分解为有序步骤, 发出 `plan_created` 事件并返回 `{plan}`; 计划为空时 `afterPlanner` 条件边直接路由到 exhausted (`graph.ts:283-285`);
+2. Execute (executor 节点, `graph.ts:139-159`): 节点每次运行只执行一个计划步骤——读 `state.plan[state.stepIndex]`, 先发 `step_start`, 再调 `executeStep()`: quick 模型 + 全量工具 + `stopWhen: isStepCount(10)`, 即单个计划步骤内部还可以跑至多 10 步工具调用小循环 (`executor.ts:24-30`). 完成后发 `step_done`, 返回 `{stepIndex: index+1, detail: [结果文本]}`; detail 字段在状态上带 concat reducer, 每步输出跨轮次累计追加而非覆盖 (`graph.ts:56-59`). `afterExecutor` 条件边判断 `stepIndex < plan.length`: 是则回到 executor 执行下一步, 否则进入 replanner (`graph.ts:287-289`);
+3. Replan (replanner 节点, `graph.ts:161-207`): think 模型 + `generateText` + `Output.object({schema: replanSchema})`(`graph.ts:74-80`) 评估: 输入包含原始任务、当前轮计划、已完成步骤编号列表、累计的全部步骤输出全文. 发出 `replan` 事件并返回 `{done, report: summary, plan: remaining, stepIndex: 0, iteration: iteration+1}`. `afterReplanner` 条件边决定路由 (`graph.ts:291-299`): `done=true` → uiify; 轮次预算耗尽 (`iteration >= MAX_ITERATIONS`) 或剩余步骤为空 → exhausted; 否则 → executor 开启下一轮;
+4. 收尾分支: uiify 节点 (`graph.ts:263-272`) 先调 `uiifyReport()` 把报告可选地渲染成 A2UI surface (think 模型、无工具, 失败不影响报告, `graph.ts:213-261`), 再发 `done` 事件 (`result=report`, `detail=累计步骤输出`, 可带 `a2ui`), 边接 END; exhausted 节点 (`graph.ts:274-281`) 发 `done` 事件 (`result="Max iterations reached"`, `detail=累计步骤输出`), 边接 END;
+5. 驱动边界 (`index.ts:41-66`): `opsGraph.stream({query}, {streamMode: "custom", recursionLimit: RECURSION_LIMIT, callbacks: aiOpsCallbacks(sessionId)})` 启动图, 每 run 生成 `randomUUID` sessionId 供 Langfuse 会话分组 (`index.ts:38,44-53`); `for(;;)` 循环取 `stream.next()`, 任何异常 (包括节点里抛出的工具/LLM 错误) 被转为 `error` 事件 (`index.ts:62-63`); `finally` 里 `logEnd` 打点 (`index.ts:64-66`).
 
-整体是一个三层嵌套循环: 外层 replan 循环 (20)× 中层步骤循环 (plan.length)× 内层工具循环 (10), 理论上限 20×N×10 次 LLM 调用, 由 MAX_ITERATIONS (20) 与 executor 的 `isStepCount(10)` 双重封顶.
+整体执行容量: 一轮 = N 步执行 + 1 次 replan 评估, 预算 `MAX_ITERATIONS = 20` 轮 (`graph.ts:39,295`), 每个计划步骤内部有 ≤10 步工具循环 (`executor.ts:28`). 控制流的载体是"节点 + 条件边"的声明——循环骨架是可静态检查的数据 (smoke 脚本可直接断言节点集与边集), 状态变更由 Annotation reducer 显式约束 (`graph.ts:48-65`).
+
+---
+
+### Plan-Execute-Replan 为什么用 LangGraph StateGraph 编码编排逻辑?
+
+若直接用嵌套循环编写多轮编排, 控制流和数据流容易混在一起——循环骨架、分支条件、状态更新都藏在函数体内, 只能靠运行来验证. 编码为 LangGraph StateGraph 后 (`graph.ts:301-317`), Planner → Executor → Replanner 循环成为"节点 + 条件边"的声明式结构:
+
+1. 循环骨架可静态检查: smoke 脚本不调 LLM 就能离线断言节点与边的全集 (`scripts/ai-ops-graph-smoke.ts:43-72`);
+2. 状态更新经 Annotation reducer 约束 (`graph.ts:48-65`), 字段合并语义显式可控 (见「图状态的 Annotation.Root 定义」);
+3. 分支语义 (done → uiify / 预算内 → executor / 预算耗尽或剩余步骤为空 → exhausted) 集中在 `afterReplanner` 一个纯函数里 (`graph.ts:291-299`), 路由逻辑可独立审查与测试;
+4. 可观测性直接挂钩: LangChain CallbackHandler 挂在图运行上, 每 run 自动产出一条 Langfuse trace 与图/节点 span (见「Langfuse 可观测性是如何接入的」).
+
+模块构成 (`lib/ai/pipelines/plan-execute-replan/`, 四个文件):
+
+- `graph.ts` (317 行): 完整图定义——planner/executor/replanner/uiify/exhausted 五个节点实现、三组条件边路由、`uiifyReport()` 后处理、Langfuse generation 埋点;
+- `index.ts` (67 行): 薄驱动——公共契约 `runPlanExecuteReplan(): AsyncGenerator<PlanExecuteEvent>` (`index.ts:35-37`), 以 `streamMode: "custom"` 跑图, 每 run 生成 `randomUUID` sessionId 并传入 Langfuse callbacks (`index.ts:38-53`), 逐 chunk 用 `PlanExecuteEventSchema.safeParse` 重校验后转发 (`index.ts:54-61`); `AI_OPS_QUERY` 根指令定义于此 (`index.ts:14-33`);
+- `events.ts`: 事件以 zod schema 声明 (`PlanExecuteEventSchema`, `events.ts:6-30`), 事件类型由 schema 推导 (`events.ts:32`)——运行时校验与编译期类型同源;
+- `executor.ts`: `executeStep()` 单步执行 (quick 模型 + 全量工具 + `isStepCount(10)` 工具循环, `executor.ts:24-30`), `StepResult` 透传 AI SDK `usage` (`executor.ts:12-16`) 供 token 遥测.
+
+管线对外的契约收敛为 AsyncGenerator 事件流 (plan_created/step_start/step_done/replan/done/error), `/api/ai_ops` 路由 (`app/api/ai_ops/route.ts:3,17`) 与前端 `triggerAIOps` (`hooks/use-chat.ts:397-428`) 只消费事件、不感知图的内部结构——这是"管线与传输解耦"的回报: 编排引擎属于管线内部实现细节, 可以独立替换或演进, 对外零波及.
+
+相关依赖 (`package.json:29-37`): `@langchain/langgraph ^1.4.18`、`@langchain/langgraph-checkpoint-postgres ^1.0.5`、`@langchain/openai ^1.6.0`、`@langfuse/langchain|otel|tracing ^5.11.1`、`@opentelemetry/sdk-node ^0.222.0`; `pnpm-workspace.yaml` 的 `allowBuilds` 放行 protobufjs 的构建脚本 (由 OTLP/gRPC 导出链的 `@grpc/proto-loader` 传递引入, pnpm-lock 锁定 7.6.6). 其中 `@langchain/langgraph-checkpoint-postgres` 与 `@langchain/openai` 当前源码零 import, 属于为 checkpoint 持久化与 LangChain 模型接入预留的依赖. 观测层落地 (`lib/observability.ts`、`instrumentation.ts:9-13` 先开 tracing 再做知识索引、`lib/config.ts`/`.env.example` 的 langfuse 配置块) 详见第十二节.
+
+---
+
+### 图状态为什么用 `Annotation.Root` 而不是 `StateSchema`? detail 字段的 concat reducer 解决什么问题?
+
+状态声明 (`graph.ts:48-65`): `OpsState = Annotation.Root({...})`, 共七个字段——`query` (分析任务, 默认 AI_OPS_QUERY)、`plan` (当前轮次步骤列表)、`stepIndex` (下一个要执行的步骤下标)、`detail` (全部已完成步骤的输出全文, 跨轮次累计)、`iteration` (已完成的 replan 轮数)、`done`、`report` (replanner 判 done 时的最终报告). 每个字段显式声明 reducer 与 default; `typeof OpsState.State` / `typeof OpsState.Update` 分别导出状态类型与更新类型 (`graph.ts:67-68`)——节点函数返回的是 Update 对象, 由框架按 reducer 合并进 State.
+
+两种 reducer 语义:
+
+1. 绝大多数字段用 `overwrite` reducer (`graph.ts:46`), 即 last-write-wins: plan 每轮被 replanner 整体替换为 remaining, stepIndex/iteration/done/report 同理覆盖写;
+2. `detail` 独享 concat reducer (`graph.ts:56-59`): executor 节点每次返回的 `{detail: [text]}` 被追加到既有数组. 若这里也用 overwrite, 状态里将只剩最后一步的输出 (last-write-wins), replanner 的评估输入 (`graph.ts:174`) 和 done 事件的步骤明细 (`graph.ts:268`) 都会丢失全部历史. 它是图中唯一的"只增历史"字段, 跨 replan 轮次累计.
+
+为什么不用 langgraph 的 `StateSchema` (以 zod schema 声明状态): 本仓库的 zod 是 v4 (import 一律 `zod/v4`), 其 `~standard` 接口缺少 langgraph `StateSchema` 所要求的 JSON-Schema 属性, 用 `Annotation.Root` 显式声明状态是正确选择——该坑已固化进仓库 `AGENTS.md:24`.
+
+---
+
+### 图节点为什么必须用 `getWriter()` 而不是 `writer()` 助手发布事件?
+
+`writeEvent()` 的实现是 `getWriter()?.(event)`(`graph.ts:108-110`), 把 `PlanExecuteEvent` 发布到 LangGraph 的 "custom" 流, 由驱动消费. 注释专门记录了版本坑 (`graph.ts:104-107`, 并固化在 `AGENTS.md:24`): @langchain/langgraph 1.4.x 中 `writer()` 助手读取 `configurable.writer`, 而 Pregel 已不再填充该字段, 于是 `writer()` 会静默丢弃全部事件; `getWriter()` 读取顶层 `config.writer`, 才是正确入口.
+
+之所以郑重记录, 是因为这个坑的失败模式是静默的: 图照常运行、LLM 调用照常发生, 只是驱动收不到任何事件——`/api/ai_ops` 等不到 done 也等不到 error, 最终走兜底分支返回 500 "internal error" (`app/api/ai_ops/route.ts:38-42`). 表象像管线挂死, 实际没有任何报错可查. 结论: 新写节点发布 custom 流事件时, 一律用 `getWriter()`.
+
+---
+
+### `MAX_ITERATIONS` 与 `RECURSION_LIMIT` 为什么需要两道护栏?
+
+两道限额层次不同:
+
+1. `MAX_ITERATIONS = 20`(`graph.ts:39`) 是真实的业务预算: `afterReplanner` 条件边检查 `state.iteration >= MAX_ITERATIONS`, replan 轮数达到预算 (或剩余步骤为空) 即路由到 exhausted, 发 `result = "Max iterations reached"` 的 done 事件 (`graph.ts:274-281,291-299`);
+2. `RECURSION_LIMIT = MAX_ITERATIONS * 25 + 25 = 525`(`graph.ts:44`) 只是 LangGraph 超步 (superstep) 数的兜底. 图按超步推进节点, 一轮计划要消耗"每个计划步骤一个超步 + 一个 replanner 超步", 给每轮留 25 个超步的宽裕预算, 确保正常执行不会在 MAX_ITERATIONS 用尽前被 LangGraph 自身的递归限制掐断. 该限额由驱动经 `recursionLimit` 传入 (`index.ts:49`).
+
+两者必须同步 (`AGENTS.md:24`): RECURSION_LIMIT 偏小会截断正常运行; MAX_ITERATIONS 调大则要相应上调 RECURSION_LIMIT. smoke 脚本对此有断言 `RECURSION_LIMIT > MAX_ITERATIONS`(`scripts/ai-ops-graph-smoke.ts:44`). 这也说明护栏设计要分层: 业务预算由自己的代码管理 (可审计、可给出 exhausted 语义), 框架限制只做最后兜底.
+
+---
+
+### ai-ops-graph-smoke 脚本如何验证这张图?
+
+`scripts/ai-ops-graph-smoke.ts` (93 行) 是仓库 `scripts/` 目录唯一的冒烟脚本, 运行方式 `npx tsx scripts/ai-ops-graph-smoke.ts`. 离线部分始终执行:
+
+1. 事件 schema round-trip: 7 个合法事件 (含带 a2ui 字段的 done) 必须 parse 成功, 4 个脏数据 (未知 type、done 缺 detail、step_start 的 index 类型错误、非对象) 必须被拒绝 (`smoke.ts:16-41`)——这是 `PlanExecuteEventSchema` 的回归测试;
+2. 图结构断言: `RECURSION_LIMIT > MAX_ITERATIONS`; `opsGraph.getGraphAsync()` 列出全部节点 (`__start__`/planner/executor/replanner/uiify/exhausted/`__end__`) 与全部 10 条边——含 executor→executor 自环、replanner→executor/uiify/exhausted 三分支与两条终边 (`smoke.ts:43-72`);
+3. 输出 Mermaid 图 (`smoke.ts:73`), review 时可直接目检拓扑.
+
+在线验证由 `AI_OPS_SMOKE_LIVE=1` 门控: `initObservability()` + `runPlanExecuteReplan()`, 逐个打印事件直到 done/error (`smoke.ts:76-88`), 可对真实 LLM 验证完整事件序列 plan_created → step_start → step_done → replan(done) → done; `AI_OPS_SMOKE_QUERY` 可换一个便宜查询控制成本 (`smoke.ts:81-83`). 脚本最后强制 `process.exit(0)`, 防止瞬态句柄 (如失败的 MCP SSE 连接) 挂住进程 (`smoke.ts:91-93`).
 
 ---
 
@@ -250,7 +318,7 @@ ReAct(Reasoning + Acting) 是让 LLM 在"思考 → 调用工具 → 观察结�
 这是"控制信号结构化, 内容产出自由化"原则的体现:
 
 - Planner 的输出是程序的控制流输入:`steps` 数组要被 for 循环逐条消费, 必须是合法 JSON 数组; 若模型输出"好的, 我将分为以下 3 步: 第一步..."这种带废话的文本, 程序无法执行. `Output.object({schema})` 借 function calling 通道把输出约束为 schema 形状, 结果从 `.output` 获取.
-- Replanner 的输出同时包含分支信号和报告内容:`done` 决定循环走向, `remaining` 决定下轮计划, `summary` 是最终给人看的报告——三者打包成一个 schema(`index.ts:48-54`), 一次调用同时拿到机器信号和人类内容.
+- Replanner 的输出同时包含分支信号和报告内容:`done` 决定循环走向, `remaining` 决定下轮计划, `summary` 是最终给人看的报告——三者打包成一个 schema(`graph.ts:74-80`), 一次调用同时拿到机器信号和人类内容.
 - Executor 的输出是给人 (和 replanner) 看的自然语言: 步骤结果需要的是"查到了什么、分析结论", 自由文本信息量最大; 若强制结构化反而限制表达.
 
 反过来是不行的: Planner 用纯 generateText 会让 `plan.length` 这种代码失去可靠输入; Executor 用 Output.object 则每步产出被 schema 箍住, replanner 拿到的"执行摘要"反而信息受损. 结构化程度应该匹配消费方: 代码消费 → 强 schema; 模型/人消费 → 自由文本.
@@ -259,22 +327,22 @@ ReAct(Reasoning + Acting) 是让 LLM 在"思考 → 调用工具 → 观察结�
 
 ### Replanner 的 prompt 是如何设计的? 为什么要把原始计划、已完成步骤、执行结果全部传给它?
 
-Replan prompt(`index.ts:137-156`) 包含四部分: 原始 Task、Original Plan(JSON)、Completed steps (编号列表) 、Results so far (全部 detail 拼接) , 指令是"判断任务是否完成; 完成则在 summary 给综合报告; 未完成则只列剩余步骤".
+Replan prompt(`graph.ts:162-176`) 包含四部分: 原始 Task、Original Plan(JSON)、Completed steps (编号列表) 、Results so far (全部 detail 拼接) , 指令是"判断任务是否完成; 完成则在 summary 给综合报告; 未完成则只列剩余步骤". 一个语义细节: prompt 里的 "Original Plan/Completed steps" 是 `state.plan`, 即当前轮次的计划 (replanner 每轮会把它替换为剩余步骤) , 而 Results so far 的 detail 经 concat reducer 跨全部轮次累计 (`graph.ts:56-59`).
 
 全量传入的原因:
 
 1. 目标对齐:replanner 需要对照原始 Task 判断"做完没有", 只给结果不给目标, 模型无从判断充分性;
 2. 防漂移: 给出 Original Plan 让 replanner 检查"计划是否还合理"——执行中可能发现原计划某步已无必要 (如告警已恢复) ,replanner 可以裁剪;
 3. 防重复: 列出 Completed steps + Results, 否则 replanner 可能把已完成的步骤再次列入 remaining, 造成死循环 (每轮都重复执行同一步, 直到 20 轮耗尽) ;
-4. 增量语义:"list only the remaining steps" 明确要求输出差集而非全量新计划, 配合代码 `plan = obj.remaining`(`index.ts:170`) 直接替换.
+4. 增量语义:"list only the remaining steps" 明确要求输出差集而非全量新计划, 配合 replanner 节点返回 `plan: output.remaining`(`graph.ts:203`) 直接替换, 同时 `stepIndex` 归零开启新一轮 (`graph.ts:204`).
 
-已知局限:`detail.join("\n")` 全量拼入 prompt, 多轮迭代后 token 膨胀严重, 可能挤爆上下文——改进方向是对历史 detail 做滚动摘要, 或只保留上轮结果 + 累计摘要.
+已知局限:`detail.join("\n")` 全量拼入 prompt (`graph.ts:174`), 多轮迭代后 token 膨胀严重, 可能挤爆上下文——改进方向是对历史 detail 做滚动摘要, 或只保留上轮结果 + 累计摘要.
 
 ---
 
 ### 为什么用 `AsyncGenerator` 产出编排事件, 而不是回调、EventEmitter 或直接返回 Promise?
 
-`runPlanExecuteReplan` 返回 `AsyncGenerator<PlanExecuteEvent>`(`index.ts:106-108`), 事件类型为判别联合 (`events.ts:2-8`). 对比各方案:
+`runPlanExecuteReplan` 返回 `AsyncGenerator<PlanExecuteEvent>`(`index.ts:35-37`), 事件类型是由 zod schema 推导的判别联合 (`events.ts:6-32`, `PlanExecuteEventSchema` + `z.infer`). 事件由图节点经 "custom" 流发布, 驱动在边界处对每个 chunk 做 `PlanExecuteEventSchema.safeParse` 重校验后才 yield (`index.ts:57-60`)——schema 与类型同源, 运行时形状与编译期类型不会脱节. 对比各方案:
 
 | 方案               | 问题                                                                                                                 |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------- |
@@ -290,7 +358,7 @@ Replan prompt(`index.ts:137-156`) 包含四部分: 原始 Task、Original Plan(J
 
 ### AI_OPS_QUERY 这段 prompt 体现了哪些 OnCall 场景的 prompt 工程技巧?
 
-`AI_OPS_QUERY`(`index.ts:23-42`) 是 AI Ops 一键分析的根指令, 技巧包括:
+`AI_OPS_QUERY`(`index.ts:14-33`, 作为 `runPlanExecuteReplan` 的默认参数) 是 AI Ops 一键分析的根指令, 技巧包括:
 
 1. SOP 显式化: 把运维 SOP 写成编号步骤 (查告警 → 按告警名查文档 → 严格按文档分析 → 时间参数先取当前时间 → 日志查询带 region/topic → 汇总报告) , 让 planner 的分解有章可循, 本质上是"用 prompt 向 planner 注入领域流程知识";
 2. 工具使用规约前置: 第 4 条"任何时间相关参数, 先调 get_current_time"是针对 LLM 的经典坑——模型会凭训练印象编造"当前时间"或传入非法格式, 前置规约把工具依赖关系讲清楚;
@@ -303,7 +371,7 @@ Replan prompt(`index.ts:137-156`) 包含四部分: 原始 Task、Original Plan(J
 
 ### `/api/ai_ops` 路由消费了整个事件流却只返回最终结果, 这种设计有什么问题?
 
-现状(`app/api/ai_ops/route.ts:15-37`):for-await 遍历事件, 遇 `done` 返回 200、遇 `error` 返回 500, 中间事件全部丢弃.
+现状(`app/api/ai_ops/route.ts:15-37`):for-await 遍历事件, 遇 `done` 返回 200、遇 `error` 返回 500, 中间事件全部丢弃; 事件流结束仍无 done/error 时兜底返回 500 "internal error" (`route.ts:38-42`). 管线公共契约是 `AsyncGenerator<PlanExecuteEvent>`, 路由与前端 `triggerAIOps` (`hooks/use-chat.ts:397-428`) 只消费事件流, 不感知图的内部结构.
 
 问题:
 
@@ -428,7 +496,7 @@ HNSW(Hierarchical Navigable Small World) 是一种基于图的近似最近邻 (A
 
 但它不是关系型数据库意义上的事务:没有回滚——队列中某条命令失败 (如字段类型错误) , 其余命令照样执行完, 返回数组里对应位置是错误对象. 对本场景可接受: hSet 是幂等覆盖写, 部分失败后重跑整个 `buildKnowledgeIndex` 即可收敛; 且 deleteBySource 有锁保护, 重跑不会与并发任务交错.
 
-另一个细节: 注释 P3-2(`indexer.ts:15-17`) 记录了 content 截断到 8192 的原因——对齐旧 Milvus schema 的 VarChar max_length, 防止超长 chunk 撑爆单 key 体积; Redis TEXT 字段本身无长度限制, 这个限制是为数据一致性和内存控制主动加的.
+另一个细节: 注释 P3-2(`indexer.ts:15-17`) 记录了 content 截断到 8192 的原因——防止超长 chunk 撑爆单 key 体积; Redis TEXT 字段本身无长度限制, 这个限制是为数据一致性和内存控制主动加的.
 
 ---
 
@@ -545,7 +613,7 @@ MCP 是 Anthropic 主导的开放协议, 目标是标准化"应用向 LLM 提供
 
 设计意图:① MCP 握手 + listTools 是网络开销, 每次 chat 都重连浪费; ② 降级为空工具表意味着"MCP 挂了, 对话仍可用, 只是少了日志工具"——语义上等价于忽略连接错误继续跑.
 
-并发隐患 (值得注意) :缓存检查与赋值之间存在 check-then-act 竞态——两个并发请求同时发现 `cachedTools` 为空, 会各自建连、各自 listTools, 后完成者覆盖前者的 client, 前者的连接泄漏. 另外"失败也缓存 \{\}"意味着 MCP 恢复后进程内永远拿不到工具, 需重启 (或调用未暴露的 `closeLogMcpClient`). 改进: 缓存 Promise 而非结果 (`cachedToolsPromise ??= connect()`, 与 Redis client 单例的 `clientPromise` 模式对齐,`client.ts:8-20`), 失败时重置 Promise 允许下次重试——项目里 Redis 单例已经示范了正确写法 (P1-8 修复) ,MCP 这处属于尚未对齐的历史遗留.
+并发隐患 (值得注意) :缓存检查与赋值之间存在 check-then-act 竞态——两个并发请求同时发现 `cachedTools` 为空, 会各自建连、各自 listTools, 后完成者覆盖前者的 client, 前者的连接泄漏. 另外"失败也缓存 \{\}"意味着 MCP 恢复后进程内永远拿不到工具, 需重启 (或调用未暴露的 `closeLogMcpClient`). 改进: 缓存 Promise 而非结果 (`cachedToolsPromise ??= connect()`), 失败时重置 Promise 允许下次重试——项目里 Redis 客户端单例已示范了该模式 (`clientPromise` 缓存 + 失败重置, P1-8, `client.ts:8-20`), MCP 这处尚未对齐.
 
 ---
 
@@ -567,7 +635,7 @@ MCP 是 Anthropic 主导的开放协议, 目标是标准化"应用向 LLM 提供
 1. schema(`tools/schemas.ts`):zod 定义入参, 如 `{ namespace: z.string().describe(...), pod_name: z.string().optional().describe(...) }`——字段描述要写给模型看, 包含格式示例;
 2. operation(`tools/operations.ts`): 纯函数 `queryK8sPods(namespace, podName?)`, 内部调 K8s API (带超时、错误结构化为 `{success, pods, error}`);zod 宽松校验外部响应;
 3. wrapper(`tools/index.ts`):`tool({description, inputSchema, execute})` 包装, 并加入 `builtinTools` 导出——description 写清"何时该用、参数含义、返回结构";
-4. 验证: 因为 `buildChatTools()`(`chat.ts:76-79`) 和 plan-execute-replan 的 `buildTools()`(`index.ts:56-59`) 都是展开 `builtinTools`, 新工具自动对两条管线可用, 无需改管线代码.
+4. 验证: 因为 `buildChatTools()`(`chat.ts:76-79`) 和 plan-execute-replan 的 `buildTools()`(`graph.ts:82-85`) 都是展开 `builtinTools`, 新工具自动对两条管线可用, 无需改管线代码.
 
 若能力由外部系统提供且会持续演进, 更优解是包成 MCP Server——此时 agent 侧零改动, 这再次体现「什么是 MCP 与本项目如何接入」的"能力外置"思想. 选型判断: 稳定、核心、需深度定制的工具内置; 多变、跨团队维护、多应用复用的能力走 MCP.
 
@@ -652,7 +720,7 @@ const stream = new ReadableStream<Uint8Array>({
 1. 流式解码:`reader.read()` 返回的是任意边界的 `Uint8Array` 块——一个 UTF-8 字符可能被拆到两个 chunk 里. `decoder.decode(value, {stream: true})` 让 TextDecoder 保留未完成的字节序列到下次 decode, 避免中文乱码 (不用 stream:true 则每个 chunk 独立解码, 跨块字符变成 �);
 2. 行缓冲:`buffer += decoded; lines = buffer.split("\n"); buffer = lines.pop()`——TCP/HTTP 不保证按行交付, 最后一段可能是不完整行, pop 出来留到下轮拼接, 保证只处理完整行;
 3. CRLF 兼容:`rawLine.endsWith("\r")` 则剥掉——SSE 规范允许 `\r\n` 行尾;
-4. 事件状态机:`event: ` 行更新 `currentEvent`,`data: ` 行将内容 push 进 `dataLines` 数组; 空行触发 `dispatchEvent()`, 将 `dataLines.join("\n")` 还原为完整载荷后按事件类型分发——message 事件累加内容并 setMessages (触发 React 增量渲染) ,a2ui 事件解析 JSON 更新交互组件, error 事件 throw(P1-3 修复: 之前静默忽略服务端错误帧) ,done 事件等下次 read 返回 done=true 自然退出;
+4. 事件状态机:`event: ` 行更新 `currentEvent`,`data: ` 行将内容 push 进 `dataLines` 数组; 空行触发 `dispatchEvent()`, 将 `dataLines.join("\n")` 还原为完整载荷后按事件类型分发——message 事件累加内容并 setMessages (触发 React 增量渲染) ,a2ui 事件解析 JSON 更新交互组件, error 事件 throw (P1-3: 服务端错误帧必须显式抛出呈现, 不能静默忽略) ,done 事件等下次 read 返回 done=true 自然退出;
 5. abort 检查: 每次 read 前检查 `controller.signal.aborted`, 组件卸载/新会话时及时中断 (P1-1 修复) .
 
 这套手写解析器本质是 SSE 协议的最小实现, 约 100 行——展示了"理解协议后可以不依赖库"的能力.
@@ -701,7 +769,7 @@ data: world
 
 - 会话态:`sessionId`、`messages`、`isStreaming`、`mode`;
 - 持久态:`histories`(localStorage 同步, 上限 50 条) ;
-- 瞬态 UI:`overlay`(loading 遮罩) ; 通知不再是 React state, 改经 Base UI toast 系统发出 (`showNotification` 调 `toast.add({ title, type, timeout: 3000 })`, `use-chat.ts:133-140`, Toaster 挂在 `app/layout.tsx:40`) ;
+- 瞬态 UI:`overlay`(loading 遮罩) ; 通知不是 React state, 经 Base UI toast 系统发出 (`showNotification` 调 `toast.add({ title, type, timeout: 3000 })`, `use-chat.ts:133-140`, Toaster 挂在 `app/layout.tsx:40`) ;
 - 资源态:`streamController`(AbortController, 放 state 是为了利用 effect cleanup 管理生命周期,`use-chat.ts:118-125`).
 
 不用外部状态库的理由:① 状态只有一个页面、一棵组件树消费, 无跨页面共享; ② 无时间旅行/中间件需求; ③ `useChat` 返回 `useMemo` 包裹的对象 (P1-6 修复,`use-chat.ts:535-571`), 消费方解构后依赖项颗粒度可控, 重渲染范围已经优化到位. 引入 Zustand 的边际收益接近零, 还增加一个依赖. 选型原则:状态管理库解决的是"共享与变更编排"问题, 不存在该问题时不预付架构成本.
@@ -752,7 +820,7 @@ data: world
 四层防护(`use-chat.ts`):
 
 1. 写入防护:`try/catch` 包裹 `localStorage.setItem`(`use-chat.ts:143-149`)——Safari 隐私模式、存储满配额时 setItem 抛 QuotaExceededError,catch 后静默忽略 (持久化失败不影响主流程) ;
-2. 读取校验:`JSON.parse` 结果过 `chatHistoriesSchema.safeParse`(`use-chat.ts:85`)——用户手动改 localStorage、旧版本数据结构残留都会使 parse 出非法形状,zod 校验失败降级为 `[]` 而非崩溃;
+2. 读取校验:`JSON.parse` 结果过 `chatHistoriesSchema.safeParse`(`use-chat.ts:85`)——localStorage 属于运行时未知数据 (用户可手动修改、也可能残留历史格式), 非法形状时 zod 校验失败降级为 `[]` 而非崩溃;
 3. 容量控制:`MAX_HISTORIES = 50`,slice 截断 (`use-chat.ts:48, 171`)——对话消息体积大, 无上限会快速撑满 5MB 配额;
 4. SSR 防御:`typeof localStorage === "undefined"` 守卫 (理论不可达, 但注释说明是二次防线) .
 
@@ -779,7 +847,7 @@ useEffect(() => {
 
 ### 下拉菜单的"点击外部关闭 + Escape 关闭"是如何实现的?
 
-当前实现不再手写事件监听: 输入框的工具菜单直接使用 shadcn 风格的 `DropdownMenu` 组件族 (`chat-input.tsx:73-91`), 组件本体在 `components/ui/dropdown-menu.tsx`, 底层是 `@base-ui/react` 的 Menu 原语. "点击外部关闭、Escape 关闭、焦点管理、`aria-expanded`/`aria-haspopup` 等可访问性属性"全部由 Base UI 原语内部实现, 业务组件只做声明式组合:
+输入框的工具菜单使用 shadcn 风格的 `DropdownMenu` 组件族 (`chat-input.tsx:73-91`), 组件本体在 `components/ui/dropdown-menu.tsx`, 底层是 `@base-ui/react` 的 Menu 原语. "点击外部关闭、Escape 关闭、焦点管理、`aria-expanded`/`aria-haspopup` 等可访问性属性"全部由 Base UI 原语内部实现, 业务组件只做声明式组合:
 
 ```tsx
 <DropdownMenu>
@@ -798,15 +866,15 @@ useEffect(() => {
 </DropdownMenu>
 ```
 
-模式切换 (quick/stream) 也从旧版的自定义下拉改为 `ToggleGroup` 组件 (`chat-input.tsx:93-106`), 由 `onValueChange` 收敛为受控的单选切换.
+模式切换 (quick/stream) 使用 `ToggleGroup` 组件 (`chat-input.tsx:93-106`), 由 `onValueChange` 收敛为受控的单选切换.
 
-工程含义: 关闭语义 (outside click/Escape) 这类"每个下拉都要重复实现"的交互细节, 交给经过测试的 headless 原语比手写 document 级监听更可靠——旧版实现需要在条件 effect 里注册/注销 `mousedown` 与 `keydown` 监听并自行处理 `contains` 判断与 mousedown/click 时序, 现在这些复杂度整体下沉到组件库, 业务代码里不再出现任何全局事件监听.
+工程含义: 关闭语义 (outside click/Escape) 这类"每个下拉都要重复实现"的交互细节, 交给经过测试的 headless 原语比手写 document 级监听更可靠——手写实现需要在条件 effect 里注册/注销 `mousedown` 与 `keydown` 监听并自行处理 `contains` 判断与 mousedown/click 时序, 原语方案则让这些复杂度整体下沉到组件库, 业务代码里不出现任何全局事件监听.
 
 ---
 
 ### 消息列表的自动滚动与流式光标是怎么做的? 有什么体验细节?
 
-自动滚动(`msg-list.tsx:45-80`):不再手写 `scrollTop = scrollHeight` 的 effect, 而是使用 `@shadcn/react/message-scroller` 原语的封装 `components/ui/message-scroller.tsx`——`MessageScrollerProvider autoScroll` 开启自动跟随, 每条消息包在 `MessageScrollerItem` 里且仅最后一条设 `scrollAnchor`, 右下角有 `MessageScrollerButton` 供用户上翻后一键回底. 跟随/停跟的判定逻辑 (用户滚动时暂停、回底后恢复) 在 message-scroller 原语内部实现 (node_modules 依赖, 仓库内不可见), Viewport 上暴露的 `data-autoscrolling` 属性用于滚动中隐藏滚动条. 此外 `MessageScrollerItem` 带 `[content-visibility:auto]` 与 `[contain-intrinsic-size:auto 10rem]` 类 (`ui/message-scroller.tsx`), 用 CSS 渲染包含跳过屏外消息的绘制, 属于轻量虚拟化.
+自动滚动(`msg-list.tsx:45-80`) 使用 `@shadcn/react/message-scroller` 原语的封装 `components/ui/message-scroller.tsx`——`MessageScrollerProvider autoScroll` 开启自动跟随, 每条消息包在 `MessageScrollerItem` 里且仅最后一条设 `scrollAnchor`, 右下角有 `MessageScrollerButton` 供用户上翻后一键回底. 跟随/停跟的判定逻辑 (用户滚动时暂停、回底后恢复) 在 message-scroller 原语内部实现 (node_modules 依赖, 仓库内不可见), Viewport 上暴露的 `data-autoscrolling` 属性用于滚动中隐藏滚动条. 此外 `MessageScrollerItem` 带 `[content-visibility:auto]` 与 `[contain-intrinsic-size:auto 10rem]` 类 (`ui/message-scroller.tsx`), 用 CSS 渲染包含跳过屏外消息的绘制, 属于轻量虚拟化.
 
 流式反馈 (`msg-list.tsx:178-185` 与 `md-render.tsx:21-26`): 回复未到达时先渲染 "Thinking..." 占位 (Spinner 组件); 流式中 MdRender 把 `streaming` prop 转发给 Streamdown 的 `mode="streaming"` + `isAnimating` + `caret="circle"`, 由 Streamdown 渲染打字机光标, 给用户"仍在生成"的明确信号. `streaming` 的判定逻辑 (`msg-list.tsx:66-70`) 要求 isStreaming 且是最后一条 assistant 消息,AI Ops 等非流式场景不会误显示.
 
@@ -868,7 +936,7 @@ export function getRedisClient() {
 
 ### 通知的 3 秒自动消失是怎么实现的?
 
-通知现在是 toast 而不是 React state: `showNotification(message, type)` 直接调用 Base UI toast manager 的 `toast.add({ title: message, type, timeout: 3000 })`(`use-chat.ts:133-140`), `Toaster` 挂在 `app/layout.tsx:40`. 自动消失由 toast manager 按 `timeout` 处理, 业务侧不再维护 `notification` state, 也不需要任何 timer effect.
+通知经 Base UI toast 发出, 不是 React state: `showNotification(message, type)` 直接调用 toast manager 的 `toast.add({ title: message, type, timeout: 3000 })`(`use-chat.ts:133-140`), `Toaster` 挂在 `app/layout.tsx:40`. 自动消失由 toast manager 按 `timeout` 处理, 业务侧不维护 `notification` state, 也不需要任何 timer effect.
 
 ```ts
 const showNotification = useCallback(
@@ -882,8 +950,7 @@ const showNotification = useCallback(
 讲究点:
 
 1. 消失逻辑下沉到组件库: 3 秒计时、进出场动画、多条 toast 的堆叠/替换都由 `components/ui/toast.tsx` (Base UI `Toast` 原语) 统一管理, 调用方零状态;
-2. 卸载安全与竞态天然消失: 旧版实现要在 effect 里管 timer 并处理"新通知重建 timer、卸载清 timer"的细节 (timer 泄漏、竞态清除是高频 bug 源), 现在这些复杂度整体不存在于业务代码;
-3. 历史背景: 早期版本确实有"notification state + `useEffect` setTimeout 3s"的写法 (P2-9 修复曾把 timer 从 ref 挪进 effect 闭包做声明式管理), 迁移到 toast 系统后该模式退役——这是"状态尽量不留在业务层"的又一例证.
+2. 卸载安全与竞态天然消失: 手写 timer 需要在 effect 里管理"新通知重建 timer、卸载清 timer"的细节 (timer 泄漏、竞态清除是高频 bug 源), toast 方案让这些复杂度整体不存在于业务代码——这是"状态尽量不留在业务层"的又一例证.
 
 ---
 
@@ -912,7 +979,7 @@ const showNotification = useCallback(
 - `getRedisClient()` 的 initClient 会走 reconnectStrategy 重试 (上限 5s 间隔, 无次数上限——会持续重试) , 请求线程在 await 上挂起, 表现为请求超时;
 - chat 管线:retrieve 失败 → 整个 chat 请求失败, 前端收到错误 (非流式) 或 error 事件 (流式) ——知识库故障导致纯对话功能也不可用;
 - upload 管线: 必然失败;
-- ai_ops:`retrieveDocs()`(`operations.ts:119-122`)与 `query_internal_docs` 的 wrapper(`tools/index.ts:34-40`)均没有 try/catch, Redis 故障会让工具的 execute 直接 throw, `generateText` 在该步中断, 错误冒泡到管线 catch 产出 `error` 事件, 整个 ai_ops 请求返回 500——模型没有机会"无文档依据降级回答".
+- ai_ops:`retrieveDocs()`(`operations.ts:119-122`)与 `query_internal_docs` 的 wrapper(`tools/index.ts:34-40`)均没有 try/catch, Redis 故障会让工具的 execute 直接 throw, `generateText` 在图的 executor 节点内中断 (`graph.ts:139-159`), 错误随 `stream.next()` 冒泡到驱动的 catch 产出 `error` 事件 (`index.ts:62-63`), 整个 ai_ops 请求返回 500——模型没有机会"无文档依据降级回答".
 
 合理性评价与改进: 当前是硬依赖, 不合理之处是对话本可以无 RAG 降级运行. 改进: retrieve 加 try/catch, 失败时返回空文档列表并在 system prompt 标注"知识库暂不可用", 对话功能保持可用; 同时 embedding API 故障与 Redis 故障要区分处理. 这呼应「MCP 工具的缓存与降级策略」提到的降级设计——项目里 MCP 已有优雅降级, Redis 路径还欠对齐, 分析出这种"降级策略不一致"能体现系统性思维.
 
@@ -922,7 +989,7 @@ const showNotification = useCallback(
 
 (示例回答, 可从 P1-1/P1-2/P1-6/P1-8/P1-9/P2-13/P2-17/P2-19/P3-14 中任选, 此处以 P1-8 与向量维度静默不匹配为例)
 
-P1-8(Redis 单例缓存 rejected Promise, `client.ts:12-17`):`clientPromise = initClient()` 没有失败重置, 一次启动时 Redis 未就绪, 整个进程余生所有请求都报同一个错——监控上看是"Redis 已恢复但应用 100% 错误率", 极具迷惑性. 说明:缓存异步操作的结果时, 必须考虑缓存到失败的情况;Promise 缓存要配失败重置, 这是与同步单例的本质差异.
+P1-8(Redis 单例失败重置, `client.ts:12-17`):`clientPromise` 缓存若没有失败重置, 启动时 Redis 未就绪就会缓存一个永远 rejected 的 Promise, 进程余生所有请求都报同一个错——监控上看是"Redis 已恢复但应用 100% 错误率", 极具迷惑性. 说明:缓存异步操作的结果时, 必须考虑缓存到失败的情况;Promise 缓存要配失败重置, 这是与同步单例的本质差异.
 
 向量维度静默不匹配 (`client.ts:40-44` 注释记录的真实踩坑, 由 `ensureIndex` 的启动自检防御, `client.ts:45-106`) : 切换 embedding provider 后, 旧索引 DIM 与新向量不符, 搜索静默失败/返回空——RAG 系统的"知识库失效"不会以异常形式出现, 而是表现为"模型开始一本正经地胡说八道" (没有文档依据还在答) . 说明:AI 系统的故障模式比传统软件更隐蔽——传统系统挂了会报错, AI 系统"半坏"时会输出貌似合理但错误的内容, 因此需要启动自检 (FT.INFO 维度比对) 和输出侧监控 (检索命中率、score 分布) 这类主动防御.
 
@@ -1015,7 +1082,7 @@ XSS 风险评估:
 - T(Tampering):mysql_crud 的任意 SQL (见「mysql_crud 允许任意 SQL 的评价与加固」); 上传覆盖同名文件污染他人知识库;
 - R(Repudiation):LLM 触发的 SQL/工具调用无审计日志, 出事无法归因到具体会话——需要工具调用审计链;
 - I(Information Disclosure):LLM 上下文里携带内部文档、DSN、日志内容, 模型输出可能把这些泄漏给提问者 (直接问"你的 system prompt 是什么"也需要防) ;CORS \* 放大暴露面;
-- D(DoS): 上传大文件打爆内存、无限制的 ai_ops 编排 (20 轮 × think 模型) 刷高额账单、Redis 无 MAXMEMORY 策略时向量数据撑爆内存;
+- D(DoS): 上传大文件打爆内存; ai_ops 编排虽有 20 轮 replan 预算 (`MAX_ITERATIONS=20`, `graph.ts:39`), 满负荷跑一次仍会触发数十次 think/quick 调用刷出高额账单——Langfuse generation 提供每次运行的 token 计量 (`observability.ts:101-109`), 异常消耗可审计; Redis 无 MAXMEMORY 策略时向量数据撑爆内存;
 - E(Elevation of Privilege):prompt injection → 模型调用 mysql_crud 写操作 = 从"只读问答"提权到"数据库写";MCP 工具同理, MCP Server 被污染即等于 agent 被提权.
 
 优先级: T (数据完整性) 与 E (提权) 最高, 因为二者有真实的破坏力; 工程上先做 SQL 白名单 + 鉴权 + 审计三件事, 性价比最高.
@@ -1026,7 +1093,7 @@ XSS 风险评估:
 
 ### 项目为什么在所有系统边界都用 zod 校验? 成本值得吗?
 
-zod 使用点全景: API 请求体 (`chat/route.ts:5-8`)、API 响应 (前端 `use-chat.ts:240`)、localStorage 数据 (`use-chat.ts:51-68`)、Prometheus 响应 (`operations.ts:30-44`)、RediSearch 结果 (`retriever.ts:19-34`)、MCP inputSchema(`query-log.ts:14`)、Planner/Replanner 的 LLM 输出 (`plan-execute-replan/index.ts:44-54`)、yukino-sentry 上报 (`metrics.ts:17-27`).
+zod 使用点全景: API 请求体 (`chat/route.ts:5-8`)、API 响应 (前端 `use-chat.ts:240`)、localStorage 数据 (`use-chat.ts:51-68`)、Prometheus 响应 (`operations.ts:30-44`)、RediSearch 结果 (`retriever.ts:19-34`)、MCP inputSchema(`query-log.ts:14`)、Planner/Replanner 的 LLM 输出 schema (`plan-execute-replan/graph.ts:70-80`)、编排事件流的边界重校验 (图节点经 custom 流发出的每个 chunk 都由驱动用 `PlanExecuteEventSchema` 重校验, `plan-execute-replan/events.ts:6-30`、`index.ts:57-60`)、yukino-sentry 上报 (`metrics.ts:17-27`).
 
 规律: 凡数据跨越信任边界 (网络、磁盘、子进程、LLM), 进入系统时先过 schema. 价值:
 
@@ -1052,14 +1119,14 @@ zod 使用点全景: API 请求体 (`chat/route.ts:5-8`)、API 响应 (前端 `u
 
 ### 项目没有写任何测试, 你如何评价? 如果让你补测试, 优先级怎么排?
 
-评价: 对"个人/小团队内部工具 + 大量逻辑在 LLM 行为里 (难断言) "的项目, 零测试是常见但欠账的选择. 值得指出的是代码已为可测试性做了铺垫 (三层分离、纯函数 operations、管线与传输解耦) , 补测试成本低.
+评价: 对"个人/小团队内部工具 + 大量逻辑在 LLM 行为里 (难断言) "的项目, 缺失正式测试套件是常见但欠账的选择. 仓库现有的保底是脚本级冒烟验证: `scripts/ai-ops-graph-smoke.ts` 覆盖事件 schema round-trip 与 LangGraph 节点/边结构断言 (见「ai-ops-graph-smoke 脚本如何验证这张图」), 但没有单元/集成测试框架. 值得指出的是代码已为可测试性做了铺垫 (三层分离、纯函数 operations、管线与传输解耦) , 补测试成本低.
 
 优先级 (按 ROI):
 
 1. 纯函数单测 (最高 ROI):`splitMarkdown` 的标题继承逻辑 (边界: 无标题文件、连续标题、空文件) 、`distanceToScore`、`normalizeDsn`、`escapeTagValue`、`calculateDuration`、SimpleMemory 的成对丢弃与 LRU——这些全是确定性逻辑, 用例明确;
 2. 协议/契约测试:SSE 帧格式 (模拟 chatStream 生成器, 断言 id/event/data 帧序列) 、`{message, data}` 响应形状、zod schema 对脏数据的拒绝行为;
 3. 集成测试 (mock 外部依赖) :Redis 用 redis-memory-server 或 testcontainers, 断言 indexChunks/retrieve/deleteBySource 的读写与锁行为; 工具层 mock fetch 验证 Prometheus 解析与降级;
-4. 管线测试:mock `generateText/streamText`(AI SDK 提供 MockLanguageModel 系列测试替身), 验证 ReAct 循环步数上限、plan-execute-replan 的事件序列 (plan_created → step_start/step_done → replan → done)、记忆回写时机 (流中断不写)、A2UI 流过滤器的跨 chunk 拆分语义;
+4. 管线测试:mock `generateText/streamText`(AI SDK 提供 MockLanguageModel 系列测试替身), 验证 ReAct 循环步数上限、plan-execute-replan 的事件序列 (plan_created → step_start/step_done → replan → done)——其中事件 schema 与图结构已由 `ai-ops-graph-smoke.ts` 离线断言, `AI_OPS_SMOKE_LIVE=1` 门控的实跑可走真实 LLM, 缺的是 mock LLM 的确定性回归——以及记忆回写时机 (流中断不写)、A2UI 流过滤器的跨 chunk 拆分语义;
 5. E2E:Playwright 跑通"上传 → 提问 → 流式回答 → 历史持久化"主链路, 以及 AI Ops 按钮全流程;
 6. LLM 评估 (eval, 非传统测试) : 见「RAG/Agent 系统的质量度量与 eval 体系」.
 
@@ -1084,7 +1151,7 @@ zod 使用点全景: API 请求体 (`chat/route.ts:5-8`)、API 响应 (前端 `u
 
 模式 (`lib/config.ts`):所有 `process.env` 读取集中一处, `??` 提供默认值, 导出 `as const` 对象.
 
-价值:① 环境变量的使用可审计——grep 全仓库 `process.env` 基本只出现在 config.ts(chat.ts:24-25 读 LOG_TOPIC_REGION/LOG_TOPIC_ID 是例外, 也是 P3-5 修复后留下的, 理想情况应一并迁入 config; instrumentation.ts:5 读 NEXT_RUNTIME 属于框架钩子的运行时守卫);② 默认值即文档——新人看 config.ts 就知道系统依赖哪些外部服务及其默认地址 (如 LLM 默认走火山引擎 Ark `ark.cn-beijing.volces.com/api/v3`, 模型默认 `deepseek-v4-flash`, `config.ts:9-20`); ③ `as const` 使导出的字面量类型精确 (如 `provider: "openai"` 而非 string), 消费方获得穷举检查能力.
+价值:① 环境变量的使用可审计——grep 全仓库 `process.env` 基本只出现在 config.ts (含 langfuse 配置块, `config.ts:62-67`; 例外是 chat.ts:24-25 读 LOG_TOPIC_REGION/LOG_TOPIC_ID, P3-5 相关读取, 理想情况应一并迁入 config; instrumentation.ts:6 读 NEXT_RUNTIME 属于框架钩子的运行时守卫; scripts/ai-ops-graph-smoke.ts:76,82 读 AI_OPS_SMOKE_LIVE/AI_OPS_SMOKE_QUERY 属于脚本入口开关);② 默认值即文档——新人看 config.ts 就知道系统依赖哪些外部服务及其默认地址 (如 LLM 默认走火山引擎 Ark `ark.cn-beijing.volces.com/api/v3`, 模型默认 `deepseek-v4-flash`, `config.ts:9-20`); ③ `as const` 使导出的字面量类型精确 (如 `provider: "openai"` 而非 string), 消费方获得穷举检查能力.
 
 细节:
 
@@ -1117,7 +1184,7 @@ zod 使用点全景: API 请求体 (`chat/route.ts:5-8`)、API 响应 (前端 `u
 3. 上传/索引同步: 多实例各有本地 `data/docs` 目录, 文件与索引不一致——文件改存对象存储, 索引操作走消息队列单点执行 (deleteBySource 锁已是 Redis 分布式锁, 天然支持) ;
 4. 向量库容量:Redis 内存随知识库增长, 万级 chunk 后成本陡增——评估迁移 pgvector (已有 MySQL 的话也可考虑其向量能力) 或专用向量库, retriever/indexer 接口已收敛, 可插拔;
 5. 成本与配额: 多团队共用需要 per-team 的 token 配额与限流 (目前无任何限制) , 加 API 鉴权 + 用量计量;
-6. 可观测性: 管线级目前只有 console.log 的 logStart/logEnd(`callbacks.ts:2-8`), 升级为 OpenTelemetry trace——把 planner/executor/replanner/每次 tool call 作为 span, 否则多实例下排查"某次 AI Ops 为什么跑了 15 分钟"基本不可能; 系统级指标已有 yukino-sentry→Prometheus 桥 (见「yukino-sentry 监控桥的接入与指标设计」), 缺的是 LLM 调用粒度的追踪.
+6. 可观测性: AI Ops 管线已接入 Langfuse/OTEL (每次运行一条 trace, 图/节点 span + 每次 LLM 调用的 generation 与 token 用量, `lib/observability.ts`), 多实例下排查"某次 AI Ops 为什么跑了 15 分钟"有 session 级 trace 可依; 剩余缺口是 chat 管线仍只有 logStart/logEnd 的 console.log 打点 (`callbacks.ts:2-8`), 应把 generation 记录扩展到 chat, 并补 tool call 与检索 span; 系统级指标已有 yukino-sentry→Prometheus 桥 (见「yukino-sentry 监控桥的接入与指标设计」).
 
 演进原则: 接口边界 (pipeline、retriever、memory) 已经画得不错, 替换实现即可, 这也是当初分层设计的回报.
 
@@ -1138,7 +1205,7 @@ zod 使用点全景: API 请求体 (`chat/route.ts:5-8`)、API 响应 (前端 `u
 
 目标: 把 Plan-Execute-Replan 的分钟级编排变成用户可感知的实时进度. 方案:
 
-1. 传输复用:`/api/ai_ops` 改为 SSE——管线已是 AsyncGenerator 事件流 (见「AsyncGenerator 产出编排事件」),route 只需 `for await` 中把每个 `PlanExecuteEvent` JSON 序列化为 SSE 帧, 与 chat_stream 共用 CORS/帧格式基建;
+1. 传输复用:`/api/ai_ops` 改为 SSE——管线已是 AsyncGenerator 事件流 (见「AsyncGenerator 产出编排事件」; 事件来自图节点的 custom 流, 驱动逐 chunk zod 重校验),route 只需 `for await` 中把每个 `PlanExecuteEvent` JSON 序列化为 SSE 帧, 与 chat_stream 共用 CORS/帧格式基建;
 2. 事件到 UI 的映射:
    - `plan_created` → 渲染计划清单 (步骤 checkbox 列表) ;
    - `step_start`/`step_done` → 对应步骤打勾 + 折叠面板填充输出;
@@ -1155,7 +1222,7 @@ zod 使用点全景: API 请求体 (`chat/route.ts:5-8`)、API 响应 (前端 `u
 
 OnCall 场景幻觉的代价是"值班人员按错误指引操作生产系统", 防御分五层:
 
-1. 知识锚定:AI_OPS_QUERY 已要求"严格遵循内部文档, 不使用文档外信息"(`index.ts:25`)——把输出约束在检索内容内; 可升级为要求模型在报告中标注引用来源(chunk title),UI 上渲染引用链接, 值班人员一键核对原文;
+1. 知识锚定:AI_OPS_QUERY 已要求"严格遵循内部文档, 不使用文档外信息"(`index.ts:16`)——把输出约束在检索内容内; 可升级为要求模型在报告中标注引用来源(chunk title),UI 上渲染引用链接, 值班人员一键核对原文;
 2. 事实工具化: 时间、告警状态、日志这类事实全部来自工具 (get_current_time/query_prometheus_alerts/MCP 日志) 而非模型记忆——本项目已做到, 关键是 prompt 中禁用模型"凭印象"描述系统状态;
 3. 不确定性表达: 训练/引导模型在证据不足时说"知识库未覆盖该告警"而非编造——配合「retrieve topK 与 RAG 检索质量优化」的相似度阈值, 检索不到时明确告知;
 4. 危险操作隔离: 当前 agent 只做"查询分析"不执行处置动作 (重启、回滚) , 这是正确的边界; 若未来加处置能力, 必须 human-in-the-loop 确认 + 审计;
@@ -1167,14 +1234,14 @@ OnCall 场景幻觉的代价是"值班人员按错误指引操作生产系统", 
 
 ### 这个项目的 LLM 调用成本如何优化? 有哪些手段?
 
-成本构成: 每轮对话 = RAG embedding + (1~N 次 tool 循环) × quick 模型; 每次 AI Ops ≈ 2× think + 步骤数 × quick(×每步至多 10 次工具循环) . 优化手段:
+成本构成: 每轮对话 = RAG embedding + (1~N 次 tool 循环) × quick 模型; 每次 AI Ops ≈ (1 次规划 + N 次 replan + 0~1 次 uiify) 的 think 调用 + 步骤数 × quick 调用 (每步至多 10 次工具循环) . 优化手段:
 
 1. 模型分级 (已做) :think/quick 分离 (见「双模型 think/quick 分层」), 保证 80% 调用走便宜模型——最大的单点优化已落地;
 2. 上下文瘦身:① 记忆窗口 6 条 (已做) ;② 工具输出裁剪 (「execute 返回为什么要 JSON.stringify」提到的行数截断待做) ;③ replan prompt 的 detail 全量拼接改为滚动摘要 (「Replanner 的 prompt 设计」的已知局限) ;④ system prompt 模板压缩 (当前较精简) ;
 3. 缓存:① prompt caching——system prompt + 工具定义是每轮重复前缀,Anthropic/部分 OpenAI 兼容网关支持 cache_control,命中后 prefill 费用降至 1/10;② 检索结果缓存 (同 question hash 短期复用) ;③ MCP 工具清单缓存 (已做) ;
 4. 调用次数控制:① `isStepCount` 双层封顶 (已做) ;② 工具结果里明确"信息已足够"的信号, 减少模型无效再查;③ planner 产出步骤数设上限 (如 max 10 步) 防超长计划;
 5. 异步与降级: 非实时任务 (如索引构建) 用 embedding 批量接口 (已做) ;AI Ops 失败快速返回而不是 replan 空转 (给 replan 加"连续两轮无进展即终止"逻辑) ;
-6. 度量先行: 接入 token usage 统计 (AI SDK 返回 usage), 按管线/模型/会话维度出账——没有计量就没有优化.
+6. 度量先行:AI Ops 管线已落地——四处 LLM 调用 (planner/execute-step/replanner/uiify) 全部经 `observeGeneration` 包裹, `generation.update` 记录 model/input/output 与 usageDetails (input/output/total tokens, `graph.ts:87-93`), `executeStep` 经 `StepResult` 透传 AI SDK usage (`executor.ts:12-16`), Langfuse 按 session 出账; 缺口是 chat 管线仍无 token 计量.
 
 ---
 
@@ -1182,7 +1249,7 @@ OnCall 场景幻觉的代价是"值班人员按错误指引操作生产系统", 
 
 (示例回答, 要求言之有据、有优先级)
 
-1. 补全可观测性与 eval 体系 (最高优先) : 管线级观测当前只有 `console.log` 的 start/end(`callbacks.ts:2-8`)——系统级已有 yukino-sentry→Prometheus 指标桥 (见「yukino-sentry 监控桥的接入与指标设计」), 但没有 LLM 调用粒度数据. v2 接入 OpenTelemetry: 每次 LLM 调用、tool 执行、检索操作打 span (含 token usage、延迟、cache 命中) , 配合「RAG/Agent 系统的质量度量与 eval 体系」的三层 eval 入 CI. 理由:没有度量, 所有优化和 prompt 迭代都是盲人摸象——这是 AI 应用从 demo 走向生产的第一块拼图;
+1. 把可观测性扩展到全管线并建 eval 体系 (最高优先) : AI Ops 管线已接入 Langfuse/OTEL——每次运行一条 trace (图/节点 span) + 每次 LLM 调用的 generation (含 token usage, `lib/observability.ts`、`graph.ts:114-131`), 但 chat 管线仍只有 `console.log` 的 start/end(`callbacks.ts:2-8`); v2 把 generation 记录扩展到 chat、补 tool 执行与检索操作的 span (含延迟、cache 命中) , 并把「RAG/Agent 系统的质量度量与 eval 体系」的三层 eval 入 CI. 理由:没有度量, 所有优化和 prompt 迭代都是盲人摸象——这是 AI 应用从 demo 走向生产的第一块拼图;
 2. 危险能力收权与审计:`mysql_crud` 改只读白名单 + SQL 静态解析 (见「mysql_crud 允许任意 SQL 的评价与加固」), 上传接口补服务端校验与路径防护 (见「文件上传接口的安全隐患与修复」),API 加鉴权并收敛 CORS(见「CORS 全开的问题与可接受场景」), 所有工具调用落审计日志. 理由: 能力越强的 agent 越接近"自动化运维账号", 安全不是功能而是上线门槛;
 3. 记忆与状态外置, 打通水平扩展: 记忆迁移 Redis、上传文件迁移对象存储、索引操作走队列 (见「业务量增长时的架构瓶颈与演进」),AI Ops 改 SSE 流式 + taskId 可恢复 (见「AI Ops 流式化设计方案」). 理由: 这三件事共同把应用从"单机 demo"变为"团队级服务", 且现有接口边界 (memory/retriever/事件流) 让改动可以渐进落地, 不需要推翻架构.
 
@@ -1190,7 +1257,7 @@ OnCall 场景幻觉的代价是"值班人员按错误指引操作生产系统", 
 
 ---
 
-## 十二、A2UI 交互界面与监控桥
+## 十二、A2UI 交互界面与可观测性
 
 ### A2UI 是什么? 本项目如何让 LLM 生成可交互的运维界面?
 
@@ -1216,7 +1283,28 @@ A2UI(Agent-to-UI) v0.9 是一套声明式 UI 协议: LLM 在 markdown 回答之�
 3. 管线 (`lib/ai/a2ui/action.ts:41-81`):quick 模型 + 全量工具 (builtin + MCP) + `stopWhen: isStepCount(10)`——动作需要真实数据时模型可以调工具; 系统提示 `A2UI_ACTION_SYSTEM_PROMPT` 限定"只许 updateComponents/updateDataModel、只能作用于同一个 surfaceId、最小化修改" (`prompt.ts:370-391`); 返回结果先经 `filterInPlaceMessages` 过滤 (`action.ts:30-39`)——混入的 createSurface 会让客户端 MessageProcessor 抛 "Surface already exists" 并丢掉整批消息, 所以宁可在服务端提前丢弃; 校验失败同样走一次纠错重试;
 4. 前端回写: 响应的更新消息数组 append 到原消息的 a2ui 末尾并 upsert 历史 (`use-chat.ts:466-472`), A2uiView 按协议原地应用——用户看到的是同一条消息内的界面刷新, 不产生新的聊天轮次.
 
-AI Ops 报告另有一处"UI 化"后处理: replanner 判定完成后, `uiifyReport()` 用 think 模型 (无工具) 把最终报告可选地渲染成 surface——报告里没有值得可视化的结构化数据则回 NONE, 失败只记 error 绝不丢弃报告本身 (`plan-execute-replan/index.ts:65-104`).
+AI Ops 报告另有一处"UI 化"后处理: 图中的 uiify 节点 (`graph.ts:263-272`) 在 replanner 判定完成后调用 `uiifyReport()`——think 模型 (无工具) 把最终报告可选地渲染成 surface; 报告里没有值得可视化的结构化数据则回 NONE, 块无效时经一次纠错重试, 调用失败只记 error (`graph.ts:255-260` 注释明言"never let its failure discard the finished report"), 绝不丢弃报告本身 (`plan-execute-replan/graph.ts:213-261`).
+
+---
+
+### Langfuse 可观测性是如何接入的? 为什么所有钩子都能 no-op 降级?
+
+`lib/observability.ts` (109 行) 是观测层核心, 只有一个开关: `langfuseEnabled()` 要求 `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`、`LANGFUSE_BASE_URL` 三者全部非空 (`observability.ts:24-30`; 配置块在 `config.ts:62-67`, 样例在 `.env.example:53-56`, baseUrl 默认 `https://cloud.langfuse.com`). 任一缺失时 `initObservability`/`aiOpsCallbacks`/`withAiOpsTrace`/`observeGeneration` 全部 no-op 降级 (`observability.ts:33-34,71-73,90-92,105-107`)——可观测性是增强不是依赖, 未配置时对管线行为零影响; 即便三个 env 齐备, NodeSDK 构建/启动失败也只 warn 并继续 (`observability.ts:51-56`).
+
+实现是 OTEL 原生的: `initObservability()` 构建 `NodeSDK`, `spanProcessors` 只有一个 `LangfuseSpanProcessor` (`observability.ts:37-45`), 即标准 OTEL span 直接导出到 Langfuse. 关键工程细节是抗 HMR: Next dev 会反复重新求值模块文件, 而 OTEL 全局 provider 注册是进程级永久的, 因此 SDK 实例缓存在 `globalThis.__yukinoObservabilitySdk` (`observability.ts:18-22,47`), 重复 import 直接短路返回不再注册——与 metrics registry 挂 `globalThis` 的缓存思路一致 (`metrics.ts:120`); `shutdownObservability()` 清缓存并 shutdown SDK (`observability.ts:59-66`).
+
+启动时序: `instrumentation.ts` 的 `register()` 在 `NEXT_RUNTIME === "nodejs"` 守卫后先调 `initObservability()` 再做知识索引 (`instrumentation.ts:9-13`)——telemetry 先于业务, 保证后续所有图运行都有 tracing.
+
+---
+
+### 一次 AI Ops 运行在 Langfuse 里的 trace 结构是什么样的? 为什么 withAiOpsTrace 要包住每次 stream.next()?
+
+一次 run 产出"一条 trace + 若干 generation":
+
+1. 每 run 一条 trace: 驱动生成 `randomUUID` sessionId (`index.ts:38`), `aiOpsCallbacks(sessionId)` 返回 `[new CallbackHandler({sessionId, tags: ["ai-ops"], traceMetadata: {pipeline: "plan-execute-replan"}})]` (`observability.ts:70-81`), 经 callbacks 传入 `opsGraph.stream` (`index.ts:50`)——LangChain CallbackHandler 自动为图运行与节点执行建 graph/node span, sessionId 把同一次 AI Ops 调用的 trace 归入同一 Langfuse session;
+2. 每次 LLM 调用一个 generation: `observeGeneration(name, fn)` 用 `startActiveObservation(..., {asType: "generation"})` 开一个 generation 观测 (`observability.ts:101-109`); 图中四处调用点分别是 `ai-ops.planner`、`ai-ops.execute-step`、`ai-ops.replanner`、`ai-ops.uiify` (`graph.ts:115,145,178,229`), `generation.update()` 记录 input prompt、output 文本、模型 id 与 usageDetails——后者把 AI SDK usage 的 inputTokens/outputTokens/totalTokens 映射为 Langfuse 的 input/output/total (`graph.ts:87-93`), 更新调用在 `graph.ts:123-128,148-153,186-191,236-241`; `modelIdOf` 兼容含裸模型 id 字符串的 LanguageModel 联合类型 (`graph.ts:95-102`).
+
+为什么需要显式传播: `opsGraph.stream()` 返回惰性执行的流——节点真正运行发生在 `stream.next()` 被调用时, 执行上下文与建流时的上下文不同. 若只在建流那一刻挂上属性, 节点运行期间创建的 observation 会脱离会话散落. `withAiOpsTrace` 用 `propagateAttributes({sessionId, tags, metadata}, fn)` (`observability.ts:86-97`) 同时包住"建流" (`index.ts:44-53`) 与"每次取 chunk" (`index.ts:55`), 保证运行期间任何时点创建的 span 与 generation 都归入同一 Langfuse session. 这是异步迭代 + 上下文传播组合的通用模式: 上下文要在每个挂起/恢复的边界上重新建立.
 
 ---
 
@@ -1233,13 +1321,13 @@ AI Ops 报告另有一处"UI 化"后处理: replanner 判定完成后, `uiifyRep
 1. 标签基数防御 (`metrics.ts:115, 521-536`):浏览器上报的字符串标签 (错误名、点击 ev id、自定义事件名) 是攻击者和重构都能控制的输入, 每个标签键最多保留 50 个不同取值, 溢出一律归并为 "other"——否则一次坏上线就能把 Prometheus 的 series 数量炸掉;
 2. registry 版本化缓存 (`metrics.ts:120, 499-517`):registry 挂在 `globalThis.__yukinoSentryMetrics` 上 (路由 bundle 与 dev HMR 会重复求值该模块, 全局缓存保证每进程只有一个 registry), 并带 `METRICS_VERSION` 版本号——指标集变更必须 bump 版本, 否则长驻 dev server 会继续用缺字段的旧缓存, 新字段 undefined 却"类型上存在" (tsc 查不出来), 第一次 `.inc()` 就抛 TypeError; 重建的代价只是一次计数器清零.
 
-`GET /api/metrics` 直接吐 registry 内容 (`metrics/route.ts:15-23`), `prometheus.yml` 以 job yukino-agent 抓取 `host.docker.internal:3000/api/metrics` (容器内访问宿主 dev server); `docker-compose.yml` 起 redis-stack + prometheus + grafana(Grafana 端口映射到 3001, 因为 3000 被 Next dev server 占用). `AGENTS.md:24` 还记录了 Go 后端暴露字节级相同的 `yukino_sentry_*` 指标名, 一个 Prometheus + 一份规则文件同时服务两个实现, 变更时两座桥必须一起改.
+`GET /api/metrics` 直接吐 registry 内容 (`metrics/route.ts:15-23`), `prometheus.yml` 以 job yukino-agent 抓取 `host.docker.internal:3000/api/metrics` (容器内访问宿主 dev server); `docker-compose.yml` 起 redis-stack + prometheus + grafana(Grafana 端口映射到 3001, 因为 3000 被 Next dev server 占用). `AGENTS.md:22` 还记录了 Go 后端暴露字节级相同的 `yukino_sentry_*` 指标名, 一个 Prometheus + 一份规则文件同时服务两个实现, 变更时两座桥必须一起改.
 
 ---
 
 ### 服务启动时知识库如何自动就绪? 告警规则与处理文档之间为什么有"契约"?
 
-启动索引 (`instrumentation.ts`):Next.js instrumentation 的 `register()` 钩子在服务启动时执行一次, 守卫 `NEXT_RUNTIME === "nodejs"` 后动态 import `indexDataDir()` (`instrumentation.ts:4-15`)——把 `FILE_DIR` (默认 ./data/docs) 下全部 `.md/.markdown/.txt` 文件重建索引, 向量库无需手动上传即有数据; 索引失败只记 error, 绝不阻塞 server boot. `indexDataDir()` 逐文件容错, 单文件失败 log 后跳过, 目录不存在则 warn 跳过 (`knowledge-index.ts:83-110`). 这与 Redis 客户端的维度探测 (见「Embedding provider 抽象与维度管理」) 组合, 构成"启动即自检自愈"的模式.
+启动钩子 (`instrumentation.ts`):Next.js instrumentation 的 `register()` 在服务启动时执行一次, 守卫 `NEXT_RUNTIME === "nodejs"` 后按序做两件事 (`instrumentation.ts:5-18`): 先调 `initObservability()` 启动 Langfuse/OTEL tracing (`instrumentation.ts:9-10`, telemetry 先于业务, 未配置时 no-op, 见「Langfuse 可观测性的接入与 no-op 降级」), 再动态 import `indexDataDir()` 把 `FILE_DIR` (默认 ./data/docs) 下全部 `.md/.markdown/.txt` 文件重建索引 (`instrumentation.ts:11-17`), 向量库无需手动上传即有数据; 索引失败只记 error, 绝不阻塞 server boot. `indexDataDir()` 逐文件容错, 单文件失败 log 后跳过, 目录不存在则 warn 跳过 (`knowledge-index.ts:83-110`). 这与 Redis 客户端的维度探测 (见「Embedding provider 抽象与维度管理」) 组合, 构成"启动即自检自愈"的模式.
 
 告警-文档契约 (`prometheus.rules.yml:1-5` 头部注释): "Alert names are contract"——AI Ops 管线的 SOP 是 `query_prometheus_alerts` 拿到活跃告警名, 再用告警名调 `query_internal_docs` 检索处理手册, 所以每条告警规则的名字必须与 `data/docs/alert-handling-guide.md` 中的同名标题一一对应, 否则检索落空、模型失去知识锚点. 规则文件本身展示了运行时指标的正确用法: ServiceOffline(up == 0)、NodeHeapNearLimit(yukino_node_v8_heap_used_ratio > 0.9)、NodeHeapLeakSuspected(predict_linear 外推一小时内触及上限)、NodeDetachedContextLeak(detached contexts > 10)——全部基于「yukino-sentry 监控桥的接入与指标设计」的 Node/V8 指标.
 
@@ -1255,11 +1343,14 @@ AI Ops 报告另有一处"UI 化"后处理: replanner 判定完成后, `uiifyRep
 - [ ] 能说明 Promise 缓存单例为什么需要失败重置 (P1-8)
 - [ ] 能解释向量维度不匹配为什么是静默故障及防御 (`client.ts:40-106`)
 - [ ] 能对比 ReAct 与 Plan-Execute-Replan 的选型逻辑
+- [ ] 能解释 LangGraph StateGraph 的条件边路由、`Annotation.Root` 状态与 detail concat reducer、getWriter 陷阱、`MAX_ITERATIONS`/`RECURSION_LIMIT` 双护栏 (见第三节 Plan-Execute-Replan 系列问答)
+- [ ] 能说明 ai-ops-graph-smoke 的离线断言与 `AI_OPS_SMOKE_LIVE=1` 实跑各验证什么 (见「ai-ops-graph-smoke 脚本如何验证这张图」)
 - [ ] 能指出 mysql_crud 的至少 4 个风险及加固方案
 - [ ] 能解释 hydration 约束下浏览器状态的初始化范式 (见「sessionId 与 histories 的初始化时机」)
 - [ ] 能说出 setState updater 必须纯函数的原因及本项目解法 (见「setState updater 里不能做副作用」)
 - [ ] 能给出 RAG 质量优化的 5 个方向并按 ROI 排序 (见「retrieve topK 与 RAG 检索质量优化」)
-- [ ] 能阐述 zod 在系统边界的 8 个使用点及价值 (见「系统边界的 zod 校验」)
+- [ ] 能阐述 zod 在系统边界的 9 个使用点及价值 (见「系统边界的 zod 校验」)
 - [ ] 能设计 AI Ops 流式化方案 (见「AI Ops 流式化设计方案」) 与幻觉防控五层模型 (见「OnCall 场景的幻觉防控」)
 - [ ] 能描述 A2UI 块的"抽取-校验-流过滤-纠错"四步与原地更新闭环 (见「A2UI 交互界面的生成链路」与「A2UI 按钮点击后的原地更新」)
+- [ ] 能说明 Langfuse 的"三 env 齐备才启用、缺一全部 no-op"降级语义、globalThis 抗 HMR 缓存与每 run 一条 trace 的结构 (见「Langfuse 可观测性的接入与 no-op 降级」)
 - [ ] 能说明 yukino-sentry→Prometheus 指标桥的两个防御设计: 标签基数上限与 registry 版本化 (见「yukino-sentry 监控桥的接入与指标设计」)
