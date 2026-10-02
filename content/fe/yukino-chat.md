@@ -5,11 +5,11 @@ description: "基于代码事实梳理 yukino-chat 的 Hono/Prisma/PostgreSQL �
 
 > 本机器路径 `$HOME/github/yukino-chat`
 
-yukino-chat 是一个自托管实时聊天平台: 单聊/群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个 Yukino AI coding agent 作为一等聊天参与者. 前端是 React 19 + Vite 8 的 SPA (`client/`), 后端是 TypeScript/Hono 服务 (`server/`), 数据落 PostgreSQL (Prisma 7), 缓存走 Redis (可降级进程内存). 本文所有结论均以仓库源码为准; 需要特别指出的是, README.md 曾长期描述一个 Go + MongoDB 后端 (与代码树中 0 个 `.go` 文件的事实不符), 已于 2026-10-01 的 `a850cce` 提交整体重写为与 TypeScript 工作区一致; 而 AGENTS.md 与 `client/` 下的 Docker 物料仍停留在 Go 版描述. server 是对旧 Go 版本的逐语义 TypeScript 移植 (源码注释中大量 "Go parity" 标注), 文中对残留不一致处逐一注明.
+yukino-chat 是一个自托管实时聊天平台: 单聊/群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个 Yukino AI coding agent 作为一等聊天参与者. 前端是 React 19 + Vite 8 的 SPA (`client/`), 后端是 TypeScript/Hono 服务 (`server/`, Hono 4.13.10 + `@hono/node-server` 1.19.17 + `@hono/node-ws` 1.3.1 + Prisma 7.10.0 + PostgreSQL + ioredis 5.11.1 + ws 8.22.0), 数据落 PostgreSQL (Prisma 7), 缓存走 Redis (可降级进程内存). 本文所有结论均以仓库源码为准; 线协议的若干约定 (空列表序列化为 null、请求体零值解析、JSON-RPC 词汇) 直接由当前实现与其源码注释定义, 下文逐一说明.
 
 ## 一、项目快照
 
-本机仓库 2026-10-01 核实 (`git log`): HEAD 为 `a850cce` "docs: rewrite README to match the TypeScript workspace layout", 提交日期 2026-10-01 01:29:02 +0800; 仓库共三个提交 (`28b789b` Initial commit, 2026-09-30 13:01:41 +0800; `f198caf` "feat: Update npm registry [skip ci]", 2026-09-30 13:26:20 +0800; `a850cce`, 仅改写 README.md, +171/-135 行); remote 为 `git@github.com:hangtiancheng/yukino-chat.git`, 分支 `main`, 工作区干净. 全部代码在初始提交引入, 其中 0 个 `.go` 文件.
+本机仓库快照: HEAD 为 `a850cce` "docs: rewrite README to match the TypeScript workspace layout" (提交日期 2026-10-01), remote 为 `git@github.com:hangtiancheng/yukino-chat.git`, 分支 `main`, 工作区干净. 下文所有实现事实均以该提交的源码与 `README.md` 为准.
 
 | 维度         | 内容                                                                                                                             |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -19,7 +19,7 @@ yukino-chat 是一个自托管实时聊天平台: 单聊/群聊、WebRTC 音视�
 | HTTP 框架    | Hono 4.13.10 + `@hono/node-server` 1.19.17 + `@hono/node-ws` 1.3.1 (WebSocket 升级)                                              |
 | ORM/数据库   | Prisma 7.10.0 (`@prisma/client` + `@prisma/adapter-pg`) -> PostgreSQL (`DATABASE_URL`, 默认库名 yukino_chat)                     |
 | 缓存         | ioredis 5.11.1, `REDIS_URL` 为空时降级进程内存 (server/src/cache/cache-service.ts)                                               |
-| 认证         | 手写 HS256 JWT (server/src/common/jwt.ts) + bcryptjs 3.0.3 口令哈希 (72 字节上限)                                                |
+| 认证         | 手写 HS256 JWT (server/src/common/jwt.ts) + bcryptjs ^3.0.3 口令哈希 (72 字节上限)                                               |
 | Agent 集成   | `@yukino.js/yukino` 0.0.4 以库形式嵌入服务进程 (非子进程), 每用户一个 AgentRuntime, 工作区 `.yukino/chat/<uid>`                  |
 | 前端框架     | React 19.3.0 + react-router-dom 7.18.4 + TypeScript 6.0.3 + Vite 8.3.1 + Tailwind CSS 4.3.3 + shadcn/ui (Base UI 1.8.0)          |
 | 前端状态     | Zustand 5.0.15 (auth/ws/call/agent/dashboard/preferences) + TanStack React Query 5.104.0 / Form 1.33.5 / Virtual 3.14.13         |
@@ -27,9 +27,9 @@ yukino-chat 是一个自托管实时聊天平台: 单聊/群聊、WebRTC 音视�
 | 可观测       | `@yukino.js/sentry` 0.0.1 (仅 DEV 初始化, Vite 插件收集报告到 logs/*.jsonl)                                                      |
 | PWA          | vite-plugin-pwa 1.3.0, `registerType: "autoUpdate"`                                                                              |
 | 测试         | Vitest 4.1.11 单测 4 个文件 + 2 个对运行中服务器的 smoke 脚本 (server/tests)                                                     |
-| 实际部署形态 | 直接 `node dist/index.js` 或 tsx; 仓库内 Dockerfile/docker-compose 仍是 Go+MongoDB 版, 与当前代码不匹配 (见第十三章)             |
+| 实际部署形态 | 直接 `node dist/index.js` 或 `tsx watch src/index.ts`; 单实例部署, 前置网关终结 TLS (见第十二章)                                 |
 
-版本号为 client/server 各自 `node_modules` 中实际安装的解析版本 (2026-09-30 核实), 与 package.json 声明区间一致.
+表内精确版本为已核实的实际安装版本, 与 client/server 各自 package.json 的声明区间一致.
 
 ### 目录结构
 
@@ -43,9 +43,7 @@ yukino-chat/
 │   ├── src/store/          # zustand: auth ws call agent dashboard preferences
 │   ├── src/service/        # http/api/queries/schemas/agent-schemas/upload (分块上传)
 │   ├── src/utils/          # rtc (CallManager) avatar (identicon) format logout toast
-│   ├── src/workers/        # file-hash.worker.ts (分块 SHA-256)
-│   ├── Dockerfile          # 多阶段: web-builder + Go server-builder + nginx (Go 段已过时)
-│   └── docker-compose.yml  # mongo + server + web (面向 Go 版, 已过时)
+│   └── src/workers/        # file-hash.worker.ts (分块 SHA-256)
 └── server/                 # TypeScript/Hono 后端
     ├── src/index.ts        # 入口: 建目录 -> createDeps -> hub/agent start -> serve
     ├── src/app.ts          # Hono 装配: cors/auth 中间件、静态目录、路由注册
@@ -62,19 +60,11 @@ yukino-chat/
     └── tests/              # vitest 单测 + http/ws smoke 脚本
 ```
 
-### 与 AGENTS.md / Docker 物料的不一致 (以代码为准)
+### 运行时形态
 
-README.md 已在 `a850cce` 重写为与代码一致: 技术栈表 (React 19 + Vite 前端、Node.js 24 + Hono 后端、PostgreSQL/Prisma 7、Redis/ioredis、`@yukino.js/yukino` 进程内嵌入)、pnpm workspace 的 Getting Started、`server/.env` 完整环境变量表、`~/.yukino/config.yaml` 优先 + `YUKINO_AI_*` 回退的 agent 配置、三个 WS 端点的 JWT 鉴权与 `/login`/`/register`/`/user/update-password` 的按 IP 限流 (10/10/5 每分钟)、agent_sessions 持久化与重启再水化, 均已如实描述; README 还自报 `client/` 下 Docker 物料是 Go + MongoDB 遗留物. 当前仍与代码不符的只剩 AGENTS.md 与 Docker 物料:
-
-| AGENTS.md / Docker 物料的说法                                                                                 | 代码事实                                                                                                                                                                   |
-| ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AGENTS.md: "./server is Go backend project: @server/cmd/main.go", 推荐 skills yukino-http / yukino-orm        | 无任何 `.go` 文件; Hono 4 + Prisma 7 的 TS 服务 (server/package.json description: "yukino-chat backend (TypeScript/Hono)"), `server/cmd` 不存在, 推荐的 Go skills 无从使用 |
-| AGENTS.md: "./server/internal/yukino -- the Yukino agent embedded in the chat server via @server/internal/ws" | `server/internal` 不存在; agent 实现在 `server/src/agent/`, 以 `@yukino.js/yukino` 0.0.4 库形式进程内嵌入                                                                  |
-| `client/Dockerfile` Stage 2 `COPY server/go.mod server/go.sum` + `go build ./cmd`                             | 这些文件在当前代码树不存在, 构建必然失败; `client/docker-compose.yml` 编排 mongo:7 + Go server + nginx, `client/docker/config.docker.json` 也是 Go 版形态                  |
-
-重写前旧 README 的历史性错误 (Go 1.26 后端 + `yukino_http`/`yukino_orm`/`yukino_cache`、MongoDB 7 存储、`src/` 为前端 + `server/cmd`+`server/internal` 为 Go 的目录结构、"WebSocket endpoints do not validate tokens"、根目录 `pnpm dev` 启动 Vite) 均已随 `a850cce` 修正. 其中 WS 鉴权的代码事实是: `/wss` 与 `/agent/ws` 均以 query token 验签, `/wss` 还校验 `client_id` 与 token uuid 一致 (server/src/routes/ws-chat-route.ts:19-28), `/dashboard/ws` 额外要求 admin —— 与新 README 的 Security 描述一致.
-
-代码中的移植痕迹非常密集: `coerceFrame` 注释 "Like Go's json.Unmarshal" (server/src/hub/message-pipeline.ts:543), JWT 头字节 "Same raw-base64url header bytes as the Go implementation" (server/src/common/jwt.ts:9), 缓存注释 "mirroring the Go server's two groupcache groups" (server/src/cache/cache-service.ts:4), 响应封装 "Go builds lists by appending to a nil slice: an empty result serializes as null" (server/src/common/envelope.ts:39-42), Prisma schema 注释 "the Go semantics (e.g. contact statuses 0-7) are load-bearing" (server/prisma/schema.prisma:10-12). server/.env 中还残留 "relative to the server2 working directory" 的注释, 暗示 TS 版曾被称为 server2.
+- server 是纯 Node.js 进程: 入口 `server/src/index.ts` 先建三个静态目录, 再 `createDeps()` 组装依赖, `ensureYukinoUser()`, 启动 hub/agent 的定时器, 最后 `createApp()` + `serve()`.
+- 默认监听 `0.0.0.0:8000` (`PORT`/`HOST`, server/src/config/env.ts:5-6); 开发态 `tsx watch src/index.ts`, 生产态 `prisma generate && tsc` 后 `node dist/index.js` (server/package.json).
+- 三个 WS 端点均以 query token 验签: `/wss` 还校验 `client_id` 与 token uuid 一致 (server/src/routes/ws-chat-route.ts:19-28), `/agent/ws` 只验 token (ws-agent-route.ts:38-42), `/dashboard/ws` 额外要求 admin (ws-dashboard-route.ts:18-25).
 
 ## 二、整体架构与启动流程
 
@@ -105,9 +95,9 @@ README.md 已在 `a850cce` 重写为与代码一致: 技术栈表 (React 19 + Vi
 
 ### 响应封装: 全 200 + body code
 
-所有 HTTP 接口 (含错误) 一律返回 HTTP 200, 真实状态在 body 的 `code` 字段: `{code: 200|400|401|403|429|500, message, data?}` (server/src/common/envelope.ts). 服务层返回 Go 风格的三元组 `(message, data, ret)` 或二元组 `(message, ret)`, 由 `back()` 翻译: `ret=0` -> code 200, `ret=-2` -> 400, 其余 -> 500. 为复刻 Go 的 nil slice 序列化行为, 空数组统一改写为 `"data": null` (envelope.ts:39-42); 客户端 zod schema 用 `wireList()` (`z.array().nullish().transform(v => v ?? [])`) 对称还原 (client/src/service/schemas.ts:39-43).
+所有 HTTP 接口 (含错误) 一律返回 HTTP 200, 真实状态在 body 的 `code` 字段: `{code: 200|400|401|403|429|500, message, data?}` (server/src/common/envelope.ts). 服务层返回 `(message, data, ret)` 三元组或 `(message, ret)` 二元组, 由 `back()` 翻译: `ret=0` -> code 200, `ret=-2` -> 400, 其余 -> 500. 空数组在成功响应里统一改写为 `"data": null` (envelope.ts:39-42); 客户端 zod schema 用 `wireList()` (`z.array().nullish().transform(v => v ?? [])`) 对称还原为 `[]` (client/src/service/schemas.ts:38-43).
 
-请求体解析同样复刻 Go `BindJSON` 零值语义: `bindBody()` 只接受 JSON object, 字段缺失/类型错误回落零值 (`str`/`num`/`strArr`, server/src/common/body.ts), 需要区分 "未传" 与 "传空" 的字段用 `optStr`/`optNum` 的 null 指针语义.
+请求体解析采用零值语义: `bindBody()` 只接受 JSON object, 字段缺失/类型错误回落零值 (`str`/`num`/`strArr`, server/src/common/body.ts), 需要区分 "未传" 与 "传空" 的字段用 `optStr`/`optNum` 的 null 指针语义.
 
 ### API 面
 
@@ -137,7 +127,7 @@ WebSocket 通道 (GET 升级):
 - auth (server/src/middleware/auth.ts:12-23): 只拦 POST, `PUBLIC_PATHS = {/login, /register, /user/update-password}` 直通; Bearer token 验签后把 uuid 写入 Hono 上下文变量 (`AppEnv.Variables.uuid`, server/src/hono-env.ts)
 - ratelimit (server/src/middleware/ratelimit.ts:19-35): 每中间件实例一个 `Map<ip, timestamps[]>` 滑动窗口, IP 取 `X-Forwarded-For` 首段或 socket 地址; `/login`、`/register` 各 10 次/60s, `/user/update-password` 5 次/60s
 - admin (server/src/middleware/admin.ts): 查缓存或 DB 的 `is_admin === 1`
-- cors (server/src/middleware/cors.ts): 全放开 + OPTIONS 204, 注释明确是对 Go CORS 中间件的镜像
+- cors (server/src/middleware/cors.ts): 全放开 (`Access-Control-Allow-Origin: *`) + OPTIONS 204
 
 ## 三、数据层: Prisma/PostgreSQL 与缓存双组
 
@@ -156,19 +146,19 @@ WebSocket 通道 (GET 升级):
 | ContactTag   | contact_tag    | 联系人标签, 注册时默认建 "Friends" 标签 (user-service.ts register)                                      |
 | AgentSession | agent_sessions | userId 唯一 (每用户一行); `context Json` 存 agent 对话快照; status 为 PG enum (IDLE/RUNNING/...)        |
 
-聊天域的状态/类型列刻意保持 Int 而不用 PG enum, schema 注释解释了原因: 线路上传输的就是原始整数, Go 语义 (如 contact status 0-7) 是承重墙; enum 只用于 agent 内部状态 (schema.prisma:10-12). 消息类型常量: 0 文本 / 1 图片 / 2 文件 / 3 音视频信令 / 4 视频 / 5 系统通知 (server/src/hub/frame-types.ts:52-57), 客户端在 schemas.ts 中以 `MessageType` 常量镜像.
+聊天域的状态/类型列刻意保持 Int 而不用 PG enum, schema 注释解释了原因: 线路上传输的就是原始整数, 这些整数取值 (如 contact status 0-7) 是承重墙; enum 只用于 agent 内部状态 (schema.prisma:10-12). 消息类型常量: 0 文本 / 1 图片 / 2 文件 / 3 音视频信令 / 4 视频 / 5 系统通知 (server/src/hub/frame-types.ts:52-57), 客户端在 schemas.ts 中以 `MessageType` 常量镜像.
 
 迁移历史两条: `20260924041225_init` 建全部表 (当时含 agent_interactions 表), `20260924050617_drop_agent_interactions` 删掉该表及两个 enum —— agent 交互 (权限/提问) 改为纯内存 broker, 不再落库. 已提交的 `src/generated/prisma/` 生成产物中仍残留 `AgentInteraction` 模型类型 (models.ts:19), 落后于当前 schema; 构建脚本 `prisma generate && tsc` 会重新生成, 不影响运行.
 
 ### 手写 JWT 与口令
 
-- JWT (server/src/common/jwt.ts): 不依赖 jsonwebtoken 库, 用 `createHmac("sha256")` 手拼 `header.payload.signature`, header 字节与 Go 版完全一致; `parseToken` 用 `timingSafeEqual` 防时序攻击, 校验 uuid 非空与 exp 过期. claims 只有 `{uuid, iat, exp}`, 有效期 `TOKEN_EXPIRE_HOURS` 默认 336 小时 (14 天), 无 refresh 机制 —— 客户端注释 "The token never refreshes, so an expired one can only be resolved by re-login" (client/src/service/http.ts:38)
+- JWT (server/src/common/jwt.ts): 不依赖 jsonwebtoken 库, 用 `createHmac("sha256")` 手拼 `header.payload.signature`, header 为固定的 raw-base64url 字节 (`{"alg":"HS256","typ":"JWT"}`, jwt.ts:9-10); `parseToken` 用 `timingSafeEqual` 防时序攻击, 校验 uuid 非空与 exp 过期. claims 只有 `{uuid, iat, exp}`, 有效期 `TOKEN_EXPIRE_HOURS` 默认 336 小时 (14 天), 无 refresh 机制 —— 客户端注释 "The token never refreshes, so an expired one can only be resolved by re-login" (client/src/service/http.ts:38)
 - 口令 (server/src/common/password.ts): bcryptjs cost 10, 显式拒绝超过 72 字节的口令 (`PasswordTooLongError`)
-- `/user/update-password` 免鉴权按手机号重置密码, user-service.ts 注释承认这是 "deliberately unauthenticated like the legacy forgot-password flow", 是已知安全缺口
+- `/user/update-password` 免鉴权按手机号重置密码, user-service.ts 的注释注明这是刻意不加鉴权的重置流程, 是已知安全缺口 (无邮件/短信验证)
 
 ### 缓存: 两个读穿组
 
-`CacheService` (server/src/cache/cache-service.ts) 复刻 Go 版 yukino_cache 的两个 groupcache 组: `user_info` (按 uuid 缓存用户投影, 不含 password/deletedAt) 与 `session_list` (按拥有者 uuid 缓存会话行). 双实现:
+`CacheService` (server/src/cache/cache-service.ts) 使用两个读穿组: `user_info` (按 uuid 缓存用户投影, 不含 password/deletedAt) 与 `session_list` (按拥有者 uuid 缓存会话行). 双实现:
 
 - `RedisStore`: key 前缀 `yukino:cache:<group>:<key>`, 另维护 `idx` set 与 `meta` hash (记录 size/expire_at) 供看板枚举; TTL 取 `CACHE_TTL_SECONDS` (默认 300s); 所有读写 try/catch 吞错, Redis 故障一律降级为 miss, DB 始终是唯一事实源 (cache-service.ts:4-7 注释)
 - `MemoryStore`: `REDIS_URL` 为空串时使用 (测试环境即如此, server/vitest.config.ts 强制 `REDIS_URL: ""`)
@@ -190,13 +180,13 @@ WebSocket 通道 (GET 升级):
 
 ### 消息管线 (MessagePipeline)
 
-`MessagePipeline` (server/src/hub/message-pipeline.ts) 是 /wss 全部入站帧的处理器, 设计上复刻 Go 版 "单事件循环消费 Transmit channel":
+`MessagePipeline` (server/src/hub/message-pipeline.ts) 是 /wss 全部入站帧的处理器, 设计上以单消费者串行链消费所有帧:
 
 1. 串行化: 所有帧经 `chain: Promise<void>` 顺序处理; `depth` 超过 `CHANNEL_SIZE = 1024` 时回发溢出帧 `{type:-1, content:"message send failed, please retry"}` (message-pipeline.ts:18, 38-39, 62-76; 溢出帧常量在 frame-types.ts:39-40)
-2. 帧解析: `coerceFrame` 复刻 Go `json.Unmarshal` 语义 —— 缺失的 string 字段取零值, 仅类型错误拒绝整帧; `type` 必须是整数 (message-pipeline.ts:534-567)
+2. 帧解析: `coerceFrame` 采用 JSON 零值语义 —— 缺失的 string 字段取零值, 仅类型错误拒绝整帧; `type` 必须是整数 (message-pipeline.ts:534-567)
 3. 防伪: `req.send_id` 强制覆写为连接属主 uuid, 昵称/头像从缓存或 DB 重取 (`resolveSender`), 客户端无法冒充他人 (message-pipeline.ts:87-94, 150-178)
 4. 持久化: 普通消息 (type != 3) 先写 message 表, 失败即静默返回
-5. 会话触达: 单聊消息 `touchDirectSessions` 保证双方各有一行未删除的 session (软删的自动恢复, session-service.ts:292-313); 群聊消息 `touchGroupSessions` 批量保证每个成员都有群会话行 (session-service.ts:317-361) —— 这就是 README 说的 auto-created/restored sessions
+5. 会话触达: 单聊消息 `touchDirectSessions` 保证双方各有一行未删除的 session (软删的自动恢复, session-service.ts:292-313); 群聊消息 `touchGroupSessions` 批量保证每个成员都有群会话行 (session-service.ts:317-361) —— 即自动创建/恢复会话
 6. 扇出: `broadcast` 计算目标集 —— 单聊为 `[接收者, 发送者(回显)]`, 群聊为全体成员 (含发送者); 逐个检查 `hub.isOnline` 后 `sendRaw`; 至少送达一人且非信令帧时把消息 status 置 1 并记 sendAt (`markSent`, message-pipeline.ts:239-256). 离线用户不推送, 上线后靠会话列表的未读计数与历史接口补齐
 7. Agent 分发: 收件人是 Yukino 时进入 `dispatchToYukino` (见第七章)
 
@@ -263,7 +253,7 @@ UI 层 `store/call.ts` 维护 `phase: idle|ringing|dialing|active` 状态机, �
 
 ## 七、每用户 Yukino Agent: AgentManager 与 AgentRuntime
 
-这是本项目与纯 LLM 聊天应用的本质区别: 集成的不是 "调一次补全接口", 而是完整的 Yukino coding agent (工具执行、MCP、权限、计划模式、上下文压缩), 以 `@yukino.js/yukino` 0.0.4 库的形式嵌入服务进程. 旧 README 曾把 agent 描述为经 ws/spawn 挂接的 Go 子进程, 与代码不符 —— 没有 spawn, 全部在进程内; `a850cce` 重写后的 README 已如实写明 "embedded in-process via @yukino.js/yukino" (每用户一个 runtime, 工作区 `.yukino/chat/<uid>`, 空闲 30 分钟回收). 仍指向旧布局的是 AGENTS.md ("./server/internal/yukino ... via @server/internal/ws").
+这是本项目与纯 LLM 聊天应用的本质区别: 集成的不是 "调一次补全接口", 而是完整的 Yukino coding agent (工具执行、MCP、权限、计划模式、上下文压缩), 以 `@yukino.js/yukino` 0.0.4 库的形式嵌入服务进程 (无子进程), 每用户一个 runtime, 工作区 `.yukino/chat/<uid>`, 空闲 30 分钟回收.
 
 ### 配置发现 (yukino-config.ts)
 
@@ -280,19 +270,19 @@ UI 层 `store/call.ts` 维护 `phase: idle|ringing|dialing|active` 状态机, �
 `AgentManager` (server/src/agent/agent-manager.ts):
 
 - `runtimes: Map<userId, AgentRuntime>` 懒创建, 每用户工作区 `path.join(process.cwd(), ".yukino", "chat", userId)` (agent-manager.ts:58-64)
-- 空闲回收: 60s 定时器扫描, `!isBusy() && connectionCount === 0 && 空闲 > AGENT_IDLE_MS (默认 30 min)` 即 `dispose()` (agent-manager.ts:11, 37-49), 注释说明与 Go bridge 的 sweep 一致
+- 空闲回收: 60s 定时器扫描, `!isBusy() && connectionCount === 0 && 空闲 > AGENT_IDLE_MS (默认 30 min)` 即 `dispose()` (agent-manager.ts:11, 37-49)
 - `makeSink()` 是关键设计 (agent-manager.ts:70-124): agent 的最终文本回复经 `saveAssistantText` 走与人类对端完全相同的 "insert message 表 + hub.sendRaw 广播" 路径, send_id 为 `UYUKINOAGENT` —— 于是助手消息天然获得历史记录、会话预览、未读计数, 刷新后依然存在. README "finalized replies are written back into the chat transcript" 说的就是这条路径
-- `dispatch(userId, chatSessionId, messageId, content)`: 消息管线把用户发给 Yukino 的文本帧路由到这里 (message-pipeline.ts:507-531); 非文本消息回复 "I can only read text messages"; 群聊刻意不接入 ("Yukino only takes part in one-to-one conversations")
+- `dispatch(userId, chatSessionId, messageId, content)`: 消息管线把用户发给 Yukino 的文本帧路由到这里 (message-pipeline.ts:507-531); 非文本消息回复 "I can only read text messages — please describe what you need in writing."; 群聊刻意不接入 ("Yukino only takes part in one-to-one conversations", message-pipeline.ts:507-509 注释)
 - 账号接线: 启动时 `ensureYukinoUser` 建保留账号 (uuid `UYUKINOAGENT`, 名字 Yukino, 签名 "Your built-in AI assistant", common/ids.ts:21-25); 注册与登录时 `ensureYukinoContact` 幂等地建立双向联系人边 + 会话行, 且该会话不可删除 (session-service.ts:264-266)
 
 ### AgentRuntime: 队列、回合与再水化
 
-`AgentRuntime` (server/src/agent/agent-runtime.ts) 是每用户长生命周期对象, 注释自述 "Mirrors the Go bridge's per-user Session":
+`AgentRuntime` (server/src/agent/agent-runtime.ts) 是每用户长生命周期对象:
 
 - `ensureReady()` (agent-runtime.ts:93-113): 首次使用时创建/复用 `agent_sessions` 行, `mkdir` 工作区, 调 `Remote.Server.createRemoteAgent({provider, workDir, mcpServers, hooks, enableCoordinatorMode: false, forkDisabled: false, askUser})` 拿到完整 agent 栈句柄 (client、conversation、registry、contextWindow、teamManager、backgroundTaskManager 等), promise 缓存防并发重建
 - 再水化 (agent-runtime.ts:118-125): 从 DB `context` JSON 恢复对话, 过滤掉可再生的 `<system-reminder>` 包裹消息防止跨重启累积; 每回合结束 `saveContext` 把 `conv.getMessages()` 快照写回 DB. 持久化策略是 DB-only: 构造 `Agent.Agent` 时 `sessionId: ""` 显式禁用库自身的 JSONL 会话写入 (agent-runtime.ts:268-271 注释), agent-stores.ts 头注释: "JSON is the only memory that survives restarts: DB is authoritative"
 - 上下文窗口策略: 每回合构造 `Agent.Agent` 时透传 `contextWindow: handle.contextWindow` 与 `maxOutput: Config.getMaxOutputTokens(handle.provider)` (agent-runtime.ts:275-276), 窗口上限由 provider 配置决定; 主动压缩走 `/compact` 斜杠命令调 `Compact.Compact.forceCompact` (agent-runtime.ts:366-384), 与 yukino 库的自动压缩机制共用同一 conversation/recoveryState
-- 提示队列 (agent-runtime.ts:186-223): `dispatch` 入队, 单 worker 串行消费; 队长超 `AGENT_QUEUE_CAP` (默认 8) 时向所有连接推 "Yukino is still working through earlier messages" 系统通知并丢弃
+- 提示队列 (agent-runtime.ts:186-223): `dispatch` 入队, 单 worker 串行消费; 队长超 `AGENT_QUEUE_CAP` (默认 8) 时向所有连接推 "Yukino is still working through earlier messages — please wait for it to catch up." 系统通知并丢弃 (agent-runtime.ts:190-202)
 - 回合执行 `runTurn` (agent-runtime.ts:227-323): `/` 开头走斜杠命令; 否则 `agent/run_start` 通知 -> `conv.addUserMessage` -> 同步 MCP instructions -> 每回合新建 `Permissions.PermissionChecker(workDir, permissionMode)` 与全新 `Agent.Agent` 实例 -> `for await (event of agent.run())` 消费事件流, 交 EventAdapter 翻译 -> finally 中 `saveContext`
 - 斜杠命令 (agent-runtime.ts:351-401): `/help` 列出命令、`/clear` 重置对话并清 MCP 公告集、`/compact` 强制上下文压缩、`/plan` 在 default/plan 两种权限模式间切换 (plan 即只读研究模式)
 - 取消与销毁: `cancel()` 触发 AbortController 并让 broker 拒绝所有挂起交互 (agent-runtime.ts:413-417); `dispose()` 幂等, 存上下文、断 MCP、停后台任务与 team、以 1001 关闭所有 WS 连接 (agent-runtime.ts:420-438)
@@ -301,14 +291,14 @@ UI 层 `store/call.ts` 维护 `phase: idle|ringing|dialing|active` 状态机, �
 
 `EventAdapter` (server/src/agent/event-adapter.ts) 是每回合有状态的翻译器, 把库的 `AgentEvent` 映射成 JSON-RPC 通知或 flush 动作:
 
-| 库事件                                  | 产出                                                                                                 |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `stream_text`                           | 累积进内部 buffer, 同时通知 `agent/stream_text` (瞬态, 不落库)                                       |
-| `thinking_text` / `thinking_complete`   | `agent/thinking_text` / `agent/thinking_complete`                                                    |
-| `tool_use`                              | 先 flush (已完成的文本块落库为聊天消息), 再 `agent/tool_use`                                         |
-| `tool_result`                           | `agent/tool_result` (output/isError/elapsed)                                                         |
-| `turn_complete` / `loop_complete`       | flush + `agent/turn_complete` / `agent/loop_complete` (totalTurns/elapsed/stopReason)                |
-| `usage` / `error` / `compact` / `retry` | `agent/usage` / `agent/error` (取消引发的 error 被吞掉, Go parity) / `agent/compact` / `agent/retry` |
+| 库事件                                  | 产出                                                                                      |
+| --------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `stream_text`                           | 累积进内部 buffer, 同时通知 `agent/stream_text` (瞬态, 不落库)                            |
+| `thinking_text` / `thinking_complete`   | `agent/thinking_text` / `agent/thinking_complete`                                         |
+| `tool_use`                              | 先 flush (已完成的文本块落库为聊天消息), 再 `agent/tool_use`                              |
+| `tool_result`                           | `agent/tool_result` (output/isError/elapsed)                                              |
+| `turn_complete` / `loop_complete`       | flush + `agent/turn_complete` / `agent/loop_complete` (totalTurns/elapsed/stopReason)     |
+| `usage` / `error` / `compact` / `retry` | `agent/usage` / `agent/error` (取消引发的 error 被吞掉) / `agent/compact` / `agent/retry` |
 
 flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取走累积文本 -> `sink.saveAssistantText` 写消息表并广播 -> 通知 `agent/stream_end {text, messageId}`, messageId 成为客户端后续 overlay 的锚点. 语义即 "streaming deltas stay ephemeral, completed text blocks flush into one persisted chat message each" (event-adapter.ts:9-12 注释).
 
@@ -320,7 +310,7 @@ flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取
 
 ### 服务端协议
 
-`server/src/agent/rpc-protocol.ts` 头注释声明词汇表镜像自 Go bridge (`yukino/bridge/protocol.go`). 方向约定: 服务器只推 notification (无 id), 客户端只发 unary request (带 id), 客户端发的 notification 被静默忽略 (ws-agent-route.ts:93-94, "Go parity").
+`server/src/agent/rpc-protocol.ts` 定义 JSON-RPC 2.0 词汇 (RpcNotification/RpcSuccess/RpcError 与各方法的 zod schema). 方向约定: 服务器只推 notification (无 id), 客户端只发 unary request (带 id), 客户端发的 notification 被静默忽略 (ws-agent-route.ts:93-94).
 
 握手流程 (`registerAgentWsRoute` -> `runtime.attach`, ws-agent-route.ts:44-68 + agent-runtime.ts:143-161): token 验签 -> `getOrCreate` runtime -> `attach` 依次推送 `session/connected` (model/streaming/ready/anchorId/token 用量/permissionMode)、`session/commands` (SERVER_COMMANDS: help/clear/compact/plan, rpc-protocol.ts:74-79)、broker snapshot 中的全部挂起 `permission/request` 与 `question/ask`. runtime 创建失败 (未配置) 时回 `agent/error` 通知而不中断连接.
 
@@ -348,7 +338,7 @@ flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取
 - `service/http.ts`: fetch 封装, 信封 zod 校验; 普通请求 15s 超时、上传 120s (`AbortSignal.timeout` + `AbortSignal.any` 合并调用方 signal, http.ts:33-36); code 401 时 `clearAuth()` 并跳 /login; `ApiError` 携带 body code, 网络错误统一 -1
 - `lib/query-client.ts`: 全局 staleTime 30s, 关窗聚焦重取; retry 策略区分故障类型 —— 后端明确拒绝的 ApiError 不重试, 仅传输层错误重试至多 2 次; MutationCache 全局 onError toast
 - `service/queries.ts`: query key 按域分层 (`keys.sessions.user(userId)` 等), WS 系统帧按 `keys.<domain>.all` 整支失效 (store/ws.ts:45-51); `openSessionQuery` 把幂等的 open-session POST 当 query 用 (`staleTime: "static"`, queries.ts:78-85)
-- `service/schemas.ts`: 全部响应 zod 化, `wireList` 处理 Go 式 null 空列表; `resolveAvatar` 在 transform 里把空头像/历史默认头像替换为 identicon
+- `service/schemas.ts`: 全部响应 zod 化, `wireList` 把 `null` 空列表还原为 `[]`; `resolveAvatar` 在 transform 里把空头像/默认头像替换为 identicon
 
 ### 状态分域 (zustand)
 
@@ -388,43 +378,23 @@ flush 的落库动作在 runtime 的 `flushText` (agent-runtime.ts:327-333): 取
 - Vitest 单测 4 个文件 (server/tests, `vitest run`, 环境强制 `REDIS_URL=""` 走内存缓存、不触 DB, vitest.config.ts 注释): `common.test.ts` (JWT 往返/错密钥/畸形、randomId、sanitizeFilename)、`call-manager.test.ts` (房间 id 派生、忙状态、leave 返回剩余成员、空房解散)、`event-adapter.test.ts` (流文本累积与 tool_use 触发 flush、回合计数)、`interaction-broker.test.ts` (fake timers 验证权限超时 fail-closed 等)
 - Smoke 脚本 2 个 (对运行中的服务器, 默认 :8000): `http-smoke.mjs` 以约 30 次请求覆盖注册/登录/错误路径/联系人/群组/会话/消息/管理守卫全流程, 末尾循环 `/login` 直至 429 验证按 IP 限流 (刻意放在最后, 避免污染限流桶, 脚本注释自述); `ws-smoke.mjs` 覆盖聊天 WS 握手、在线状态、单聊/群聊扇出、顶号驱逐、call_failed、agent WS 握手+ping+私聊分发、dashboard WS (文件头注释)
 
-## 十二、与 yukino.go 栈的关系
-
-当前代码与 yukino.go (Go 模块 `yukino_http`/`yukino_rpc`/`yukino_cache`) 没有构建期依赖 —— server 是纯 Node.js 进程. 关系是语义移植: TS 版把 Go 版的每一处可观察行为都当作契约保留下来, 源码注释直接点名对应物 ——
-
-| TS 实现                                  | 注释指向的 Go 对应物                       |
-| ---------------------------------------- | ------------------------------------------ |
-| envelope.ts 空数组 -> null               | Go nil slice 的 JSON 序列化                |
-| body.ts bindBody 零值语义                | Go `BindJSON`                              |
-| jwt.ts header 字节                       | Go 实现的 raw-base64url header             |
-| message-pipeline.ts 串行链 + 1024 上限   | Go 单事件循环 + Transmit channel 容量      |
-| cache-service.ts 两组读穿缓存            | Go 服务器两个 groupcache 组 (yukino_cache) |
-| rpc-protocol.ts JSON-RPC 词汇            | `yukino/bridge/protocol.go`                |
-| interaction-broker.ts applied:false 语义 | "like the Go bridge"                       |
-| agent-manager.ts 30 min 空闲清扫         | Go bridge 的 sweep                         |
-| utils/rtc.ts callRoomId                  | Go call manager 的 CallRoomId              |
-| ws-dashboard-route.ts 快照协议           | Go yukino_cache dashboard 协议             |
-
-AI agent 侧的关系则是直接的: Go 版内嵌的是 Go 语言 Yukino agent, TS 版换成 `@yukino.js/yukino` 0.0.4 (yukino agent 的 JS/TS 发行版, 提供 Agent/Config/MCP/Permissions/Remote/Skills/Subagent/Compact 等命名空间), 协议层 (权限/提问/事件) 与 Go bridge 对齐, 因此前端交互模型不变. 这种 wire-compatible 重写使得两版后端可以互换而客户端零改动 —— schemas.ts 里 `MessageType` 注释仍引用 Go 常量文件路径 (`internal/constant/constant.go`).
-
-## 十三、部署现状与已知约束
+## 十二、部署现状与已知约束
 
 - 实际运行方式: server `pnpm dev` (tsx watch) 或 `pnpm build && pnpm start` (先 `prisma migrate` 建表); client `pnpm dev` (Vite, 默认 5173) 或构建后任意静态托管; `VITE_API_URL` 构建期内联 (client/src/env.ts, 默认 http://localhost:8000), `VITE_WS_URL` 可选, 缺省把 http 换成 ws
-- Docker 物料过时: `client/Dockerfile` 的 Stage 2 `COPY server/go.mod server/go.sum` 与 `go build ./cmd` 在当前代码树下必然失败 (这些文件不存在); `client/docker-compose.yml` 编排 mongo:7 + Go server + nginx, 与 PostgreSQL/Hono 现状不符; `client/docker/config.docker.json` 也是 Go 版 config.json 形态. 若需容器化 TS 版需重写 (node:24 + prisma migrate deploy + node dist/index.js)
-- 单实例约束仍然成立 (重写后的 README "Deployment Constraints" 一节已明确 "Single instance only"): ChatHub 连接表、CallManager 房间、MessagePipeline 串行链、AgentManager runtime 表全部在进程内存, 无跨实例总线
-- 无 TLS: 明文 HTTP/WS, 需前置网关终结
-- `/user/update-password` 免鉴权按手机号重置, 公网暴露前必须加验证步骤 (README Deployment Constraints 与 user-service.ts 注释均承认)
+- 单实例约束 (README "Deployment Constraints" 自报 "Single instance only"): ChatHub 连接表、CallManager 房间、MessagePipeline 串行链、AgentManager runtime 表、限流桶全部在进程内存, 无跨实例总线
+- 无 TLS: 明文 HTTP/WS, 需前置网关终结 (README Deployment Constraints 自报)
+- `/user/update-password` 免鉴权按手机号重置 (README Deployment Constraints 自报, 无邮件/短信验证, 限流 5 次/分/IP), 公网暴露前必须加验证步骤
 - WebRTC 无 STUN/TURN, 跨 NAT 通话打不通
-- 声明未消费的依赖: server 的 `minio` 8.0.7 与 `archiver` 7.0.1 在 server/src 与 tests 中零引用; env 的 `AGENT_WS_MAX_MESSAGE_BYTES` 未被路由读取
-- `.npmrc` 当前指向 registry.npmjs.org, 注释行保留 npmmirror —— `f198caf` 提交 "feat: Update npm registry [skip ci]" 改的正是这个文件
+- 声明未消费的依赖: server 的 `minio` (package.json ^8.0.7) 与 `archiver` (^7.0.1) 在 server/src 与 tests 中零引用; env 的 `AGENT_WS_MAX_MESSAGE_BYTES` 未被路由读取 (路由用本地常量, ws-agent-route.ts:20)
+- `.npmrc` 当前指向 registry.npmjs.org, 注释行保留 npmmirror
 - 其余杂项: 根 package.json 只有 git 便捷脚本; `client/package.json` 的 `dual` 脚本用 concurrently 把 `pnpm dev` 跑两遍 (双开联调用途); 仓库还提交了 `server/.playwright-cli/` 快照与 `server/static/` 下的示例上传文件
 
-## 十四、小结
+## 十三、小结
 
 yukino-chat 的价值密度集中在三处工程设计:
 
-1. 消息管线的 Go 语义保真移植 —— 从 JSON 零值解析、nil-slice null 序列化到 channel 容量溢出帧, 全部作为契约保留, 换来与旧 Go 版的 wire 兼容和 smoke 脚本可直接复用的回归面
+1. 消息管线的线协议语义保真 —— 从 JSON 零值解析、空列表 null 序列化到 channel 容量溢出帧, 全部作为稳定的线协议契约保留, smoke 脚本因此有可靠的回归面
 2. Agent 与聊天的合流 —— 落库回复走人类消息同一条 insert+broadcast 路径 (sink), 流式过程走独立 /agent/ws overlay 并以 anchorId/messageId 与转录缝合, 断线重连靠 broker snapshot 重放挂起交互; transcript 是事实、overlay 是过程的分工让刷新/顶号/多端都不丢结果
 3. 断点续传的极简状态机 —— 服务器状态就是 chunk 目录里的文件集合, verify 返回缺失下标, merge 幂等且失败清理半成品; 客户端把哈希挪进 worker 用二次摘要规避内存峰值, Semaphore+重试控制并发
 
-当前短板同样清晰: 部署物料停留在 Go 版、无 TURN、update-password 裸奔、单实例内存态. 这些在 README 的 Deployment Constraints 一节大多有自我披露, 属于内网自托管定位下的自觉取舍.
+当前短板同样清晰: 无 TURN、update-password 无验证步骤、单实例内存态. 这些在 README 的 Deployment Constraints 一节大多有自我披露, 属于内网自托管定位下的自觉取舍.

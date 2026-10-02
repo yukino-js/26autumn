@@ -3,16 +3,19 @@
   "title": "后端",
   "pages": [
     "index",
+    "---语言基础---",
     "go",
-    "yukino-codegen",
+    "---存储与中间件---",
+    "mysql",
+    "redis",
+    "clickhouse-kafka",
+    "middleware",
+    "node-pool",
+    "---Yukino Go 系列---",
     "yukino-http",
     "yukino-rpc",
     "yukino-cache",
     "yukino-go-apps",
-    "mysql",
-    "redis",
-    "middleware",
-    "node-pool",
-    "clickhouse-kafka"
+    "yukino-codegen"
   ]
 }

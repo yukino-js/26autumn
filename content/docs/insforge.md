@@ -5,13 +5,12 @@ description: "insforge/insforge turbo monorepo 与 insforge/insforge-mcp 双仓�
 
 仓库路径: https://github.com/insforge/insforge 与 https://github.com/insforge/insforge-mcp (本机克隆分别位于 $HOME/Downloads/insforge 与 $HOME/Downloads/insforge-mcp)
 
-## 一、项目快照 (本机克隆 2026-09-30)
+## 一、项目快照 (本机克隆 2026-10-02 同步)
 
 | 指标          | insforge (主仓库)                                                                                                                                                         | insforge-mcp                                                                                        |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| HEAD          | 870582836, 提交日期 2026-09-26                                                                                                                                            | 094a1f3, 提交日期 2026-09-10                                                                        |
-| 分支          | main (与 origin/main 同步)                                                                                                                                                | master (与 origin/master 同步)                                                                      |
-| 提交总数      | 5547                                                                                                                                                                      | 387                                                                                                 |
+| HEAD          | f3df24d4 (完整哈希 f3df24d483f02c9938bdd1abb14ab9681e3545f0), 提交日期 2026-10-01                                                                                         | 094a1f3, 提交日期 2026-09-10                                                                        |
+| 分支          | main                                                                                                                                                                      | master                                                                                              |
 | 定位          | "The all-in-one, open-source backend platform for agentic coding" — 给 coding agent 提供数据库、鉴权、存储、计算、托管与 AI 网关的开源 BaaS (README.md 首屏)              | InsForge 后端的 MCP (Model Context Protocol) server, 把平台操作面暴露为 agent 可调用的工具          |
 | 主包名/版本   | 根 package.json name 为 insforge, version 2.3.2                                                                                                                           | @insforge/mcp 1.2.12 (mcpName: io.github.InsForge/insforge-mcp)                                     |
 | License       | Apache-2.0 (LICENSE)                                                                                                                                                      | Apache-2.0 (LICENSE)                                                                                |
@@ -135,7 +134,7 @@ backend/src/server.ts 的 createApp() 是全栈装配点, 初始化顺序有明�
 | 6    | /storage/v1/s3              | S3 协议网关同样在 JSON 中间件之前挂载, 让请求体原样流过去, 网关自己处理流式签名 (含 STREAMING-AWS4-HMAC-SHA256-PAYLOAD 分块签名)              |
 | 7    | express.json / urlencoded   | 默认 100mb / 10mb (appConfig.server.maxJsonBodySize), 注释称高默认值是为开箱即用, 可经环境变量收紧                                            |
 | 8    | apiRouter                   | /api/health (返回根 package.json 的 version 字段) 与 22 个子路由                                                                              |
-| 9    | ALL /functions/:slug        | 边缘函数反向代理: 优先 Deno Deploy 部署 URL, 回退本地 Deno runtime; 注释标注这是向后兼容路径, SDK 会直连边缘函数                              |
+| 9    | ALL /functions/:slug        | 边缘函数反向代理: 优先 Deno Deploy 部署 URL, 回退本地 Deno runtime; 注释标注该路径为兜底, SDK 会直连边缘函数                                  |
 | 10   | 静态前端或 404              | dist/frontend 存在则托管 SPA, 否则 REST 风格 404 (带 nextActions 字段)                                                                        |
 | 11   | errorMiddleware             | 统一错误出口                                                                                                                                  |
 | 12   | seedBackend()               | 播种初始数据 (backend/src/utils/seed.ts), 控制台打印 Dashboard 地址提示                                                                       |
@@ -371,14 +370,14 @@ src/features 按产品域切 15 个目录: ai, analytics, auth, compute, dashboa
 
 ## 十一、OpenAPI 契约与 docs 服务
 
-openapi/ 下 17 个 YAML 共 15007 行, 全部 OpenAPI 3.0.3, 按产品域拆分:
+openapi/ 下 17 个 YAML 共 15015 行, 全部 OpenAPI 3.0.3, 按产品域拆分:
 
 | 文件             | 行数 | 覆盖                                                                                                                                                   |
 | ---------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | payments.yaml    | 3854 | Stripe/Razorpay 支付全链                                                                                                                               |
 | auth.yaml        | 2571 | 38 个路径: sessions/refresh/logout、admin sessions、tokens/anon、email OTP 全家桶、11 家 OAuth + custom OAuth + id-token、smtp-config、email-templates |
 | storage.yaml     | 1519 | bucket/object/upload-strategy/download-strategy/s3 config/access-keys 与 `/storage/v1/s3/{path}` 通配                                                  |
-| deployments.yaml | 1091 | 站点部署                                                                                                                                               |
+| deployments.yaml | 1099 | 站点部署                                                                                                                                               |
 | ai.yaml          | 854  | AI 网关 8 端点                                                                                                                                         |
 | realtime.yaml    | 833  | channels/messages/permissions/config                                                                                                                   |
 | functions.yaml   | 651  | /api/functions CRUD + `/functions/{slug}` 调用                                                                                                         |
@@ -424,7 +423,7 @@ deploy/setup.sh (POSIX sh) 的行为: 克隆或 HTTPS 拉取 image-only 栈所�
 
 ### 12.3 云/自托管双态开关
 
-代码里大量行为由 isCloudEnvironment() (backend/src/utils/environment.ts) 切换: 根路径重定向到 /dashboard/login 仅非云; 备份调度器仅非云; OpenRouter key 轮换仅云; signCloudToken 仅云; 遥测在云环境整体关闭 (云上另有控制面遥测)。PROJECT_ID/APP_KEY/CLOUD_API_HOST/DEPLOYMENT_ID/PARENT_APP_KEY 等变量构成云多租户身份, 存储 branch 模式、compute cloud provider、云 token 验证都挂在这组变量上。同一套 OSS 代码即云控制面下发的项目运行时。.env.example 长达 20KB, 注释密度极高, 大量条目直接解释参数间的耦合约束 (PostgREST 池对齐、keep-alive 与 LB 超时、compose 项目名语义), 本身就是自托管运维手册。
+代码里大量行为由 isCloudEnvironment() (backend/src/utils/environment.ts) 切换: 根路径重定向到 /dashboard/login 仅非云; 备份调度器仅非云; OpenRouter key 轮换仅云; signCloudToken 仅云; 遥测在云环境整体关闭 (云上另有控制面遥测)。PROJECT_ID/APP_KEY/CLOUD_API_HOST/DEPLOYMENT_ID/PARENT_APP_KEY 等变量构成云多租户身份, 存储 branch 模式、compute cloud provider、云 token 验证都挂在这组变量上。同一套 OSS 代码即云控制面下发的项目运行时。.env.example 约 450 行, 注释密度极高, 大量条目直接解释参数间的耦合约束 (PostgREST 池对齐、keep-alive 与 LB 超时、compose 项目名语义), 本身就是自托管运维手册。
 
 ## 十三、Agent 原生配套 (docs / skills / plugin)
 
@@ -571,7 +570,7 @@ OAuth 流程本体 (oauth-manager.ts): 对 MCP 客户端做标准授权码 + PKC
 | Vercel 部署状态机与 appKey.insforge.site                             | packages/shared-schemas/src/deployments.schema.ts; backend/src/services/deployments/deployment.service.ts getDeploymentUrl                     |
 | 前端双模式壳                                                         | frontend/src/App.tsx; frontend/package.json description                                                                                        |
 | dashboard 15 个 feature 与 PostHog V4 实验 flag                      | packages/dashboard/src/features 目录; packages/dashboard/src/router/AppRoutes.tsx AuthenticatedRoutes                                          |
-| openapi 17 文件 15007 行, auth.yaml 38 路径                          | openapi/ 目录 wc -l 与 grep 实测                                                                                                               |
+| openapi 17 文件 15015 行, auth.yaml 38 路径                          | openapi/ 目录 wc -l 与 grep 实测                                                                                                               |
 | docs 路由路径穿越防护限 docs/ 与 .agents/docs                        | backend/src/api/routes/docs/index.routes.ts 安全检查段                                                                                         |
 | runner 镜像 CMD 先迁移后 exec node                                   | 根 Dockerfile runner 阶段                                                                                                                      |
 | setup.sh 生成六个 secret (含两个 access key)、幂等、不启动服务       | deploy/setup.sh gen_secret 调用与头注释; README Quickstart                                                                                     |

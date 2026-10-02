@@ -467,7 +467,7 @@ type TimeWheel struct {
 
 ### 进程装配
 
-`timer_demo/main.go`: 从 `app` 包取四个应用实例 (migrator、scheduler、webserver、monitor) 依次 Start, 另起 pprof 服务 (`:9999`), 等待 SIGINT.
+`timer_demo/main.go`: 从 `app` 包取四个应用实例, 依次 Start migrator、scheduler、monitor (三者均 `defer Stop()`), web server 最后 Start; 另起 pprof 服务 (`:9999`), 等待 SIGINT.
 
 `timer_demo/app/provider.go`: 全部依赖注入在 `init()` 中用 `go.uber.org/dig` 完成, 分五组 Provide -- conf 提供器、pkg (bloom、hash、redis、mysql、cron、xhttp、promethus)、dao (timer、task、taskCache)、service、app; `GetSchedulerApp` 等函数通过 `container.Invoke` 拉取根对象, 依赖图由 dig 解析.
 

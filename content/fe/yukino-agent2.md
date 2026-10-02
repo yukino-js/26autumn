@@ -5,7 +5,7 @@ description: "基于代码事实梳理 yukino-agent2 的 Hono HTTP 层、LangGra
 
 > 本机器路径 `$HOME/github/yukino-agent2`
 
-yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScript 实现. 后端品牌为 Yukino Select, 客服人设名为 Yukino (`AGENTS.md` 中固化为项目规范: Project Brand Name / Project Agent Persona). 知识库语料为英文 Markdown, system prompt 亦要求以英文作答 (`src/core/prompts.ts` 的 "answer in English" 规则). 本文所有结论均基于仓库真实源码, 关键处给出相对仓库根的文件路径与函数名引用.
+yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScript 实现. 品牌为 Yukino Select, 客服人设名为 Yukino (`AGENTS.md` 的 Project Brand Name / Project Agent Persona 固化为项目规范): 该品牌与人设贯穿 `src/core/prompts.ts` 的主体 system prompt (`CUSTOMER_SERVICE_SYSTEM`、`AGENT_SYSTEM`、`RAG_ANSWER_SYSTEM`、`FAITHFULNESS_SYSTEM` 四段均以 "Yukino"/"Yukino Select" 自称, `src/core/prompts.ts:7,38,84,117`)、前端页面与弹窗文案 (`fe/index.html` 的 title "Yukino Select" 与 description)、`data/kb/` 语料与 eval 夹具. 知识库语料为英文 Markdown, system prompt 亦要求以英文作答 (`CUSTOMER_SERVICE_SYSTEM` 与 `RAG_ANSWER_SYSTEM` 的 "answer in English" 规则). 本文所有结论均基于仓库真实源码, 关键处给出相对仓库根的文件路径与函数名引用.
 
 ## 一、项目快照
 
@@ -27,7 +27,7 @@ yukino-agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScr
 | 包管理      | pnpm workspace (`pnpm-workspace.yaml` 声明 `packages: [fe]`)                                                               |
 | 启动        | `pnpm dev` (tsx watch) 或 `node main.js dev` (先拉起两个 MCP mock 服务再 `pnpm dev`)                                       |
 
-版本号取自根 `package.json` 的 dependencies/devDependencies 声明区间, 其中 hono 4.13.12、langgraph 1.4.18、core 1.2.13、checkpoint-postgres 1.0.5、openai 7.25.0 与 `pnpm-lock.yaml` 实际解析版本一致.
+版本号取自根 `package.json` 的 dependencies/devDependencies 声明区间 (表中 `@langchain/openai` 1.6.0 与官方 `openai` SDK 7.25.0 是两个不同依赖); 其中 hono 4.13.12、`@langchain/langgraph` 1.4.18、`@langchain/core` 1.2.13、`@langchain/langgraph-checkpoint-postgres` 1.0.5、`openai` 7.25.0、pg 8.23.1、zod 4.6.5 均与 `pnpm-lock.yaml` 实际解析版本一致.
 
 ### 目录结构
 
@@ -40,8 +40,9 @@ yukino-agent2/
 │   ├── config.ts         # .env 配置读取 (settings 对象 + missingRuntimeConfig)
 │   ├── logger.ts         # pino 日志
 │   ├── api/              # 12 个路由模块 (chat/agent/kb/review/rageval/admin/jobs/...)
-│   ├── core/             # llm/intent/coref/retrieval/rerank/confidence/memory/
-│   │                     # budget/summarizer/selfcheck/flywheel/observability/jobs/prompts
+│   ├── core/             # llm/intent/coref/query-understanding/retrieval/rerank/confidence/
+│   │                     # memory/budget/summarizer/selfcheck/flywheel/observability/jobs/prompts
+│   │                     # embeddings/model-guard/read-notes
 │   ├── graph/            # LangGraph 图: build/state/nodes/routing/runtime
 │   ├── kb/               # 知识库: chunking/documents/sources/store/milvus/dualwrite/mining/dedup
 │   ├── tools/            # 工具注册表/执行引擎/MCP 客户端 + builtin/ 内置工具
@@ -116,20 +117,20 @@ export const chatRequestSchema = z.object({
 
 由 `grep` 各路由文件得到 (相对路径 `src/api/*.ts`):
 
-| 端点                                                                                                                                                                     | 文件             | 职责                                                       |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- | ---------------------------------------------------------- |
-| POST /api/chat                                                                                                                                                           | chat.ts          | 对话 SSE 流式端点                                          |
-| POST /api/agent                                                                                                                                                          | agent.ts         | 非流式对话端点 (评测/测试用), 返回 tool_calls/tool_results |
-| POST /api/actions/create-ticket, /api/actions/create-refund, /api/actions/resume                                                                                         | actions.ts       | UI 动作卡片回调与 interrupt 恢复                           |
-| GET /api/conversations                                                                                                                                                   | conversations.ts | 会话列表                                                   |
-| POST /api/feedback                                                                                                                                                       | feedback.ts      | 点赞/点踩反馈                                              |
-| POST /api/extract                                                                                                                                                        | extract.ts       | 售后工单信息抽取                                           |
-| GET /api/kb/overview, POST /api/kb/preview, /api/kb/ingest, /api/kb/vectorize, /api/kb/search, GET /api/kb/staging, POST /api/kb/staging/approve, /api/kb/staging/reject | kb.ts            | 知识库运营页后端                                           |
-| GET /api/review/queue, GET /api/review/:review_id, POST /api/review/:review_id/approve, /api/review/:review_id/reject                                                    | review.ts        | 低置信问题人工审核队列                                     |
-| GET /api/rag-eval/overview, GET /api/rag-eval/faith-cases, POST /api/rag-eval/faith-cases/:case_id/status                                                                | rageval.ts       | RAG 评测看板与忠实度案例处置                               |
-| GET /api/admin/overview, GET /api/admin/jobs                                                                                                                             | admin.ts         | 管理后台概览                                               |
-| GET /api/jobs, POST /api/jobs/:name, GET /api/jobs/:name, POST /api/jobs/:name/stop                                                                                      | jobs.ts          | 任务运行器 HTTP 接口                                       |
-| GET /api/observability/overview                                                                                                                                          | observability.ts | 可观测/成本/校准三合一概览                                 |
+| 端点                                                                                                                                                                     | 文件             | 职责                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- | -------------------------------------------------------------------------- |
+| POST /api/chat                                                                                                                                                           | chat.ts          | 对话 SSE 流式端点                                                          |
+| POST /api/agent                                                                                                                                                          | agent.ts         | 非流式对话端点 (评测/测试用), 返回 tool_calls/tool_results                 |
+| POST /api/actions/create-ticket, /api/actions/create-refund, /api/actions/resume                                                                                         | actions.ts       | UI 动作卡片回调与 interrupt 恢复                                           |
+| GET /api/conversations                                                                                                                                                   | conversations.ts | 会话列表与历史消息 (另含 GET /api/conversations/:conversation_id/messages) |
+| POST /api/feedback                                                                                                                                                       | feedback.ts      | 点赞/点踩反馈                                                              |
+| POST /api/extract                                                                                                                                                        | extract.ts       | 售后工单信息抽取                                                           |
+| GET /api/kb/overview, POST /api/kb/preview, /api/kb/ingest, /api/kb/vectorize, /api/kb/search, GET /api/kb/staging, POST /api/kb/staging/approve, /api/kb/staging/reject | kb.ts            | 知识库运营页后端                                                           |
+| GET /api/review/queue, GET /api/review/:review_id, POST /api/review/:review_id/approve, /api/review/:review_id/reject                                                    | review.ts        | 低置信问题人工审核队列                                                     |
+| GET /api/rag-eval/overview, GET /api/rag-eval/faith-cases, POST /api/rag-eval/faith-cases/:case_id/status                                                                | rageval.ts       | RAG 评测看板与忠实度案例处置                                               |
+| GET /api/admin/overview, GET /api/admin/jobs                                                                                                                             | admin.ts         | 管理后台概览                                                               |
+| GET /api/jobs, POST /api/jobs/:name, GET /api/jobs/:name, POST /api/jobs/:name/stop                                                                                      | jobs.ts          | 任务运行器 HTTP 接口                                                       |
+| GET /api/observability/overview                                                                                                                                          | observability.ts | 可观测/成本/校准三合一概览                                                 |
 
 ### 聊天 SSE 协议
 
@@ -177,7 +178,7 @@ log -> END
 
 ### 状态设计
 
-`ConversationState` (`src/graph/state.ts:43`) 用 LangGraph `Annotation.Root` 定义约 24 个通道, 其中两个带自定义 reducer:
+`ConversationState` (`src/graph/state.ts:43`) 用 LangGraph `Annotation.Root` 定义 23 个通道, 其中两个带自定义 reducer:
 
 - `messages`: `messagesStateReducer` (追加并按 id 合并).
 - `trace`: `mergeDict` 合并字典; 注释说明 `null` 是入口重置哨兵 —— 合并型通道无法用空对象清零, 只能靠 null (`src/graph/state.ts:32-41`).
@@ -242,7 +243,7 @@ log -> END
 
 ### Rerank 上游
 
-`src/core/rerank.ts` 封装两种协议: `RERANK_PROTOCOL=jina` (默认) 时请求 `POST {base}/rerank` (Jina/Cohere 形态); `dashscope` 时剥掉 `/v1`、`/compatible-mode` 等后缀, 走阿里网关原生路径 `{gateway}/api/v1/services/rerank/text-rerank/text-rerank` (`rerankUrl()`, 18-43 行). 重试策略: 429/500/502/503/504 触发, 最多 3 次, 退避 1500ms (`rerank.ts:10-12`). 返回按 `relevance_score` 降序, 输出 `[index, score]` 对供 `searchKnowledge` 回填 `rerank_score`.
+`src/core/rerank.ts` 封装两种协议: `RERANK_PROTOCOL=jina` (默认) 时请求 `POST {base}/rerank` (Jina/Cohere 形态); `dashscope` 时剥掉 `/v1`、`/compatible-mode` 等后缀, 走阿里网关原生路径 `{gateway}/api/v1/services/rerank/text-rerank/text-rerank` (`rerankUrl()`, 18-43 行). 重试策略: 429/500/502/503/504 或连接层异常触发, `RETRIES = 3` 即最多重试 3 次 (加首次请求共 4 次尝试), 退避 `BACKOFF_MS * 2^i` 从 1500ms 起指数增长 (`rerank.ts:10-12`). 返回按 `relevance_score` 降序, 输出 `[index, score]` 对供 `searchKnowledge` 回填 `rerank_score`.
 
 ### 证据置信度与两道门禁
 
@@ -375,7 +376,7 @@ score = 0.5 * clip01(top1_score)          # 最高 rerank 分
 5. 超时与重试: 超时取 spec 覆盖, 否则 `TOOL_DEFAULT_TIMEOUT` (5s) 或 `MCP_TOOL_TIMEOUT` (10s); 读工具重试 `TOOL_MAX_RETRIES` (2) 次, 写工具 0 次.
 6. 审计: 每次调用落 `ToolAuditLog` (会话、工具名、来源、MCP 服务、入参、结果摘要、状态、重试数、耗时), 审计写失败不影响工具执行 (`audit`, 173 行); 同时打 `tool_run` 结构化日志.
 
-结果格式化发生在客户端而非服务端: `src/tools/mcp-client.ts` 为 query_logistics/query_warranty/query_return_status 各配了 `ResultFormatter`, 把内部枚举 (如 `IN_TRANSIT`) 翻译成面向用户的文案, 并丢弃内部字段 (`carrier_code` 等).
+结果格式化发生在 MCP 客户端 (我们这端) 而不是 MCP 服务器: `src/tools/mcp-client.ts` 为 query_logistics/query_warranty/query_return_status 各配了 `ResultFormatter`, 把内部枚举 (如 `IN_TRANSIT`) 翻译成面向用户的文案, 并丢弃内部字段 (`status_code`、`carrier_code`、`warranty_code`、`policy_ref` 等).
 
 ### MCP 服务端
 
@@ -486,7 +487,7 @@ sliding = min(CONTEXT_BUDGET_TURNS * steady_per_turn, window - fixed - peak)    
 - 轮级记录: `recordTurn` (82 行) 用 `propagateAttributes` + `startActiveObservation` 记一条 generation (input/output/model/total tokens), 意图作为 tag (`intent:xxx`) 与 metadata; 注释写明可观测是增强项, 一切异常吞掉.
 - 关停: `shutdownObservability` 在 server 优雅关停链里 flush.
 
-成本报表 `scripts/cost-report.ts` (job `cost-report`) 依赖 Langfuse 中窗口内的 traces 按意图汇总成本, 展示在 /observability 页面; `src/api/observability.ts` 的 overview 端点把成本、置信度校准、Langfuse 配置状态聚合成一个响应.
+成本报表 `scripts/cost-report.ts` (job `cost-report`) 依赖 Langfuse 中窗口内的 traces 按意图汇总成本, 展示在 /observability 页面; `src/api/observability.ts` 的 overview 端点把成本报表 (cost_by_intent.json)、评测趋势 (eval_runs 表) 与置信度校准 (confidence_calibration.json) 三块聚合成一个响应, 页面只读这些产物、从不重算.
 
 ## 十二、部署与任务运行器
 
@@ -516,24 +517,24 @@ sliding = min(CONTEXT_BUDGET_TURNS * steady_per_turn, window - fixed - peak)    
 
 `pnpm test` (vitest run) 覆盖 16 个测试文件共 59 个用例 (按源码 it/test 块静态统计), 均不走真实上游. 代表性文件:
 
-| 文件                                                                                                                                                 | 关注点                                                     |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| api-contracts.test.ts                                                                                                                                | Hono 应用级契约 (含 /api/agent, /api/chat 的 400/404 行为) |
-| retrieval-pipeline.test.ts / retrieval-helpers.test.ts                                                                                               | 检索管线与 rerank 组装                                     |
-| kb-store.test.ts                                                                                                                                     | 进程内 BM25/稠密/混合检索 (含 tokenize)                    |
-| confidence.test.ts                                                                                                                                   | 置信度公式与信号 (4 个用例)                                |
-| memory.test.ts / budget.test.ts                                                                                                                      | 分层窗口裁剪与预算分账                                     |
-| tool-engine.test.ts                                                                                                                                  | 执行引擎校验/权限/审计                                     |
-| dualwrite.test.ts / chunking.test.ts / dedup.test.ts / repository.test.ts / json.test.ts / model-guard.test.ts / read-notes.test.ts / config.test.ts | KB 双写、切分、去重、仓储、JSON 安全、模型护栏等           |
+| 文件                                                                                                                                                 | 关注点                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| api-contracts.test.ts                                                                                                                                | Hono 应用级契约 (/api/kb/staging 的 400 限制校验、order_id 占位符归一化) |
+| retrieval-pipeline.test.ts / retrieval-helpers.test.ts                                                                                               | 检索管线与 rerank 组装                                                   |
+| kb-store.test.ts                                                                                                                                     | 进程内 BM25/稠密/混合检索 (含 tokenize)                                  |
+| confidence.test.ts                                                                                                                                   | 置信度公式与信号 (4 个用例)                                              |
+| memory.test.ts / budget.test.ts                                                                                                                      | 分层窗口裁剪与预算分账                                                   |
+| tool-engine.test.ts                                                                                                                                  | 执行引擎校验/权限/审计                                                   |
+| dualwrite.test.ts / chunking.test.ts / dedup.test.ts / repository.test.ts / json.test.ts / model-guard.test.ts / read-notes.test.ts / config.test.ts | KB 双写、切分、去重、仓储、JSON 安全、模型护栏等                         |
 
 ### 离线脚本 (scripts/, 35 个)
 
 README 将其定位为离线工具: 或直接驱动运行中的服务器, 或直连上游. 按前缀分组:
 
 - `kb-*`: 知识库构建/向量化/挖掘/重置/预览/重嵌 (即 main.js kb 任务的实体).
-- `eval-*`: eval-rag (四策略对比)、eval-flywheel (记录一轮趋势)、eval-retrieval、eval-judge、eval-intent、eval-coref、eval-expand、eval-extract、eval-mcp、eval-workflow、eval-agent、eval-context、calibrate-confidence、cost-report. 其中 eval-mcp/eval-workflow 等对 `http://localhost:8000/api/agent` 跑验收用例 (建单三连问: 缺描述先追问 -> 补描述弹 interrupt 预览卡 -> 确认后落 tickets 行 + 审计 success + 回答带单号).
+- `eval-*`: eval-rag (四策略对比)、eval-flywheel (记录一轮趋势)、eval-retrieval、eval-judge、eval-intent、eval-intent2、eval-coref、eval-expand、eval-extract、eval-mining、eval-mcp、eval-workflow、eval-agent、eval-context、calibrate-confidence、cost-report. 其中 eval-mcp 对 `http://localhost:8000/api/agent` + `/api/actions/resume` 跑建单验收 (三连问: 缺描述先追问 -> 补描述弹 interrupt 预览卡 -> 确认后落 tickets 行 + 审计 success + 回答带单号; 取消则审计 permission_denied), eval-workflow 跑业务数据/投诉/闲聊/多步链路的验收用例.
 - `smoke-*`: smoke-embed / smoke-rerank / smoke-bm25 / smoke-milvus / smoke-toolcall / smoke-langgraph / smoke-interrupt, 分别冒烟各上游与关键机制.
-- `validate-*` 与 `bare-agent-loop.ts`: 样本数据校验与最小 agent 循环基线.
+- `validate-*` 与 `bare-agent-loop.ts`: 样本数据校验与最小 agent 循环基线; 另有一次性的 `rename-chapters.mjs` 辅助脚本.
 
 测试数据 (tests/data/) 含 eval_rag.jsonl、query_rewrite_samples.jsonl、retrieval_samples.json 等样本集, 与评测脚本配套.
 

@@ -216,7 +216,3 @@ target
 # (the mirrors themselves stay local; REPO-FACTS.md is tracked)
 .research/*
 !.research/REPO-FACTS.md
-
-# stray reference clone of a2ui-project/a2ui at the repo root
-# (the canonical provisioned copy lives at $HOME/Downloads/a2ui)
-/a2ui/

@@ -85,17 +85,17 @@ Yukino Agent 是一个 Next.js 16 App Router 全栈应用, 前后端同仓同进
 
 ---
 
-### 这个项目是从 Go 项目重写而来的, 重写过程中如何保证行为对齐? 这种"对照式重写"有哪些工程价值?
+### 代码中的来源注释、不变量注释与 P 编号修复注释, 体现了怎样的工程质量实践?
 
-代码中留有可追溯的移植对照痕迹: `models.ts:102` 注明 extended thinking 的 providerOptions "mirrors yukino/src/llm/anthropic.ts L310-322";`knowledge-index.ts:19` 注明切分参数 "match the proven yukino-chatbot RAG setup";`AGENTS.md:22` 记录 Go 后端 sentry_metrics_handler.go 暴露字节级相同的 `yukino_sentry_*` 指标名;`memory.ts:1` 注明 "window size 6, drop in pairs" 语义.
+代码中留有可追溯的来源与契约注释: `models.ts:102` 注明 extended thinking 的 providerOptions "mirrors yukino/src/llm/anthropic.ts L310-322";`knowledge-index.ts:19` 注明切分参数 "match the proven yukino-chatbot RAG setup";`AGENTS.md:22` 记录 Go 后端 sentry_metrics_handler.go 暴露字节级相同的 `yukino_sentry_*` 指标名, 一套 Prometheus 与一份规则文件同时服务两个实现;`memory.ts:1` 注明 "window size 6, drop in pairs" 语义.
 
-保证行为对齐的手段:
+保证行为正确性的手段:
 
-1. 语义级移植而非字面翻译: 保留关键不变量——如记忆窗口成对丢弃以保持 user/assistant 对齐 (`memory.ts:39-40` 注释与 `41-48` 实现)、Prometheus 告警同名去重只保留首次出现 (`operations.ts:75-89`)、MCP 不可用时降级为空工具表 (`query-log.ts:49-57`).
-2. 显式记录偏差: 有意的行为差异都在注释中声明, 例如 MySQL 工具注释 "Executes directly without an interactive confirmation prompt"(`operations.ts:125`)——Web 版去掉了交互确认直接执行.
-3. 修复可追溯: 重写过程中的修复以 `P1-x/P2-x/P3-x` 编号注释标记 (如 P1-8 Redis 单例失败重试 `client.ts:12`、P2-17 executor 补 providerOptions `executor.ts:18`、P2-13 距离转相似度 `retriever.ts:45`), 每个编号对应一条 review 发现, 形成完整的决策痕迹.
+1. 显式声明不变量: 保留关键不变量——如记忆窗口成对丢弃以保持 user/assistant 对齐 (`memory.ts:39-40` 注释与 `41-48` 实现)、Prometheus 告警同名去重只保留首次出现 (`operations.ts:75-89`)、MCP 不可用时降级为空工具表 (`query-log.ts:49-57`).
+2. 显式记录行为特征: 例如 MySQL 工具注释 "Executes directly without an interactive confirmation prompt"(`operations.ts:125`)——当前实现不做交互确认, 直接执行 SQL.
+3. 修复可追溯: 代码中的修复以 `P1-x/P2-x/P3-x` 编号注释标记 (如 P1-8 Redis 单例失败重试 `client.ts:12`、P2-17 executor 补 providerOptions `executor.ts:18`、P2-13 距离转相似度 `retriever.ts:45`), 每个编号对应一条 review 发现, 形成完整的决策痕迹.
 
-工程价值: 对照注释让 review 者能逐条核对"这个行为是故意的还是漏掉的";P 编号把"重写"同时变成了一次系统性代码审计——很多 bug (内存无限增长、维度不匹配静默失败) 是在重写时才被发现并修复的.
+工程价值: 契约注释让 review 者能逐条核对"这个行为是故意的还是漏掉的";P 编号把系统性代码审计的结论固化在代码里——内存无限增长、维度不匹配静默失败这类 bug 正是由此被发现并修复的.
 
 ---
 
@@ -265,7 +265,7 @@ ReAct(Reasoning + Acting) 是让 LLM 在"思考 → 调用工具 → 观察结�
 
 管线对外的契约收敛为 AsyncGenerator 事件流 (plan_created/step_start/step_done/replan/done/error), `/api/ai_ops` 路由 (`app/api/ai_ops/route.ts:3,17`) 与前端 `triggerAIOps` (`hooks/use-chat.ts:397-428`) 只消费事件、不感知图的内部结构——这是"管线与传输解耦"的回报: 编排引擎属于管线内部实现细节, 可以独立替换或演进, 对外零波及.
 
-相关依赖 (`package.json:29-37`): `@langchain/langgraph ^1.4.18`、`@langchain/langgraph-checkpoint-postgres ^1.0.5`、`@langchain/openai ^1.6.0`、`@langfuse/langchain|otel|tracing ^5.11.1`、`@opentelemetry/sdk-node ^0.222.0`; `pnpm-workspace.yaml` 的 `allowBuilds` 放行 protobufjs 的构建脚本 (由 OTLP/gRPC 导出链的 `@grpc/proto-loader` 传递引入, pnpm-lock 锁定 7.6.6). 其中 `@langchain/langgraph-checkpoint-postgres` 与 `@langchain/openai` 当前源码零 import, 属于为 checkpoint 持久化与 LangChain 模型接入预留的依赖. 观测层落地 (`lib/observability.ts`、`instrumentation.ts:9-13` 先开 tracing 再做知识索引、`lib/config.ts`/`.env.example` 的 langfuse 配置块) 详见第十二节.
+相关依赖 (`package.json:29-37`): `@langchain/langgraph ^1.4.18`、`@langchain/langgraph-checkpoint-postgres ^1.0.5`、`@langchain/openai ^1.6.0`、`@langfuse/langchain|otel|tracing ^5.11.1`、`@opentelemetry/sdk-node ^0.222.0`; `pnpm-workspace.yaml` 的 `allowBuilds` 放行 protobufjs、sharp、unrs-resolver 三个含构建脚本的依赖 (protobufjs 由 OTLP/gRPC 导出链的 `@grpc/proto-loader` 传递引入, pnpm-lock 锁定 7.6.6), 另有 `minimumReleaseAgeExclude` 放行 `@yukino.js/sentry@0.0.1`. 其中 `@langchain/langgraph-checkpoint-postgres` 与 `@langchain/openai` 当前源码零 import, 属于为 checkpoint 持久化与 LangChain 模型接入预留的依赖. 观测层落地 (`lib/observability.ts`、`instrumentation.ts:9-13` 先开 tracing 再做知识索引、`lib/config.ts`/`.env.example` 的 langfuse 配置块) 详见第十二节.
 
 ---
 
@@ -278,7 +278,7 @@ ReAct(Reasoning + Acting) 是让 LLM 在"思考 → 调用工具 → 观察结�
 1. 绝大多数字段用 `overwrite` reducer (`graph.ts:46`), 即 last-write-wins: plan 每轮被 replanner 整体替换为 remaining, stepIndex/iteration/done/report 同理覆盖写;
 2. `detail` 独享 concat reducer (`graph.ts:56-59`): executor 节点每次返回的 `{detail: [text]}` 被追加到既有数组. 若这里也用 overwrite, 状态里将只剩最后一步的输出 (last-write-wins), replanner 的评估输入 (`graph.ts:174`) 和 done 事件的步骤明细 (`graph.ts:268`) 都会丢失全部历史. 它是图中唯一的"只增历史"字段, 跨 replan 轮次累计.
 
-为什么不用 langgraph 的 `StateSchema` (以 zod schema 声明状态): 本仓库的 zod 是 v4 (import 一律 `zod/v4`), 其 `~standard` 接口缺少 langgraph `StateSchema` 所要求的 JSON-Schema 属性, 用 `Annotation.Root` 显式声明状态是正确选择——该坑已固化进仓库 `AGENTS.md:24`.
+为什么不用 langgraph 的 `StateSchema` (以 zod schema 声明状态): 应用代码的 zod 走 v4 (`package.json` 声明 `zod ^3.25.76`, 该版本通过 `zod/v4` 子路径提供 v4 API, lib/、app/、hooks/ 的 import 一律是 `zod/v4`; `catalog/` 下的 a2ui 组件单独用 `zod/v3` 与 web_core 对齐), 其 `~standard` 接口缺少 langgraph `StateSchema` 所要求的 JSON-Schema 属性, 用 `Annotation.Root` 显式声明状态是正确选择——该坑已固化进仓库 `AGENTS.md:24`.
 
 ---
 
@@ -541,7 +541,7 @@ HNSW(Hierarchical Navigable Small World) 是一种基于图的近似最近邻 (A
 2. 指令优先级声明:AI_OPS_QUERY 中"严格遵循内部文档"的语境是"处理流程", 而非全局指令覆盖;
 3. 来源可信: 文档来自内部上传 (upload 接口) , 非公开抓取, 攻击面相对小.
 
-但要说清楚:目前没有根治方案, 业界的纵深防御还包括——检索结果 sanitize (stripping 指令性语句模式) 、把文档放入独立 user message 而非 system prompt (降低指令权重) 、对工具调用做人工确认 (human-in-the-loop, 本项目 mysql_crud 的写操作尤其需要, 源项目的交互确认被 Web 版移除后防线少了一层, 见「mysql_crud 允许任意 SQL 的评价与加固」)、输出侧审计. 需要注意当前实现的残余风险.
+但要说清楚:目前没有根治方案, 业界的纵深防御还包括——检索结果 sanitize (stripping 指令性语句模式) 、把文档放入独立 user message 而非 system prompt (降低指令权重) 、对工具调用做人工确认 (human-in-the-loop, 本项目 mysql_crud 的写操作尤其需要——当前实现直接执行 SQL, 没有确认环节, 见「mysql_crud 允许任意 SQL 的评价与加固」)、输出侧审计. 需要注意当前实现的残余风险.
 
 ---
 
@@ -574,7 +574,7 @@ AI SDK 中工具三要素 (以 `mysqlCrudTool` 为例,`tools/index.ts:24-32`):
 
 1. 超时控制:`fetch(url, { signal: AbortSignal.timeout(10000) })`——Prometheus 宕机/网络分区时 10 秒快速失败, 不会把 ReAct 循环挂死在一次 HTTP 上;
 2. 响应 zod 宽松校验:`z.looseObject` 只声明关心的字段 (labels/annotations/state/activeAt), 其余字段容忍——Prometheus 版本间响应字段有差异, 严格 schema 会把兼容性变成脆弱性; 校验失败走 catch 返回错误结构而非抛异常;
-3. 同名去重: 同一 alertname 可能多条实例 (不同 instance 标签) , 按"首次出现保留"去重, 对齐源项目语义——对 LLM 而言 10 条同因告警是噪声, 压缩 token 也避免模型重复分析;
+3. 同名去重: 同一 alertname 可能多条实例 (不同 instance 标签) , 按"首次出现保留"去重——对 LLM 而言 10 条同因告警是噪声, 压缩 token 也避免模型重复分析;
 4. duration 计算:`activeAt` 转人类可读的 `Xh Ym Zs`(`operations.ts:106-116`)——模型对"持续 3 小时"的判断远好于对 ISO 时间戳的心算, 等于把计算前置到工具侧;
 5. 错误即数据: 失败返回 `{success:false, error}` 而非 throw, 让模型能读到"Prometheus 不可用"并如实告知用户 (对应「LLM 调用特点的错误处理设计」的"面向 LLM 的错误要可读").
 
@@ -582,7 +582,7 @@ AI SDK 中工具三要素 (以 `mysqlCrudTool` 为例,`tools/index.ts:24-32`):
 
 ### `mysql_crud` 工具的 DSN 为什么要做格式归一化? 每次调用新建/销毁 knex 实例的取舍是什么?
 
-`normalizeDsn`(`operations.ts:127-131`): 源 Go 项目使用 Go MySQL driver 的 DSN 格式 `user:pass@tcp(host:port)/db`, 而 node 的 mysql2 接受标准 URL `mysql://user:pass@host:port/db`. 归一化用正则把 `@tcp(...)` 替换为 `@...` 并补协议头. 存在的原因:DSN 是 LLM 生成的——模型从文档/知识库里学到的 DSN 样例很可能是 Go 格式 (内部文档面向 Go 服务) , 兼容两种格式避免了"模型按文档填 DSN 却连不上"的失败循环. 这是"工具实现迁就模型输入分布"的典型例子.
+`normalizeDsn`(`operations.ts:127-131`): 同时接受 Go MySQL driver 的 DSN 格式 `user:pass@tcp(host:port)/db` 与 node mysql2 的标准 URL `mysql://user:pass@host:port/db`. 归一化用正则把 `@tcp(...)` 替换为 `@...` 并补协议头. 存在的原因:DSN 是 LLM 生成的——模型从文档/知识库里学到的 DSN 样例可能是 Go 格式, 兼容两种格式避免了"模型按文档填 DSN 却连不上"的失败循环. 这是"工具实现迁就模型输入分布"的典型例子.
 
 每次新建/销毁 knex(`operations.ts:133-151`):
 
@@ -613,7 +613,7 @@ MCP 是 Anthropic 主导的开放协议, 目标是标准化"应用向 LLM 提供
 
 设计意图:① MCP 握手 + listTools 是网络开销, 每次 chat 都重连浪费; ② 降级为空工具表意味着"MCP 挂了, 对话仍可用, 只是少了日志工具"——语义上等价于忽略连接错误继续跑.
 
-并发隐患 (值得注意) :缓存检查与赋值之间存在 check-then-act 竞态——两个并发请求同时发现 `cachedTools` 为空, 会各自建连、各自 listTools, 后完成者覆盖前者的 client, 前者的连接泄漏. 另外"失败也缓存 \{\}"意味着 MCP 恢复后进程内永远拿不到工具, 需重启 (或调用未暴露的 `closeLogMcpClient`). 改进: 缓存 Promise 而非结果 (`cachedToolsPromise ??= connect()`), 失败时重置 Promise 允许下次重试——项目里 Redis 客户端单例已示范了该模式 (`clientPromise` 缓存 + 失败重置, P1-8, `client.ts:8-20`), MCP 这处尚未对齐.
+并发隐患 (值得注意) :缓存检查与赋值之间存在 check-then-act 竞态——两个并发请求同时发现 `cachedTools` 为空, 会各自建连、各自 listTools, 后完成者覆盖前者的 client, 前者的连接泄漏. 另外"失败也缓存 \{\}"意味着 MCP 恢复后进程内永远拿不到工具, 需重启 (或调用已导出但当前无调用方的 `closeLogMcpClient`, `query-log.ts:60-66`, 它会清空两个缓存). 改进: 缓存 Promise 而非结果 (`cachedToolsPromise ??= connect()`), 失败时重置 Promise 允许下次重试——项目里 Redis 客户端单例已示范了该模式 (`clientPromise` 缓存 + 失败重置, P1-8, `client.ts:8-20`), MCP 这处尚未对齐.
 
 ---
 
@@ -874,7 +874,7 @@ useEffect(() => {
 
 ### 消息列表的自动滚动与流式光标是怎么做的? 有什么体验细节?
 
-自动滚动(`msg-list.tsx:45-80`) 使用 `@shadcn/react/message-scroller` 原语的封装 `components/ui/message-scroller.tsx`——`MessageScrollerProvider autoScroll` 开启自动跟随, 每条消息包在 `MessageScrollerItem` 里且仅最后一条设 `scrollAnchor`, 右下角有 `MessageScrollerButton` 供用户上翻后一键回底. 跟随/停跟的判定逻辑 (用户滚动时暂停、回底后恢复) 在 message-scroller 原语内部实现 (node_modules 依赖, 仓库内不可见), Viewport 上暴露的 `data-autoscrolling` 属性用于滚动中隐藏滚动条. 此外 `MessageScrollerItem` 带 `[content-visibility:auto]` 与 `[contain-intrinsic-size:auto 10rem]` 类 (`ui/message-scroller.tsx`), 用 CSS 渲染包含跳过屏外消息的绘制, 属于轻量虚拟化.
+自动滚动(`msg-list.tsx:45-80`) 使用 `@shadcn/react/message-scroller` 原语的封装 `components/ui/message-scroller.tsx`——`MessageScrollerProvider autoScroll` 开启自动跟随, 每条消息包在 `MessageScrollerItem` 里且仅最后一条设 `scrollAnchor`, 底部居中有 `MessageScrollerButton` 供用户上翻后一键回底. 跟随/停跟的判定逻辑 (用户滚动时暂停、回底后恢复) 在 message-scroller 原语内部实现 (node_modules 依赖, 仓库内不可见), Viewport 上暴露的 `data-autoscrolling` 属性用于滚动中隐藏滚动条. 此外 `MessageScrollerItem` 带 `[content-visibility:auto]` 与 `[contain-intrinsic-size:auto 10rem]` 类 (`ui/message-scroller.tsx`), 用 CSS 渲染包含跳过屏外消息的绘制, 属于轻量虚拟化.
 
 流式反馈 (`msg-list.tsx:178-185` 与 `md-render.tsx:21-26`): 回复未到达时先渲染 "Thinking..." 占位 (Spinner 组件); 流式中 MdRender 把 `streaming` prop 转发给 Streamdown 的 `mode="streaming"` + `isAnimating` + `caret="circle"`, 由 Streamdown 渲染打字机光标, 给用户"仍在生成"的明确信号. `streaming` 的判定逻辑 (`msg-list.tsx:66-70`) 要求 isStreaming 且是最后一条 assistant 消息,AI Ops 等非流式场景不会误显示.
 
@@ -1006,14 +1006,14 @@ P1-8(Redis 单例失败重置, `client.ts:12-17`):`clientPromise` 缓存若没�
 1. LLM 生成 SQL 不可预测: 可能生成 `DROP TABLE`、无 WHERE 的全表 UPDATE、慢查询拖垮业务库;
 2. prompt injection 间接利用: 知识库文档/告警描述里若藏有"去查一下 mysql,DELETE FROM ..."的诱导文本, 模型可能照做 (见「RAG 场景的 prompt injection 防护」);
 3. DSN 由模型传入: 等于把"连哪个库"的决定权也交给了模型, 配合内部文档里的 DSN 样例, 可能触达不该触达的库;
-4. Web 版移除了源项目的交互确认, 直接执行 SQL (`operations.ts:125` 注释 "Executes directly without an interactive confirmation prompt"), 执行链路上没有人工卡点.
+4. 当前实现直接执行 SQL, 没有交互确认 (`operations.ts:125` 注释 "Executes directly without an interactive confirmation prompt"), 执行链路上没有人工卡点.
 
 加固方案 (纵深防御, 按实施成本排序) :
 
 1. SQL 静态校验: 执行前解析 SQL (如 `node-sql-parser`), 白名单语句类型——诊断场景 99% 是 SELECT, 可直接禁掉 insert/update/delete,`operate_type` 枚举收窄;
 2. 只读账号 + DSN 白名单: 服务端维护允许的 DSN 列表, 模型只传"库别名";MySQL 账号本身只授权 SELECT;
 3. 资源限制:`SET SESSION MAX_EXECUTION_TIME`、强制 LIMIT 注入、结果行数截断 (保护上下文也保护 DB);
-4. 写操作 human-in-the-loop: 若必须支持写, 高危语句进入待确认队列, 前端弹确认框后才执行——恢复源项目的确认语义, 但做成异步 UI;
+4. 写操作 human-in-the-loop: 若必须支持写, 高危语句进入待确认队列, 前端弹确认框后才执行, 即做成异步 UI 的确认;
 5. 审计日志: 所有执行的 SQL 连同会话 ID 落审计表, OnCall 场景事后可追溯.
 
 核心原则:给 LLM 的工具权限应该是最小够用, 且与模型自主度成反比——模型自主度越高 (25 步无人值守循环) , 工具越要收紧.
@@ -1055,11 +1055,11 @@ P1-8(Redis 单例失败重置, `client.ts:12-17`):`clientPromise` 缓存若没�
 
 XSS 风险评估:
 
-1. 渲染链路:Streamdown 基于 react-markdown 体系, 但并非"不渲染内嵌 HTML"——其默认 rehype 插件链是 rehype-raw + rehype-sanitize (扩展 defaultSchema) + rehype-harden, markdown 内嵌 HTML 会被解析渲染, `<script>`、事件属性、`javascript:` 链接在 sanitize 阶段被剔除 (安全效果靠净化而非纯文本化) ; 构建产物中还有一处 `dangerouslySetInnerHTML`——Mermaid 图表组件用它注入 Mermaid 渲染出的 SVG, 该路径的安全性依赖 Mermaid 自身的净化配置 (默认 securityLevel=strict);
-2. 代码高亮走 Shiki 输出, 不是"手拼 HTML 字符串再注入"的旧模式, 不存在"高亮失败 fallback 到未转义原始文本"这类分支;
-3. 内容来源:markdown 内容来自 LLM 输出 (服务端可控性弱) + 用户自己的消息. LLM 输出可能被知识库 prompt injection 诱导产出恶意 markdown (如"回复中包含这段代码"), 间接 XSS 的载体依赖渲染器 sanitize 兜底; A2UI 数据 (由 web_core schema 校验) 是另一条渲染路径, 见「A2UI 交互界面的生成链路」与「A2UI 按钮点击后的原地更新」.
+1. 渲染链路:应用侧 `MdRender` 只把 markdown 文本作为 children 交给 Streamdown, 仓库源码里没有任何 `dangerouslySetInnerHTML` 或手写 innerHTML 注入点; markdown 内嵌 HTML 的解析与净化由 Streamdown (react-markdown 体系) 内部负责, 其具体 rehype 插件链属于依赖内部实现, 不在本仓库源码范围内, 这里不做源码级断言;
+2. 代码高亮通过 `plugins: { code }`(`@streamdown/code`) 走 Shiki, 由渲染器产出元素, 应用不手工拼接 HTML 字符串, 也就不存在"高亮失败 fallback 到未转义原始文本"这类分支;
+3. 内容来源:markdown 内容来自 LLM 输出 (服务端可控性弱) + 用户自己的消息. LLM 输出可能被知识库 prompt injection 诱导产出恶意 markdown (如"回复中包含这段代码"), 间接 XSS 的载体依赖渲染器自身的净化语义兜底; A2UI 数据 (由 web_core schema 校验) 是另一条渲染路径, 见「A2UI 交互界面的生成链路」与「A2UI 按钮点击后的原地更新」.
 
-结论: 主路径依赖 Streamdown 的 rehype-sanitize 净化语义与 React 元素渲染, 应用自身代码无手写 innerHTML 注入点 (依赖内仅 Mermaid 图表一处, 注入的是 Mermaid 渲染产物而非原始文本) ; 加固还可以上 CSP(`script-src 'self'`) 作为纵深防御.
+结论: 应用自身代码无手写 innerHTML 注入点, 主路径是 Streamdown 的 markdown 渲染, 其 XSS 防护依赖上游依赖的净化实现 (需以依赖版本与其文档为准) ; 应用层可加 CSP(`script-src 'self'`) 作为纵深防御.
 
 ---
 
@@ -1265,12 +1265,12 @@ A2UI(Agent-to-UI) v0.9 是一套声明式 UI 协议: LLM 在 markdown 回答之�
 
 服务端处理分四步 (`lib/ai/a2ui/` 四个文件) :
 
-1. prompt 装配 (`prompt.ts`):`A2UI_PROMPT_SECTION` 由 SDK 的 Direct JSON 生成器组装"协议规则 + 完整 shadcn catalog schema 契约 + OnCall 域 few-shot 示例" (`prompt.ts:340-363`); 三个示例 (告警列表/指标报告/静默表单) 由 builder 函数生成 (`prompt.ts:33-332`)——UI 结构变化只需改 builder, prompt 自动保持同步; 该段被注入 chat 的 SYSTEM_PROMPT (`chat.ts:58`), 规约"只在有结构化数据时输出、必须先写 markdown 摘要、数据逐字拷贝工具结果、绝不编造";
+1. prompt 装配 (`prompt.ts`):`A2UI_PROMPT_SECTION` 由 SDK 的 Direct JSON 生成器组装"协议规则 + 完整 shadcn catalog schema 契约 + OnCall 域 few-shot 示例" (`prompt.ts:339-364`); 三个示例 (告警列表/指标报告/静默表单) 由 builder 函数生成 (`prompt.ts:34-333`)——UI 结构变化只需改 builder, prompt 自动保持同步; 该段被注入 chat 的 SYSTEM_PROMPT (`chat.ts:58`), 规约"只在有结构化数据时输出、必须先写 markdown 摘要、数据逐字拷贝工具结果、绝不编造";
 2. 抽取与校验 (`extract.ts`):`extractA2ui()` 从完整输出中定位标签对并截出干净文本 (`extract.ts:47-64`); 校验统一走 `@a2ui/web_core/v0_9` 的 `A2uiMessageListSchema.safeParse` (`extract.ts:20-30`). 一条 zod 红线: web_core 自带 zod v3, 严禁与 app 的 zod/v4 组合 (`extract.ts:17-19` 注释与 `AGENTS.md:47`), 因此所有边界处的 a2ui 数据类型都是 `unknown[]`, 校验时才直接调用 web_core schema;
 3. 流式过滤 (`extract.ts:87-132`):`createA2uiStreamFilter()` 是有状态过滤器——普通文本立即放行, 但会扣留"可能是被 chunk 切断的开标签前缀"的尾部 (`partialTagSuffixLength`, `extract.ts:74-82`), 标签块内容静默缓冲到闭合标签出现; 流结束时未闭合的块还原开标签交给上层按无效块处理 (`chat.ts:205-212`), 避免裸 JSON 泄漏进可见文本;
 4. 纠错 (`correct.ts`): 校验失败时把"原对话 + 无效输出 + 校验错误"回放给模型做一次无工具重试 (`correct.ts:10-39`), 仍失败则降级为诚实的 notice 提示 (`chat.ts:186-191`)——绝不编造 UI 数据.
 
-客户端消费: SSE 的 a2ui 事件解析为非空数组后追加到消息的 `a2ui` 字段 (`use-chat.ts:302-325`), msg-list 用本地组件 `components/a2ui-view.tsx` 的 `A2uiView` 渲染 (`msg-list.tsx:186-191`, 内部由 `@a2ui/web_core/v0_9` 的 `MessageProcessor` + `@a2ui/react/v0_9` 的 `A2uiSurface` 配合本地 `catalog/` 的 shadcnCatalog 驱动); `/gallery` 是无需后端的 catalog 验证页, 用固定消息集渲染全部扩展组件 (`app/gallery/page.tsx:1-35`).
+客户端消费: SSE 的 a2ui 事件解析为非空数组后追加到消息的 `a2ui` 字段 (`use-chat.ts:302-325`), msg-list 用本地组件 `components/a2ui-view.tsx` 的 `A2uiView` 渲染 (`msg-list.tsx:186-191`, 内部由 `@a2ui/web_core/v0_9` 的 `MessageProcessor` + `@a2ui/react/v0_9` 的 `A2uiSurface` 配合本地 `catalog/` 的 shadcnCatalog 驱动); `/gallery` 是无需后端的 catalog 验证页, 用固定消息集渲染全部扩展组件 (`app/gallery/page.tsx:12-68`).
 
 ---
 
@@ -1280,7 +1280,7 @@ A2UI(Agent-to-UI) v0.9 是一套声明式 UI 协议: LLM 在 markdown 回答之�
 
 1. 前端: `sendA2uiAction(messageIndex, action)` 把动作 (name/surfaceId/sourceComponentId/context) 连同该消息当前完整的 a2ui 消息数组 POST 到 `/api/a2ui_action` (`use-chat.ts:434-483`)——界面自身状态就是请求上下文, 服务端无需另存 surface 状态;
 2. 路由: zod 校验请求体 (action 对象 + 非空 a2ui 数组, `a2ui_action/route.ts:6-15`), 调 `runA2uiAction`, 模型未产出有效更新时返回 502 (`route.ts:27-69`);
-3. 管线 (`lib/ai/a2ui/action.ts:41-81`):quick 模型 + 全量工具 (builtin + MCP) + `stopWhen: isStepCount(10)`——动作需要真实数据时模型可以调工具; 系统提示 `A2UI_ACTION_SYSTEM_PROMPT` 限定"只许 updateComponents/updateDataModel、只能作用于同一个 surfaceId、最小化修改" (`prompt.ts:370-391`); 返回结果先经 `filterInPlaceMessages` 过滤 (`action.ts:30-39`)——混入的 createSurface 会让客户端 MessageProcessor 抛 "Surface already exists" 并丢掉整批消息, 所以宁可在服务端提前丢弃; 校验失败同样走一次纠错重试;
+3. 管线 (`lib/ai/a2ui/action.ts:41-81`):quick 模型 + 全量工具 (builtin + MCP) + `stopWhen: isStepCount(10)`——动作需要真实数据时模型可以调工具; 系统提示 `A2UI_ACTION_SYSTEM_PROMPT` 限定"只许 updateComponents/updateDataModel、只能作用于同一个 surfaceId、最小化修改" (`prompt.ts:371-392`); 返回结果先经 `filterInPlaceMessages` 过滤 (`action.ts:30-39`)——混入的 createSurface 会让客户端 MessageProcessor 抛 "Surface already exists" 并丢掉整批消息, 所以宁可在服务端提前丢弃; 校验失败同样走一次纠错重试;
 4. 前端回写: 响应的更新消息数组 append 到原消息的 a2ui 末尾并 upsert 历史 (`use-chat.ts:466-472`), A2uiView 按协议原地应用——用户看到的是同一条消息内的界面刷新, 不产生新的聊天轮次.
 
 AI Ops 报告另有一处"UI 化"后处理: 图中的 uiify 节点 (`graph.ts:263-272`) 在 replanner 判定完成后调用 `uiifyReport()`——think 模型 (无工具) 把最终报告可选地渲染成 surface; 报告里没有值得可视化的结构化数据则回 NONE, 块无效时经一次纠错重试, 调用失败只记 error (`graph.ts:255-260` 注释明言"never let its failure discard the finished report"), 绝不丢弃报告本身 (`plan-execute-replan/graph.ts:213-261`).
@@ -1291,7 +1291,7 @@ AI Ops 报告另有一处"UI 化"后处理: 图中的 uiify 节点 (`graph.ts:26
 
 `lib/observability.ts` (109 行) 是观测层核心, 只有一个开关: `langfuseEnabled()` 要求 `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`、`LANGFUSE_BASE_URL` 三者全部非空 (`observability.ts:24-30`; 配置块在 `config.ts:62-67`, 样例在 `.env.example:53-56`, baseUrl 默认 `https://cloud.langfuse.com`). 任一缺失时 `initObservability`/`aiOpsCallbacks`/`withAiOpsTrace`/`observeGeneration` 全部 no-op 降级 (`observability.ts:33-34,71-73,90-92,105-107`)——可观测性是增强不是依赖, 未配置时对管线行为零影响; 即便三个 env 齐备, NodeSDK 构建/启动失败也只 warn 并继续 (`observability.ts:51-56`).
 
-实现是 OTEL 原生的: `initObservability()` 构建 `NodeSDK`, `spanProcessors` 只有一个 `LangfuseSpanProcessor` (`observability.ts:37-45`), 即标准 OTEL span 直接导出到 Langfuse. 关键工程细节是抗 HMR: Next dev 会反复重新求值模块文件, 而 OTEL 全局 provider 注册是进程级永久的, 因此 SDK 实例缓存在 `globalThis.__yukinoObservabilitySdk` (`observability.ts:18-22,47`), 重复 import 直接短路返回不再注册——与 metrics registry 挂 `globalThis` 的缓存思路一致 (`metrics.ts:120`); `shutdownObservability()` 清缓存并 shutdown SDK (`observability.ts:59-66`).
+实现是 OTEL 原生的: `initObservability()` 构建 `NodeSDK`, `spanProcessors` 只有一个 `LangfuseSpanProcessor` (`observability.ts:37-45`), 即标准 OTEL span 直接导出到 Langfuse. 关键工程细节是抗 HMR: Next dev 会反复重新求值模块文件, 而 OTEL 全局 provider 注册是进程级永久的, 因此 SDK 实例缓存在 `globalThis.__yukinoObservabilitySdk` (`observability.ts:18-22,47`), 重复 import 直接短路返回不再注册——与 metrics registry 挂 `globalThis` 的缓存思路一致 (`metrics.ts:499-517`); `shutdownObservability()` 清缓存并 shutdown SDK (`observability.ts:59-66`).
 
 启动时序: `instrumentation.ts` 的 `register()` 在 `NEXT_RUNTIME === "nodejs"` 守卫后先调 `initObservability()` 再做知识索引 (`instrumentation.ts:9-13`)——telemetry 先于业务, 保证后续所有图运行都有 tracing.
 
@@ -1329,7 +1329,7 @@ AI Ops 报告另有一处"UI 化"后处理: 图中的 uiify 节点 (`graph.ts:26
 
 启动钩子 (`instrumentation.ts`):Next.js instrumentation 的 `register()` 在服务启动时执行一次, 守卫 `NEXT_RUNTIME === "nodejs"` 后按序做两件事 (`instrumentation.ts:5-18`): 先调 `initObservability()` 启动 Langfuse/OTEL tracing (`instrumentation.ts:9-10`, telemetry 先于业务, 未配置时 no-op, 见「Langfuse 可观测性的接入与 no-op 降级」), 再动态 import `indexDataDir()` 把 `FILE_DIR` (默认 ./data/docs) 下全部 `.md/.markdown/.txt` 文件重建索引 (`instrumentation.ts:11-17`), 向量库无需手动上传即有数据; 索引失败只记 error, 绝不阻塞 server boot. `indexDataDir()` 逐文件容错, 单文件失败 log 后跳过, 目录不存在则 warn 跳过 (`knowledge-index.ts:83-110`). 这与 Redis 客户端的维度探测 (见「Embedding provider 抽象与维度管理」) 组合, 构成"启动即自检自愈"的模式.
 
-告警-文档契约 (`prometheus.rules.yml:1-5` 头部注释): "Alert names are contract"——AI Ops 管线的 SOP 是 `query_prometheus_alerts` 拿到活跃告警名, 再用告警名调 `query_internal_docs` 检索处理手册, 所以每条告警规则的名字必须与 `data/docs/alert-handling-guide.md` 中的同名标题一一对应, 否则检索落空、模型失去知识锚点. 规则文件本身展示了运行时指标的正确用法: ServiceOffline(up == 0)、NodeHeapNearLimit(yukino_node_v8_heap_used_ratio > 0.9)、NodeHeapLeakSuspected(predict_linear 外推一小时内触及上限)、NodeDetachedContextLeak(detached contexts > 10)——全部基于「yukino-sentry 监控桥的接入与指标设计」的 Node/V8 指标.
+告警-文档契约 (`prometheus.rules.yml:1-9` 头部注释): "Alert names are contract"——AI Ops 管线的 SOP 是 `query_prometheus_alerts` 拿到活跃告警名, 再用告警名调 `query_internal_docs` 检索处理手册, 所以每条告警规则的名字必须与 `data/docs/alert-handling-guide.md` 中的同名标题一一对应, 否则检索落空、模型失去知识锚点. 规则文件本身展示了运行时指标的正确用法: ServiceOffline(up == 0)、NodeHeapNearLimit(yukino_node_v8_heap_used_ratio > 0.9)、NodeHeapLeakSuspected(predict_linear 外推一小时内触及上限)、NodeDetachedContextLeak(detached contexts > 10)——全部基于「yukino-sentry 监控桥的接入与指标设计」的 Node/V8 指标.
 
 这条契约把四个模块串成一个闭环: yukino-sentry 采集 → `/api/log` 入库 → `/api/metrics` 暴露 → Prometheus 告警 → AI Ops 一键分析 (按告警名检索 runbook) → 报告与 A2UI 界面呈现. 可以把它作为"监控数据反哺 AI Agent"的完整案例.
 

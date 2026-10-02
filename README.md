@@ -22,15 +22,17 @@ deployed to GitHub Pages at <https://yukino-js.github.io/26autumn/>.
 `26autumn` is a static documentation site that collects technical notes written during
 study, internships, and work. It covers three broad areas:
 
-- **Frontend** (`content/fe`) — React, Next.js, CSS, Vite, TanStack Query, Formily,
-  plus source-level walkthroughs of the Yukino frontend family
+- **Frontend** (`content/fe`) — JavaScript/DOM/browser fundamentals, CSS, React,
+  Next.js, Vite/Webpack, Formily, TanStack, Priority Hints, OpenSpec, plus
+  source-level walkthroughs of the Yukino frontend family
   (Coding Agent CLI & source, agent, agent2, chatbot, chat, sentry).
-- **Backend** (`content/be`) — Go, MySQL, Redis, ClickHouse, Kafka, middleware,
-  plus the Yukino Go series (http, rpc, cache, codegen).
+- **Backend** (`content/be`) — Go, MySQL, Redis, ClickHouse, Kafka, backend
+  middleware, the generic-pool source walkthrough, and the Yukino Go series
+  (http, rpc, cache, apps, codegen).
 - **Work notes & research** (`content/docs`) — TikTok/IEG/data engineering retrospectives,
-  protocol research (A2UI, MCP Apps, WebContainer), and coding-agent / AI-framework
-  surveys (CodeGraph, Claude Code, Codex, pi, OpenCodeReview, insforge, LangChain.js,
-  LangGraph.js, OpenSpec).
+  protocol research (A2UI, A2UI Express, MCP Apps, WebContainer), coding-agent surveys
+  (CodeGraph, Claude Code, Codex, pi, OpenCodeReview), and AI framework/platform surveys
+  (insforge, LangChain.js, LangGraph.js).
 
 Every document is grounded in project facts: source-code analysis is verified against the
 actual repositories on disk, not invented from memory. Research docs cite the local clone

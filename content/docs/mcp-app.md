@@ -4,8 +4,7 @@ description: "MCP Apps 扩展的协议机制、安全模型与工程实践, 以�
 ---
 
 > 本文基于 `@modelcontextprotocol/ext-apps` v1.7.5（MCP Apps 规范版本 2026-01-26, Stable）与官方文档整理，协议仍在活跃开发中。
-> 文中的工程实践均来自 `$HOME/github/yukino-code/apps/mcp` 的 MCP App 工具（一个已落地的 MCP App），可与代码对照阅读。
-> 注：撰写时该工具名为 `render_app`（`src/tools/render-app/`，UI 资源 `ui://render-app/mcp-app.html`）；当前仓库中已演进为 `create_app`（`src/tools/create-app/`，UI 资源 `ui://create-app/create-app.html`）。正文保留撰写时点的名称与结构，机制不变。
+> 文中的工程实践均来自 `$HOME/github/yukino-code/apps/mcp` 的 MCP App 工具 `create_app`（`src/tools/create-app/`，UI 资源 `ui://create-app/create-app.html`），可与代码对照阅读。
 > 对比对象 A2UI 的资料见 `a2ui.md`（Google 发起的声明式 UI 协议）。
 
 ---
@@ -34,7 +33,7 @@ MCP App 是 MCP 协议的一个扩展：让 MCP 工具返回一段可交互的 H
 
 ### 1.3 与普通 MCP 工具的关系：增强，而非替代
 
-MCP App 对文本-only 客户端完全向后兼容：
+MCP App 对文本-only 客户端无破坏性影响：
 
 - 工具本身照常出现在 `tools/list`，照常被模型调用；
 - 返回结果中的 `content`（文本）照常进入模型上下文；
@@ -57,7 +56,7 @@ import {
   RESOURCE_MIME_TYPE, // "text/html;profile=mcp-app"
 } from "@modelcontextprotocol/ext-apps/server";
 
-const resourceUri = "ui://render-app/mcp-app.html";
+const resourceUri = "ui://create-app/create-app.html";
 
 // 1) App 工具：比普通工具多一个 _meta.ui.resourceUri
 registerAppTool(
@@ -109,7 +108,7 @@ registerAppResource(
 用户: "给我看个图表"
   │
   V
-模型决定调用 render_app（带 HTML 参数）
+模型决定调用 create_app（带 HTML 参数）
   │
   ├─(可选)宿主预加载 ui:// 资源，甚至开始流式转发工具入参
   V
@@ -142,24 +141,29 @@ App 渲染数据；用户交互时 App 反向发起 tools/call（宿主代理转
 
 ### 2.3 通信协议：postMessage 上的 MCP 方言
 
-iframe 内外的传输是 `window.postMessage`，消息格式是 JSON-RPC——一个 MCP 的"方言"：部分方法与核心 MCP 共享（如 `tools/call`），多数是 `ui/` 前缀的新方法。从 SDK 源码确认的方法集合：
+iframe 内外的传输是 `window.postMessage`，消息格式是 JSON-RPC——一个 MCP 的"方言"：部分方法与核心 MCP 共享（如 `tools/call`），多数是 `ui/` 前缀的新方法。下表按 SDK 生成的协议 schema（`dist/src/generated/schema.d.ts` 中的 method 字面量）与 `App` 类整理：
 
-| 方法 / 通知                             | 方向                | 作用                                                              |
-| :-------------------------------------- | :------------------ | :---------------------------------------------------------------- |
-| `ui/initialize`                         | App → 宿主          | 握手，交换能力（App 能力、宿主上下文初值）                        |
-| `ui/notifications/tool-input`           | 宿主 → App          | 完整工具入参（`arguments`）                                       |
-| `ui/notifications/tool-input-partial`   | 宿主 → App          | 流式部分入参（已修复的合法 JSON）                                 |
-| `ui/notifications/tool-result`          | 宿主 → App          | 工具结果（`content` / `structuredContent` / `_meta` / `isError`） |
-| `ui/notifications/tool-cancelled`       | 宿主 → App          | 工具执行被取消（用户操作、分类器拦截等）                          |
-| `ui/notifications/host-context-changed` | 宿主 → App          | 主题、样式变量、字体、安全区、显示模式变化                        |
-| `ui/notifications/size-changed`         | App → 宿主          | App 高度变化（配合 `autoResize` 自适应）                          |
-| `ui/notifications/sandbox-proxy-ready`  | App → 宿主          | 沙箱代理就绪信号                                                  |
-| `ui/request-display-mode`               | App → 宿主          | 请求 `inline` / `fullscreen` 切换                                 |
-| `ui/open-link`                          | App → 宿主          | 请求宿主打开外部链接（宿主可拒绝）                                |
-| `ui/update-model-context`               | App → 宿主          | 把 App 内的结构化结果回写模型上下文                               |
-| `ui/resource-teardown`                  | 双向                | 卸载前清理（保存状态、关闭连接）                                  |
-| `tools/call`                            | App → 宿主 → Server | App 反向调用 Server 工具（宿主代理）                              |
-| `sendLog`                               | App → 宿主          | 调试日志直达宿主（而非仅 iframe 控制台）                          |
+| 方法 / 通知                               | 方向                | 作用                                                              |
+| :---------------------------------------- | :------------------ | :---------------------------------------------------------------- |
+| `ui/initialize`                           | App → 宿主          | 握手，交换能力（App 能力、宿主上下文初值）                        |
+| `ui/notifications/initialized`            | App → 宿主          | 握手完成通知                                                      |
+| `ui/notifications/tool-input`             | 宿主 → App          | 完整工具入参（`arguments`）                                       |
+| `ui/notifications/tool-input-partial`     | 宿主 → App          | 流式部分入参（已修复的合法 JSON）                                 |
+| `ui/notifications/tool-result`            | 宿主 → App          | 工具结果（`content` / `structuredContent` / `_meta` / `isError`） |
+| `ui/notifications/tool-cancelled`         | 宿主 → App          | 工具执行被取消（用户操作、分类器拦截等）                          |
+| `ui/notifications/host-context-changed`   | 宿主 → App          | 主题、样式变量、字体、安全区、显示模式变化                        |
+| `ui/notifications/size-changed`           | App → 宿主          | App 高度变化（配合 `autoResize` 自适应）                          |
+| `ui/notifications/sandbox-proxy-ready`    | App → 宿主          | 沙箱代理就绪信号                                                  |
+| `ui/notifications/sandbox-resource-ready` | 宿主 → App          | 沙箱内资源就绪信号                                                |
+| `ui/notifications/request-teardown`       | 宿主 → App          | 请求 App 进入卸载流程                                             |
+| `ui/request-display-mode`                 | App → 宿主          | 请求 `inline` / `fullscreen` 切换                                 |
+| `ui/open-link`                            | App → 宿主          | 请求宿主打开外部链接（宿主可拒绝）                                |
+| `ui/update-model-context`                 | App → 宿主          | 把 App 内的结构化结果回写模型上下文                               |
+| `ui/message`                              | App → 宿主          | 追加一条消息到对话（受宿主策略约束）                              |
+| `ui/download-file`                        | App → 宿主          | 请求宿主下载文件                                                  |
+| `ui/resource-teardown`                    | 双向                | 卸载前清理（保存状态、关闭连接）                                  |
+| `tools/call`                              | App → 宿主 → Server | App 反向调用 Server 工具（宿主代理）                              |
+| `sendLog`                                 | App → 宿主          | 调试日志直达宿主（而非仅 iframe 控制台；`App.sendLog` 方法）      |
 
 ### 2.4 客户端 API：App 类
 
@@ -201,7 +205,7 @@ app.onhostcontextchanged = (ctx) => {
 await app.connect(new PostMessageTransport());
 ```
 
-宿主通过 `styles.variables` 下发一批 CSS 自定义属性（`--color-background-primary`、`--color-text-primary`、`--font-sans`、`--border-radius-md` 等），App 用 `var(--x, fallback)` 消费即可与宿主主题对齐。React 技术栈另有 `useApp` / `useHostStyles` / `useDocumentTheme` hooks（注意：v1.7.5 的 `./react` 子路径类型声明在 NodeNext 解析下有缺陷，实践见 §4.6）。
+宿主通过 `styles.variables` 下发一批 CSS 自定义属性（`--color-background-primary`、`--color-text-primary`、`--font-sans`、`--border-radius-md` 等），App 用 `var(--x, fallback)` 消费即可与宿主主题对齐。React 技术栈另有 `useApp` / `useHostStyles` / `useDocumentTheme` hooks（注意：v1.7.5 的 `./react` 子路径类型声明在 NodeNext 解析下有缺陷，实践见 §4.5）。
 
 ### 2.5 服务端生态与官方示例
 
@@ -253,17 +257,17 @@ MCP App HTML 没有同源服务器，所有外部来源都必须在资源的 `_m
 
 ---
 
-## 4. 工程实践：以 `render_app` 为例
+## 4. 工程实践：以 `create_app` 为例
 
-`$HOME/github/yukino-code/apps/mcp/src/tools/render-app/`（现为 `create-app/`）是一个完整可参照的实现：模型传入一份自包含 HTML，工具把它渲染成对话内的交互应用。
+`$HOME/github/yukino-code/apps/mcp/src/tools/create-app/` 是一个完整可参照的实现：模型传入一份自包含 HTML，工具把它渲染成对话内的交互应用。
 
 ### 4.1 结构与数据通道
 
 ```text
-src/tools/render-app/          # 现为 src/tools/create-app/
+src/tools/create-app/
 ├── tool.ts                    # registerAppTool + registerAppResource（服务端）
-├── mcp-app.html               # UI 入口（现为 create-app.html）
-├── mcp-app.tsx                # React shell：App 生命周期 + 沙箱 iframe（现为 create-app.tsx）
+├── create-app.html            # UI 入口
+├── create-app.tsx             # React shell：App 生命周期 + 沙箱 iframe
 └── global.css                 # @import "tailwindcss"; @plugin "daisyui";
 ```
 
@@ -299,12 +303,12 @@ tsup（清空 dist，产出 dist/main.js）
 
 - UI 依赖（react / tailwind / daisyui / vite-plugin-singlefile）全部进 devDependencies——它们只参与打包，服务器运行时不需要；ext-apps 是例外：服务端 tool.ts 运行时 import `@modelcontextprotocol/ext-apps/server` 的 registerAppTool / registerAppResource / RESOURCE_MIME_TYPE，因此位于 dependencies；
 - `build:fe`（vite build）单独成脚本，`dev` / `test` 都先跑它，保证源码运行时读到的也是构建产物；
-- 服务端从 `dist/` 读 HTML：打包后取 `dist/main.js` 的同级文件，tsx 源码运行时取包级 `dist/mcp-app.html`；文件缺失时抛错而不是降级——静默返回占位 HTML 会把"没构建"伪装成"渲染成功"。
+- 服务端从 `dist/` 读 HTML：打包后取 `dist/main.js` 的同级文件，tsx 源码运行时取包级 `dist/create-app.html`；文件缺失时抛错而不是降级——静默返回占位 HTML 会把"没构建"伪装成"渲染成功"。
 
 ### 4.4 测试与验证
 
 - 协议层：`InMemoryTransport` 成对连接，断言 `tools/list` 里的 `_meta.ui.resourceUri`、`resources/read` 的 MIME 与 bundle 内容、`tools/call` 的结果通道；
-- 宿主层：官方 `ext-apps/examples/basic-host` 是本地调试宿主（`SERVERS='["http://localhost:3300/mcp"]' npm start`），或用 cloudflared 隧道把本地 Server 注册为 Claude 的自定义 connector。
+- 宿主层：官方 `ext-apps/examples/basic-host`（仓库内附的参考宿主实现）可在本地调试，或用 cloudflared 隧道把本地 Server 注册为 Claude 的自定义 connector。
 
 ### 4.5 已踩过的坑（v1.7.5）
 
@@ -406,7 +410,7 @@ Agent 产出声明式 JSON 消息流
    iframe 决定了 MCP Apps 只存在于 Web 宿主；A2UI 的一份 JSON 可以同时驱动 React 网页、Angular 控制台和 Flutter 移动端。若产品要跨端复用 Agent 的 UI 输出，A2UI 是唯一现成答案。
 
 8. 协议耦合与生态位。
-   MCP Apps 是 MCP 扩展，天然被"MCP 宿主是否实现了这个扩展"卡住；A2UI 传输无关，A2A（AgentCard 扩展协商）只是其最主流的传输层。两者还可以嵌套：按调研资料（yukino-mcp 的文档副本）的说法，A2UI 生态下的承载方式是——自定义组件用 smart wrapper 模式包装 MCP App 的 iframe，外层维持结构化 JSON-RPC 通道，内层严格排除 `allow-same-origin` 防沙箱逃逸（注意：A2UI 官方规范本身只声明了"A2UI 可经 MCP 传输"的绑定，并未规定 iframe 承载细节，上述描述属于生态实践转述）。也就是说在 A2UI 的世界观里，MCP App 是一种"需要双 iframe 隔离的富组件"；两者是互补而非互斥。a2ui 仓库现有两个社区示例实证了这一互嵌关系：samples/community/agent/adk/mcp-apps-in-a2ui-sample/（在 A2UI 中承载 MCP App）与 samples/community/mcp/a2ui-in-mcpapps/（在 MCP Apps 中嵌入 A2UI，client 依赖 ext-apps ^1.7.4）。
+   MCP Apps 是 MCP 扩展，天然被"MCP 宿主是否实现了这个扩展"卡住；A2UI 传输无关，A2A（AgentCard 扩展协商）只是其最主流的传输层。两者还可以嵌套，A2UI 仓库给出了可核对的参考实现：samples/community/client/shared/mcp_apps_inner_iframe/ 用"同源外层代理 iframe + 受限内层 iframe"的双 iframe 隔离运行不受信的第三方内容（其 README 记为 double-iframe isolation pattern），外层维持与宿主的结构化 JSON-RPC 通道，内层默认 `sandbox="allow-scripts allow-forms allow-modals"`（sandbox.ts:125），不含 `allow-same-origin`，因此内层源序列化为 `null`，postMessage 只能以 `'*'` 为目标 origin（sandbox.ts:157、159 的注释）。该实现直接复用了 MCP Apps 的 `ui/notifications/sandbox-proxy-ready` 与 `ui/notifications/sandbox-resource-ready` 通知（sandbox.ts:43-45）。需要说明的是：A2UI 官方协议规范本身只声明了"A2UI 可经 MCP 传输"的绑定，双 iframe 承载属于示例中的实现选择。也就是说在 A2UI 的世界观里，MCP App 是一种"需要双 iframe 隔离的富组件"；两者是互补而非互斥。a2ui 仓库另有两个社区示例实证了这一互嵌关系：samples/community/agent/adk/mcp-apps-in-a2ui-sample/（在 A2UI 中承载 MCP App）与 samples/community/mcp/a2ui-in-mcpapps/（在 MCP Apps 中嵌入 A2UI，client 依赖 ext-apps ^1.7.4）。
 
 9. 上下文经济学：同一笔账，四种费率。
    两个协议的 UI 描述都"进上下文一次"——A2UI 的 `<a2ui-json>` 块是助手回复正文的一部分，MCP Apps 的 HTML 是 tool_use 入参，都是模型亲手写的输出并驻留历史，没有谁天然更省。分野在完整生命周期的四笔账上：
@@ -451,7 +455,7 @@ MCP Apps 用"工具 + `ui://` 资源 + 沙箱 iframe"这个极小的协议增量
 
 ## 8. 完整流程闭环：从需求到渲染，从交互到更新
 
-以上述 `render_app` 工具为例走一遍完整闭环。场景：用户说 _"画一个 2026 年 Q3 每周 QPS 的柱状图"_，之后又改需求、又在图里点了按钮。四个角色：用户、模型（住在宿主里）、宿主（协议端点 + 沙箱执行者）、MCP Server、App（宿主挂载的 iframe）。
+以上述 `create_app` 工具为例走一遍完整闭环。场景：用户说 _"画一个 2026 年 Q3 每周 QPS 的柱状图"_，之后又改需求、又在图里点了按钮。四个角色：用户、模型（住在宿主里）、宿主（协议端点 + 沙箱执行者）、MCP Server、App（宿主挂载的 iframe）。
 
 ### 8.1 第一圈：需求 → 首帧渲染
 
@@ -460,14 +464,14 @@ MCP Apps 用"工具 + `ui://` 资源 + 沙箱 iframe"这个极小的协议增量
 ────────────────────────────────────────────────────────────
 ①  用户 ── "画一个 QPS 柱状图" ──> 模型
 
-②  模型 ── 流式生成 tool_use: render_app
+②  模型 ── 流式生成 tool_use: create_app
             { html: "<!doctype html>…", title }
             HTML 唯一进入模型上下文的位置——它是模型自己的输出
 
-③  宿主 ── resources/read "ui://render-app/mcp-app.html" ──> Server
+③  宿主 ── resources/read "ui://create-app/create-app.html" ──> Server
             <── 自包含单文件 HTML（宿主已缓存时本步跳过）
             触发源不是"调用发生"，而是会话建立时 tools/list 已带回映射
-              （render_app 的 _meta.ui.resourceUri）；流里刚出现工具名
+              （create_app 的 _meta.ui.resourceUri）；流里刚出现工具名
               （name 字段先于参数生成），宿主查表即知该渲染哪个 UI，
               无需等 ② 完成。资源是静态声明的容器，与 html 参数内容无关。
 
@@ -478,7 +482,7 @@ MCP Apps 用"工具 + `ui://` 资源 + 沙箱 iframe"这个极小的协议增量
 
 阶段二　工具执行
 ────────────────────────────────────────────────────────────
-⑥  宿主 ── tools/call render_app ──> Server
+⑥  宿主 ── tools/call create_app ──> Server
             <── { content, structuredContent:{title}, _meta:{html} }
 
 阶段三　结果分叉与渲染（一次结果，两条通道）
@@ -507,7 +511,7 @@ MCP Apps 用"工具 + `ui://` 资源 + 沙箱 iframe"这个极小的协议增量
 
 ```text
 用户 ──"改成折线图，加环比"──> 模型
-模型 ── 新的 tool_use: render_app { html: <新版整页 HTML> } ──> 宿主
+模型 ── 新的 tool_use: create_app { html: <新版整页 HTML> } ──> 宿主
 宿主：resourceUri 未变 → 不重拉资源、不重建 iframe
 宿主 ── ui/notifications/tool-result ──> shell
 shell ── setState(ready) ── srcDoc 整体替换 ──> 新版 UI（内层状态清零）
@@ -515,7 +519,7 @@ shell ── setState(ready) ── srcDoc 整体替换 ──> 新版 UI（内�
 
 三个关键语义：
 
-- 资源复用：新调用引用同一个 `ui://render-app/mcp-app.html`，宿主已持有该资源，不再发起 `resources/read`；iframe 也已挂载，只是收到新的 tool-result 推送。
+- 资源复用：新调用引用同一个 `ui://create-app/create-app.html`，宿主已持有该资源，不再发起 `resources/read`；iframe 也已挂载，只是收到新的 tool-result 推送。
 - 全量替换：shell 的更新方式是重设 `srcDoc`——内层文档整体重建，用户在内层积累的运行时状态（滚动位置、未提交的表单输入、JS 内存状态）会清零。这是"对话驱动改版"的合理语义（新版本来就是重画的页面），但意味着任何需要保留状态的长交互都不该依赖这条路。
 - 上下文成本：每一次"改需求"，模型都要重新生成整份 HTML（输出 token），旧版 tool_use 入参仍留在历史里。
 
@@ -529,7 +533,7 @@ B2 — 回程取数（callServerTool 代理）：点击需要新数据的按钮�
 
 ```text
 内层 HTML 按钮 onclick
-  ── window.parent.postMessage({type:"render_app:callTool", name, arguments}) ──> shell
+  ── window.parent.postMessage({type:"create_app:callTool", name, arguments}) ──> shell
 shell：校验 event.source === frame.contentWindow（opaque origin 下 origin 恒为 "null"，
        只能靠 source 比对确认消息来自自家 iframe；并对可调工具名做白名单）
   ── app.callServerTool({ name, arguments }) ──> 宿主
@@ -541,7 +545,7 @@ Server 结果原路返回：宿主 → shell → postMessage 回内层
 需要区分两种 App 形态：
 
 - 直连型（官方 map-server / system-monitor 这类）：App 代码本身就是 `App` bridge 的持有者，按钮 onclick 里直接 `app.callServerTool(...)`，不需要任何中转。
-- 托管型（`render_app` 这类）：bridge 在外层 shell 手里，内层是隔离的不可信 srcdoc。内层要回程取数，必须经 shell 中转——即上面的 postMessage 桥。当前 shell 尚未内置这座桥，需要按上述模式扩展（约 30 行：监听 message → 校验 source 与工具白名单 → `callServerTool` → 回发结果；内层配一个 `callTool(name, args)` 的 Promise helper）。
+- 托管型（`create_app` 这类）：bridge 在外层 shell 手里，内层是隔离的不可信 srcdoc。内层要回程取数，必须经 shell 中转——即上面的 postMessage 桥。当前 shell 尚未内置这座桥，需要按上述模式扩展（约 30 行：监听 message → 校验 source 与工具白名单 → `callServerTool` → 回发结果；内层配一个 `callTool(name, args)` 的 Promise helper）。
 
 B3 — 通知模型（让对话接续）：如果 App 内发生的事需要模型知道（例如用户在 App 里完成了提交，希望对话继续），App 调 `ui/update-model-context` 把结构化摘要注入模型上下文。这是唯一一条"App → 模型"的显式通道；没有它，内层发生的一切对对话是不可见的。
 

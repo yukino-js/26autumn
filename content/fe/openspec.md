@@ -1,9 +1,9 @@
 ---
 title: "OpenSpec 调研文档"
-description: "Fission AI OpenSpec 调研: 规格驱动开发的协议层定位、CLI 命令与 schema 体系、proposal/specs/tasks artifacts 工作流、50 个 AI 编码工具的集成方式"
+description: "Fission AI OpenSpec 调研: 规格驱动开发的协议层定位、CLI 命令与 schema 体系、校验规则、proposal/specs/tasks artifacts 工作流、50 个 AI 编码工具的集成方式"
 ---
 
-仓库路径: https://github.com/Fission-AI/openspec (本机克隆位于 $HOME/Downloads/openspec, 本文按 main @ c879d13d, 2026-09-29 的源码核对; 本机克隆现为浅克隆 3a34ea3, 2026-09-30, package.json 版本 1.14.0, 其间 5 个提交仅涉及 1.13.2 → 1.14.0 版本发布、website 依赖锁、changesets 与 status/zsh 补全小修, 不影响本文结论)
+仓库路径: https://github.com/Fission-AI/openspec (本机克隆位于 $HOME/Downloads/openspec, 本文按 main @ 760584b, 2026-10-01 的源码核对, HEAD 提交为 "fix(validate): fail --strict on requirements over the length limit (#2020)"; package.json 版本 1.14.0; 本机克隆为浅克隆, 基点之前的提交不在本地对象库, 无法核实)
 
 ## 一、OpenSpec 是什么
 
@@ -76,7 +76,7 @@ specs/ 描述"现在是什么样", changes/ 描述"打算改成什么样". 归�
 
 1. Specs 是真相
 
-用结构化需求 (Requirement) 和场景 (Scenario) 描述系统行为. 规范性语句遵循 RFC 2119 关键词, 但校验器只检测 SHALL 与 MUST 两个词 (正则 `\b(SHALL|MUST)\b`, src/core/parsers/requirement-text.ts 的 containsShallOrMust) , schema 指令还明确要求避免 should/may. 校验强度: change 的 delta spec 缺关键词时默认给 guidance 级提示, --strict 模式升级为错误; 主 spec 缺关键词给 WARNING 提示 (整段 body 缺失才是 ERROR) . 每条 Requirement 必须至少带一个 `#### Scenario:` 块 (四级井号, 三级或列表会静默失效) , 否则 validate 直接报错. Spec 是行为契约, 不是实现方案.
+用结构化需求 (Requirement) 和场景 (Scenario) 描述系统行为. 规范性语句遵循 RFC 2119 关键词, 但校验器只检测 SHALL 与 MUST 两个词 (正则 `\b(SHALL|MUST)\b`, src/core/parsers/requirement-text.ts 的 containsShallOrMust) , schema 指令还明确要求避免 should/may. 校验强度 (src/core/validation/validator.ts) : change 的 delta spec 缺关键词时, 整段 body 缺失是 ERROR, 否则给 "should contain SHALL or MUST (RFC 2119 best practice for English specs)" 式的 WARNING 引导; 主 spec 缺关键词同样是 WARNING (body 缺失才是 ERROR) ; --strict 模式的通过条件是零 ERROR 且零 WARNING, 即所有警告都升级为校验失败. 每条 Requirement 至少要有一个带正文的四级标题块: 场景计数器匹配任意 `#### ` 开头的标题 (约定写成 `#### Scenario:`), 三级标题、列表、以及只有标题没有正文的块都不计入. change 的 ADDED/MODIFIED 需求缺场景是 ERROR, 主 spec 缺场景是 WARNING (src/core/parsers/requirement-text.ts 的 SCENARIO_HEADER, hasScenarioBody 与 countScenarios) . 另有几条量化规则 (src/core/validation/constants.ts) : 需求描述 (### Requirement: 到第一个 scenario 之间的文本) 超过 500 字符 (MAX_REQUIREMENT_TEXT_LENGTH) 给 WARNING, --strict 直接失败, 该限制作用于 ADDED 需求与主 spec, MODIFIED 要求保留现有文本整体不动故不检查; ## Purpose 少于 50 字符 (MIN_PURPOSE_LENGTH) 给 WARNING (--strict 报太简短) , archive 生成的 TBD 占位符另有专门的 WARNING; delta 的需求描述少于 10 字符 (MIN_DELTA_DESCRIPTION_LENGTH) 、或 ADDED/MODIFIED 区段没有任何需求, 均给 WARNING. Spec 是行为契约, 不是实现方案.
 
 ```markdown
 ### Requirement: Session Expiration
@@ -120,7 +120,7 @@ The system MUST expire sessions after 15 minutes of inactivity.
 
 ### Requirement: Remember Me
 
-(Deprecated in favor of 2FA)
+(Replaced by 2FA)
 
 ## RENAMED Requirements
 
@@ -349,9 +349,9 @@ operations:
 
 注入机制 (src/core/project-config.ts 与 src/commands/workflow/instructions.ts) :
 
-- context 注入到所有 artifact 的 AI 提示中 (用 `<context>` 标签包裹) , 硬上限 50KB, 超限整段忽略并告警
+- context 注入到所有 artifact 的 AI 提示中 (用 `<project_context>` 标签包裹) , 硬上限 50KB, 超限整段忽略并告警
 - rules 只注入到对应 artifact 的提示中 (用 `<rules>` 标签包裹) ; rules 的 key 会对照所有可用 schema 的 artifact id 校验, 未知 id 给出警告
-- operations guidance 在 openspec instructions apply / archive 执行时以 "Operation Guidance (advisory)" 注入
+- operations guidance 在 openspec instructions apply / archive 时作为 artifact 提示的一部分注入, 文本模式下的标题是 "Operation Guidance (advisory)"
 
 除这三个字段外, config.yaml 还认识: store: (声明本项目默认使用的 store id) 、references: (引用的 store 列表, 字符串或 \{id, remote\} 形式) 、githubCopilot: (目前只有 cloudAgent 布尔开关) ; 文件名 config.yaml 优先, 不存在时才回退 config.yml.
 
@@ -398,7 +398,7 @@ references:
 - Store 就是一个 git 仓库, 通过 git push/pull 共享
 - OpenSpec 永远不会自动 clone/pull/push
 - 引用 (references) 是只读上下文, 不移动任何人的工作
-- 命令解析优先级: --store flag > 最近的 openspec/ > config 中的 store: 指针 > 全局 defaultStore
+- 命令解析优先级 (src/core/root-selection.ts) : --store flag > 最近的 openspec/ 目录 (若它是真正的规划根就直接用, 否则若其 config 里有 store: 指针就解析该 store) > 全局 config 的 defaultStore > 当前目录兜底
 
 ### 7.4 Worksets
 
@@ -415,24 +415,11 @@ openspec workset open platform   # 在 VS Code 中一起打开
 
 Worksets 不共享、不提交, 纯粹是个人便利.
 
-## 八、架构设计 (OPSX vs Legacy)
+## 八、架构设计
 
-### 8.1 Legacy 工作流的问题
-
-```
-Legacy:
-┌────────────────────────┐
-│  模板硬编码在 TypeScript │  ← 不可修改
-│  一个大命令创建所有东西   │  ← 不能逐步测试
-│  固定结构, 所有人一样     │  ← 不可定制
-│  黑盒: 输出不好没法调     │  ← 无法迭代
-└────────────────────────┘
-```
-
-### 8.2 OPSX 的架构
+### 8.1 Schema Definitions + Artifact Graph
 
 ```
-OPSX:
 ┌────────────────────────────────────────────────────────────┐
 │  Schema Definitions (YAML)                                 │
 │  ├── schema.yaml          工作流定义 (artifacts + 依赖)     │
@@ -446,15 +433,15 @@ OPSX:
 │                    │                                       │
 │                    v                                       │
 │  Skill Files (.claude/skills/openspec-*/SKILL.md)          │
-│  跨编辑器兼容, 技能查询 CLI 获取结构化数据                    │
+│  跨编辑器兼容, 技能通过 CLI 查询结构化数据                    │
 └────────────────────────────────────────────────────────────┘
 ```
 
-### 8.3 信息流对比
+工作流定义与模板都是可编辑的文件 (schema.yaml 与 templates/*.md) , 不在 TypeScript 里硬编码; 因此同一个 CLI 既能跑内置的 spec-driven, 也能跑项目级自定义 schema. 相关实现集中在 src/core/artifact-graph/ (schema.ts 解析校验, graph.ts 负责拓扑排序与状态, resolver.ts 负责 schema 查找, instruction-loader.ts 组装富指令与 ArtifactStatus) .
 
-Legacy: agent 收到静态指令, 一次性创建所有 artifacts, 无依赖感知.
+### 8.2 信息流
 
-OPSX: agent 查询 CLI 获取当前状态 → 获取就绪 artifact 的富指令 → 读取依赖 → 创建一个 artifact → 展示解锁了什么 → 循环.
+agent 查询 CLI 获取当前状态 → 获取就绪 artifact 的富指令 → 读取依赖 → 创建一个 artifact → 展示解锁了什么 → 循环.
 
 ```
 $ openspec status --change "add-auth" --json
@@ -474,6 +461,8 @@ $ openspec instructions specs --change "add-auth" --json
   "unlocks": ["tasks"]
 }
 ```
+
+status 的取值共四种: done / skipped / ready / blocked (src/core/artifact-graph/instruction-loader.ts 的 ArtifactStatus) . skipped 专门用于声明了 skip_specs 的 change: 其 specs artifact 按设计没有 delta 文件, 直接计入完成以免阻塞下游 tasks, 但在状态里渲染为 skipped 而不是 done. instructions 的文本输出按固定顺序组织成若干段: `<task>` (要创建什么) → `<project_context>` (config 的 context) → 可选的参考 store 索引 → `<rules>` (对应 artifact 的 rules) → `<dependencies>` → `<output>` → `<instruction>` (schema 的 instruction) → `<template>` → `<success_criteria>` → `<unlocks>` (实现见 src/commands/workflow/instructions.ts 的 printInstructionsText 与 printOperationInputsText) .
 
 ## 九、工作流模式
 
@@ -565,10 +554,6 @@ openspec list [--specs]
 # 查看 change 或 spec 详情 (重名时用 --type change|spec 消歧)
 openspec show <name>
 
-# 旧的名词式命令组 (deprecated, 提示改用 list/show/validate 顶层命令)
-openspec spec list | spec show <id> | spec validate <id>
-openspec change show | change list | change validate
-
 # 查看状态 (JSON, 供 agent 消费)
 openspec status --change <name> --json
 
@@ -612,9 +597,11 @@ openspec store doctor
 openspec workset create <name> --member <path> --tool <id>
 openspec workset list
 openspec workset open <name>
+openspec workset remove <name> --yes
 
 # 全局配置 (profile/delivery/defaultStore/telemetry 等)
 openspec config list | get <key> | set <key> <value> | unset <key> | reset | edit
+openspec config path                    # 打印全局配置文件位置
 openspec config profile [core]        # 交互式选择 delivery 与 workflows
 
 # shell 补全

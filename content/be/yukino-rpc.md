@@ -810,16 +810,16 @@ type observedStream struct {
     once  sync.Once
 }
 
-func (s *observedStream) Recv(msg any) error {
-    err := s.inner.Recv(msg)
+func (o *observedStream) Recv(msg any) error {
+    err := o.inner.Recv(msg)
     switch {
     case err == nil:
     case errors.Is(err, io.EOF):
-        s.once.Do(s.br.RecordSuccess)
+        o.once.Do(o.br.RecordSuccess)
     case errors.Is(err, context.Canceled):
         // 调用者主动取消, 不算服务失败
     default:
-        s.once.Do(s.br.RecordFailure)
+        o.once.Do(o.br.RecordFailure)
     }
     return err
 }
@@ -867,9 +867,9 @@ RoundRobin (轮询):
 ```go
 type RoundRobin struct { idx atomic.Uint64 }
 
-func (r *RoundRobin) Select(list []Instance) Instance {
+func (r *RoundRobin) Select(list []registry.Instance) registry.Instance {
     if len(list) == 0 {
-        return Instance{}  // 空列表防御 (round_robin.go:19-21)
+        return registry.Instance{}  // 空列表防御 (round_robin.go:19-21)
     }
     i := r.idx.Add(1)
     return list[(i-1) % uint64(len(list))]
@@ -885,9 +885,9 @@ Random (随机):
 ```go
 type Random struct { r *rand.Rand; m sync.Mutex }
 
-func (r *Random) Select(list []Instance) Instance {
+func (r *Random) Select(list []registry.Instance) registry.Instance {
     if len(list) == 0 {
-        return Instance{}  // 空列表防御 (random.go:23-25)
+        return registry.Instance{}  // 空列表防御 (random.go:23-25)
     }
     r.m.Lock()
     defer r.m.Unlock()
@@ -902,7 +902,7 @@ WeightedRR (平滑加权轮询, Nginx 算法):
 
 ```go
 // 每次 Select (前置防御: len(list)==0、len(list)!=len(weights)、totalWeight<=0 均返回零值 Instance, weighted_rr.go:37-49):
-for i := range weights { currentWeight[i] += weights[i] }
+for i := range list { currentWeight[i] += weights[i] }
 maxIdx := index of max(currentWeight)
 currentWeight[maxIdx] -= totalWeight
 return list[maxIdx]
@@ -918,7 +918,7 @@ return list[maxIdx]
 `WeightedRR.Select` 按位置 (index) 匹配 weights 和 instances:
 
 ```go
-if len(r.weights) != len(list) { return Instance{} }
+if len(list) != len(w.weights) { return registry.Instance{} }
 // weights[i] 对应 list[i]
 ```
 

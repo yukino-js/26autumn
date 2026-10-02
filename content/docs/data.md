@@ -1,13 +1,13 @@
 ---
 title: "Data 工作: JSError 自动修复、视频切片聚类标签与手写 SWR"
-description: "Data 工作复盘: JSError 上报与故障现场还原 (rrweb/componentStack/sourcemap)、视频切片聚类标签、手写 SWR 数据请求方案"
+description: "Data 工作复盘: JSError 上报与故障现场还原 (rrweb/componentStack/sourcemap)、monaco 资源加载竞态、FSP 首屏计算、视频切片聚类标签、手写 SWR 数据请求方案"
 ---
 
 ## JSError 自动修复与故障现场还原
 
 ### 背景
 
-Tiktok 搜索推荐平台是一个 React SPA, 页面报错后排查链路长: 用户反馈模糊、错误堆栈被压缩、无法复现操作路径. 该工作的目标是建立「JSError 上报 -> 现场还原 -> 大模型自动修复」的闭环:
+TikTok 搜索推荐平台是一个 React SPA, 页面报错后排查链路长: 用户反馈模糊、错误堆栈被压缩、无法复现操作路径. 该工作的目标是建立「JSError 上报 -> 现场还原 -> 大模型自动修复」的闭环:
 
 1. 前端接入监控 SDK 上报 JSError, 携带尽可能完整的错误信息
 2. 使用 rrweb 录制错误发生前的页面操作, 还原故障现场
@@ -21,7 +21,7 @@ Tiktok 搜索推荐平台是一个 React SPA, 页面报错后排查链路长: �
 
 1. 常态录制, 内存缓冲: rrweb 的 record() 启动后, 每产生一个事件 (DOM 增量、点击、滚动) 就通过 emit 回调推进一个数组. rrweb 录的是结构化增量事件而非视频, 开销很小, 所以「全程录」是可行的
 2. 滚动淘汰, 只留最近 3 秒: 每次 emit 时在 recorder 内部执行 pruneWindow(event.timestamp), 按 event.timestamp - screenRecordDurationMs 作为截止线, 把数组头部更早的事件 shift 掉. 内存占用恒定, 也不会记录用户完整操作历史 (隐私 + 体积)
-3. 错误触发, 取快照上报: 上报事件命中触发类型 (Error/Xhr/Fetch/Resource/UnhandledRejection) 时置 shouldScreenRecord = true, 插件把当前窗口内的事件 JSON -> gzip -> base64 附在错误数据里. 错误发生的那一刻, 窗口里装的恰好就是「错误前 3 秒」的事件流
+3. 错误触发, 取快照上报: 上报事件命中触发类型 (Error/Xhr/Fetch/Resource/UnhandledRejection) 时置 shouldScreenRecord = true; 下一次 emit 时插件把当前窗口内的事件 JSON -> gzip -> base64, 作为独立的 ScreenRecord 事件上报 (不复用触发错误的 payload). 错误发生的那一刻, 窗口里装的恰好就是「错误前 3 秒」的事件流
 
 配套细节: rrweb 的 checkoutEveryNms 按窗口长度定期生成新的全量 DOM 快照. 回放必须从一个全量快照开始重建 DOM, 如果不做 checkout, 滚动窗口裁掉旧事件后可能把唯一的全量快照也裁掉, 窗口就无法独立回放.
 
@@ -52,7 +52,7 @@ Tiktok 搜索推荐平台是一个 React SPA, 页面报错后排查链路长: �
 补充: 为什么存在两条捕获路径?
 
 - window error 事件 (未捕获的运行时异常): 浏览器派发 ErrorEvent, HTML 规范规定事件对象直接携带 filename/lineno/colno 三个属性 (出错脚本 URL、行号、列号), 采集时直接解构取值, 无需解析
-- 运行时抛出的 Error 对象 (try-catch 捕获、Promise 拒绝的 reason、框架错误处理器的入参等): ECMAScript 规范只规定了 name 和 message, 没有 line/column 属性, 拿不到行列号; 但 stack 字符串 (非标准但 V8/SpiderMonkey/JSC 都实现) 里带帧信息, 每帧格式为 `at 函数名 (文件:行:列)`, 行列号藏在字符串里, 需要正则解析提取
+- 运行时抛出的 Error 对象 (try-catch 捕获、Promise 拒绝的 reason、框架错误处理器的入参等): ECMAScript 规范只规定了 name 和 message, 没有 line/column 属性, 拿不到行列号; 但 stack 字符串 (非标准但 V8/SpiderMonkey/JSC 都实现, 帧格式随引擎不同) 里带帧信息, V8 的每帧形如 `at 函数名 (文件:行:列)`, SpiderMonkey 则是 `函数名@文件:行:列`, 行列号藏在字符串里, 需要正则解析提取
 
 两类错误在实际页面中同时存在, 采集逻辑必须是两套兜底: 有 ErrorEvent 时优先用它的 filename/lineno/colno, 只有 Error 对象时退回解析 error.stack 的帧信息, 归一化成同一套数据模型 (name/message/line/column/stack) 后, 再交给 sourcemap 反解定位到源码 (见「Sourcemap 反解与堆栈聚合策略是怎样的?」). 只写一种分支会漏掉另一类错误的行列号信息.
 
@@ -152,7 +152,7 @@ Babel 的 JSX 转换插件 (@babel/plugin-transform-react-jsx-source, Vite 的 @
 <MessagePanel />;
 
 // 编译后 (dev)
-jsx(MessagePanel, {
+React.createElement(MessagePanel, {
   __source: { fileName: "MessagePanel.tsx", lineNumber: 15, columnNumber: 5 },
 });
 ```
@@ -190,9 +190,9 @@ dev 模式下该插件启用, fiber 上有 `_debugSource`, componentStack 带源
 
 React 17+: 运行时从原生 JS 栈帧重建
 
-React 17 引入了全新的 componentStack 生成机制, 不再依赖 `__source` / `_debugSource` 来获取位置信息. 核心思路: 捕获错误后, 沿 fiber 树向上, 对每个祖先组件在其 render 函数 (或 class constructor) 内部抛出一个临时 Error, 从 error.stack 里提取该组件对应的原生栈帧 (包含 bundle 文件 URL + 行列号), 再拼成 componentStack.
+React 17 引入了全新的 componentStack 生成机制, 不再依赖 `__source` / `_debugSource` 来获取位置信息. 核心思路: 捕获错误后, 沿 fiber 树向上, 对每个祖先组件重新执行一次它的函数 (函数组件是 render, 类组件是 constructor), 在调用中构造临时 Error 捕获原生调用栈, 从中提取该组件对应的原生栈帧 (包含 bundle 文件 URL + 行列号), 再拼成 componentStack.
 
-React 源码中的关键函数是 describeNativeComponentFrame (位于 packages/shared/ReactComponentStackFrame.js), 它负责执行这个「抛临时 Error -> 提取栈帧」的过程. 同时 React 检测当前 JS 引擎的栈帧前缀 (V8 用 at, SpiderMonkey 无前缀), 确保 componentStack 格式与原生栈帧对齐.
+React 源码中的关键函数是 describeNativeComponentFrame (位于 packages/shared/ReactComponentStackFrame.js), 它负责执行这个「重新调用组件捕获临时 Error -> 提取栈帧」的过程. componentStack 直接复用原生栈帧字符串, 格式天然跟随 JS 引擎 (V8 带 at 前缀, SpiderMonkey 无前缀), 与浏览器打印的原生错误栈对齐.
 
 这个机制不区分 dev/prod, 在生产环境同样生效. 以下是线上真实采集到的 React 17+ 生产环境 componentStack (Vite 构建, V8 环境):
 
@@ -209,7 +209,7 @@ React 源码中的关键函数是 describeNativeComponentFrame (位于 packages/
     at Nt (http://localhost:4173/assets/index-W4hlOKTv.js:10:38198)
 ```
 
-组件名同样被压缩成了 jd/Dd/Md/qt 等无意义标识符 (terser 默认 mangle), 但位置信息是有的——每帧都带 bundle 文件 URL + 行列号. 配合 sourcemap 反解, 可以还原出原始组件的源码位置. 这正是 React 官方所说的 "fully symbolicated React component stack traces in a production environment".
+组件名同样被压缩成了 jd/Dd/Md/qt 等无意义标识符 (terser 默认 mangle), 但位置信息是有的——每帧都带 bundle 文件 URL + 行列号. 配合 sourcemap 反解, 可以还原出原始组件的源码位置. 这正是 React 17 引入原生组件栈后, 生产环境也能拿到可完整反解的组件栈的原因.
 
 与 React 16 那份对比, 几个关键差异:
 
@@ -219,18 +219,18 @@ React 源码中的关键函数是 describeNativeComponentFrame (位于 packages/
 - `at div` 没有位置信息: div 是原生 DOM 元素 (host component), 没有 render 函数可供 React 抛临时 Error 提取栈帧, 所以只输出标签名. 这和 React 16 中 div 保留标签名的原因一致
 - `at Pd` 也没有位置信息: 这是一个实际边界情况. 某些组件 (如 Context Provider/Consumer、Suspense 边界、或预编译库中 React 无法重新执行 render 的组件) 在 describeNativeComponentFrame 机制下拿不到栈帧, 退化为只输出组件名. 监控侧解析时需要对「有位置」和「无位置」的帧分别处理
 
-Breaking Change 提示: 重建组件栈涉及重新执行组件的 render 函数和 class constructor, 如果这些函数有副作用, 可能会在错误处理路径中被再次触发. 这是 React 17 的一个已知 breaking change.
+Breaking Change 提示: 重建组件栈涉及重新执行组件的 render 函数和 class constructor, 如果这些函数有副作用, 可能会在错误处理路径中被再次触发. 这是 React 17 组件栈生成机制引入的已知行为变化, 社区有对应的 issue 讨论, 编写组件时要避免在 render 里放副作用.
 
 对比总结:
 
-| 维度                   | React 16                                  | React 17+                                      |
-| ---------------------- | ----------------------------------------- | ---------------------------------------------- |
-| 位置信息来源           | 构建期 `__source` -> fiber `_debugSource` | 运行时临时 Error 的原生栈帧                    |
-| dev 模式格式           | in Chat (at Chat.tsx:10)                  | at Chat (http://...bundle.js:1234:5)           |
-| prod 模式格式          | in s (仅组件名, 无位置)                   | s@http://...bundle.js:1:470 (有 bundle 行列号) |
-| prod 是否可用于定位    | 仅组件层级, 无定位价值                    | 配合 sourcemap 可反解到原始源码                |
-| 格式前缀               | 固定 in                                   | 随 JS 引擎变化 (V8: at, SpiderMonkey: 无前缀)  |
-| 对 `_debugSource` 依赖 | 强依赖                                    | 不依赖                                         |
+| 维度                   | React 16                                  | React 17+                                                       |
+| ---------------------- | ----------------------------------------- | --------------------------------------------------------------- |
+| 位置信息来源           | 构建期 `__source` -> fiber `_debugSource` | 运行时临时 Error 的原生栈帧                                     |
+| dev 模式格式           | in Chat (at Chat.tsx:10)                  | at Chat (http://...bundle.js:1234:5)                            |
+| prod 模式格式          | in s (仅组件名, 无位置)                   | at s (http://...bundle.js:1:470) (有 bundle 行列号, 前缀随引擎) |
+| prod 是否可用于定位    | 仅组件层级, 无定位价值                    | 配合 sourcemap 可反解到原始源码                                 |
+| 格式前缀               | 固定 in                                   | 随 JS 引擎变化 (V8: at, SpiderMonkey: 无前缀)                   |
+| 对 `_debugSource` 依赖 | 强依赖                                    | 不依赖                                                          |
 
 对监控侧的结论:
 
@@ -804,7 +804,7 @@ export default Card;
 
 React 17+ 生产环境的 componentStack 带 bundle 行列号, 可以走 sourcemap 反解. 落地流程:
 
-1. 构建时: 生成 sourcemap (webpack 配 devtool: 'hidden-source-map', Vite 配 build.sourcemap: true), 上传至监控平台 (Sentry、ARMS 等), 不要部署到公网
+1. 构建时: 生成 sourcemap (webpack 配 devtool: 'hidden-source-map', Vite 配 build.sourcemap: 'hidden'), 上传至监控平台 (Sentry、ARMS 等), 不要部署到公网
 2. 运行时: SDK 采集到含 bundle URL + 行列号的 componentStack
 3. 服务端: 监控平台按 URL 匹配对应版本的 sourcemap, 逐帧将 bundle 行列号反解为原始文件路径和行号
 
@@ -853,7 +853,7 @@ componentStack 的价值之一是按组件归因; 有了 CodeGraph, 归因可从
 
 5. 修复闭环: 出错组件名作为探索入口
 
-componentStack 顶行的出错组件名, 可替代「栈帧→符号」的第一步: codegraph_node(出错组件) 拿源码 → explore 摸数据链路 → impact 评估波及 → affected 选测试. 入口从行列号换成组件名, 后续链路复用 codegraph.md 第七章的自动修复流程.
+componentStack 顶行的出错组件名, 可替代「栈帧→符号」的第一步: codegraph_node(出错组件) 拿源码 → explore 摸数据链路 → impact 评估波及 → affected 选测试. 入口从行列号换成组件名, 后续链路复用 codegraph.md 中描述的自动修复流程.
 
 6. 前置条件与边界
 
@@ -1039,7 +1039,7 @@ export const routes: RouteObject[] = [
 3. 双构建复用: 扫描与生成逻辑抽成纯 Node 模块 page-routes.js, vite 插件和 webpack 插件共享
 4. 生成文件纳入 gitignore 或标注 DO NOT EDIT, 避免人工修改被覆盖
 
-为什么不用运行时方案 (如 import.meta.glob 动态构建路由表): 代码生成的产物是纯静态 import, 打包工具的 tree-shaking、chunk 命名、依赖分析都最完整; 运行时方案需要额外的路由表构建代码且类型推导更弱.
+为什么不用运行时方案 (如 import.meta.glob 动态构建路由表): 代码生成的产物是显式的 lazy(() => import(...)) 声明, 打包工具的 chunk 拆分、命名、依赖分析最直接; 运行时方案需要额外的路由表构建代码且类型推导更弱.
 
 ### 跨域脚本错误只有 Script error, 如何解决?
 
@@ -1140,13 +1140,13 @@ const [{ record }, pako] = await Promise.all([
 
 ### monaco editor 发版后资源加载错误, 如何分析与解决?
 
-真实业务场景: Tiktok 搜索推荐平台内有大量基于 monaco editor 的 web 编辑器页面 (规则配置、DSL 编辑等). monaco 的运行时资源分两部分: 编辑器本体 (editor.main, 提供 UI 与编辑能力) 和各语言的 web worker (editor.worker 基础 worker、ts.worker/json.worker/css.worker 等语言服务 worker, 承载语法高亮、代码补全、类型检查). 这些脚本平时命中浏览器缓存, 体验无感; 但前端发版后集中出现资源加载错误, 且问题集中在一种路径上: 用户不是从 / 根路径跳转进来, 而是直接访问 /path/to/web/editor 直连进入编辑器页面, 此时语法高亮等 worker 脚本尚未就绪, monaco 抛出资源加载错误.
+真实业务场景: TikTok 搜索推荐平台内有大量基于 monaco editor 的 web 编辑器页面 (规则配置、DSL 编辑等). monaco 的运行时资源分两部分: 编辑器本体 (editor.main, 提供 UI 与编辑能力) 和各语言的 web worker (editor.worker 基础 worker、ts.worker/json.worker/css.worker 等语言服务 worker, 承载语法高亮、代码补全、类型检查). 这些脚本平时命中浏览器缓存, 体验无感; 但前端发版后集中出现资源加载错误, 且问题集中在一种路径上: 用户不是从 / 根路径跳转进来, 而是直接访问 /path/to/web/editor 直连进入编辑器页面, 此时语法高亮等 worker 脚本尚未就绪, monaco 抛出资源加载错误.
 
 这类错误的本质是「懒加载资源在需要的那一刻还没下载完」: 文件都存在 (版本一致), 但 monaco 的 worker 是按需创建的独立请求, 直连进入编辑器页面时脚本还没下载完就被 monaco 调用, 抛出 worker 不可用错误. 发版后缓存失效需要重新请求, 把这个竞态暴露得更明显.
 
 #### 为什么直连进入会触发竞态型错误
 
-1. monaco 的语言能力由 web worker 异步承载: 语法高亮、代码补全运行在 worker 里, 通过 MonacoEnvironment.getWorkerUrl 或打包工具的 worker 插件按需创建. 这些脚本只在编辑器组件挂载、worker 被创建时才发起请求, 属于典型的懒加载资源
+1. monaco 的语言能力由 web worker 异步承载: 代码补全、类型检查, 以及 JSON/TS 这类语言的语法高亮都运行在 worker 里, 通过 MonacoEnvironment.getWorkerUrl 或打包工具的 worker 插件按需创建. 这些脚本只在编辑器组件挂载、worker 被创建时才发起请求, 属于典型的懒加载资源
 2. SPA 入口 HTML 不预置所有路由的脚本: 入口 HTML 只加载首屏必需的 chunk, 编辑器页面代码与 monaco 依赖靠路由级 lazy (动态 import) 在访问时才拉取
 3. 从 / 跳转与直连 /path/to/web/editor 的差异, 本质是资源下载有没有"时间余量":
    - 从 / 跳转: SPA 内部导航, 不重新请求 HTML, 只触发编辑器 chunk 与 monaco 依赖的动态 import. 这些下载与页面渲染并行, 且用户在前序页面停留期间浏览器有较多空闲带宽, 下载大概率先于用户操作完成, 竞态被掩盖
@@ -1276,7 +1276,7 @@ const EditorPage = lazy(() => retryImport(() => import("./pages/Editor")));
 
 webpack 中可配合 html-webpack-plugin 的注入或用 preload-webpack-plugin 自动为路由 chunk 生成 modulepreload 标签
 
-适用场景: modulepreload 不阻塞 HTML 解析和首屏渲染, 但默认优先级并不低 (Chrome 中 modulepreload 与动态 import 的模块预载同属中等优先级, 且会提前解析编译模块), 会和首屏资源竞争带宽. 如果首屏本身包含编辑器, modulepreload 能让它和首屏一起尽早下载, 值得用. 但 Tiktok 平台首屏是搜索推荐页, 编辑器是其他路由, 首屏不包含编辑器——此时 modulepreload 几百 KB 的 monaco-vendor 会挤占首屏资源带宽, 弱网下间接拖慢首屏, 不建议用, 改用 requestIdleCallback 在首屏完成后再预取
+适用场景: modulepreload 不阻塞 HTML 解析和首屏渲染, 但默认优先级并不低 (Chrome 中 modulepreload 与动态 import 的模块预载同属中等优先级, 且会提前解析编译模块), 会和首屏资源竞争带宽. 如果首屏本身包含编辑器, modulepreload 能让它和首屏一起尽早下载, 值得用. 但 TikTok 平台首屏是搜索推荐页, 编辑器是其他路由, 首屏不包含编辑器——此时 modulepreload 几百 KB 的 monaco-vendor 会挤占首屏资源带宽, 弱网下间接拖慢首屏, 不建议用, 改用 requestIdleCallback 在首屏完成后再预取
 
 - requestIdleCallback 时机预取: 相比 modulepreload 在 HTML 渲染后立即开始下载, requestIdleCallback 在首屏渲染完成、浏览器空闲后才触发, 不和首屏资源竞争带宽, 适合首屏不包含编辑器的场景. 在首屏指标 (LCP) 上报完成后的空闲时机预取编辑器相关资源: 编辑器页面 chunk 是 webpack chunk 用 import() 预取, worker 脚本是 CDN URL 不在 webpack 打包体系里, 用 fetch() 预取到 HTTP 缓存. requestIdleCallback 带 timeout 兜底参数, 避免页面一直不空闲导致预取被无限延迟:
 
@@ -1308,7 +1308,7 @@ function prefetchEditorAssets() {
 reportLCP().then(prefetchEditorAssets);
 ```
 
-两者的选择取决于首屏是否包含编辑器: 首屏包含编辑器时用 modulepreload 让它和首屏一起尽早下载; 首屏不包含编辑器时 (Tiktok 平台场景) 用 requestIdleCallback 在首屏完成后预取, 不与首屏竞争带宽. requestIdleCallback 回调里同时预取编辑器页面 chunk (import()) 和 worker 脚本 (fetch CDN URL), 竞态根源是 worker 脚本没就绪, 预取 worker 是最直接的缓解
+两者的选择取决于首屏是否包含编辑器: 首屏包含编辑器时用 modulepreload 让它和首屏一起尽早下载; 首屏不包含编辑器时 (TikTok 平台场景) 用 requestIdleCallback 在首屏完成后预取, 不与首屏竞争带宽. requestIdleCallback 回调里同时预取编辑器页面 chunk (import()) 和 worker 脚本 (fetch CDN URL), 竞态根源是 worker 脚本没就绪, 预取 worker 是最直接的缓解
 
 - monaco 本体拆为独立 vendor chunk: webpack 的 splitChunks 把 monaco-editor 单独拆出来, 编辑器页面 chunk 只剩业务代码 (React 组件、页面布局、调用后端 API 等), 不再包含 monaco 库:
 
@@ -1333,7 +1333,7 @@ monaco 体积大 (几百 KB), 拆成独立 chunk 后跨多个编辑器页面共�
 
 ### SPA 首屏渲染时间 (FSP) 如何计算?
 
-真实业务场景: Tiktok 搜索推荐平台是 React SPA, 首屏内容由 JS 执行后动态渲染, 不是 HTML 直出的. 传统的 DOMContentLoaded 只表示 HTML 解析完成, load 事件表示所有资源 (包括非首屏图片、iframe) 加载完毕, 都不能准确反映用户看到首屏内容的时间. LCP (Largest Contentful Paint) 虽然更接近, 但浏览器按元素面积自动选“最大内容元素”, 候选元素仅限视口内 (视口外的大图不会成为候选), 仍可能选到骨架屏占位等不代表首屏真正完成的元素. yukino-sentry 用 MutationObserver 配合 IntersectionObserver 自行计算 FSP (First Screen Paint), 只关心首屏视口内可见元素的出现时间.
+真实业务场景: TikTok 搜索推荐平台是 React SPA, 首屏内容由 JS 执行后动态渲染, 不是 HTML 直出的. 传统的 DOMContentLoaded 只表示 HTML 解析完成, load 事件表示所有资源 (包括非首屏图片、iframe) 加载完毕, 都不能准确反映用户看到首屏内容的时间. LCP (Largest Contentful Paint) 虽然更接近, 但浏览器按元素面积自动选“最大内容元素”, 候选元素仅限视口内 (视口外的大图不会成为候选), 仍可能选到骨架屏占位等不代表首屏真正完成的元素. yukino-sentry 用 MutationObserver 配合 IntersectionObserver 自行计算 FSP (First Screen Paint), 只关心首屏视口内可见元素的出现时间.
 
 #### FSP 的计算原理
 
@@ -1429,7 +1429,7 @@ waitForPageReady();
 
 #### 边界与局限
 
-- 骨架屏干扰: 如果首屏先出现骨架屏再出现真实内容, FSP 会把骨架屏出现的时间计入, 导致 FSP 偏小. 这是所有 DOM 变化监听方案的通病, 缓解手段是结合 FCP (First Contentful Paint) 判断骨架屏 vs 真实内容
+- 骨架屏干扰: 观察在 readyState complete 后一帧就结束, 如果真实内容在页面 load 之后才渲染出来 (典型 SPA: 骨架屏先出, 数据接口返回后才渲染正文), 骨架屏之后的真实内容不会被计入, FSP 停留在骨架屏出现的时间, 导致偏小. 这是"以 load 完成为观察终点"的 DOM 变化监听方案的通病, 缓解手段是结合 FCP (First Contentful Paint) 判断骨架屏 vs 真实内容
 - SSR 场景退化: 如果首屏元素由服务端直出, 元素在 HTML 解析阶段就已存在, MutationObserver 只监听新增节点观察不到, latestRenderTime 停留在初值 0. 缓解手段是在 SSR 场景 fallback 到 LCP 或直接用 DOMContentLoaded
 - SPA 路由切换不算首屏: FSP 只计算 document 初始化阶段的首屏, 路由切换后的渲染不在观察范围内 (MutationObserver 在 readyState complete 后断开)
 
@@ -1807,7 +1807,7 @@ Lab 用 headless 浏览器运行页面, 收集运行时数据, 产出性能指�
 
 为了验证这条链路, 在 packages/tags 下用 Golang 实现了一个完整可运行的单机版本 (Go module 路径是 github.com/hangtiancheng/26autumn/docs/tags, 与目录名不一致, 代码中的 import 路径以此为准): 输入一个长视频 (实测 24 分 08 秒的 React Conf 演讲视频), 按固定时长切片, 每个切片抽代表帧调用多模态大模型, 产出 1 到多个简短中文聚类标签, 输出 JSON 结果和 Markdown 报告. 实测 25 个切片全部产出标签, 端到端耗时约 3 分钟.
 
-### 一. 技术选型
+### 一、技术选型
 
 #### 1. 大模型调用: eino 框架
 
@@ -1825,7 +1825,7 @@ llm 工厂 (internal/llm/model.go) 的职责就是根据配置构造 ChatModel, 
 Go 社区没有成熟的纯 Go 视频编解码库, 社区共识是 "Go 负责编排, ffmpeg 负责切割":
 
 - 时长探测: ffprobe -show_entries format=duration, 输出纯数字, Go 侧 ParseFloat
-- 抽帧: ffmpeg -ss <时间戳> -i <视频> -frames:v 1 -vf "scale=768:-2,format=yuvj420p" -q:v 4 -f image2 out.jpg
+- 抽帧: `ffmpeg -ss <时间戳> -i <视频> -frames:v 1 -vf "scale=768:-2,format=yuvj420p" -q:v 4 -f image2 out.jpg`
 - Go 侧用 exec.CommandContext 驱动子进程, 捕获 stderr 便于排错, ctx 取消可级联杀掉 ffmpeg 进程
 
 不选 cgo 绑定 (goav、gmf) 的原因: 交叉编译困难, 与 ffmpeg 版本强耦合, 生产环境维护成本高. 生产项目也可以用 u2takey/ffmpeg-go 这类进程封装库, 本项目为了透明直接用 exec.
@@ -1852,7 +1852,7 @@ packages/tags/
     └── tags_report.md           # 人读的时间线报告
 ```
 
-### 二. 切片实现 (internal/slicer)
+### 二、切片实现 (internal/slicer)
 
 #### 1. 时长探测与分段规划
 
@@ -1886,7 +1886,7 @@ t(k) = start + span * (k + 0.5) / n,  k = 0, 1, ..., n-1
 
 对策是时间戳回退重试: 某采样点抽不出帧 (输出文件为空) 时, 时间戳减 1 秒重试, 最多 8 次, 允许回退到切片起点之前 5 秒 (保证尾部被截断的切片仍能拿到邻近帧). 修复后最后一个切片成功产出标签"React 2025 大会 / 技术会议 / 会议标题页".
 
-### 三. 聚类标签生产 (internal/labeler)
+### 三、聚类标签生产 (internal/labeler)
 
 #### 1. 多模态消息构造
 
@@ -1927,7 +1927,7 @@ System Prompt 定义角色和输出规范:
 
 同理, pipeline 层面抽帧失败、LLM 网络错误等硬失败也不中止整个任务, 该切片降级为兜底标签, 其余切片照常产出. 单次失败只损失一个切片, 不损失整个任务.
 
-### 四. 真实踩坑记录
+### 四、真实踩坑记录
 
 #### 1. 文本模型拒绝图片输入 (400)
 
@@ -1945,7 +1945,7 @@ ffmpeg 9 抽帧报错 "Non full-range YUV is non-standard", 原因是源视频�
 
 25 个切片并发 2 处理, 完成顺序完全乱序 (日志里 segment 9 先于 segment 1 完成). 结果数组按切片下标写入而非追加, 最后按 index 排序输出, 报告时间线始终有序.
 
-### 五. 实测结果
+### 五、实测结果
 
 24 分 08 秒视频, 60 秒粒度, 25 个切片, 每片 3 帧, 并发 2, 端到端约 3 分钟, 25/25 产出标签. 标签质量摘录:
 
@@ -1960,7 +1960,7 @@ ffmpeg 9 抽帧报错 "Non full-range YUV is non-standard", 原因是源视频�
 
 可以看到: 场景语义识别准确 (赞助商页、代码演示、架构图、致谢页都能区分); 标签具备聚类价值 ("React会议演讲"、"性能对比分析"在多个切片复现); 连只出现一次的项目名 (React Forest、React Fir) 也从画面文字中读了出来, 说明 VLM 自带 OCR 能力, 对演讲类视频尤其有效.
 
-### 六. 大型企业项目中的优化方向
+### 六、大型企业项目中的优化方向
 
 单机验证版跑通后, 放到大型企业场景 (日均数万小时直播录制、标签供算法在线消费) 下, 以下每个方向都有明确的优化空间.
 
@@ -2025,7 +2025,7 @@ HDBSCAN 的关键参数 min_cluster_size 按数据量定: 万级切片设 10~50,
 
 对每个簇:
 
-1. 采样: 取离簇质心最近的 K 个切片 (medoid, 比 centroid 附近随机采样更有代表性), 连同它们的文本描述、时间分布、簇规模组成上下文
+1. 采样: 取离簇质心最近的 K 个切片 (极端情况 K=1 时即 medoid, 簇内真实样本比质心附近的合成点更有代表性), 连同它们的文本描述、时间分布、簇规模组成上下文
 2. Prompt 要求输出 JSON: `{label, definition, boundary}`, label 是简短中文标签, definition 是簇的定义 (什么样的切片属于这个簇), boundary 给出边界判例 (什么样的内容不算这个簇). definition 和 boundary 是留给后续增量归簇和人工抽检用的
 3. 注入已有标签体系, 优先复用已有标签, 控制标签膨胀
 
@@ -2308,7 +2308,7 @@ vercel/swr 提供轮询、重试、指数退避、focus 重新校验、乐观更
 
 - 纯 SPA、React 18+、团队已经统一使用数据请求库的新项目
 - 需要乐观更新、mutation 后缓存失效、轮询、请求重试等复杂能力
-- 需要 devtools、缓存生命周期管理 (LRU 淘汰、gcTime)
+- 需要配套的 devtools 和完整的缓存生命周期管理 (如 React Query 的 gcTime 与 LRU 淘汰)
 
 手写方案明确不覆盖这些场景, 它的定位是"存量项目里低成本拿到预加载、去重、缓存三个收益"的战术工具, 不是 React Query 的替代品.
 
@@ -2333,7 +2333,7 @@ SWR 时序把 fetch 提前到 HTML 解析阶段, 与 bundle 下载、解析、�
 
 收益有两层: 前端层面减少了 N-1 次响应解析和状态更新; 后端层面减少了 N-1 次接口调用, 对公用选择器这种被全系统高频消费的接口, 去重直接降低了后端 QPS.
 
-实现上依赖 promise 的可共享性: promise 是惰性求值的句柄, 多次 await 同一个 promise 不会重新执行请求逻辑, 只会各自注册 then 回调.
+实现上依赖 promise 的可共享性: promise 是同一个在途计算的句柄, 创建时执行器就已经启动, 多次 await 同一个 promise 不会重新执行请求逻辑, 只会各自注册回调、等待同一个结果.
 
 #### 4.3 Stale-While-Revalidate: 用缓存消除等待
 
@@ -2355,7 +2355,7 @@ SWR 时序把 fetch 提前到 HTML 解析阶段, 与 bundle 下载、解析、�
 
 可能进一步延伸"为什么不直接用 link rel=preload", 可以对比:
 
-- link rel=preload 只能预加载资源 (脚本、字体、图片), 无法预加载 XHR/fetch 接口数据
+- link rel=preload 面向资源 (脚本、字体、图片); 用 as=fetch 预取接口响应虽然可行, 但要求 URL、credentials、CORS 模式与后续 fetch 完全一致, 不一致会二次下载, 而且它只暖 HTTP 缓存, 给不出 promise/result 语义, 无法被非 fetch 的消费方认领
 - HTTP 缓存 (Cache-Control) 能覆盖二次访问, 但首次访问仍需完整 RTT, 且无法与 bundle 下载并行调度, 也没有 promise 级别的去重
 - React 18 的 useDeferredValue、Suspense 都不解决"请求早于 bundle"的问题
 - header 内联 fetch 加 window 挂载 promise, 是接口数据预加载的最直接形态, SWR 消费机制让它能被框架代码无缝认领
@@ -2384,7 +2384,7 @@ SWR 时序把 fetch 提前到 HTML 解析阶段, 与 bundle 下载、解析、�
 
 延伸六: 和 React Query 的 prefetchQuery 有什么区别?
 
-回答: prefetchQuery 运行在 bundle 内部, 最早也只能在应用初始化时触发, 无法早于 bundle 下载; 且强依赖 QueryClientProvider, 非 React 页面无法使用. 手写方案的预加载发生在 HTML 解析阶段, 消费入口是普通函数, 这两点差异正是存量 MPA 项目选择它的原因.
+回答: prefetchQuery 运行在 bundle 内部, 最早也只能在应用初始化时触发, 无法早于 bundle 下载; 且缓存挂在 QueryClient 上、消费侧依赖 Provider 包裹的 React 应用, 非 React 页面无法使用. 手写方案的预加载发生在 HTML 解析阶段, 消费入口是普通函数, 这两点差异正是存量 MPA 项目选择它的原因.
 
 ### 6. 手写前端性能监控: 思路与选型
 
@@ -2396,7 +2396,7 @@ boot.ts 的监控代码由五个部分组成, 全部基于浏览器原生 Perfor
 
 第一部分, 启动打点. 脚本入口第一行就执行 performance.mark('boot-start'), 在整个启动流程 (加载库文件、登录校验、菜单预取、prepare 执行) 完成后打 boot-end, 再用 performance.measure 计算启动总耗时. measure 封装了 try/catch, mark 不存在时不会抛错中断业务.
 
-第二部分, 长任务监听. 用 PerformanceObserver 观察 longtask 类型的条目, 只上报 duration 超过 50ms 的任务 (50ms 是 Long Tasks 与 TBT 的阈值, INP 的处理延迟同样按长任务边界分段), 上报内容附带当前页面路径和业务码 bizCode, 便于按页面维度归因卡顿. 监听在启动采集完成时 disconnect, 避免后续用户交互的长任务污染启动阶段数据.
+第二部分, 长任务监听. 用 PerformanceObserver 观察 longtask 类型的条目, 只上报 duration 超过 50ms 的任务 (50ms 是 Long Tasks 的判定阈值, TBT 也只累计任务超出 50ms 的部分), 上报内容附带当前页面路径和业务码 bizCode, 便于按页面维度归因卡顿. 监听在启动采集完成时 disconnect, 避免后续用户交互的长任务污染启动阶段数据.
 
 第三部分, 资源加载采样. 记录前 12 秒内执行的模块, 按 0.003 的采样率上报模块路径, 用于离线分析"哪些模块值得做预加载". 这是监控反哺优化的典型用法: 先采样观测, 再决定预加载清单.
 

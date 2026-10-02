@@ -1,6 +1,6 @@
 ---
 title: "前端技术笔记: JavaScript、DOM、BOM、浏览器与网络"
-description: "JavaScript 语言核心、DOM/BOM、浏览器原理与网络知识笔记: 类型检测与语言语义、事件循环与原型继承、浏览器渲染与网络协议、性能与工程实践"
+description: "JavaScript 语言核心、DOM/BOM、浏览器原理与网络知识笔记: 类型检测与语言语义、事件循环与原型继承、手写实现题、浏览器渲染与网络协议、安全与性能优化、TypeScript 编译与 V8 优化"
 ---
 
 本文档梳理 JavaScript 语言、DOM/BOM、浏览器原理与网络的核心知识点, 内容由浅入深, 力求准确、专业, 并覆盖常见的延伸方向.
@@ -1521,8 +1521,8 @@ A: 微前端把多个可独立开发部署的子应用聚合到一个宿主页�
 
 JS 沙箱方案:
 
-- 快照沙箱: 子应用挂载前记录 window 快照, 卸载时还原差异. 实现简单但只支持单实例, 且遍历 window 成本高 (qiankun 旧版降级方案) .
-- Proxy 沙箱: 用 Proxy 包一层 fakeWindow, 子应用代码通过 with(proxyWindow) 或函数参数注入的方式访问"window", 写操作落在 fakeWindow 上不污染真实全局, 支持多实例并存 (qiankun legacy 主力方案) . 逃逸点: 直接引用 globalThis、setTimeout 回调里的隐式全局、原型链修改.
+- 快照沙箱: 子应用挂载前记录 window 快照, 卸载时还原差异. 实现简单但只支持单实例, 且遍历 window 成本高 (qiankun 的降级沙箱方案) .
+- Proxy 沙箱: 用 Proxy 包一层 fakeWindow, 子应用代码通过 with(proxyWindow) 或函数参数注入的方式访问"window", 写操作落在 fakeWindow 上不污染真实全局, 支持多实例并存 (qiankun 的默认沙箱方案) . 逃逸点: 直接引用 globalThis、setTimeout 回调里的隐式全局、原型链修改.
 - iframe/ShadowRealm 类: 天然硬隔离. 无界 (wujie) 用 iframe 承载 JS 执行 + 主文档承载 DOM 渲染, 规避了 iframe 的 UI 局限; ShadowRealm 是 TC39 的隔离执行环境提案 (现处 Stage 2.7) , 目标是提供无 DOM/网络访问的轻量硬隔离沙箱.
 
 样式隔离方案:
@@ -1874,43 +1874,43 @@ class CircuitBreaker {
 
 ## 第十二部分 算法实现
 
-本部分基于本机手写源码练习库 (`$HOME/github/h/chucks/js` 目录, 共 35 个源码文件, 含 lc/ 子目录 18 题与 polyfill/) 编排 33 道高频手写实现题, 覆盖 this 绑定、闭包、原型继承、Promise、并发控制、柯里化与深拷贝等核心主题, 覆盖其中 32 个文件 (proto.js、promise-pool.js、downloader-sdk.ts 未单列; miHoYo.js 为历史题目文件, 已不在该目录), 每题含源码解读、深入解析、进阶延伸.
+本部分基于本机手写源码练习库 (`$HOME/github/h/chucks/js`, 含 `lc/` 子目录与 `polyfill/`) 编排 33 道高频手写实现题, 覆盖 this 绑定、闭包、原型继承、Promise、并发控制、柯里化与深拷贝等核心主题, 每题含源码解读、深入解析、进阶延伸; 其中 `proto.js`、`promise-pool.js`、`downloader-sdk.ts` 未单列成题.
 
-| #   | 题目                                | 对应文件                 | 核心要点                       |
-| --- | ----------------------------------- | ------------------------ | ------------------------------ |
-| 1   | 手写 call / apply / bind            | apply-call-bind.js       | this 绑定、Symbol、new.target  |
-| 2   | 循环闭包输出与修复                  | closure.js               | 闭包、IIFE、let 块级作用域     |
-| 3   | 累加式柯里化                        | curry.js                 | 柯里化、参数聚合、空参触发     |
-| 4   | 防抖与四种节流                      | debounce-throttle.js     | 定时器、leading/trailing       |
-| 5   | 装饰器求值顺序                      | decorator.ts             | TS 装饰器四类、求值时序        |
-| 6   | 深拷贝 (循环引用)                   | deep-clone.js            | WeakMap、类型分支              |
-| 7   | 寄生组合式继承                      | extends.js               | 原型链、静态继承               |
-| 8   | 手写 Array.prototype.flat           | flat.js                  | 递归/DFS、稀疏数组             |
-| 9   | 手写 instanceof                     | instanceof.js            | 原型链遍历、Symbol.hasInstance |
-| 10  | 让普通对象可迭代                    | iterator.js              | Symbol.iterator、生成器        |
-| 11  | 手写 map / reduce + 串行 Promise 链 | map-reduce.js            | 稀疏数组、reduce 链式 then     |
-| 12  | 类字段初始化顺序 (米哈游题)         | miHoYo.js (已不在该目录) | 字段初始化时序、方法重写陷阱   |
-| 13  | 手写 new 操作符                     | new.js                   | 构造函数返回值规则             |
-| 14  | 手写 Promise (A+ 规范)              | promise.js               | 状态机、回调队列、链式         |
-| 15  | 用 rAF 实现 setTimeout/setInterval  | timer.js                 | 渲染帧、时间戳比对             |
-| 16  | 手写 requestAnimationFrame polyfill | polyfill/index.js        | 60fps 对齐、批量回调、取消     |
-| 17  | JSON 深比较                         | lc/lc2628.ts             | 递归、键序无关比较             |
-| 18  | 基于 fn.length 的柯里化             | lc/lc2632.js             | 函数 length 属性               |
-| 19  | 手写 JSON.stringify                 | lc/lc2633.js             | 递归序列化                     |
-| 20  | Promise 并发池 (4 种实现)           | lc/lc2636.js             | 并发控制、迭代器共享           |
-| 21  | 对齐语义的节流                      | lc/lc2676.js             | nextCallTime 调度              |
-| 22  | Proxy 无限对象                      | lc/lc2690.js             | Proxy get 陷阱                 |
-| 23  | 手写 Immer produce                  | lc/lc2691.js             | 写时复制、草稿代理             |
-| 24  | 深度不可变对象                      | lc/lc2692.js             | Proxy set/apply 拦截           |
-| 25  | 对象 Diff                           | lc/lc2700.js             | 递归差分                       |
-| 26  | 深合并 deepMerge                    | lc/lc2755.js             | 键并集递归                     |
-| 27  | 查询批处理器                        | lc/lc2756.ts             | 批量合并、节流窗口             |
-| 28  | 循环生成器                          | lc/lc2757.js             | generator 双向通信、负数取模   |
-| 29  | Date.prototype.nextDay              | lc/lc2758.js             | 日期进位、padStart             |
-| 30  | promisify                           | lc/lc2776.ts             | 回调转 Promise                 |
-| 31  | 手写 Promise.allSettled (找 Bug)    | lc/lc2795.js             | 计数器、缺陷分析               |
-| 32  | delayAll                            | lc/lc2821.js             | 高阶函数包装                   |
-| 33  | JSON 转矩阵                         | lc/lc3675.js             | 路径展开、列对齐               |
+| #   | 题目                                | 对应文件             | 核心要点                       |
+| --- | ----------------------------------- | -------------------- | ------------------------------ |
+| 1   | 手写 call / apply / bind            | apply-call-bind.js   | this 绑定、Symbol、new.target  |
+| 2   | 循环闭包输出与修复                  | closure.js           | 闭包、IIFE、let 块级作用域     |
+| 3   | 累加式柯里化                        | curry.js             | 柯里化、参数聚合、空参触发     |
+| 4   | 防抖与四种节流                      | debounce-throttle.js | 定时器、leading/trailing       |
+| 5   | 装饰器求值顺序                      | decorator.ts         | TS 装饰器四类、求值时序        |
+| 6   | 深拷贝 (循环引用)                   | deep-clone.js        | WeakMap、类型分支              |
+| 7   | 寄生组合式继承                      | extends.js           | 原型链、静态继承               |
+| 8   | 手写 Array.prototype.flat           | flat.js              | 递归/DFS、稀疏数组             |
+| 9   | 手写 instanceof                     | instanceof.js        | 原型链遍历、Symbol.hasInstance |
+| 10  | 让普通对象可迭代                    | iterator.js          | Symbol.iterator、生成器        |
+| 11  | 手写 map / reduce + 串行 Promise 链 | map-reduce.js        | 稀疏数组、reduce 链式 then     |
+| 12  | 类字段初始化顺序                    | -                    | 字段初始化时序、方法重写陷阱   |
+| 13  | 手写 new 操作符                     | new.js               | 构造函数返回值规则             |
+| 14  | 手写 Promise (A+ 规范)              | promise.js           | 状态机、回调队列、链式         |
+| 15  | 用 rAF 实现 setTimeout/setInterval  | timer.js             | 渲染帧、时间戳比对             |
+| 16  | 手写 requestAnimationFrame polyfill | polyfill/index.js    | 60fps 对齐、批量回调、取消     |
+| 17  | JSON 深比较                         | lc/lc2628.ts         | 递归、键序无关比较             |
+| 18  | 基于 fn.length 的柯里化             | lc/lc2632.js         | 函数 length 属性               |
+| 19  | 手写 JSON.stringify                 | lc/lc2633.js         | 递归序列化                     |
+| 20  | Promise 并发池 (4 种实现)           | lc/lc2636.js         | 并发控制、迭代器共享           |
+| 21  | 对齐语义的节流                      | lc/lc2676.js         | nextCallTime 调度              |
+| 22  | Proxy 无限对象                      | lc/lc2690.js         | Proxy get 陷阱                 |
+| 23  | 手写 Immer produce                  | lc/lc2691.js         | 写时复制、草稿代理             |
+| 24  | 深度不可变对象                      | lc/lc2692.js         | Proxy set/apply 拦截           |
+| 25  | 对象 Diff                           | lc/lc2700.js         | 递归差分                       |
+| 26  | 深合并 deepMerge                    | lc/lc2755.js         | 键并集递归                     |
+| 27  | 查询批处理器                        | lc/lc2756.ts         | 批量合并、节流窗口             |
+| 28  | 循环生成器                          | lc/lc2757.js         | generator 双向通信、负数取模   |
+| 29  | Date.prototype.nextDay              | lc/lc2758.js         | 日期进位、padStart             |
+| 30  | promisify                           | lc/lc2776.ts         | 回调转 Promise                 |
+| 31  | 手写 Promise.allSettled (找 Bug)    | lc/lc2795.js         | 计数器、缺陷分析               |
+| 32  | delayAll                            | lc/lc2821.js         | 高阶函数包装                   |
+| 33  | JSON 转矩阵                         | lc/lc3675.js         | 路径展开、列对齐               |
 
 ### 题目 1| 手写 call / apply / bind
 
@@ -2001,7 +2001,7 @@ function curry(fn) {
 
 深入解析:
 
-- 旧版 (experimentalDecorators) 求值顺序: 实例成员先于静态成员, 每个成员先应用参数装饰器、再应用方法/访问器/属性装饰器 (按声明顺序) , 随后是构造函数的参数装饰器, 类装饰器最后. 装饰器表达式自上而下求值, 调用自下而上 (洋葱模型) .
+- experimentalDecorators 模式的求值顺序: 实例成员先于静态成员, 每个成员先应用参数装饰器、再应用方法/访问器/属性装饰器 (按声明顺序) , 随后是构造函数的参数装饰器, 类装饰器最后. 装饰器表达式自上而下求值, 调用自下而上 (洋葱模型) .
 - 属性装饰器拿不到 PropertyDescriptor (因为实例属性不在原型上) , 所以无法拦截赋值.
 - TS 5.0 标准装饰器签名完全不同: (value, context), context 含 kind/name/access/addInitializer, 不再有 target/descriptor 三元组.
 - 装饰器叠加 emitDecoratorMetadata 会生成 design:type / design:paramtypes / design:returntype 元数据 (reflect-metadata) , 这是 Angular/NestJS 依赖注入的根基.
@@ -2357,8 +2357,8 @@ function createInfiniteObject(path = []) {
 
 源码解读: promiseAllSettled2 是正确范式: 计数器 + 每个任务 then/catch 写入对应下标、finally 里计数达到总数即 resolve. 而第一版藏了两个 bug:
 
-1. functions.map((fn, i) => \{ fn[i](<>); ... \})——回调形参 fn 就是函数本身, fn[i] 是 undefined, 调用立即抛 TypeError;
-2. map 回调没有 return 那个 Promise, 得到的 promises 数组全是 undefined, Promise.all([undefined...]) 立即 resolve.
+1. `functions.map((fn, i) => { fn[i](); ... })` —— 回调形参 fn 就是函数本身, fn[i] 是 undefined, 调用立即抛 TypeError;
+2. `map` 回调没有 return 那个 Promise, 得到的 promises 数组全是 undefined, `Promise.all([undefined, ...])` 立即 resolve.
 
 深入解析:
 
@@ -2407,7 +2407,7 @@ A: TypeScript 编译器 (tsc) 本质是一个"带类型擦除的转译器", 从�
 5. 转换 (Transformer) : AST -> AST 的降级变换, 按 target 决定应用哪些 transformer:
    - 类型擦除: 删除所有类型标注、接口、类型别名、as 断言、! 非空断言 (纯删除, 零运行时成本) ;
    - TS 独有语法展开: enum -> IIFE 生成双向映射对象; namespace -> IIFE 闭包; 参数属性 (constructor(private x)) -> 构造体内赋值语句;
-   - 装饰器 (旧版) : 类与方法调用改写为 \_\_decorate([...], target, key, descriptor) 辅助函数调用; emitDecoratorMetadata 额外注入 Reflect.metadata("design:type", ...);
+   - 装饰器 (experimentalDecorators 模式) : 类与方法调用改写为 \_\_decorate([...], target, key, descriptor) 辅助函数调用; emitDecoratorMetadata 额外注入 Reflect.metadata("design:type", ...);
    - 语法降级: async/await -> \_\_awaiter + 生成器状态机 (target `<` ES2017, ES2017 及以上保留原生 async) ; class -> 函数 + 原型赋值 (`<=ES5`) ; ?. / ?? -> 临时变量 + 三元表达式;
    - 模块转换: ESM import/export -> CJS 的 require/exports.x (module: commonjs 时) .
 
@@ -2418,7 +2418,7 @@ A: TypeScript 编译器 (tsc) 本质是一个"带类型擦除的转译器", 从�
 
 补充深挖点:
 
-- tsc vs transpileModule vs swc/esbuild/babel: transpileModule 走"单文件、无类型检查"快速通道 (无法处理 const enum 等需跨文件信息的特性) ; swc/esbuild 只做扫描/解析/降级/发射 (Rust/Go 实现快 10-100 倍) , 不做类型检查——所以现代工程链路是"esbuild/swc 负责转译 + tsc --noEmit 负责类型检查".
+- tsc vs transpileModule vs swc/esbuild/babel: transpileModule 走"单文件、无类型检查"快速通道 (无法处理 const enum 等需跨文件信息的特性) ; swc/esbuild 只做扫描/解析/降级/发射 (Rust/Go 实现快 10-100 倍) , 不做类型检查——所以现代工程链路是"esbuild/swc 负责转译 + tsc --noEmit 负责类型检查". 本站 `/Users/hangtiancheng/github/26autumn/package.json` 的 `typecheck` 脚本即这一模式的落地 (`next typegen && tsc --noEmit`) , 其中 `typescript` 依赖通过 npm alias 指向 `@typescript/typescript6` (本机安装版本 6.0.2) .
 - 增量编译: incremental: true 生成 .tsbuildinfo (签名哈希 + 依赖图) , 二次编译跳过未变化文件.
 - Language Service: 同一套编译器 API 驱动 VS Code 的跳转/补全/重构——binder/checker 结果常驻内存, 编辑时增量重解析.
 
@@ -2466,7 +2466,7 @@ BigInt: 任意精度整数 (123n) ; 不能与 Number 混算 (显式转换) ; typ
 - 正则 d 标志 (indices, 捕获组起止下标) 、命名捕获组、后行断言.
 - ES2025 已落地 (2025-06 定稿): Set 集合方法 (union/intersection/difference 等) 、Iterator Helpers (Iterator.prototype.map/filter/take 等) 、Promise.try、RegExp.escape、Float16Array, 现代浏览器基本都已原生支持.
 - import attributes (`import ... with { type: 'json' }` 语法) 与 JSON modules 均已收入 ES2025 (两者都在 TC39 finished proposals 清单中) ; Chrome 123+、Safari 17.4+ 已支持 `with` 语法, 早期的 `assert` 写法已废弃.
-- 提案动态: Temporal (取代 Date 的新标准, 已达 Stage 4, 将随 ES2027 并入 ECMA-262; Chrome 144+/Firefox 139+ 已原生提供, Node 26/Bun/Deno 跟进, Safari 仅技术预览版可用) 、Decorator (已落地 TS 5.0, TC39 为需要实现验证的提案新设 Stage 2.7, 该提案与 Decorator Metadata 现处此阶段) ; 原 Pattern Matching 提案仍在 Stage 1, 其核心机制由更聚焦的 Extractors 提案承接 (Stage 2) ; Record & Tuple 已于 2025 年撤回, 值类型方向由 Composites 提案 (Stage 2) 延续.
+- 提案动态 (以 TC39 活跃提案列表为准) : Temporal (取代 Date 的新标准, 已达 Stage 4; Chrome 144+/Firefox 139+ 已原生提供, Node 26/Bun/Deno 跟进, Safari 仅技术预览版可用) 、Decorator (已落地 TS 5.0, TC39 为需要实现验证的提案新设 Stage 2.7, 该提案与 Decorator Metadata 现处此阶段) ; 原 Pattern Matching 提案仍在 Stage 1, 其核心机制由更聚焦的 Extractors 提案承接 (Stage 2) ; Record & Tuple 提案已撤回, 值类型方向由 Composites 提案 (Stage 2) 延续.
 
 ### 正则引擎与灾难性回溯
 

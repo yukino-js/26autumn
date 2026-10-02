@@ -10,8 +10,6 @@ export default defineConfig(
     ignores: [
       "**/dist/**",
       "**/node_modules/**",
-      "packages/**",
-      "a2ui/**",
       ".next/**",
       "out/**",
       ".source/**",

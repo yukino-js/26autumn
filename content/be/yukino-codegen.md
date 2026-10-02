@@ -6,6 +6,7 @@ description: "基于仓库源码全面走读整理的 AI 全栈代码生成平�
 > 基于对仓库源码的全面走读整理（client / server / prisma / prompts / 配置与测试）。
 > 重点章节：第 6 章 WebContainer 深度解析。
 > 本机器路径: `$HOME/github/yukino-codegen`
+> 仓库 `git@github.com:hangtiancheng/yukino-codegen.git` (分支 main); 本文的文件清单、版本号与行为描述均以 HEAD `1bdef29` (2026-09-30) 快照为准.
 
 ---
 

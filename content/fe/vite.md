@@ -30,13 +30,13 @@ Webpack dev 启动时要扫描所有依赖、构建完整依赖图、全量转�
 
 Vite 快的三个关键点:
 
-1. 依赖预构建: node_modules 中的 CJS/UMD 依赖被一次性转为 ESM, 缓存在 node_modules/.vite/deps, 二次启动直接读缓存; Vite 8 起该步骤由 Rolldown (Rust) 完成, Vite 7 及之前由 esbuild (Go, 比 Babel 快 10-100 倍) 完成.
+1. 依赖预构建: node_modules 中的 CJS/UMD 依赖被一次性转为 ESM, 缓存在 node_modules/.vite/deps, 二次启动直接读缓存; 该步骤由 Rust 编写的 Rolldown 完成.
 2. 源码按需转译: 业务代码只在被请求时转译, 配合 HTTP 304 协商缓存, 未修改的模块不重复处理.
 3. HMR 粒度小: 修改一个模块只需重新请求该模块的 ESM, 不需要重新计算整个依赖图 (详见「Webpack HMR 和 Vite HMR 的实现原理有何不同?」).
 
 需要说明的边界: Vite dev 模式下首屏可能产生大量模块请求 (瀑布流), 深层依赖链的页面首次打开反而可能变慢, Vite 通过预构建合并依赖、`server.warmup` 预热高频模块来缓解. 生产构建两者都要完整打包, 差距主要在开发体验.
 
-在阿里妈妈的项目中, 我推动从 Webpack 迁移到 Vite 后, 开发服务器启动时间从 4 分钟降至 8 秒, HMR 响应从 2 秒降至 200ms.
+在模块数量大的项目上这种差异会被放大, 冷启动与 HMR 的耗时通常相差一个数量级, 具体幅度取决于模块数量、依赖预构建的缓存命中情况与机器性能.
 
 ### Webpack 的完整构建流程是怎样的? Loader 和 Plugin 的区别?
 
@@ -64,38 +64,37 @@ Loader 和 Plugin 的区别:
 
 一句话概括: Loader 解决"这个文件怎么变成模块", Plugin 解决"整个构建过程中我要做什么".
 
-### esbuild 和 Rollup 在 Vite 中各自承担什么角色? 为什么生产构建不直接用 esbuild?
+### Vite 8 的构建引擎如何分工? Rolldown、Oxc 与 Lightning CSS 各做什么?
 
-先说现状: 这道题在 Vite 8 起已成为历史. Vite 8 用 Rust 编写的 Rolldown 作为统一打包器, dev 依赖预构建与生产打包都由它完成; JS/TS/JSX 转译改用 Oxc Transformer (顶层 `esbuild` 配置项已废弃, 自动转换为 `oxc`) , JS 产物压缩默认改用 Oxc Minifier (`build.minify` 类型为 `boolean | 'oxc' | 'terser' | 'esbuild'`, 客户端构建默认 `'oxc'`, SSR 构建默认 `false`; `'esbuild'` 已废弃, 选 `'terser'`/`'esbuild'` 需自行安装对应依赖) ; CSS 压缩默认改用 Lightning CSS (`build.cssMinify` 默认 `'lightningcss'`, 可改回 `'esbuild'` 但需安装 esbuild) 。本机 `/Users/hangtiancheng/github/yukino-chatbot` 的 pnpm-lock.yaml 解析出 vite@8.3.1, 其 dependencies 为 `rolldown`、`lightningcss`、`postcss`、`picomatch`、`tinyglobby`, 已不含 rollup, esbuild 降级为 optionalDependency; 官方迁移指南的表述是 "Vite 8 uses Rolldown and Oxc based tools instead of esbuild and Rollup". 与之配套, 依赖预构建的 `optimizeDeps.esbuildOptions` 也已废弃, 自动转换为 `optimizeDeps.rolldownOptions`.
+Vite 8 的构建管线由一套 Rust 工具链接管, 官方迁移指南的表述是 "Vite 8 uses Rolldown and Oxc based tools instead of esbuild and Rollup". 本机 `$HOME/github/yukino-chatbot` 的 pnpm-lock.yaml 解析出 vite@8.3.1, 它声明的 dependencies 是 `rolldown`、`lightningcss`、`postcss`、`picomatch`、`tinyglobby`, 不含 rollup.
 
-Vite 7 及之前版本的分工:
+各组件职责:
 
-- esbuild: dev 模式的依赖预构建 (CJS 转 ESM + 合并小模块)、TS/JSX 的单文件转译 (只做语法降级, 不做类型检查)、生产构建中的代码压缩 (minify 可选 esbuild, 比 terser 快一个数量级).
-- Rollup: 生产构建的打包核心. 负责完整的 bundle、Tree Shaking、代码分割 (manualChunks)、产物格式输出, Vite 的插件 API 也是 Rollup 插件接口的超集.
+- Rolldown (打包器): dev 的依赖预构建与生产打包共用这一个引擎, 负责完整 bundle、Tree Shaking、代码分割与产物格式输出. 手动分割由声明式的 `output.codeSplitting.groups` 提供 (见「代码分割怎么做?」). Vite 插件 API 建立在 Rolldown 插件接口之上, 后者与 Rollup 插件接口高度兼容.
+- Oxc Transformer (转译): JS/TS/JSX 的转换与语法降级, `build.target` 传下去的正是 Oxc 的 target 选项; 顶层 `esbuild` 配置项会自动转换为 `oxc` (可转换字段见迁移指南). 原生装饰器暂不支持下探, 需要 Babel/SWC 插件补足.
+- Oxc Minifier (JS 压缩): `build.minify` 类型为 `boolean | 'oxc' | 'terser' | 'esbuild'`, 客户端构建默认 `'oxc'`, SSR 构建默认 `false`; 选 `'terser'` 或 `'esbuild'` 需要自行安装对应依赖.
+- Lightning CSS (CSS 压缩): `build.cssMinify` 类型为 `boolean | 'lightningcss' | 'esbuild'`, 默认 `'lightningcss'`; 选 `'esbuild'` 需要自行安装 esbuild.
+- esbuild: 不是 Vite 的运行时依赖, 而是可选 peerDependency (vite@8.3.1 的 `peerDependenciesMeta` 标记 `esbuild: { optional: true }`); 只有插件调用 `transformWithEsbuild`, 或配置 `build.minify: 'esbuild'` / `build.cssMinify: 'esbuild'` 时才需要自行安装. 官方推荐把 `transformWithEsbuild` 迁到 `transformWithOxc`.
 
-当时生产构建不直接用 esbuild 的原因 (Vite 团队的官方权衡):
+与之配套, 依赖预构建的 `optimizeDeps.esbuildOptions` 会转换为 `optimizeDeps.rolldownOptions`.
 
-1. 灵活性差距: esbuild 为了极致速度牺牲了很多定制能力, 当时对代码分割的控制、CSS 处理、产物细粒度优化不如 Rollup 成熟.
-2. 插件生态: Rollup 插件生态成熟, Vite 大量能力 (如 legacy 降级、SSR 处理) 依赖插件链的灵活介入.
-3. 输出质量: Rollup 的 Tree Shaking 更精细, Scope Hoisting 产物更紧凑; 应用构建对产物质量的要求高于对构建速度的要求.
-
-这个权衡的结局是: Vite 团队没有继续二选一, 而是用 Rust 重写了兼具两者能力的新引擎 Rolldown, 在 Vite 8 中统一了 dev 与 build, "双引擎"正式成为历史. 另外, Vite 6 引入的 Environment API (为不同运行环境提供独立的模块图与配置) 在 Vite 8 官方定位为 Release Candidate: 大版本之间承诺保持 API 稳定, 但仍有部分具体 API 标记为实验性, 完全稳定化计划在未来某个大版本完成.
+另外, 为不同运行环境提供独立模块图与配置的 Environment API, 在 Vite 8 文档中标注为 Release Candidate: 大版本之间承诺保持 API 稳定, 但仍有部分具体 API 属于实验性, 完全稳定化计划在未来某个大版本完成.
 
 ### Vite 依赖预构建 (optimizeDeps) 的原理是什么? 遇到过哪些坑?
 
-原理: Vite 启动时扫描源码中的裸模块导入 (bare import, 如 `import React from 'react'`), 用 Rolldown (Vite 7 及之前为 esbuild) 将这些 node_modules 依赖打包成 ESM 并输出到 node_modules/.vite/deps. 目的有两个:
+原理: Vite 启动时扫描源码中的裸模块导入 (bare import, 如 `import React from 'react'`), 用 Rolldown 将这些 node_modules 依赖打包成 ESM 并输出到 node_modules/.vite/deps. 目的有两个:
 
 1. 格式统一: 很多包只发布 CJS/UMD, 浏览器 ESM 无法直接消费, 预构建统一转为 ESM.
 2. 请求合并: 像 lodash-es 这种包内部有几百个小模块, 不合并的话一次导入会触发几百个 HTTP 请求, 预构建合并为单文件.
 
-缓存失效条件: lockfile 变更、vite.config 变更、NODE_ENV 变更时自动重新预构建; 也可用 `--force` 强制.
+缓存失效条件: 包管理器 lockfile 内容变更、patches 目录修改时间变更、vite.config 中相关字段变更、`NODE_ENV` 变更时自动重新预构建; 也可用 `--force` 命令行参数 (或 `optimizeDeps.force`) 强制重跑, 或直接删除 node_modules/.vite 缓存目录.
 
 实际踩过的坑:
 
 1. 运行时才发现的新依赖: 动态 import 的依赖在首次扫描中漏掉, 运行时触发"new dependencies optimized"并整页 reload, 体验很差. 解决: 用 `optimizeDeps.include` 显式声明.
-2. CJS/ESM 互操作: 某些包的 `exports` 字段配置不规范, 预构建后 default 导出行为与 Webpack 下不一致 (`esModuleInterop` 差异), 需要 `optimizeDeps.needsInterop` 或让包方修复. 值得注意的是, Vite 8 引入了"一致的 CommonJS 互操作"规则: 对 CJS 模块的 `default` 导入, 当导入方是 `.mjs`/`.mts`、或最近 `package.json` 的 `type` 为 `module`、或被导入 CJS 的 `module.exports.__esModule` 不为 `true` 时, `default` 即 `module.exports` 本身, 否则取 `module.exports.default`; dev 与 build 行为从此统一. 该变化可能打破依赖旧行为的代码, 可用临时的 `legacy.inconsistentCjsInterop: true` 恢复旧行为, 更推荐修包.
-3. monorepo 内部包: workspace 链接的内部包默认不做预构建 (被视为源码), 如果内部包是 CJS 产物就会报错, 需要将其加入 `optimizeDeps.include` 并在 `build.commonjsOptions.include` 同步配置 (此为 Vite 7 及之前的做法; Vite 8 起 `build.commonjsOptions` 已废弃且不再生效).
-4. 模块联邦场景: 在给 @module-federation/vite 提 PR 时发现, 原实现对每个 shared 依赖单独执行一次 optimizeDeps, 依赖多时预构建耗时很长, 我将多个 shared 依赖合并为一次调用, 预构建时间从约 12 秒降到 3 秒.
+2. CJS/ESM 互操作: 某些包的 `exports` 字段配置不规范, 预构建后 default 导出行为与 Webpack 下不一致 (`esModuleInterop` 差异), 需要 `optimizeDeps.needsInterop` (实验选项, 强制对指定依赖做 ESM interop) 或让包方修复. 当前的 CJS 互操作规则在 dev 与 build 之间统一: 对 CJS 模块的 `default` 导入, 当导入方是 `.mjs`/`.mts`、或最近 `package.json` 的 `type` 为 `module`、或被导入 CJS 的 `module.exports.__esModule` 不为 `true` 时, `default` 即 `module.exports` 本身, 否则取 `module.exports.default` (见 Rolldown 文档 "Ambiguous default import from CJS modules").
+3. monorepo 内部包: workspace 链接的内部包默认不做预构建 (被视为源码), 如果内部包是 CJS 产物就会报错, 需要将其加入 `optimizeDeps.include`; `build.commonjsOptions` 在当前 Vite 中是 no-op, 不需要再同步配置.
+4. 模块联邦场景: shared 依赖如果逐个触发 optimizeDeps, 预构建会被重复执行, shared 数量一多耗时就明显上升; 把多个 shared 依赖合并进一次预构建调用, 是这类插件常见的优化点.
 
 ### Webpack HMR 和 Vite HMR 的实现原理有何不同?
 
@@ -123,7 +122,7 @@ Vite HMR:
 
 两层机制配合:
 
-1. usedExports (Webpack) / Rollup 的导出追踪: 标记哪些导出被使用.
+1. usedExports (Webpack) / Rolldown 的导出追踪: 标记哪些导出被使用.
 2. sideEffects: package.json 中声明包是否有副作用. `"sideEffects": false` 允许构建工具跳过未被引用的整个模块, 即使它被 import 过 (如 `import 'x'`). CSS 导入必须声明为副作用 (`"sideEffects": ["*.css"]`), 否则样式会被误删.
 
 常见失效场景:
@@ -134,9 +133,9 @@ Vite HMR:
 4. Babel 配置错误: `@babel/preset-env` 未设置 `modules: false` 时会把 ESM 提前转成 CJS, 直接废掉 Tree Shaking.
 5. 类的静态属性、装饰器等转译产物带副作用, 需要检查 helper 是否标记了 PURE.
 
-验证手段: `webpack --stats` 看 usedExports、Rollup 的 `treeshake` 日志、用 rsdoctor / webpack-bundle-analyzer 对比前后产物.
+验证手段: `webpack --stats` 看 usedExports、Rolldown 的 `treeshake` 日志、用 rsdoctor / webpack-bundle-analyzer 对比前后产物.
 
-### 代码分割怎么做? splitChunks 和 manualChunks 的策略如何设计?
+### 代码分割怎么做? splitChunks 和 codeSplitting 的策略如何设计?
 
 代码分割的三个来源: 多入口、动态 `import()` (最主要手段, 天然分割点)、公共依赖提取.
 
@@ -176,27 +175,44 @@ optimization: {
 2. 控制 chunk 数量与大小的平衡: chunk 太碎增加请求数与调度开销, 太大则缓存失效代价高. 经验值是单 chunk 压缩后 100-200KB 量级, 配合 HTTP/2 多路复用可以适当更碎.
 3. 异步路由页独立分割: 路由级 `React.lazy(() => import(...))`, 首屏只加载框架 + 首页 chunk.
 
-Vite (Vite 7 及之前基于 Rollup) 的 manualChunks 是函数式的等价物:
+Vite 8 的对应能力是 Rolldown 的声明式 `output.codeSplitting.groups`, 用 `test` 正则与 `name` 分组:
 
 ```typescript
 build: {
-  rollupOptions: {
+  rolldownOptions: {
     output: {
-      manualChunks(id) {
-        if (id.includes("node_modules")) {
-          if (/react|react-dom/.test(id)) return "framework";
-          if (/echarts/.test(id)) return "charts";
-          return "vendor";
-        }
+      codeSplitting: {
+        groups: [
+          // 高频基础库单独成 chunk, 版本稳定, 缓存命中率最高
+          {
+            test: /[\\/]node_modules[\\/](react|react-dom|react-router)[\\/]/,
+            name: "framework",
+          },
+          // 体积大且低频变更的库 (如 echarts) 独立拆出, 避免污染公共 chunk
+          {
+            test: /[\\/]node_modules[\\/](echarts|zrender)[\\/]/,
+            name: "charts",
+          },
+          // 其余第三方依赖
+          { test: /[\\/]node_modules[\\/]/, name: "vendor" },
+        ],
       },
     },
   },
 }
 ```
 
-注意点: manualChunks 手动分组容易引入循环加载问题 (chunk A 的初始化依赖 chunk B 中的模块), Rollup 会警告 circular chunk, 需要保证分组边界与依赖方向一致.
+注意点: 手动分组会把模块在 chunk 之间移动, 容易产生输出层的循环引用, 需要保证分组边界与依赖方向一致. Rolldown 会为使用了 `groups` 的构建强制生成一个只含加载与执行运行时的 `runtime.js` chunk, 保证运行时先于其他 chunk 执行; 分组还会递归捕获其依赖 (可用 `codeSplitting.includeDependenciesRecursively: false` 关闭), 这些机制兜底执行顺序, 但不改变"分组要顺着依赖方向切"的原则.
 
-Vite 8 中的变化: `build.rollupOptions` 已更名为 `build.rolldownOptions` 并整体标记废弃 (类型切换为 RolldownOptions) , `worker.rollupOptions` 同样更名为 `worker.rolldownOptions`; `output.manualChunks` 的对象写法已被移除, 函数写法虽保留但已标记废弃, 等价能力由 Rolldown 更灵活的声明式 `output.codeSplitting` 选项提供. 此外一批 Rollup 细节在 Vite 8 中不再支持: `output.format` 的 `'system'`/`'amd'`、`shouldTransformCachedModule`/`resolveImportMeta`/`renderDynamicImport`/`resolveFileUrl` 等插件钩子; 所有并行钩子按顺序执行; `parseAst`/`parseAstAsync` 废弃, 改用 `parseSync`/`parse`; 依赖 `transformWithEsbuild` 的插件需自行安装 esbuild, 官方推荐迁移到 `transformWithOxc`. 用 plugin-legacy 转译到 ES5 及以下也不再支持.
+当前 Vite 的 Rolldown 接口事实:
+
+- 打包配置入口是 `build.rolldownOptions` (对应 worker 构建的 `worker.rolldownOptions`), 类型为 RolldownOptions.
+- 手动分割优先用 `output.codeSplitting.groups`; `output.manualChunks` 的对象写法不支持, 函数写法仍可用.
+- `output.format` 可用 `'es'`、`'cjs'`、`'umd'`、`'iife'`; `'system'` 与 `'amd'` 不可用.
+- `shouldTransformCachedModule`、`resolveImportMeta`、`renderDynamicImport`、`resolveFileUrl` 等 Rollup 插件钩子在 Rolldown 中不可用; 所有并行钩子按顺序执行.
+- 解析 AST 的现行函数是 `parseSync`/`parse`; `parseAst`/`parseAstAsync` 带废弃标记, 不是推荐入口.
+- 依赖 `transformWithEsbuild` 的插件需自行安装 esbuild, 推荐改用 `transformWithOxc`.
+- `@vitejs/plugin-legacy` 只支持转译到 ES2015 及以上, 不再支持 ES5 及以下.
 
 ### Source Map 有哪些类型? 生产环境如何选择与管理?
 
@@ -208,20 +224,19 @@ Webpack devtool 的常见取值本质是三个维度的组合: 是否独立文�
 
 Vite 对应 `build.sourcemap: true | 'hidden' | 'inline'`, 语义一致.
 
-生产 Source Map 的管理是我在 yukino-sentry 监控 SDK 中实际设计过的链路:
+生产 Source Map 的管理在 yukino-sentry 监控 SDK 里有一条完整实现:
 
-1. CI 构建阶段, 构建插件在产物输出后将 .map 文件上传到独立的 source map 存储服务 (不随静态资源发 CDN), 上传时携带 release version (git commit hash) 和压缩文件路径.
-2. .map 文件从发布产物中剔除, 线上只有压缩代码.
-3. SDK 上报错误时携带页面的 release version, 服务端用 version + filename 精确匹配对应 .map, 调用 source-map 库的 `originalPositionFor` 还原出原始文件、行列号和变量名.
-4. 多版本共存 (灰度) 场景也能正确匹配, 因为映射键包含版本号.
+1. 构建期: yukino-sentry/client/vite.config.ts 用 `build.sourcemap: 'hidden'` 生成不带 sourceMappingURL 注释的 map, 再由自定义插件 `moveSourcemaps` 在 `closeBundle` 阶段把所有 .map 移到 dist/.sourcemaps, 不随站点发布, 线上只有压缩代码.
+2. 还原期: SDK 用 `source-map` 包的 `SourceMapConsumer` 做位置还原. `sentry/src/source-map/source-map.ts` 的 `resolveFrame()` 调用 `consumer.originalPositionFor({ line, column })` 得到原始文件与行列号 (浏览器行列号是 1-based, sourcemap 列号是 0-based, 代码里做了 `column - 1` 换算), 再用 `sourceContentFor` 取源码片段; `server/src/source-map.ts` 用同一套 `SourceMapConsumer` 在服务端还原上报堆栈.
+3. 开发期: `@yukino.js/sentry/vite` 导出的是 `serve` 阶段插件 (`sentryPlugin`), 它启动一个 mock 上报端点, 并用 Vite dev server 内存 module graph 里的 sourcemap 直接还原上报帧 (`sentry/src/source-map/vite.ts` 的 `enrichReportData`), 与生产链路复用同一个 `resolveFrame`.
 
-这套方案同时满足了"线上不泄漏源码"和"错误堆栈可还原"两个诉求.
+这套方案的诉求是两条: 线上不泄漏源码, 同时错误堆栈可还原.
 
 ---
 
 ## 二、工程化实践
 
-### Webpack 和 Vite 的模块联邦有什么本质差异? 你给 @module-federation/vite 贡献了什么?
+### Webpack 和 Vite 的模块联邦有什么本质差异?
 
 ```
   Host (消费方)                          Remote (提供方)
@@ -250,44 +265,33 @@ Vite 对应 `build.sourcemap: true | 'hidden' | 'inline'`, 语义一致.
 
 Webpack 的 MF 依赖 `__webpack_init_sharing__` / `container.init` / `container.get` 这套 runtime API; Vite 没有等价 runtime, @module-federation/vite 要在插件层实现模块注册表、remoteEntry 动态生成和 shared 版本协商, 且要处理与 optimizeDeps 预构建的时序关系.
 
-我的贡献 (以 PR #860 为例, 已合并):
-
-修复 workspace 包双格式导出在浏览器端崩溃: monorepo 里的 workspace 包若通过 `exports` 字段同时提供 ESM/CJS 入口, 并被配置为 shared 依赖, 浏览器运行时会抛 `ReferenceError: module is not defined`. 根因是插件用 `createRequire().resolve()` 解析 shared 包路径, 走的是 Node CJS 条件 (`["node", "require"]`), 命中 `.cjs` 入口; node_modules 里的包有 Vite optimizeDeps 兜底做 CJS 转 ESM, 但 workspace 包是软链接、跳过了预构建, `.cjs` 路径被直接写进生成的 `import` 语句, 浏览器加载后遇到 `module.exports` 即崩溃. 我在 `virtualShared_preBuild.ts` 中新增 `resolveWorkspaceEsmEntry()` 辅助函数: 对 workspace 包改用 `['browser', 'import', 'module', 'default']` 条件重解析到 ESM 入口, 非 workspace 包原样返回交给 optimizeDeps 处理, ESM 解析失败则优雅回退到原路径; 并在三个 `createRequire().resolve()` 调用点统一接入, 补充了对应测试用例.
+这类插件最容易踩的是 workspace 包的双格式导出: monorepo 里的 workspace 包若通过 `exports` 字段同时提供 ESM/CJS 入口, 又被配置成 shared 依赖, 解析时一旦命中 Node 的 CJS 条件 (`require`) 就会拿到 `.cjs` 入口. node_modules 里的包有 optimizeDeps 兜底做 CJS 转 ESM, 但 workspace 包是软链接、默认跳过预构建, `.cjs` 路径一旦被写进生成的 `import` 语句, 浏览器执行时就会因 `module is not defined` 崩溃. 规避方式是在插件层按 `browser`/`import`/`module`/`default` 条件重新解析 workspace 包的 ESM 入口, 非 workspace 包则原样交给 optimizeDeps.
 
 生产实践要点: React 必须 `singleton: true` 防止多实例导致 hooks 报错; remoteEntry 加载失败要有重试 + ErrorBoundary fallback + 兜底版本 URL 三层降级.
 
-### 从 Webpack 迁移到 Vite 的完整过程? 遇到了哪些兼容性问题?
+### Vite 与 Webpack 在工程化接口上有哪些关键差异?
 
-在阿里妈妈的项目中主导过这次迁移, 整体分四步:
+两套工具的能力并不一一对应, 从 Webpack 体系切入时最容易碰到以下几处 (均为当前行为):
 
-1. 摸底: 清点 webpack.config 中的 loader/plugin 清单, 逐项找 Vite 等价物; 统计 CJS 依赖和使用 webpack 特有 API 的代码 (如 `require.context`).
-2. 双轨并行: 保留 Webpack 配置, 新增 vite.config, 先让 dev 模式跑通, 生产构建仍走 Webpack, 降低风险.
-3. 生产切换: Vite build 产物与 Webpack 产物做对比验证 (体积、chunk 结构、运行时行为、异常监控对比), 灰度切流后全量.
-4. 清理: 移除 Webpack 依赖与配置, CI 流水线切换.
-
-实际遇到的兼容性问题:
-
-1. `require.context` 批量导入: 改为 Vite 的 `import.meta.glob`, 注意后者默认懒加载, 需要 `{ eager: true }` 对齐原行为.
-2. 环境变量: `process.env.X` 改为 `import.meta.env.VITE_X`; 第三方库内部引用 process.env 的, 用 `define` 注入兜底.
-3. CJS 依赖的 default 导出差异: esModuleInterop 行为不一致导致 `xxx.default is not a function`, 通过 optimizeDeps 配置或改写导入方式解决.
-4. index.html 地位变化: Vite 以 html 为入口, HtmlWebpackPlugin 的模板注入逻辑改为 vite-plugin-html 或 transformIndexHtml 钩子.
-5. CSS 处理: less 的 javascriptEnabled、全局变量注入改到 `css.preprocessorOptions`; 样式顺序与 Webpack 略有差异, 个别覆盖关系要修正.
-6. 动态 import 的路径变量: Webpack 支持部分动态路径 (会打包整个目录), Vite 需要 import.meta.glob 显式声明可选集合.
-
-收益: dev 启动 4 分钟降到 8 秒, HMR 从 2 秒降到 200ms, 新人本地环境搭建时间明显缩短.
+1. 批量导入: Webpack 的 `require.context` 在 Vite 中用 `import.meta.glob` 表达; 后者默认返回懒加载函数, 需要同步拿到模块时传 `{ eager: true }`.
+2. 环境变量: `process.env.X` 对应 `import.meta.env.VITE_X`, 只有 `VITE_` 前缀会暴露给客户端; 第三方库内部引用 `process.env` 的, 用 `define` 注入兜底.
+3. CJS 依赖的 default 导出: 两边对 `esModuleInterop` 的处理不同, 常见症状是 `xxx.default is not a function`, 通过 `optimizeDeps` 配置或改写导入方式解决.
+4. 入口: Vite 以 index.html 为入口, HtmlWebpackPlugin 那套模板注入改由 `transformIndexHtml` 钩子或对应插件承担.
+5. CSS: less/sass 的全局变量注入与 `javascriptEnabled` 之类的开关放在 `css.preprocessorOptions`; 样式顺序与 Webpack 可能不同, 个别覆盖关系需要显式调整.
+6. 动态 import 的路径变量: Webpack 会为部分动态路径打包整个目录, Vite 要求用 `import.meta.glob` 显式声明可选集合.
 
 ### monorepo 的工程化怎么做? 内部包如何构建和消费?
 
-我在个人项目 (yukino-sentry、yukino-code 均为多包结构) 和公司项目中都使用 pnpm workspace 组织 monorepo.
+本机的 yukino 系列仓库都用 pnpm workspace 组织 monorepo: yukino-sentry 的 pnpm-workspace.yaml 声明 `packages` 为 `sentry`、`client`、`server`、`docs`; yukino-code 的 pnpm-workspace.yaml 声明 `packages: [apps/*]`, 并在 package.json 的 `pnpm.overrides` 里把 `@yukino.js/yukino`、`@yukino.js/mcp` 固定到 `workspace:*`.
 
 核心实践:
 
 1. 包管理: pnpm workspace + `workspace:*` 协议声明内部依赖, 硬链接节省磁盘且天然防止幽灵依赖 (依赖必须显式声明才能被解析).
 2. 内部包消费的两种模式:
    - 源码直连 (推荐用于应用内共享包): 包的 exports 直接指向 src, 由消费方的 Vite/Webpack 统一转译. 优点是改动即时生效、无需 watch 构建; 代价是消费方要能处理 TS.
-   - 预构建产物: 对外发布的包 (如 @yukino/sentry 的 core 与各 plugin 子包) 用 tsup/Rollup 构建出 ESM + CJS + d.ts 双格式, 配置规范的 exports 条目.
+   - 预构建产物: 对外发布的包 (如 `@yukino.js/sentry`) 用 Rollup 构建出 ESM + CJS + d.ts (sentry/package.json 的 build 脚本是 `rollup -c ./rollup.config.ts`), 在 `exports` 里为 `.`、`./plugins`、`./react`、`./vue`、`./vite`、`./webpack` 每个子路径同时声明 `types`/`import`/`require` 入口.
 3. 任务编排: Turborepo (或 pnpm -r + topological order) 声明 build 依赖关系 `"dependsOn": ["^build"]`, 配合内容哈希的远程缓存, CI 上未变更的包直接命中缓存跳过构建.
-4. 版本与发布: changesets 管理版本号与 changelog, CI 自动发布到 npm registry. 在字节的 Thrift IDL 类型包链路中也是类似思路: IDL 变更触发 CI 重新生成 TS 类型、按 semver 规则自动 bump 并发布.
+4. 版本与发布: changesets 管理版本号与 changelog, CI 自动发布到 npm registry; 协议定义类的类型包也可以套同一条链路——上游 IDL 变更触发重新生成 TS 类型, 再按 semver 规则自动 bump 并发布.
 5. 统一约束: 根目录统一 tsconfig base、ESLint、prettier; 用 syncpack 或 pnpm catalog 收敛各包的依赖版本, 避免同一依赖多版本并存.
 
 常见坑: 内部包源码直连时 Vite 不会对 workspace 包做预构建, 若该包引用了 CJS 依赖需手动加入 optimizeDeps.include; TS 的 paths 与包 exports 需要保持一致, 否则 IDE 跳转与构建解析不同步.
@@ -313,25 +317,25 @@ Webpack 的 MF 依赖 `__webpack_init_sharing__` / `container.init` / `container
 1. 依赖治理 (通常收益最大): bundle 分析找出大头, moment 换 dayjs、lodash 换 lodash-es 按需导入、图表库按需注册组件; 重复依赖用 dedupe/resolutions 收敛到单版本.
 2. 代码分割 + 按需加载: 路由级动态 import, 低频功能 (导出 Excel、富文本编辑器) 交互时再加载.
 3. Tree Shaking 保障: 见「Tree Shaking 的原理是什么? 哪些写法会导致失效?」, 重点是 sideEffects 声明和避免 CJS.
-4. 压缩: JS 用 oxc/esbuild/terser, CSS 用 cssnano/lightningcss; 产物开启 gzip/brotli (brotli 比 gzip 再小 15% 左右), 由 CDN 或网关下发.
+4. 压缩: Vite 8 的 JS 默认用 Oxc Minifier (可切 esbuild/terser), CSS 默认用 Lightning CSS; 产物开启 gzip/brotli (brotli 比 gzip 再小 15% 左右), 由 CDN 或网关下发.
 5. 资源优化: 小图内联 base64 阈值控制、大图 WebP/AVIF、字体子集化.
 
 浏览器兼容:
 
-1. 统一用 browserslist 声明目标 (`.browserslistrc`), 让 Babel/SWC、autoprefixer、esbuild target 共享同一份目标. 注意 Vite 自身并不读 browserslist: `build.target` 默认值是特殊值 `'baseline-widely-available'`, 在 Vite 8 中具体对应 `chrome111`/`edge111`/`firefox114`/`safari16.4`/`ios16.4` (对齐 2026-01-01 的 Baseline Widely Available) ; 要支持更老的浏览器需显式覆盖 `build.target`。
+1. 统一用 browserslist 声明目标 (`.browserslistrc`), 让 Babel/SWC、autoprefixer 与构建工具的 target 共享同一份目标. 注意 Vite 自身并不读 browserslist: `build.target` 默认值是特殊值 `'baseline-widely-available'`, 在 Vite 8 中具体对应 `'chrome111'`/`'edge111'`/`'firefox114'`/`'safari16.4'`/`'ios16.4'` (对齐 2026-01-01 的 Baseline Widely Available, 转换由 Oxc Transformer 执行) ; 要支持更老的浏览器需显式覆盖 `build.target`.
 2. 语法降级与 polyfill 分开考虑: 语法降级由转译器完成; polyfill 用 core-js 的 `useBuiltIns: 'usage'` 按需注入, 或交给 polyfill 服务按 UA 下发.
 3. Vite 的现代/传统双产物: `@vitejs/plugin-legacy` 生成带 polyfill 的 legacy chunk, 通过 `<script type="module">` 与 `nomodule` 让新浏览器加载小的现代产物、老浏览器加载兼容产物.
 4. 兼容成本要有边界: 与业务方确认最低支持版本, 每往下兼容一档都有体积与维护成本, 不做无限兼容.
 
 ### 大型项目的构建性能优化手段有哪些?
 
-先度量再优化: Webpack 用 `--profile` + speed-measure-plugin / rsdoctor 定位耗时在哪个 loader/plugin; Vite 用 `vite --profile`、`DEBUG=vite:*` 观察预构建与转译耗时.
+先度量再优化: Webpack 用 `--profile` + speed-measure-plugin / rsdoctor 定位耗时在哪个 loader/plugin; Vite 用 `vite --profile` (`--profile [name]` 会启动内置 Node inspector 并写出 `<name>.cpuprofile`) 与 `--debug` 日志观察预构建与转译耗时.
 
 Webpack 侧:
 
 1. 持久化缓存 (Webpack 5 核心手段): `cache: { type: 'filesystem' }`, 二次构建通常快 5 倍以上, CI 上挂载缓存目录跨任务复用.
 2. 换更快的转译器: babel-loader 换 swc-loader/esbuild-loader, 类型检查移交 fork-ts-checker 并行进程 (transpileOnly).
-3. 缩小处理范围: loader 配置 include 只处理 src; 合理设置 resolve.extensions 顺序; DllPlugin 的思路已被持久化缓存取代, 不再推荐.
+3. 缩小处理范围: loader 配置 include 只处理 src; 合理设置 resolve.extensions 顺序.
 4. 并行: thread-loader 对重 loader 并行化 (注意进程通信开销, 小项目反而变慢); terser 默认并行.
 5. sourcemap 降级: 开发环境用 eval-cheap-module-source-map 而非完整 source-map.
 
@@ -341,7 +345,7 @@ Vite 侧:
 2. 预构建稳定性: 显式 optimizeDeps.include 避免运行时二次预构建 reload.
 3. 生产构建: Vite 8 的 `build.minify` 默认即 oxc, 无需额外配置; 追求更高压缩率可评估 terser (需显式安装); 关闭不必要的 `build.reportCompressedSize` (大项目上 gzip 计算很耗时).
 
-组织级手段: monorepo 任务缓存 (Turborepo 远程缓存) 让 CI 只构建受影响的包; 产物增量发布, 未变更的 chunk 命中 CDN 缓存. 终极手段是换 Rust 工具链 (Rspack/Rolldown), 对存量 Webpack 项目 Rspack 基本兼容配置且构建速度提升 5-10 倍.
+组织级手段: monorepo 任务缓存 (Turborepo 远程缓存) 让 CI 只构建受影响的包; 产物增量发布, 未变更的 chunk 命中 CDN 缓存. 终极手段是换 Rust 工具链: Rolldown 已内置在 Vite 8, Rspack 的配置面与 Webpack 高度重合, 迁移时可以大量复用既有的 loader/plugin 约定.
 
 ### CI/CD 中如何保障构建产物质量?
 
@@ -356,10 +360,10 @@ Vite 侧:
    - E2E 冒烟测试验证核心路径在真实构建产物上可用 (dev 模式跑通不代表生产产物没问题, 比如 Tree Shaking 误删副作用、动态 import 路径错误都只在 build 后暴露).
 4. 发布与回滚关卡:
    - 产物带 contenthash 全量上传 CDN 后再切换 html 引用, 保证原子发布; 旧版本产物保留, 回滚只需切回旧 html.
-   - Source map 随构建上传监控平台并与 release version 绑定 (见「Source Map 有哪些类型? 生产环境如何选择与管理?」), 发布后观察错误率, 异常自动告警回滚.
+   - Source map 在构建后上传监控平台并与 release version 绑定, 同时从发布产物中剔除 (见「Source Map 有哪些类型? 生产环境如何选择与管理?」), 发布后观察错误率, 异常自动告警回滚.
 
-在字节的 Thrift IDL 类型包链路中还有一层契约关卡: IDL 变更时 CI 自动做新旧版本 diff, 识别 breaking change 并强制 major 版本升级, 防止接口契约漂移流入下游 BFF.
+对协议/IDL 类型包还可以加一层契约关卡: 定义变更时 CI 自动做新旧版本 diff, 识别 breaking change 并强制 major 版本升级, 防止接口契约漂移流入下游.
 
 ---
 
-以上内容基于本人在阿里妈妈 (Webpack/Vite 模块联邦接入、@module-federation/vite 开源贡献、Vite 迁移)、字节跳动 (Thrift IDL npm 包 CI 链路) 以及 yukino-sentry / yukino-code 个人项目中的实际工程经验整理.
+以上内容基于本机 yukino 系列仓库 (yukino-chatbot 的 Vite 8 配置与 lockfile、yukino-codegen 的 Vite 7 配置、yukino-sentry 的 sourcemap 与构建链路、yukino-code 的 pnpm workspace 结构) 与通用构建工具原理整理; Vite 8 相关的配置事实逐条对照 vite.dev 的 Config Reference 与 Migration from v7 文档, Rolldown 的 codeSplitting 行为对照 rolldown.rs 的 Manual Code Splitting 文档.

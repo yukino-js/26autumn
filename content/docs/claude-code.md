@@ -5,9 +5,9 @@ description: "claude-code-best v2.8.4 逆向复原工程调研: 构建体系、�
 
 本机器位置 $HOME/Downloads/claude-code
 
-## 一、项目快照 (本机克隆 2026-09-29)
+## 一、项目快照 (本机克隆 HEAD 77a7934, 2026-08-24)
 
-本机克隆 commit 77a7934e, 分支 main, clone 后无 pull 记录 (reflog 只有一条 clone 条目)。
+本机克隆 commit 77a7934e (完整哈希 77a7934e15d69da13879112ed7db695c9ee7a52a, 提交主题 "docs: update contributors", 2026-08-24), 分支 main, 远端 git@github.com:claude-code-best/claude-code.git, clone 后无 pull 记录 (reflog 只有一条 clone 条目)。
 
 | 指标       | 数值                                                                                                                         |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -22,7 +22,7 @@ description: "claude-code-best v2.8.4 逆向复原工程调研: 构建体系、�
 | 文档站     | ccb.agent-aura.top (Mintlify, 源码在 docs/ 目录), DeepWiki 有镜像                                                            |
 | 社区       | Discord 群组; README 末尾声明 "本项目仅供学习研究用途, Claude Code 的所有权利归 Anthropic 所有"; 仓库根目录未见 LICENSE 文件 |
 
-CCB 是社区对 Anthropic 官方 Claude Code CLI 的逆向复原项目 (CLAUDE.md 原文: "reverse-engineered / decompiled", 目标是 "restore core functionality while trimming secondary capabilities")。它声明完全兼容官方 CC 的配置文件, 用户不需要改原始配置, 并持续追平企业版/登录态特性, 同时关闭了所有外部封控点 (遥测上报类依赖保留空实现)。同生态还有作者推荐的 Peri Code (github.com/KonghaYao/peri) — 一个 Claude Code 兼容的 Rust Agent。
+CCB 是社区对 Anthropic 官方 Claude Code CLI 的逆向复原项目 (CLAUDE.md 原文: "reverse-engineered / decompiled", 目标是 "restore core functionality while trimming secondary capabilities")。它声明完全兼容官方 CC 的配置文件, 用户不需要改原始配置, 目标是追平企业版/登录态特性; 遥测上报与特性开关类依赖保留空实现。同生态还有作者推荐的 Peri Code (github.com/KonghaYao/peri) — 一个 Claude Code 兼容的 Rust Agent。
 
 依赖清单本身就是信息量: dependencies/devDependencies 混排 (全部参与 bundle), 包含 @anthropic-ai/sdk ^0.81.0、bedrock-sdk、vertex-sdk、foundry-sdk、claude-agent-sdk、@modelcontextprotocol/sdk ^1.29.0、@agentclientprotocol/sdk ^0.19.0 (ACP)、openai ^6.34.0、google-auth-library、@azure/identity、AWS SDK、整套 OpenTelemetry (OTLP grpc/http/proto × traces/metrics/logs) + Prometheus exporter、@sentry/node、@growthbook/growthbook、@langfuse/otel + @langfuse/tracing、react 19 + react-reconciler、zod 4、@commander-js/extra-typings ^14.0.0 (commander 的类型化封装, commander 本体作为其传递依赖)、chokidar、execa、undici、marked、sharp、turndown、qrcode、fuse.js 等; optionalDependencies 有 doubaoime-asr (豆包语音识别, 给 Voice Mode 提供免 Anthropic OAuth 的方案)。
 
@@ -44,7 +44,7 @@ CCB 是社区对 Anthropic 官方 Claude Code CLI 的逆向复原项目 (CLAUDE.
 | Voice Mode              | 语音输入, /voice doubao 接豆包 ASR                                                                                                                                 | src/voice/, packages/audio-capture-napi/  |
 | Computer Use            | 屏幕截图、键鼠控制                                                                                                                                                 | packages/@ant/computer-use-*              |
 | Chrome Use              | 浏览器自动化、表单填写、数据抓取 (自托管 MCP 或原生版)                                                                                                             | packages/@ant/claude-for-chrome-mcp/      |
-| Sentry / GrowthBook     | 企业级错误追踪 / 特性开关 (保留空实现)                                                                                                                             | (stubbed)                                 |
+| Sentry / GrowthBook     | 企业级错误追踪 / 特性开关 (保留空实现)                                                                                                                             | (空实现)                                  |
 | /dream 记忆整理         | 自动整理和优化记忆文件                                                                                                                                             | src/services/autoDream/, src/memdir/      |
 
 一个值得注意的事实差: README 把 Pipe IPC 群控列为卖点, 但 CLAUDE.md 的 Feature Flag 清单里 UDS_INBOX、LAN_PIPES 在 Build 默认 features 中标记为"已禁用", 需要环境变量显式开启; CONTEXT_COLLAPSE、FORK_SUBAGENT、REVIEW_ARTIFACT、TEAMMEM、SKILL_LEARNING 同样是默认关闭的。
@@ -73,7 +73,7 @@ CCB 是社区对 Anthropic 官方 Claude Code CLI 的逆向复原项目 (CLAUDE.
 - --dump-system-prompt (DUMP_SYSTEM_PROMPT flag)、--claude-in-chrome-mcp、--chrome-native-host、--computer-use-mcp (独立 MCP server 模式)
 - --daemon-worker=<kind> (DAEMON flag)、daemon 子命令
 - remote-control / rc / remote / sync / bridge (BRIDGE_MODE flag)
-- ps / logs / attach / kill / --bg (BG_SESSIONS flag, 后台会话, 前四者是 daemon 子命令的 deprecated 别名)
+- ps / logs / attach / kill / --bg (BG_SESSIONS flag, 后台会话, 前四者也是 daemon 子命令的别名)
 - weixin (微信集成入口)、autonomy
 - job / new / list / reply (TEMPLATES flag, Template job 命令)
 - --tmux + --worktree 组合
@@ -98,7 +98,7 @@ API 客户端 src/services/api/claude.ts 组装请求参数 (system prompt、mes
 第三方 API 兼容层全部采用流适配器模式 — 把第三方协议格式转成 Anthropic 内部格式, 下游代码零改动:
 
 - OpenAI 兼容: CLAUDE_CODE_USE_OPENAI=1, 支持 Ollama/DeepSeek/vLLM 等任意 Chat Completions 端点, 含 DeepSeek thinking mode; 环境变量 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL (src/services/api/openai/)
-- Gemini: CLAUDE_CODE_USE_GEMINI=1, GEMINI_API_KEY 必填; 模型映射优先级 GEMINI_MODEL > GEMINI_DEFAULT_SONNET_MODEL/GEMINI_DEFAULT_OPUS_MODEL > ANTROPIC_DEFAULT_*_MODEL (已废弃) > 原样返回 (src/services/api/gemini/)
+- Gemini: CLAUDE_CODE_USE_GEMINI=1, GEMINI_API_KEY 必填; 模型映射优先级 GEMINI_MODEL > GEMINI_DEFAULT_SONNET_MODEL/GEMINI_DEFAULT_OPUS_MODEL > 原样返回 (src/services/api/gemini/)
 - Grok: CLAUDE_CODE_USE_GROK=1, 自定义模型映射对接 xAI API (src/services/api/grok/)
 
 首次配置走 REPL 内 /login, 有四个栏目: Anthropic Compatible (任意兼容 Messages API 的服务, README 举例 OpenRouter、AWS Bedrock 代理)、OpenAI Compatible (Ollama、DeepSeek、vLLM、One API 等)、Gemini API (Google Gemini 原生 REST/SSE), 前三者字段为 Base URL / API Key / Haiku / Sonnet / Opus 模型 ID; 第四个栏目是第三方平台 (Amazon Bedrock、Microsoft Foundry、Vertex AI), 引导设置对应环境变量。
@@ -146,19 +146,19 @@ API 客户端 src/services/api/claude.ts 组装请求参数 (system prompt、mes
 | packages/mcp-client                 | MCP 客户端库                                                                                                                |
 | packages/remote-control-server      | 自托管 RCS (Docker 部署, React 19 + Vite + Radix UI Web 控制台, 支持 ACP agent 接入)                                        |
 | packages/cloud-artifacts            | Cloudflare Worker + R2 的 HTML Artifacts 托管服务 (独立部署, 不被主 CLI import)                                             |
-| packages/audio-capture-napi         | 原生音频捕获 (已恢复)                                                                                                       |
+| packages/audio-capture-napi         | 原生音频捕获 (native addon)                                                                                                 |
 | packages/color-diff-napi            | 颜色差异计算 (完整实现, 11 tests)                                                                                           |
-| packages/image-processor-napi       | 图像处理 (已恢复)                                                                                                           |
+| packages/image-processor-napi       | 图像处理 (native addon)                                                                                                     |
 | packages/modifiers-napi             | 键盘修饰键检测 (macOS FFI)                                                                                                  |
 | packages/url-handler-napi           | URL scheme 处理                                                                                                             |
 | packages/weixin                     | 微信集成                                                                                                                    |
 | packages/workflow-engine            | 多 agent 工作流的确定性 JS 脚本编排引擎 (Ultracode 的 Workflow 工具底座); 零核心层运行时依赖, 通过 port adapters 与外界交互 |
 
-packages/ 下除上述 workspace 包外只有一个共享 tsconfig.json, 没有其他辅助目录 (当前 HEAD 不存在 langfuse-dashboard、shared-web-ui、highlight-code、claude-pencil、vscode-ide-bridge、pokemon 等目录)。
+packages/ 下除上述 workspace 包外只有一个共享 tsconfig.json。
 
 ## 九、平台化能力: ACP、Daemon、Bridge、Artifacts
 
-ACP (Agent Client Protocol): src/services/acp/ 实现 ACP agent (agent.ts 的 AcpAgent 类、bridge.ts 的 Claude Code ↔ ACP 桥接、permissions.ts、entry.ts); packages/acp-link 提供独立 CLI 把 WebSocket 客户端桥接到 ACP agent, 支持自定义端口/HTTPS/认证/会话管理与 RCS 集成 (REST 注册 + WS identify 两步流程)。权限管道统一为 createAcpCanUseTool, applySessionMode 同步模式, bypassPermissions 可用性检测 (非 root/sandbox 环境); Plan 可视化支持 session/update plan 消息 (PlanView 组件, 进度条/状态图标/优先级标签)。
+ACP (Agent Client Protocol): src/services/acp/ 实现 ACP agent (agent.ts 的 AcpAgent 类、bridge.ts 的 Claude Code 与 ACP 桥接、permissions.ts、entry.ts); packages/acp-link 提供独立 CLI 把 WebSocket 客户端桥接到 ACP agent, 支持自定义端口/HTTPS/认证/会话管理与 RCS 集成 (REST 注册 + WS identify 两步流程)。权限管道统一为 createAcpCanUseTool, applySessionMode 同步模式, bypassPermissions 可用性检测 (非 root/sandbox 环境); Plan 可视化支持 session/update plan 消息 (PlanView 组件, 进度条/状态图标/优先级标签)。
 
 Daemon 模式: src/daemon/ (main.ts + workerRegistry.ts), DAEMON flag 门控, 长驻 supervisor 管理 worker。
 
@@ -168,7 +168,7 @@ Cloud Artifacts 托管: Cloudflare Worker 处理 POST /upload (Bearer token 鉴�
 
 ## 十、测试与工程纪律
 
-- 框架 bun:test; 单元测试就近放 src/**/**tests**/; tests/integration/ 有 7 个集成测试文件 (cli-arguments、context-build、message-pipeline、tool-chain、autonomy-lifecycle-user-flow、dependency-overrides、goal-lifecycle; CLAUDE.md 仍记为 6 个, 漏了 goal-lifecycle); tests/mocks/ 共享 fixture。
+- 框架 bun:test; 单元测试就近放 src/**/**tests**/; tests/integration/ 有 7 个集成测试文件 (cli-arguments、context-build、message-pipeline、tool-chain、autonomy-lifecycle-user-flow、dependency-overrides、goal-lifecycle); tests/mocks/ 共享 fixture。
 - Mock 规范很严格: 只 mock 有副作用的依赖链, 不 mock 纯函数; log.ts / debug.ts 必须用 tests/mocks/ 下的共享 mock。
 - 关键陷阱: Bun 的 mock.module 是进程全局的 (last-write-wins), 一个测试文件的 mock 会污染同进程所有其他文件的 require/import; 测试执行顺序不保证字母序。核心规则是"不要 mock 被测模块的上层业务模块" — 集成测试 (launch*.test.ts) 应 mock axios 而非源 API 模块, 保证同目录 api.test.ts 能测到真实 HTTP 逻辑。
 - 类型纪律: 生产代码禁止 as any; 优先 as unknown as SpecificType 双重断言或补 interface; 未知结构用 Record<string, unknown>; 联合类型用类型守卫收窄。
@@ -180,7 +180,7 @@ Cloud Artifacts 托管: Cloudflare Worker 处理 POST /upload (Bearer token 鉴�
 
 上下文构建: src/context.ts 组装 system/user context (git status、日期、CLAUDE.md 内容、memory 文件); src/utils/claudemd.ts 按项目层级发现并加载 CLAUDE.md。穷鬼模式 /poor 持久化到 settings.json, 启用后跳过 extract_memories、prompt_suggestion、verification_agent 以减少 token 消耗 (src/commands/poor/poorMode.ts)。
 
-Stubbed/Deleted 模块状态 (CLAUDE.md 表格): Computer Use (@ant/*) 已恢复但各平台后端完整度不一; 全部 *-napi 包已恢复/实现; Voice Mode 已恢复 (Push-to-Talk); OpenAI/Gemini/Grok 兼容层已恢复; RCS 已恢复; packages/shell、packages/swarm、packages/mcp-server、packages/cc-knowledge 已删除 (功能合并或废弃); Analytics/GrowthBook/Sentry 为空实现; Magic Docs 与 LSP Server 管理器已恢复; Plugins/Marketplace 已恢复; MCP OAuth 做了简化。
+关键模块状态: Computer Use (@ant/*) 各平台后端完整度不一; Voice Mode 走 Push-to-Talk; OpenAI/Gemini/Grok 兼容层可用; Analytics/GrowthBook/Sentry 为空实现; MCP OAuth 做了简化; packages/shell、packages/swarm、packages/mcp-server、packages/cc-knowledge 在仓库中不存在 (功能并入其他包)。
 
 设计上下文保存在 .impeccable.md: 五条原则 (Considered over clever、Warmth through subtlety、Density with clarity、Community voice、Anthropic's shadow); 品牌色 Claude Orange #D77757 与 Claude Blue #5769F7; 暗色模式用温暖深色表面; 明确避免 AI 产品常见套路 (渐变文字、玻璃态、霓虹色)。
 
@@ -197,4 +197,4 @@ Stubbed/Deleted 模块状态 (CLAUDE.md 表格): Computer Use (@ant/*) 已恢复
 3. 第三方 API 兼容统一走流适配器模式, 把异构协议收敛到内部格式, 下游零改动。
 4. 工具数量膨胀后用 CORE_TOOLS 白名单 + TF-IDF 延迟发现, 而不是全量注册。
 5. mock.module 进程全局污染的应对纪律 (共享 mock、只 mock 底层 HTTP、不 mock 上层业务模块) 是 Bun 测试生态里少见的系统性总结。
-6. 逆向项目的诚实标注: CLAUDE.md 明确哪些模块 restored、哪些 stubbed、哪些 deleted, 对二次开发者是可靠的地图。
+6. 逆向项目的诚实标注: CLAUDE.md 逐模块标注实现完整度 (完整实现 / 空实现 / 仓库中不存在), 对二次开发者是可靠的地图。

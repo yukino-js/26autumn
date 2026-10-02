@@ -1,11 +1,11 @@
 ---
 title: "Priority Hints 与 Fetch Priority API 教程"
-description: "Priority Hints 与 Fetch Priority API 教程: fetchpriority 属性的标准化演进、浏览器内置优先级模型、各资源类型的调度行为与优化实践"
+description: "Priority Hints 与 Fetch Priority API 教程: fetchpriority 属性与 fetch() priority 选项的取值、浏览器内置优先级模型、各资源类型的调度行为与优化实践"
 ---
 
 ## 1. 概述
 
-Priority Hints 是一项 Web 平台特性, 允许开发者向浏览器传达资源的相对重要性, 从而影响浏览器获取资源的优先顺序. 该特性最初以 `importance` 属性的形式提出, 经过标准化演进, 最终以 Fetch Priority API 的形式落地, 使用 `fetchpriority` 作为属性名.
+Priority Hints 是一项 Web 平台特性, 允许开发者向浏览器传达资源的相对重要性, 从而影响浏览器获取资源的优先顺序. 它在 Web 平台以 Fetch Priority API 的形式落地, 由两个入口组成: HTML 侧的 `fetchpriority` 内容属性, 以及 JavaScript 侧 `fetch()` 的 `priority` 选项.
 
 它解决的核心问题是: 浏览器内置的优先级模型是通用的, 无法感知具体页面的业务语义. 例如, 浏览器不知道哪张图片是首屏主视觉、哪个脚本是交互关键路径. 通过 Priority Hints, 开发者可以把这些业务层面的知识传递给浏览器, 让资源调度更贴合实际体验需求.
 
@@ -84,7 +84,9 @@ const normal = await fetch("/api/page-content");
 - `<link>` — 预加载 (preload) 、预取 (prefetch) 、样式表等
 - `<script>` — 脚本资源
 
-注意: `<iframe>` 不支持 `fetchpriority`. 该属性在 HTML 规范中只定义于 `img`、`link`、`script` 三个元素 (早期 Priority Hints 提案 (importance 属性) 曾覆盖 iframe, 最终标准未纳入) , 主流浏览器均未实现 iframe 上的 fetchpriority.
+此外, SVG 的 `image`、`feImage`、`script` 元素有对应的 SVG `fetchpriority` 属性, 用于 SVG 内引用的外部资源.
+
+注意: `<iframe>` 不支持 `fetchpriority`. 该属性在 HTML 规范中只定义于 `img`、`link`、`script` 三个元素, 主流浏览器均未实现 iframe 上的 fetchpriority.
 
 ---
 
@@ -195,7 +197,7 @@ LCP (Largest Contentful Paint) 是 Core Web Vitals 指标之一. 如果 LCP 元�
 
 ### 4.5 iframe 优先级
 
-`<iframe>` 不支持 `fetchpriority`: 该属性只定义在 `img`、`link`、`script` 上, 早期 Priority Hints 提案 (importance 属性) 曾覆盖 iframe, 最终标准未纳入, 主流浏览器也没有实现. 对非关键 iframe (如社交媒体嵌入) , 可改用 `loading="lazy"` 延迟加载或在需要时再动态插入; 对关键 iframe (如支付组件) , 将其放在 HTML 靠前位置并减少前置的阻塞资源即可.
+`<iframe>` 不支持 `fetchpriority`: 该属性只定义在 `img`、`link`、`script` 上, 主流浏览器也没有实现. 对非关键 iframe (如社交媒体嵌入) , 可改用 `loading="lazy"` 延迟加载或在需要时再动态插入; 对关键 iframe (如支付组件) , 将其放在 HTML 靠前位置并减少前置的阻塞资源即可.
 
 ### 4.6 动态 fetch 请求的优先级
 
@@ -276,7 +278,7 @@ HTTP/2 和 HTTP/3 协议层也有优先级机制 (Stream Priorities / Extensible
 
 ### 6.2 使用 Lighthouse
 
-Lighthouse 的 "Preload Largest Contentful Paint image" 审计项 (audit id 为 prioritize-lcp-image) 检测 LCP 图片是否因缺少 preload 而发现过晚, 并建议 preload 配合 fetchpriority 使用; 新版 Lighthouse 已以 Performance Insights (如 lcp-discovery-insight) 取代该独立审计项.
+Lighthouse (13.x) 的 Performance 分类把 LCP 图片的发现时机问题交给 `lcp-discovery-insight` 这条 insight, 它会指出 LCP 图片是否因缺少 preload、发现过晚而延迟加载, 并建议用 preload 配合 fetchpriority 提前获取. 该 insight 属于 Lighthouse 的 "Insights" 分组, 与 Chrome DevTools Performance 面板共享同一套分析; 独立的 `prioritize-lcp-image` 审计项在当前版本的 default config 中已不存在 (`lighthouse@13.5.0/core/config/default-config.js` 的 audits 列表含 `insights/lcp-discovery-insight`, 不含 `prioritize-lcp-image`).
 
 ### 6.3 使用 PerformanceObserver 度量 LCP
 
@@ -346,7 +348,9 @@ onLCP((metric) => {
 | Samsung Internet | 19+                  | 19+                      | —              |
 | iOS Safari       | 17.2+                | 17.2+                    | —              |
 
-`fetchpriority` 除作用于 `img`/`link`/`script` 外, 在 SVG 中也有对应属性 (SVG `fetchpriority`) , 可用于 SVG 内引用的外部资源. 相比之下, `loading` 属性 (尤其 `loading="lazy"`) 属于 Baseline Widely Available, 各主流浏览器早在 2020-2022 年即已支持, 兼容面比 `fetchpriority` 更广.
+表中版本号取自 MDN browser-compat-data 的 `html.elements.img.fetchpriority`、`html.elements.link.fetchpriority`、`html.elements.script.fetchpriority` 与 `api.Request.priority` 条目 (Bcd 版本号与 caniuse 展示的表一致) . 三个 HTML 元素属性的支持版本相同.
+
+`fetchpriority` 除作用于 `img`/`link`/`script` 外, 在 SVG 中也有对应属性 (SVG `fetchpriority`) , 可用于 SVG 内引用的外部资源. 相比之下, `loading` 属性 (尤其 `loading="lazy"`) 属于 Baseline Widely Available, 兼容面比 `fetchpriority` 更广.
 
 对于不支持的浏览器, `fetchpriority` 属性会被静默忽略, 不会产生任何错误或副作用. JS 中传入 `priority` 字段在不支持的浏览器中同样被忽略. 因此这是一个天然渐进增强的特性, 无需 polyfill 或特性检测即可安全使用.
 

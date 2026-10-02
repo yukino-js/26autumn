@@ -5,7 +5,7 @@ description: "基于本机克隆源码逐条核实的 CodeGraph 调研快照: tr
 
 本机器位置 $HOME/Downloads/codegraph
 
-复核说明: 本文首次调研于 2026-08-12、2026-08-26 复核; 2026-09-30 对照克隆 (HEAD 791ae39) 逐条重新核实; 2026-10-01 克隆两次 pull, 先到 aa0c73c、再前进到 HEAD 34ede4de (自 791ae39 以来新增 74 个 commit, #2170~#2248, 全部是解析精度修复, 逐条记入 CHANGELOG Unreleased 段落; package.json 版本仍为 1.6.1), 下文所有关于仓库结构、文件路径、行数的论断均以该克隆当前代码为准; 时点性数据 (star 数、基准、发布日期) 保留原时点标注.
+核对快照: 本机克隆 HEAD ec738ec7 (main, 完整哈希 ec738ec7a322a680dae39a904194ce9271e6873f, 提交主题 "fix(viewer): a Steps picture with nothing past its anchor says why (#2274)", 2026-10-01), package.json 版本 1.6.1. 下文所有关于仓库结构、文件路径、行数的论断均以本机克隆当前代码为准; CHANGELOG 的 Unreleased 区块收录尚未随版本发布的解析精度修复与查看器修正 (以 fix 为主) ; 时点性数据 (star 数、基准、发布节奏) 按各自时点标注.
 
 ## 一、项目快照 (截至 2026-08-26)
 
@@ -13,27 +13,27 @@ CodeGraph (colbymchenry/codegraph) 是 2026 年 1 月 18 日由独立开发者 C
 
 仓库当前状态 (GitHub API, 2026-08-26) :
 
-| 指标         | 数值                                                                |
-| ------------ | ------------------------------------------------------------------- |
-| stars        | 68,137                                                              |
-| forks        | 4,336                                                               |
-| contributors | 42                                                                  |
-| open issues  | 448                                                                 |
-| 创建时间     | 2026-01-18                                                          |
-| 最近推送     | 2026-08-25                                                          |
-| 当前版本     | v1.5.0 (2026-07-21 发布, "The Rust engine release")                 |
-| License      | MIT                                                                 |
-| npm 包       | @colbymchenry/codegraph                                             |
-| 官网/文档    | colbymchenry.github.io/codegraph (Astro/Starlight, 仓库 site/ 目录) |
-| 托管产品候补 | getcodegraph.com (README 顶部 "The CodeGraph platform is coming")   |
+| 指标          | 数值                                                                |
+| ------------- | ------------------------------------------------------------------- |
+| stars         | 68,137                                                              |
+| forks         | 4,336                                                               |
+| contributors  | 42                                                                  |
+| open issues   | 448                                                                 |
+| 创建时间      | 2026-01-18                                                          |
+| 最近推送      | 2026-08-25                                                          |
+| 版本 (该时点) | v1.5.0 ("The Rust engine release")                                  |
+| License       | MIT                                                                 |
+| npm 包        | @colbymchenry/codegraph                                             |
+| 官网/文档     | colbymchenry.github.io/codegraph (Astro/Starlight, 仓库 site/ 目录) |
+| 托管产品候补  | getcodegraph.com (README 顶部 "The CodeGraph platform is coming")   |
 
-上表为 2026-08-26 时点数据. 同日 v1.6.0 发布 (CHANGELOG 标注 2026-08-26) , 9 月 29 日 v1.6.1 发布 (前端路由导航图谱、explore 条件标注与大量解析精度修复) , 本机克隆于 2026-09-30 pull 到 v1.6.1 之后的 main (HEAD 791ae39) , 2026-10-01 两次 pull, 先到 aa0c73c、再前进到 34ede4de——两批共新增 74 个 commit (#2170~#2248) , 全部是尚未随版本发布的解析精度修复; 后一批 63 个 commit 的构成是 60 个 fix、1 个 perf (成员类型推断只读一次类成员行, #2181) 与 2 个 ui-server 测试调整, 正文结构描述均按克隆当前代码核实.
+上表为 2026-08-26 时点数据. 当前 npm 与 Release 版本为 1.6.1 (CHANGELOG 标注 2026-09-29, 前端路由导航图谱、explore 条件标注与解析精度修复) . 克隆当前 main 位于 1.6.1 之后 (HEAD ec738ec7) , Unreleased 区块收录尚未随版本发布的解析精度修复与查看器修正, 以 fix 为主; 正文结构描述均按克隆当前代码核实.
 
-技术栈: TypeScript (主程序) + Rust (原生解析内核 codegraph-kernel) + SQLite (Node 内建 node:sqlite) . 没有 Neo4j、没有向量数据库、索引链路没有任何 LLM 调用. 支持 Windows / macOS / Linux 共 6 个平台架构组合, 自 0.9.0 起捆绑自己的 Node 运行时 (当前捆绑 Node 24) , 裸机无需安装 Node.js.
+技术栈: TypeScript (主程序) + Rust (原生解析内核 codegraph-kernel) + SQLite (Node 内建 node:sqlite) . 没有 Neo4j、没有向量数据库、索引链路没有任何 LLM 调用. 支持 Windows / macOS / Linux 共 6 个平台架构组合, 随包捆绑自己的 Node 运行时 (当前捆绑 Node 24) , 裸机无需安装 Node.js.
 
 已适配的 agent (README, 共 9 个产品、11 个安装目标) : Claude Code、Cursor、Codex CLI、opencode、Hermes Agent、Gemini CLI、Antigravity IDE、Kiro、GitHub Copilot (VS Code / CLI / JetBrains 三个变体) .
 
-从 5 月底 (约 29.1k stars、v0.9.4) 到 8 月下旬 (68k stars、v1.5.0) , 近三个月里项目完成了三次质变: 6 月 12 日 1.0.0 引入遥测与 MCP 工具面收窄; 7 月 7 日 1.3.0 把语言数从 22 扩到 30+ (含 COBOL、VB.NET、ArkTS、CUDA、Solidity、Terraform) ; 7 月 21 日 1.5.0 上线 Rust 原生解析内核; 8 月 26 日 1.6.0 以可靠性修复与 explore 回答质量为主 (GitHub Copilot 三变体支持、explore 会话内去重、索引漂移修复、WAL 泄漏修复) ; 9 月 29 日 1.6.1 把 Expo Router、Next.js、React Router、TanStack Router、Vue Router/Nuxt、SvelteKit 的页面与导航拉进图 (routes 节点与 navigates 边) , Flow 的每一跳开始携带触发条件. 发布节奏极快: 克隆当前 CHANGELOG 共 33 个块 (0.7.6 至 1.6.1 共 32 个版本块, 外加一个内容庞大的 Unreleased 区块, 截至 34ede4de 已累计 134 条解析精度修复条目) , 5 月中旬以来平均约 4 天一个版本.
+1.6.x 的能力面还包括: GitHub Copilot 三变体支持、explore 会话内去重、索引漂移修复与 WAL 泄漏修复; 前端路由 (Expo Router、Next.js、React Router、TanStack Router、Vue Router/Nuxt、SvelteKit) 的页面与导航也进入图 (route 节点与 navigates 边) , Flow 的每一跳携带触发条件. 发布节奏极快: CHANGELOG 当前共 33 个块 (0.7.6 至 1.6.1 共 32 个版本块, 外加一个内容庞大的 Unreleased 区块) , 5 月中旬以来平均约 4 天一个版本.
 
 ## 二、它到底要解决什么问题
 
@@ -59,9 +59,9 @@ src/ 顶层模块职责 (均经源码核实) :
 
 | 模块              | 职责                                                                                                                                                                                                                                                                                                                                                                    |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| src/extraction/   | 抽取编排: 文件扫描→解析→入库. 含 wasm 抽取器 (tree-sitter.ts, 7644 行) 、languages/ 下 28 个语言配置、kernel/ 子目录 (Rust 内核路由/加载/解码) 、worker 线程流水线 (parse-pool / parse-worker / store-writer / store-worker) 、SFC 抽取器 (vue/svelte/astro/razor/liquid/mybatis/dfm/cfml)                                                                              |
+| src/extraction/   | 抽取编排: 文件扫描→解析→入库. 含 wasm 抽取器 (tree-sitter.ts, 7649 行) 、languages/ 下 28 个语言配置、kernel/ 子目录 (Rust 内核路由/加载/解码) 、worker 线程流水线 (parse-pool / parse-worker / store-writer / store-worker) 、SFC 抽取器 (vue/svelte/astro/razor/liquid/mybatis/dfm/cfml) 、CommonJS require 解析 (commonjs-requires.ts)                               |
 | src/resolution/   | 引用解析: import-resolver、name-matcher (9594 行) 、动态分发合成器 (callback-synthesizer 4141 行、c-fnptr-synthesizer、goframe-synthesizer、swift-objc-bridge) 、跨层 tier-synthesizer (fetch→路由、队列→消费者、事件→handler) 、七个路由器合成器 (expo-router/next-router/react-router/sveltekit/tanstack-router/vue-router/angular-template) 、frameworks/ 框架解析器 |
-| src/db/           | SQLite 层: sqlite-adapter.ts (node:sqlite 薄适配) 、schema.sql、migrations.ts (CURRENT_SCHEMA_VERSION = 11) 、预编译查询 (queries.ts, 4086 行) 、WAL checkpoint 阀门 (wal-valve.ts)                                                                                                                                                                                     |
+| src/db/           | SQLite 层: sqlite-adapter.ts (node:sqlite 薄适配) 、schema.sql、migrations.ts (CURRENT_SCHEMA_VERSION = 11) 、预编译查询 (queries.ts, 4087 行) 、WAL checkpoint 阀门 (wal-valve.ts)                                                                                                                                                                                     |
 | src/sync/         | 文件监听与增量同步: watcher.ts (原生 fs.watch) 、watch-policy.ts (WSL2 等禁用策略) 、git-hooks.ts (钩子兜底) 、worktree.ts (git worktree 错位检测)                                                                                                                                                                                                                      |
 | src/mcp/          | MCP server: tools.ts (工具定义+Handler, 8452 行) 、Direct/Proxy/Daemon 三种运行模式、查询 worker 池、explore 会话状态/去重/诊断、server-instructions.ts (initialize 响应中的 agent 指引) 、watchdog                                                                                                                                                                     |
 | src/graph/        | BFS/DFS 图遍历与图查询管理, 以及多渲染面共享的查询期推导 (named-symbol-flow、dynamic-boundary-report、type-hierarchy、dead-code、branch-guards)                                                                                                                                                                                                                         |
@@ -86,7 +86,7 @@ src/ 顶层模块职责 (均经源码核实) :
 
 CodeGraph 选 tree-sitter 是明确的工程权衡: 放弃类型级精度 (obj.foo() 里 obj 到底是哪个类的实例, tree-sitter 答不上来) , 换来三件事——不要求项目可编译、一份 wasm 二进制覆盖所有平台、增量解析快到可以毫秒级响应文件保存. 对面向 agent 的探索性查询工具, 这个折中是合理的.
 
-1.5.0 的关键演进是在 tree-sitter 之上叠加了一层 Rust 原生内核 (codegraph-kernel/) . 动机记录在 docs/design/native-extraction-kernel.md: 作者用排除法测量发现, RAM-backed DB 无效 (parse 是 CPU-bound) 、TreeCursor 重写无效——wasm 路径的成本下限是逐节点 JS-WASM 边界 marshaling, 遍历 AST 时每个节点的 kind、childForFieldName、text 都要跨一次边界. 唯一剩余杠杆是把整个 parse + walk 移到原生侧.
+在 tree-sitter 之上叠加了一层 Rust 原生内核 (codegraph-kernel/) . 动机记录在 docs/design/native-extraction-kernel.md: 作者用排除法测量发现, RAM-backed DB 无效 (parse 是 CPU-bound) 、TreeCursor 重写无效——wasm 路径的成本下限是逐节点 JS-WASM 边界 marshaling, 遍历 AST 时每个节点的 kind、childForFieldName、text 都要跨一次边界. 唯一剩余杠杆是把整个 parse + walk 移到原生侧.
 
 内核的设计一句话概括 (Cargo.toml 描述原文) : "tree-sitter parse+extract with one JS boundary crossing per file"——每个文件只调用一次 extractFile(filePath, content, language), 整个解析和遍历在 Rust 内完成, 返回 5 块扁平类型化 Buffer:
 
@@ -139,22 +139,22 @@ property, field, variable, constant, enum, enum_member, type_alias, namespace,
 parameter, import, export, route, component, union
 ```
 
-其中 union 是 1.5.0 后新增 (PR #1515) , 1.6.0 起 C/C++/Objective-C/Rust 的 union 声明也按一等 union 节点入库. 边类型 (EdgeKind, 13 种) :
+其中 union 覆盖 C/C++/Objective-C/Rust 等语言的 union 声明, 按一等 union 节点入库. 边类型 (EdgeKind, 13 种) :
 
 ```text
 contains, calls, imports, exports, extends, implements, references,
 type_of, returns, instantiates, overrides, decorates, navigates
 ```
 
-navigates 是 1.6.1 (2026-09-29 发布) 新增的边类型, 表示"导航到某个屏幕/路由", 当前由 Expo Router、Next.js、React Router、TanStack Router、Vue Router/Nuxt、SvelteKit、Angular 七个路由器解析器产生 (Angular 的路由与导航是 1.6.1 之后、尚未随版本发布的 #2113/#2114/#2133 补齐的) . 每条边携带 provenance 字段, 取值 tree-sitter / scip / heuristic.
+navigates 表示"导航到某个屏幕/路由", 当前由 Expo Router、Next.js、React Router、TanStack Router、Vue Router/Nuxt、SvelteKit、Angular 七个路由器解析器产生. 每条边携带 provenance 字段, 取值 tree-sitter / scip / heuristic.
 
-覆盖率不是宣称而是测量的. README 的 "Measured cross-file coverage" 定义"公平覆盖率"= 有至少一个已解析跨文件依赖方的含符号源文件占比, 每语言一个真实基准仓库. 克隆当前 README 的表已扩到 22 行: TypeScript/JavaScript 95.8% (本仓库) 、Python 100% (requests) 、Go 96.6% (gin) 、Rust 86.7% (ripgrep) 、Java 93.3% (gson) 、C# 85.2% (MediatR) 、PHP 100% (guzzle) 、Ruby 100% (sidekiq) 、C 92.2% (redis) 、C++ 94.8% (leveldb) 、Objective-C 91.6% (SDWebImage) 、Swift 95.3% (Alamofire) 、Kotlin 96.2% (okhttp) 、Scala 91.2% (gatling) 、Dart 92.4% (flutter/packages) 、Svelte/SvelteKit 100% (sveltejs/realworld) 、Vue/Nuxt 93.5% (nuxt/movies) 、Astro 93.0%、Lua 84.2% (telescope.nvim) 、Luau 92.2% (Fusion) 、Liquid 73.8% (Shopify dawn) 、Pascal/Delphi 77.4% (PascalCoin) . 框架路由覆盖率同样实测: Express 100%、FastAPI 98%、Flask 100%、NestJS 96.8%、Gin 96.5%、Axum 100%、Rocket 93.8%、Vapor 100%、Laravel 92%、Rails 89.6%、React Router 100%, 约定/反射密集型的诚实报出静态分析天花板: ASP.NET 83.9%、Spring 83.3%、Drupal 78.9%、Play 76.3%、Django 74.1%. README 原话: 残余部分"永远是真正的静态分析前沿——运行时动态分发、反射/DI 容器、框架约定入口、vendored 第三方代码——绝不通过操纵分母来隐藏".
+覆盖率不是宣称而是测量的. README 的 "Measured cross-file coverage" 定义"公平覆盖率"= 有至少一个已解析跨文件依赖方的含符号源文件占比, 每语言一个真实基准仓库. README 的表共 22 行: TypeScript/JavaScript 95.8% (本仓库) 、Python 100% (requests) 、Go 96.6% (gin) 、Rust 86.7% (ripgrep) 、Java 93.3% (gson) 、C# 85.2% (MediatR) 、PHP 100% (guzzle) 、Ruby 100% (sidekiq) 、C 92.2% (redis) 、C++ 94.8% (leveldb) 、Objective-C 91.6% (SDWebImage) 、Swift 95.3% (Alamofire) 、Kotlin 96.2% (okhttp) 、Scala 91.2% (gatling) 、Dart 92.4% (flutter/packages) 、Svelte/SvelteKit 100% (sveltejs/realworld) 、Vue/Nuxt 93.5% (nuxt/movies) 、Astro 93.0%、Lua 84.2% (telescope.nvim) 、Luau 92.2% (Fusion) 、Liquid 73.8% (Shopify dawn) 、Pascal/Delphi 77.4% (PascalCoin) . 框架路由覆盖率同样实测: Express 100%、FastAPI 98%、Flask 100%、NestJS 96.8%、Gin 96.5%、Axum 100%、Rocket 93.8%、Vapor 100%、Laravel 92%、Rails 89.6%、React Router 100%, 约定/反射密集型的诚实报出静态分析天花板: ASP.NET 83.9%、Spring 83.3%、Drupal 78.9%、Play 76.3%、Django 74.1%. README 原话: 残余部分"永远是真正的静态分析前沿——运行时动态分发、反射/DI 容器、框架约定入口、vendored 第三方代码——绝不通过操纵分母来隐藏".
 
 ### 4.3 存储: node:sqlite + WAL + FTS5, 没有图数据库
 
-这是 CodeGraph 与 Neo4j 路线 (如 Potpie) 最大的体系差异. 0.9.0 起存储后端切换为 Node 内建的 node:sqlite (DatabaseSync) , src/db/sqlite-adapter.ts 是一个薄适配层, 文件头注释写明"无原生构建步骤、无 wasm 回退". 这个选择与捆绑 Node 运行时的决策互为因果: 捆绑 Node 24 就意味着自带真正的 SQLite (含 WAL + FTS5) , 从而删掉 better-sqlite3 依赖、实现零原生 addon、根治早期 "database is locked" 问题 (issue #238) .
+这是 CodeGraph 与 Neo4j 路线 (如 Potpie) 最大的体系差异. 存储后端是 Node 内建的 node:sqlite (DatabaseSync) , src/db/sqlite-adapter.ts 是一个薄适配层, 文件头注释写明"无原生构建步骤、无 wasm 回退" (从源码运行要求 Node >= 22.5) . 这个选择与捆绑 Node 运行时的决策互为因果: 捆绑 Node 24 就意味着自带真正的 SQLite (含 WAL + FTS5) , 因而零原生 addon、无需编译或 rebuild, 也不存在外部 SQLite 驱动的锁竞争问题.
 
-Schema (src/db/schema.sql 基线 + migrations 到 v11; v10 为合成输入追踪表 synthesis_inputs 与索引重建 (#1988) , v11 给合成元数据查找加畸形 JSON 防护) :
+Schema (src/db/schema.sql 基线 + migrations 到 v11, CURRENT_SCHEMA_VERSION = 11; v10 引入合成输入追踪表 synthesis_inputs 与索引重建, v11 给合成元数据查找加畸形 JSON 防护) :
 
 | 表                 | 要点                                                                                                                                                                                                                          |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -166,27 +166,27 @@ Schema (src/db/schema.sql 基线 + migrations 到 v11; v10 为合成输入追踪
 | project_metadata   | key/value                                                                                                                                                                                                                     |
 | nodes_fts          | FTS5 虚表 (content= 外部内容表模式 + 三个同步触发器) , 全文搜索                                                                                                                                                               |
 
-连接配置 (src/db/index.ts configureConnection) : busy_timeout=5000 最先设置, journal_mode=WAL、synchronous=NORMAL、cache_size=-64000 (64MB) 、temp_store=MEMORY、mmap_size=256MB. 围绕 WAL 有一整套工程设施: 批量索引期间关闭 wal_autocheckpoint (issue #1231) , 由 WalCheckpointValve 在 worker 线程定时做 PASSIVE checkpoint, 索引期软阈值为"256MB 与索引大小四分之一取大"、上限 2GB (CODEGRAPH_WAL_VALVE_MB 可调) , 超过时背压暂停写入; 每次打开连接时 healOversizedWal() 修复被 kill 进程遗留的超大 WAL, 静息阈值默认 64MB (CODEGRAPH_WAL_HEAL_MB 可调, 1.6.0 修复的 issue #1431) ; 批量写入窗口临时 DROP 二级索引、结束后一次性重建, FTS 触发器同样先删后整体 rebuild.
+连接配置 (src/db/index.ts configureConnection) : busy_timeout=5000 最先设置, journal_mode=WAL、synchronous=NORMAL、cache_size=-64000 (64MB) 、temp_store=MEMORY、mmap_size=256MB. 围绕 WAL 有一整套工程设施: 批量索引期间关闭 wal_autocheckpoint (issue #1231) , 由 WalCheckpointValve 在 worker 线程定时做 PASSIVE checkpoint, 索引期软阈值为"256MB 与索引大小四分之一取大"、上限 2GB (CODEGRAPH_WAL_VALVE_MB 可调) , 超过时背压暂停写入; 每次打开连接时 healOversizedWal() 修复被 kill 进程遗留的超大 WAL, 静息阈值默认 64MB (CODEGRAPH_WAL_HEAL_MB 可调, issue #1431) ; 批量写入窗口临时 DROP 二级索引、结束后一次性重建, FTS 触发器同样先删后整体 rebuild.
 
-向量检索的结局值得记录: 仓库早期设计过 vectors/ 模块 (@xenova/transformers 跑 ONNX、384 维 nomic-embed-text-v1.5 embeddings、sqlite-vss 索引, IMPLEMENTATION_PLAN.md 里有完整设计) , 在 CHANGELOG 记录范围之前就被整体移除, issue #87 里有用户直接问"为什么把整个向量搜索和 embedding 模块删掉? ". 当前代码里只剩命名残留: src/errors.ts 有一个从未使用的 VectorError 类, src/context/index.ts 沿用 "semantic search" 术语但实现是精确符号查找 + FTS5 + 词干扩展 + 图遍历的混合检索. src/mcp/tools.ts 第 3877 行注释明确自证: "deterministic, no embeddings". 作者用实测得出的结论是: 对"找调用链、找定义、找路由"这类 agent 问题, 符号名 + FTS5 + 图遍历已经足够, 向量检索引入的延迟和不确定性反而是负担.
+检索路线是确定性的混合检索, 不含向量检索与 embedding. src/context/index.ts 沿用 "semantic search" 术语, 实现是精确符号查找 + FTS5 + 词干扩展 + 图遍历; src/mcp/tools.ts 第 3877 行注释自证 "deterministic, no embeddings"; src/errors.ts 里的 VectorError 类从未被使用, 属命名残留. 对"找调用链、找定义、找路由"这类 agent 问题, 符号名 + FTS5 + 图遍历已经足够, 向量检索引入的延迟和不确定性反而是负担.
 
 ### 4.4 引用解析: 三阶段流水线 + 启发式合成边
 
-解析流程 (src/resolution/index.ts, 3070 行) : 抽取阶段把未解析引用写入 unresolved_refs (status=pending) , ReferenceResolver 用 worker 池批量解析. 三个阶段:
+解析流程 (src/resolution/index.ts, 3072 行) : 抽取阶段把未解析引用写入 unresolved_refs (status=pending) , ReferenceResolver 用 worker 池批量解析. 三个阶段:
 
 1. imports → 文件: tsconfig/jsconfig path alias、JVM 全限定名、C/C++ include 目录、PHP include、COBOL copybook、Nix path import、Go module、monorepo workspace packages
 2. calls → 定义: name-matcher 多策略匹配 (qualified-name、exact-name、file-path、链式调用 matchDottedCallChain、回调值引用 matchFunctionRef) ; 对同名定义超过 500 个的"泛在名"拒绝出边, 防止噪声
 3. inheritance: extends/implements 双向边, 随后二遍解析——链式工厂调用靠 conforms 边解析、this.member 引用沿超类型 BFS
 
-name-matcher 是这套流水线里演进最快的模块 (当前 9594 行) . 791ae39 之后的 74 个未发布修复 (#2170~#2248, CHANGELOG Unreleased 段落) 几乎全部投在接收者 (receiver) 解析的收敛上, 方向一致——"名字猜测"退让给"类型事实"与"作用域事实": 经字段/属性/参数声明类型的调用 (C#/Java/Kotlin, 含继承来的泛型实参、for-each 声明、C# using 别名、类型参数上界) 落到声明类型自己的方法, 不再回退到项目内同名方法猜测; 经类名的调用 (Pascal/Python/Ruby/PHP/TS/JS/Java 系) 到达该类继承来的类方法; 标准库/库类型的调用留在库内 (Rust 的 Vec::new 与模块路径、Go 的 net/http、JS 的 fetch Response.text()/.json()、R 的基础函数) ; 接收者名猜测不再命中 web 框架派发的请求 handler (Django/DRF view 的 get/post、控制器 CRUD) 与测试文件里的匿名替身; C# 接口成员按语言定义视为 public、无修饰符类型为 internal; Swift 的无接收者/self./super. 调用只到达所在类型及其继承与遵循的成员, 最近覆写优先; Kotlin infix 调用被记录为调用、无接收者调用只到达"可及范围内"的成员 (error/require/check 等标准函数不再错连项目方法) ; Objective-C 发给 super 的消息到达超类实现; Solidity 无接收者调用留在合约及其继承链内, Erlang 跨模块调用跟随文件的 -import 声明; C/C++ 的限定名可进入宏展开的命名空间 (fmt 的 FMT_BEGIN_NAMESPACE、pybind11 的 PYBIND11_NAMESPACE_BEGIN 等) 与命名空间别名. 后 63 个 commit (#2181~#2248) 把同一方向推向语言作用域本身: 裸名只解析到引用处可见的符号 (Java 的包/import/嵌套可见性、PHP 的命名空间与 use、C# 的 namespace 块作用域、Rust 的 module/use、Scala 的 package object 与块内局部 val、Lua 的 local 与文件私有) ; 调用落到实参个数/参数标签匹配的那个重载 (Java/C#/Kotlin/Swift/Scala/Dart/VB.NET/C++) ; 框架命名约定 (NestJS provider、Express middleware、React hook/context、Django/FastAPI/Flask/ASP.NET/Gin/SwiftUI/Vapor) 收敛为"只挑引用所在文件自己的声明", 统一进新增的 frameworks/name-heuristic.ts 共享挑选模块 (#2225) ; 生产代码不再连到测试套件里的同名符号, minified 产物里的同名函数不参与名字解析, 外部导入 (Java/Kotlin import、Go 外部包限定名) 拥有自己的名字; Python 的包再导出 (`__init__.py` re-export) 被跟随到真实定义 (#2247/#2248) . 这些条目普遍标注 "Re-index after upgrading", 即精度提升需要重建索引才能生效.
+name-matcher 是这套流水线里体量最大的模块 (当前 9594 行) . CHANGELOG Unreleased 区块的解析精度修复几乎全部投在接收者 (receiver) 解析的收敛上, 方向一致——"名字猜测"退让给"类型事实"与"作用域事实": 经字段/属性/参数声明类型的调用 (C#/Java/Kotlin, 含继承来的泛型实参、for-each 声明、C# using 别名、类型参数上界) 落到声明类型自己的方法, 不再回退到项目内同名方法猜测; 经类名的调用 (Pascal/Python/Ruby/PHP/TS/JS/Java 系) 到达该类继承来的类方法; 标准库/库类型的调用留在库内 (Rust 的 Vec::new 与模块路径、Go 的 net/http、JS 的 fetch Response.text()/.json()、R 的基础函数) ; 接收者名猜测不再命中 web 框架派发的请求 handler (Django/DRF view 的 get/post、控制器 CRUD) 与测试文件里的匿名替身; C# 接口成员按语言定义视为 public、无修饰符类型为 internal; Swift 的无接收者/self./super. 调用只到达所在类型及其继承与遵循的成员, 最近覆写优先; Kotlin infix 调用被记录为调用、无接收者调用只到达"可及范围内"的成员 (error/require/check 等标准函数不再错连项目方法) ; Objective-C 发给 super 的消息到达超类实现; Solidity 无接收者调用留在合约及其继承链内, Erlang 跨模块调用跟随文件的 -import 声明; C/C++ 的限定名可进入宏展开的命名空间 (fmt 的 FMT_BEGIN_NAMESPACE、pybind11 的 PYBIND11_NAMESPACE_BEGIN 等) 与命名空间别名. 后一批条目把同一方向推向语言作用域本身: 裸名只解析到引用处可见的符号 (Java 的包/import/嵌套可见性、PHP 的命名空间与 use、C# 的 namespace 块作用域、Rust 的 module/use、Scala 的 package object 与块内局部 val、Lua 的 local 与文件私有) ; 调用落到实参个数/参数标签匹配的那个重载 (Java/C#/Kotlin/Swift/Scala/Dart/VB.NET/C++) ; 框架命名约定 (NestJS provider、Express middleware、React hook/context、Django/FastAPI/Flask/ASP.NET/Gin/SwiftUI/Vapor) 收敛为"只挑引用所在文件自己的声明", 统一进 frameworks/name-heuristic.ts 共享挑选模块; 生产代码不再连到测试套件里的同名符号, minified 产物里的同名函数不参与名字解析, 外部导入 (Java/Kotlin import、Go 外部包限定名) 拥有自己的名字; Python 的包再导出 (`__init__.py` re-export) 被跟随到真实定义. 这些条目普遍标注 "Re-index after upgrading", 即精度提升需要重建索引才能生效. 精度修复还扩展到框架路由与模块图形态: Vapor 的 trailing-closure handler (app.get("hello") \{ req in … \}) 像 Express 内联 handler 一样接到闭包调用; Laravel 字符串控制器 ('Common\Uploads@inline'、带命名空间的 Route::resource) 不再要求 Controller 后缀, 同名控制器按命名空间区分; Rails 的 resources only:/except: 支持 %i[]/%w() 等全部写法; Nuxt/Astro 文件路由页接到文件自身定义的组件 (frameworks/page-component.ts) , Astro endpoint 接到 export const GET 等 verb handler; Vue/Svelte/Astro 的组件"拥有"自己的 script——script setup/Svelte instance script/Astro frontmatter 顶层调用记在组件名下 (Nuxt 页的 useAsyncData、Svelte 页的 onMount、Astro 的 getCollection) ; JS/TS 的 CommonJS require 按 Node/bundler 规则 (扩展名、index 文件、路径别名) 解析为文件级 import (extraction/commonjs-requires.ts) ; Express 内联 function (req, res) 形式的 handler 不再被前面的内联 middleware 顶替; COBOL 文件末行落在 sequence area (1-6 列) 时不再卡死索引一分钟以上.
 
-最有特色的是动态分发桥接 (synthesizers) . callback-synthesizer.ts (4141 行) 识别的模式包括: 字符串键 EventEmitter (.on/.once 与 .emit/.fire 按事件名对接, fan-out 上限 6) 、React setState→render 重渲染边、JSX 子组件边、Vue 模板组件事件绑定/composable 解构/Nuxt 自动导入、Flutter setState→build、ArkUI (鸿蒙) state→build 与 Emitter 事件、C++ virtual override、Go interface→struct 与 gRPC stub→impl、Kotlin expect/actual (KMP) 、闭包集合分发 (Swift/Kotlin 的 coll.forEach \{ $0() \}) . c-fnptr-synthesizer 处理 C/C++ 函数指针分发, 包括宏构建的命令表 (redis、SQLite、Vim 风格的注册表, issue #932/#991) . goframe-synthesizer 处理 GoFrame 反射路由. swift-objc-bridge 处理 Swift-ObjC selector 桥接. 克隆当前 main 还新增了 tier-synthesizer (跨层合成: 客户端字面量 fetch/axios 路径接到本仓路由、队列任务接到消费者、总线/socket 事件接到 handler, 边带 channel/tier/registeredAt 元数据) 与七个前端路由器合成器 (含 Angular 模板合成器, 见 4.5) . 所有合成边一律标记 provenance:'heuristic' 并带 metadata.synthesizedBy 通道名与 registeredAt 注册点, agent 可以分辨某条边是怎么进入图中的. 这是让 trace 能跨越"事件分发、回调、运行时绑定"这些 grep 永远穿不过的边界的关键.
+最有特色的是动态分发桥接 (synthesizers) . callback-synthesizer.ts (4141 行) 识别的模式包括: 字符串键 EventEmitter (.on/.once 与 .emit/.fire 按事件名对接, fan-out 上限 6) 、React setState→render 重渲染边、JSX 子组件边、Vue 模板组件事件绑定/composable 解构/Nuxt 自动导入、Flutter setState→build、ArkUI (鸿蒙) state→build 与 Emitter 事件、C++ virtual override、Go interface→struct 与 gRPC stub→impl、Kotlin expect/actual (KMP) 、闭包集合分发 (Swift/Kotlin 的 coll.forEach \{ $0() \}) . c-fnptr-synthesizer 处理 C/C++ 函数指针分发, 包括宏构建的命令表 (redis、SQLite、Vim 风格的注册表, issue #932/#991) . goframe-synthesizer 处理 GoFrame 反射路由. swift-objc-bridge 处理 Swift-ObjC selector 桥接. 另有 tier-synthesizer (跨层合成: 客户端字面量 fetch/axios 路径接到本仓路由、队列任务接到消费者、总线/socket 事件接到 handler, 边带 channel/tier/registeredAt 元数据) 与七个前端路由器合成器 (含 Angular 模板合成器, 见 4.5) . 所有合成边一律标记 provenance:'heuristic' 并带 metadata.synthesizedBy 通道名与 registeredAt 注册点, agent 可以分辨某条边是怎么进入图中的. 这是让 trace 能跨越"事件分发、回调、运行时绑定"这些 grep 永远穿不过的边界的关键.
 
 另有查询期的 dynamic-boundaries 机制 (src/mcp/dynamic-boundaries.ts) : explore 的静态路径断开时, 检测并如实播报动态分发点 (计算成员调用、getattr、反射、字符串总线) , 但不猜测合成边.
 
 ### 4.5 框架感知路由
 
-src/resolution/frameworks/ 当前共 34 个文件 (不含 index.ts, 其中 name-heuristic.ts 是 #2225 抽出的共享命名约定挑选模块, 其余 33 个是 resolver) , 覆盖 17 个以上 web 框架: Express、NestJS、React、Angular Router、Svelte、Vue、Astro、Django、Flask、FastAPI、Rails、Spring、Play、Go 标准路由 (net/http、Gin 等) 、GoFrame、Axum/Actix 等 Rust 框架、ASP.NET、Laravel、Drupal、SwiftUI/UIKit/Vapor, 以及 CICS (COBOL TRANSID 跳转) 和 Terraform, 另有 cargo-workspace、object-literal (zustand 风格 store action) 、package-deps 等非 web 解析器. 路由声明被抽成 kind:'route' 的图节点并连向 handler, 因此 agent 可以问"POST /api/users 的实现在哪、影响哪些下游", 一次 impact 查询直接出结果. 克隆当前 main 把七个前端路由器升级为"路由 + 导航"双向解析 (expo-router、nextjs、react-router、tanstack-router、vue-router、sveltekit-router、angular-router, docs/design/framework-coverage.md 将此七者记为 "Routers — routes AND navigation (done)") : 屏幕/页面文件成为绑定组件的 route 节点, router.push、navigate、redirect、模板 Link 等字面量导航调用产生 navigates 边, "点击这里会去哪个页面"变成一跳查询; Angular 的模板不作为符号索引, 而在合成期读 templateUrl/内联模板, 额外产生组件树边与 routerLink 导航边; 计算型目标与无路由匹配的路径如实留空而不是猜测. 企业技术栈 (Spring/MyBatis 自 0.9.6 起专门优化, 1.3.0 把大型 Java/Kotlin Spring monorepo 的解析从近 1 小时降到几分钟) 是明确的支持目标.
+src/resolution/frameworks/ 当前共 35 个文件 (不含 index.ts, 其中 name-heuristic.ts 是共享命名约定挑选模块, page-component.ts 是 Nuxt/Astro 文件路由页→自身 SFC 组件的接线辅助, 其余 33 个是 resolver) , 覆盖 17 个以上 web 框架: Express、NestJS、React、Angular Router、Svelte、Vue、Astro、Django、Flask、FastAPI、Rails、Spring、Play、Go 标准路由 (net/http、Gin 等) 、GoFrame、Axum/Actix 等 Rust 框架、ASP.NET、Laravel、Drupal、SwiftUI/UIKit/Vapor, 以及 CICS (COBOL TRANSID 跳转) 和 Terraform, 另有 cargo-workspace、object-literal (zustand 风格 store action) 、package-deps 等非 web 解析器. 路由声明被抽成 kind:'route' 的图节点并连向 handler, 因此 agent 可以问"POST /api/users 的实现在哪、影响哪些下游", 一次 impact 查询直接出结果. 七个前端路由器做"路由 + 导航"双向解析 (expo-router、nextjs、react-router、tanstack-router、vue-router、sveltekit-router、angular-router, docs/design/framework-coverage.md 将此七者记为 "Routers — routes AND navigation (done)") : 屏幕/页面文件成为绑定组件的 route 节点, router.push、navigate、redirect、模板 Link 等字面量导航调用产生 navigates 边, "点击这里会去哪个页面"变成一跳查询; Angular 的模板不作为符号索引, 而在合成期读 templateUrl/内联模板, 额外产生组件树边与 routerLink 导航边; 计算型目标与无路由匹配的路径如实留空而不是猜测. 企业技术栈 (Spring/MyBatis 有专门优化, 大型 Java/Kotlin Spring monorepo 的解析可控制在几分钟内) 是明确的支持目标.
 
 ### 4.6 自动同步: 原生 fs.watch, 保存后亚秒级更新
 
@@ -196,9 +196,9 @@ src/sync/watcher.ts 不用 chokidar, 直接用 Node 内建 fs.watch (头注释: 
 
 效果 (README) : 保存文件后图在 1 秒内更新——4,400 文件项目约 0.3 秒, 27,000 文件的 Swift 编译器仓库约 0.4 秒, 从不重扫文件树. 对 31 个仓库、30 种语言的对比基准中, 变更重索引比"最快的竞品 indexer"快 2-7 倍, 且差距随仓库规模扩大——因为对方成本随仓库增长, CodeGraph 成本随变更增长.
 
-### 4.7 MCP 接口: 从 10 个工具收窄到默认 1 个
+### 4.7 MCP 接口: 8 个工具, 默认只暴露 1 个
 
-src/mcp/tools.ts 当前定义 8 个工具 (早期是 10 个, codegraph_context 与 codegraph_trace 在 0.9.9 被裁撤) :
+src/mcp/tools.ts 当前定义 8 个工具:
 
 | 工具                                  | 语义                                                                                     |
 | ------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -218,24 +218,24 @@ CLAUDE.md 里的 MCP 设计哲学是整个项目最有借鉴价值的部分, 摘
 - "Adapt the tool to the agent——不要试图改变 agent". 影响 agent 的渠道 (initialize 指引、工具描述) 都是低显著性的, 改措辞无法可靠改变工具选择 (trace-first 指引试了 3 种措辞均未复现效果) . 可行的是让 agent 本来就会调的工具在给定输入下做更多事.
 - 充分性原则: codegraph_node 对歧义名一次返回所有重载的完整函数体, 杜绝 agent 去 Read 找重载.
 - 错误即弃用: 早期一两次 isError 就会让 agent 永久弃用 codegraph. isError 只留给真正的故障与安全拒绝; 一切预期内状态 (未索引、找不到符号) 返回"成功形态的指引".
-- 失败教训: 模糊输入工具必败. codegraph_context 收描述不收符号名、无法定位端点, 已删; codegraph_trace 因 agent 不选它而删. 精确输出需要精确输入.
+- 失败教训: 模糊输入的工具必然失败——收描述不收符号名的工具无法定位端点, 也不会被 agent 选中. 精确输出需要精确输入.
 - explore 预算按仓库规模分档: 500 文件以下 1 次调用、5000 以下 2 次、15000 以下 3 次、25000 以下 4 次、更大 5 次; 每档输出预算有单调性不变量 (大档位 maxCharsPerFile 不得小于小档位——曾因此回归导致 excalidraw 415KB 的 App.tsx 只返回不到 1% 内容, 逼 agent 去 Read) . explore 输出永远不许说 "use Read".
 - 动态分发覆盖: "partial coverage is WORSE than none"——半截桥接会让 agent 钻进去读文件补齐 (excalidraw 实测 react-render 单独上线反而把 Read 提到 5-7 次, 补齐 jsx-child 后才降到 0-1) .
 - 验证方法论: 每新增语言/框架强制跑小/中/大真实仓库加 3 个以上 flow prompt; agent A/B 每臂至少 2 次、禁止 n=1 下结论; 模型政策一律 Sonnet + effort high、绝不用 Opus——Sonnet 是刻意的"地板模型", 在弱模型上成立的 affordance 才能向上泛化到所有宿主; 所有对照组封锁 codegraph CLI 防污染.
 
-运行模式上, MCP server 支持 Direct/Proxy/Daemon 三种形态; 0.9.5 引入的共享后台 daemon 让多个 agent 共用一个 watcher 和 SQLite 连接.
+运行模式上, MCP server 支持 Direct/Proxy/Daemon 三种形态; 共享后台 daemon 让多个 agent 共用一个 watcher 和 SQLite 连接.
 
-除面向 agent 的 MCP 面之外, 克隆当前 main 包含尚未随正式版本发布的面向人的图查看器 `codegraph ui` (代码已随包分发, 但命令默认隐藏并拒绝执行, 需 CODEGRAPH_UI=1 启用, 门控逻辑在 src/bin/viewer-gate.ts): 本地只读 web 服务, 默认监听 127.0.0.1:4747 (别名 `codegraph web`, 支持 --port/--no-open/--read-only, CODEGRAPH_BROWSER 可指定浏览器) , 前端是仓库顶层 ui/ 目录的 Svelte + Vite 应用, 后端是 src/ui-server/ 的只读 JSON API. 视图包括: 符号三栏页 (左侧按文件分组的调用方、中间带调用行标记的逐字源码、右侧与调用行对齐的 callee) 、Flow (两个符号之间的路径, 静态图没有记录的动态分发跳以虚线呈现并标注接线点, 走不通时如实报告 "Where the graph stops") 、Map (模块粒度全仓依赖图, 由图布局生成, 环被列出而非抹平) 、Screens/Steps (前端应用的屏幕导航图与单个屏幕/端点触发的事件链, 每条边带触发条件, 覆盖 Expo Router/Next.js/React Router/TanStack/Vue Router/SvelteKit/Angular——Screens 视图是 route 节点与 navigates 边的纯函数, 任何产生这两者的框架自动落进该标签页) 、Entry points (每个路由及其 handler、import 即执行的文件、测试覆盖面排序) 、dead code 与类型层级. 查看器只读已存在的索引、绝不建索引或改代码, 唯一的写盘是用户主动保存的 trail (JSON 存于 .codegraph/ui/trails/) , 无任何数据外发. 这是托管产品 (getcodegraph.com) 方向在本地端的对应物.
+除面向 agent 的 MCP 面之外, 仓库还提供面向人的图查看器 `codegraph ui` (命令默认隐藏, 需 CODEGRAPH_UI=1 启用, 门控逻辑在 src/bin/viewer-gate.ts): 本地只读 web 服务, 默认监听 127.0.0.1:4747 (别名 `codegraph web`, 支持 --port/--no-open/--read-only, CODEGRAPH_BROWSER 可指定浏览器) , 前端是仓库顶层 ui/ 目录的 Svelte + Vite 应用, 后端是 src/ui-server/ 的只读 JSON API. 视图包括: 符号三栏页 (左侧按文件分组的调用方、中间带调用行标记的逐字源码、右侧与调用行对齐的 callee) 、Flow (两个符号之间的路径, 静态图没有记录的动态分发跳以虚线呈现并标注接线点, 走不通时如实报告 "Where the graph stops") 、Map (模块粒度全仓依赖图, 由图布局生成, 环被列出而非抹平) 、Screens/Steps (前端应用的屏幕导航图与单个屏幕/端点触发的事件链, 每条边带触发条件, 覆盖 Expo Router/Next.js/React Router/TanStack/Vue Router/SvelteKit/Angular——Screens 视图是 route 节点与 navigates 边的纯函数, 任何产生这两者的框架自动落进该标签页) 、Entry points (每个路由及其 handler、import 即执行的文件、测试覆盖面排序) 、dead code 与类型层级. 查看器只读已存在的索引、绝不建索引或改代码, 唯一的写盘是用户主动保存的 trail (JSON 存于 .codegraph/ui/trails/) , 无任何数据外发. 这是托管产品 (getcodegraph.com) 方向在本地端的对应物.
 
 ### 4.8 分发与供应链: 捆绑 Node 24、零原生 addon、SLSA 签名
 
-BUNDLING.md 记录的核心决策: 随包捆绑 vendored Node 运行时 (scripts/build-bundle.sh 默认 Node v24.16.0) . 因为 Node 22.5+ 内置真正的 SQLite, 捆绑 Node 意味着去掉 better-sqlite3、零原生 addon、无需编译/rebuild、不依赖用户机器上的 Node 版本. 打包没有用 SEA/pkg 类工具——由于零原生 addon, 打包就是纯文件拼装 (下载目标平台官方 Node + 拷贝 dist + npm ci --omit=dev) , 任意 OS 可构建任意 target. 6 个平台目标: darwin-arm64/x64、linux-x64/arm64、win32-x64/arm64. 四个安装通道: curl | sh (install.sh) 、npm (薄 shim + 按 os/cpu 的平台 optionalDependencies) 、Windows irm | iex (install.ps1) 、Homebrew/Scoop (TODO) . install.sh 本身不检测 agent, 只装 bundle; agent 检测与 MCP 注册发生在 codegraph install CLI (src/installer/, 11 个目标各自实现 detect 逻辑, MCP 条目统一为 `{ type: 'stdio', command: 'codegraph', args: ['serve', '--mcp'] }`) .
+BUNDLING.md 记录的核心决策: 随包捆绑 vendored Node 运行时 (scripts/build-bundle.sh 默认 Node v24.16.0) . 因为 Node 22.5+ 内置真正的 SQLite, 捆绑 Node 就意味着零原生 addon、无需编译/rebuild、不依赖用户机器上的 Node 版本. 打包没有用 SEA/pkg 类工具——由于零原生 addon, 打包就是纯文件拼装 (下载目标平台官方 Node + 拷贝 dist + npm ci --omit=dev) , 任意 OS 可构建任意 target. 6 个平台目标: darwin-arm64/x64、linux-x64/arm64、win32-x64/arm64. 四个安装通道: curl | sh (install.sh) 、npm (薄 shim + 按 os/cpu 的平台 optionalDependencies) 、Windows irm | iex (install.ps1) 、Homebrew/Scoop (TODO) . install.sh 本身不检测 agent, 只装 bundle; agent 检测与 MCP 注册发生在 codegraph install CLI (src/installer/, 11 个目标各自实现 detect 逻辑, MCP 条目统一为 `{ type: 'stdio', command: 'codegraph', args: ['serve', '--mcp'] }`) .
 
-供应链安全是 1.5.0 前后的重点建设 (README "Verified releases" 节) : npm 包通过 trusted publishing (OIDC, 不存在可被窃取的长期 npm token) 发布, 带 provenance attestation, 可用 npm audit signatures 验证; GitHub Release 捆绑包带签名的 build attestation (SLSA v1.0 Build Level 2) , 可用 gh attestation verify 验证; 所有产物由公开的 Release workflow 构建发布, "never from a laptop". 2026 年 7 月之前的发布不带 attestation. 对一个要装进开发者机器、接管 agent 工具链的软件, 这套密码学溯源是企业安全审计能接受的前提.
+供应链安全 (README "Verified releases" 节) : npm 包通过 trusted publishing (OIDC, 不存在可被窃取的长期 npm token) 发布, 带 provenance attestation, 可用 npm audit signatures 验证; GitHub Release 捆绑包带签名的 build attestation (SLSA v1.0 Build Level 2) , 可用 gh attestation verify 验证; 所有产物由公开的 Release workflow 构建发布, "never from a laptop". 对一个要装进开发者机器、接管 agent 工具链的软件, 这套密码学溯源是企业安全审计能接受的前提.
 
 ### 4.9 遥测: 第一方、allowlist、可审计
 
-遥测在 1.0.0 (2026-06-12) 引入, 1.6.0 (2026-08-26) 起转为完全第一方存储 (接收端点不做任何出站请求) . TELEMETRY.md 逐字段文档化收集内容: 信封字段 (machine_id 本地随机 UUID、版本、os/arch、node 主版本、是否 CI) 加四类事件——install (配置了哪些 agent) 、index (仅语言名列表 + 文件数/耗时的粗分桶) 、usage_rollup (本地按天聚合的工具调用计数, prompt hook 只记 gate 决策计数、绝不读 prompt 内容) 、uninstall. 明确不收集: 源码、路径/文件名/符号名/查询词、IP (端点不读 IP) 、任何个人数据.
+遥测为完全第一方存储 (接收端点不做任何出站请求) . TELEMETRY.md 逐字段文档化收集内容: 信封字段 (machine_id 本地随机 UUID、版本、os/arch、node 主版本、是否 CI) 加四类事件——install (配置了哪些 agent) 、index (仅语言名列表 + 文件数/耗时的粗分桶) 、usage_rollup (本地按天聚合的工具调用计数, prompt hook 只记 gate 决策计数、绝不读 prompt 内容) 、uninstall. 明确不收集: 源码、路径/文件名/符号名/查询词、IP (端点不读 IP) 、任何个人数据.
 
 工程契约 (docs/design/telemetry.md) : 改 schema 必须同一 PR 同时改设计文档 + TELEMETRY.md + Worker allowlist; 遥测永不增加 MCP 热路径延迟、零依赖、stdout 零字节. 存储用自家 Cloudflare D1, 无第三方分析商, 原始事件 90 天删除, 只留匿名日汇总. 关闭机制: "Off means off"——codegraph telemetry off 或 CODEGRAPH_TELEMETRY=0 或 DO_NOT_TRACK=1, 关闭即删除未发送缓冲, 连"已退出"的 ping 都不发. 接收端 Worker (telemetry-worker/) 和管理看板 (telemetry-dashboard/) 的源码都公开在仓库内供审计.
 
@@ -243,7 +243,7 @@ BUNDLING.md 记录的核心决策: 随包捆绑 vendored Node 运行时 (scripts
 
 README 当前数字来自 2026-08-05 用 Claude Opus 4.8 对当前构建的重测. 方法: 7 个真实开源仓库 (VS Code 约 11k 文件、Excalidraw、Django、Tokio、OkHttp、Gin、Alamofire, 跨 7 种语言) ; claude -p headless + --strict-mcp-config; WITH 组启用 CodeGraph MCP, WITHOUT 组空 MCP 配置; 两边都保留内建 Read/Grep/Bash; 每臂 4 次取中位数.
 
-关键方法论升级: 两组都封锁 codegraph CLI (净化 PATH + PreToolUse hook) . 不封锁时对照组 28 次运行中 26 次会通过 Bash 偷用 CLI, 污染对比; 本次 28/28 全部封锁成功. 早期发布的数字没有这个封锁.
+关键方法论升级: 两组都封锁 codegraph CLI (净化 PATH + PreToolUse hook) . 不封锁时对照组 28 次运行中 26 次会通过 Bash 偷用 CLI, 污染对比; 本次 28/28 全部封锁成功.
 
 总结论: 工具调用减少 88%、快 53%、token 减少 62%、成本降低 44%, 7 个仓库的文件读取全部归零.
 
@@ -281,7 +281,7 @@ README 当前数字来自 2026-08-05 用 Claude Opus 4.8 对当前构建的重�
 
 企业的代码资产不是单一技术栈的绿色田野, 而是十几二十年积累的异构地层. CodeGraph 的语言清单明显冲着这个现实去的: 除了现代主流语言, 还有 COBOL (含 CICS TRANSID 跳转桥接) 、VB.NET、Pascal/Delphi (含 DFM/FMX 表单) 、CFML、Erlang、Objective-C、ArkTS——这些恰恰是银行核心系统、保险理赔、制造业 ERP、电信计费里最常见的"没人敢动"的资产. 把遗留代码纳入同一张图, 意味着 agent 第一次能在这些系统上做有依据的问答和影响分析, 而不是靠口口相传.
 
-企业框架同样是明确目标: Spring/MyBatis 流 (0.9.6 起) 、Laravel、Drupal、GoFrame、NestJS、ASP.NET; 跨语言桥接覆盖 Swift-ObjC、React Native (legacy bridge + TurboModules + Fabric) 、Expo Modules、Kotlin expect/actual, 对应大型移动团队的混合栈. 对遗留系统常见的"约定大于配置"入口 (路由、事件、反射注册表) , 启发式合成边带着 provenance 标记给出尽力而为的连接, 覆盖率表则诚实标出静态分析天花板 (Spring 路由 83.3%、Django 74.1%) ——企业评估时可以直接拿自己技术栈对应的数字做预期管理.
+企业框架同样是明确目标: Spring/MyBatis 流、Laravel、Drupal、GoFrame、NestJS、ASP.NET; 跨语言桥接覆盖 Swift-ObjC、React Native (legacy bridge + TurboModules + Fabric) 、Expo Modules、Kotlin expect/actual, 对应大型移动团队的混合栈. 对遗留系统常见的"约定大于配置"入口 (路由、事件、反射注册表) , 启发式合成边带着 provenance 标记给出尽力而为的连接, 覆盖率表则诚实标出静态分析天花板 (Spring 路由 83.3%、Django 74.1%) ——企业评估时可以直接拿自己技术栈对应的数字做预期管理.
 
 ### 6.4 确定性: 可复现、零边际成本、无模型漂移
 
@@ -291,7 +291,7 @@ CodeGraph 的抽取"源自 AST, 不被 LLM 总结" (CLAUDE.md 原话) . 这带�
 
 CLI 提供直接嵌入流水线的原语: codegraph affected 基于图反向追踪"改了这些源文件, 哪些测试文件会被影响", README 给出的用法是 `git diff --name-only HEAD | codegraph affected --stdin --quiet | xargs vitest run`——在大型测试套件里只跑相关测试, 直接压缩 CI 机时. codegraph impact 给出符号级改动影响半径, 可以用在重构审批和 PR 风险评估. codegraph.json 支持提交到仓库共享扩展名映射 (README 原话: "Commit the file to share the mapping with your team") .
 
-更值得关注的是方向: README 顶部的 getcodegraph.com 候补名单描述的产品形态是"对每个 PR, 知道该测什么、什么可能坏、影响哪些业务流、业务逻辑是否被破坏"——这是把本地图谱能力上升为团队级变更治理平台, 1.1.0 的 monorepo 多项目 MCP (projectPath) 已经在为这个方向铺路. 如果落地, 它对标的是企业目前靠人工 review 和覆盖率报表勉强维持的变更风险控制.
+更值得关注的是方向: README 顶部的 getcodegraph.com 候补名单描述的产品形态是"对每个 PR, 知道该测什么、什么可能坏、影响哪些业务流、业务逻辑是否被破坏"——这是把本地图谱能力上升为团队级变更治理平台, monorepo 多项目 MCP (projectPath) 为这个方向铺路. 如果落地, 它对标的是企业目前靠人工 review 和覆盖率报表勉强维持的变更风险控制.
 
 ### 6.6 部署与运维经济学
 
@@ -475,7 +475,7 @@ cd your-project
 codegraph init           # 建 .codegraph/ 并构图; 自动同步默认开启
 ```
 
-CLI 主要命令 (src/bin/codegraph.ts, 克隆当前共 24 个) : install / uninstall / init / uninit / index / sync / status / ui (别名 web) / unlock / query / explore / context / node / files / callers / callees / impact / affected / daemon / telemetry / upgrade / version, 另有隐藏的 serve --mcp (MCP 传输入口) 与 prompt-hook. 相对上一版本新增的是 ui (浏览器查看器) 、unlock (清理残留锁) 与 context (为任务构建 markdown/json 上下文包, 恢复了外部集成依赖的命令契约) . 其中 affected 的 CI 用法:
+CLI 主要命令 (src/bin/codegraph.ts, 共 24 个) : install / uninstall / init / uninit / index / sync / status / ui (别名 web) / unlock / query / explore / context / node / files / callers / callees / impact / affected / daemon / telemetry / upgrade / version, 另有隐藏的 serve --mcp (MCP 传输入口) 与 prompt-hook. 其中 ui 是浏览器查看器, unlock 清理残留锁, context 为任务构建 markdown/json 上下文包. affected 的 CI 用法:
 
 ```bash
 git diff --name-only HEAD | codegraph affected --stdin --quiet | xargs vitest run
@@ -507,10 +507,10 @@ cg.watch();
 
 ## 附录: 调研方法与来源
 
-本文更新基于以下一手材料 (首次调研 2026-08-12, 2026-08-26 复核, 2026-09-30 对照克隆核实, 2026-10-01 对照新 HEAD 复核) :
+本文更新基于以下一手材料 (首次调研 2026-08-12, 此后多次对照本机克隆逐条复核, 最近一次 2026-10-02) :
 
-- 仓库克隆 colbymchenry/codegraph, HEAD 34ede4de (main, 完整哈希 34ede4de888c55aab170c3d6349c60d8dc56e7f2, package.json 1.6.1, CHANGELOG Unreleased 区块含 #2170~#2248 共 134 条解析精度修复条目), 源码级阅读
+- 仓库克隆 colbymchenry/codegraph, 本机 HEAD ec738ec7 (main, 完整哈希 ec738ec7a322a680dae39a904194ce9271e6873f, 2026-10-01) , package.json 版本 1.6.1, CHANGELOG 的 Unreleased 区块收录尚未随版本发布的解析精度修复与查看器修正, 源码级阅读
 - GitHub API / gh CLI: stars 66,003、forks 4,156、contributors 42、open issues 409、created 2026-01-18、release 列表 (v0.9.5 至 v1.5.0) (2026-08 时点)
 - 2026-08-26 复核 (GitHub API 与 npm registry) : stars 68,137、forks 4,336、open issues 448、最近推送 2026-08-25; 当时最新 release 与 npm 包均为 v1.5.0, License MIT
-- 关键文件: package.json、README.md、CHANGELOG.md (当前 33 个块) 、CLAUDE.md、TELEMETRY.md、BUNDLING.md、src/db/schema.sql、src/db/migrations.ts、src/mcp/tools.ts、src/mcp/server-instructions.ts、src/types.ts、src/extraction/kernel/、src/resolution/name-matcher.ts、src/resolution/frameworks/ (含 name-heuristic.ts) 、codegraph-kernel/Cargo.toml 及 build.rs、src/bin/codegraph.ts、src/sync/watcher.ts、ui/ 与 src/ui-server/、docs/design/native-extraction-kernel.md、docs/design/rust-kernel-migration-plan.md、docs/design/framework-coverage.md、docs/design/generated-file-detection.md、docs/design/codegraph-ui-design-spec.md、docs/benchmarks/residual-context-occupancy.md、scripts/build-bundle.sh、.github/workflows/release.yml、install.sh
-- 初版文章: 陶刚《CodeGraph 深度解析》 (知乎, 2026 年 5 月) , 本文保留其问题定义与赛道分类框架, 全部数据与架构描述已按克隆当前源码重新核实
+- 关键文件: package.json、README.md、CHANGELOG.md (当前 33 个块) 、CLAUDE.md、TELEMETRY.md、BUNDLING.md、src/db/schema.sql、src/db/migrations.ts、src/mcp/tools.ts、src/mcp/server-instructions.ts、src/types.ts、src/extraction/kernel/、src/resolution/name-matcher.ts、src/resolution/frameworks/ (含 name-heuristic.ts、page-component.ts) 、codegraph-kernel/Cargo.toml 及 build.rs、src/bin/codegraph.ts、src/sync/watcher.ts、ui/ 与 src/ui-server/、docs/design/native-extraction-kernel.md、docs/design/rust-kernel-migration-plan.md、docs/design/framework-coverage.md、docs/design/generated-file-detection.md、docs/design/codegraph-ui-design-spec.md、docs/benchmarks/residual-context-occupancy.md、scripts/build-bundle.sh、.github/workflows/release.yml、install.sh
+- 初版文章: 陶刚《CodeGraph 深度解析》 (知乎, 2026 年 5 月) , 本文保留其问题定义与赛道分类框架, 全部数据与架构描述已按本机克隆当前源码重新核实

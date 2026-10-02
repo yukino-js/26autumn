@@ -11,13 +11,13 @@ description: "MySQL 8.0 与 InnoDB 核心笔记: 架构与执行流程、索引�
 
 MySQL 架构分为两层: Server 层和存储引擎层.
 
-- Server 层负责建立连接、解析和执行 SQL: 包括连接器、(8.0 前的) 查询缓存、解析器、预处理器、优化器、执行器, 以及所有内置函数和跨引擎功能 (存储过程、触发器、视图等)
-- 存储引擎层负责数据的存储和检索: 支持 InnoDB、MyISAM、Memory 等插件式存储引擎, MySQL 5.5 起默认 InnoDB
+- Server 层负责建立连接、解析和执行 SQL: 包括连接器、解析器、预处理器、优化器、执行器, 以及所有内置函数和跨引擎功能 (存储过程、触发器、视图等)
+- 存储引擎层负责数据的存储和检索: 支持 InnoDB、MyISAM、Memory 等插件式存储引擎, InnoDB 是默认引擎
 
 一条 select 的完整执行路径:
 
 1. 连接器: 客户端与 MySQL 完成 TCP 三次握手, 连接器校验用户名密码, 读取该用户权限缓存 (此后修改权限不影响已存在连接). 空闲连接超过 `wait_timeout` (默认 8 小时) 会被自动断开
-2. 查询缓存 (MySQL 8.0 已移除): 以 SQL 语句为 key 查询缓存, 命中直接返回
+2. 查询缓存: Server 层的查询缓存自 8.0 起已不存在, 这一步不再有任何命中逻辑; 需要结果级缓存请用 Redis 等外部缓存 (见本章 "为什么 MySQL 8.0 移除了查询缓存?")
 3. 解析器: 词法分析 (tokenization) 把 SQL 切分为 token, 语法分析 (parsing) 检查是否满足语法规则, 构建 AST 抽象语法树. 语法错误在这一步抛出
 4. 预处理器 (prepare): 检查表和字段是否存在; 将 `select *` 展开为表的所有列
 5. 优化器 (optimize): 基于成本 (cost-based) 制定执行计划——选择走哪个索引、多表连接顺序、是否使用索引下推/覆盖索引等. `explain` 看到的就是优化器的产物
@@ -49,7 +49,7 @@ update 会经过与 select 相同的连接器、解析器、优化器、执行�
 解决方案:
 
 1. 定期断开长连接: 使用一段时间或执行过大内存查询后主动断连, 由连接池重建
-2. MySQL 5.7+ 可执行 `mysql_reset_connection` 重置连接资源, 不需要重连和重新鉴权
+2. 连接池可调用驱动提供的 `mysql_reset_connection()` 重置连接上的会话状态 (回滚事务、释放锁与临时表、重置会话变量与游标), 不必断开重连, 也就不必重新鉴权
 3. 合理设置连接池大小与 `max_connections` (超过最大连接数后 MySQL 拒绝新连接)
 
 ```sql
@@ -65,7 +65,7 @@ show variables like 'max_connections';   -- 最大连接数
 - 失效粒度太粗: 只要表上有任何更新, 该表所有查询缓存全部清空. 对写多读少或读写混合的业务, 缓存刚建立就被清掉, 反而增加维护开销
 - 查询缓存有全局锁竞争, 高并发下成为瓶颈
 
-因此 MySQL 8.0 直接移除了 Server 层查询缓存. 注意这与 InnoDB 的 Buffer Pool 无关——Buffer Pool 缓存的是数据页, 不是查询结果, 依然存在且至关重要. 需要结果级缓存时应使用 Redis 等外部缓存.
+因此当前 MySQL 的 Server 层没有查询缓存, 缓存能力下沉到 InnoDB 的 Buffer Pool 与外部缓存. 注意 Buffer Pool 与查询结果无关——它缓存的是数据页, 依然至关重要; 需要结果级缓存时应使用 Redis 等外部缓存.
 
 ### InnoDB 和 MyISAM 的核心区别?
 
@@ -79,7 +79,7 @@ show variables like 'max_connections';   -- 最大连接数
 | MVCC      | 支持                                   | 不支持                                             |
 | count(\*) | 需要扫描 (可走最小二级索引)            | 维护了精确行数, O(1) 返回                          |
 
-选型结论: 需要事务、高并发写、崩溃恢复的场景 (几乎所有 OLTP 业务) 用 InnoDB; MySQL 5.5 之后 InnoDB 是默认引擎, MyISAM 基本仅存在于历史系统.
+选型结论: 需要事务、高并发写、崩溃恢复的场景 (几乎所有 OLTP 业务) 用 InnoDB; InnoDB 是当前默认引擎, MyISAM 基本仅存在于历史系统.
 
 ---
 
@@ -105,7 +105,7 @@ InnoDB 是行式存储. 开启 `innodb_file_per_table` 后每张表对应一个 
 
 ### 详述 compact 行格式, null 值和变长字段是如何存储的?
 
-InnoDB 行格式分为不紧凑的 redundant (古老) 和紧凑的 compact、dynamic (5.7+ 默认)、compressed. dynamic/compressed 基于 compact 改进.
+InnoDB 行格式分为不紧凑的 redundant (古老) 与紧凑的 compact、dynamic (当前默认)、compressed. dynamic/compressed 基于 compact 改进.
 
 compact 格式下, 一条记录 = 记录的额外信息 + 记录的真实数据.
 
@@ -164,7 +164,7 @@ B+ 树 vs B 树:
 
 B+ 树 vs 哈希: 哈希 O(1) 等值查询快, 但完全不支持范围查询和排序; InnoDB 不支持显式哈希索引 (但有自适应哈希索引 AHI 作为内部优化).
 
-B+ 树 vs 红黑树: 红黑树是二叉树, 千万级数据高度约 20+ 层, 意味着 20+ 次磁盘 I/O, 不可接受.
+B+ 树 vs 红黑树: 红黑树是二叉树, 千万级数据树高在 20 层以上 (平衡二叉树的高度约为 log2(n), 红黑树最坏还要翻倍), 意味着几十次磁盘 I/O, 不可接受.
 
 B+ 树 vs 跳表: 跳表 (Redis zset 使用) 是链表 + 多级索引, 层高不可控且节点分散, 不利于按页组织磁盘数据; B+ 树节点天然对应磁盘页, 扇出大、高度稳定. 跳表适合内存场景.
 
@@ -233,7 +233,7 @@ select * from users where name = 'Alice';             -- 需要回表查其余�
 
 - 生效: `where a = 1`、`where a = 1 and b = 2`、`where a = 1 and b = 2 and c = 3` (where 中列的书写顺序无关, 优化器会调整)
 - 全部失效: `where b = 2`、`where c = 3`、`where b = 2 and c = 3` (缺最左列 a, b/c 全局无序)
-- 部分失效: `where a = 1 and c = 3` —— a 用于索引定位, c 不能 (跳过了 b), 但 MySQL 5.6+ 可通过索引下推用 c 过滤
+- 部分失效: `where a = 1 and c = 3` —— a 用于索引定位, c 不能参与索引定位 (跳过了 b), 但可通过索引下推在二级索引上用 c 过滤
 
 范围查询停止匹配:
 
@@ -245,18 +245,18 @@ select * from users where name = 'Alice';             -- 需要回表查其余�
 
 ### 什么是索引下推 (ICP)?
 
-索引下推 (Index Condition Pushdown, MySQL 5.6 引入): 将本应在 Server 层做的 where 过滤, 下推到存储引擎层, 在遍历二级索引时直接用索引中包含的列过滤, 减少回表次数. explain 的 Extra 显示 `Using index condition`.
+索引下推 (Index Condition Pushdown, ICP): 将本应在 Server 层做的 where 过滤, 下推到存储引擎层, 在遍历二级索引时直接用索引中包含的列过滤, 减少回表次数. explain 的 Extra 显示 `Using index condition`.
 
 例: 联合索引 (a, b), 执行 `select * from t where a > 1 and b = 2`:
 
-- 5.6 之前: 存储引擎按 a > 1 找到每个主键值就回表, 回表后由 Server 层判断 b = 2, 大量无效回表
-- 5.6 之后: 存储引擎遍历二级索引时, 索引里就有 b 的值, 先判断 b = 2, 不满足直接跳过, 只对满足的记录回表
+- 无索引下推时: 存储引擎按 a > 1 找到每个主键值就回表, 回表后由 Server 层判断 b = 2, 大量无效回表
+- 有索引下推时: 存储引擎遍历二级索引时, 索引里就有 b 的值, 先判断 b = 2, 不满足直接跳过, 只对满足的记录回表
 
 ### 哪些情况会导致索引失效?
 
 1. 违反最左匹配: 联合索引缺最左列或跳列 (见第三节 "详述联合索引的最左匹配原则")
 2. 左模糊/左右模糊匹配: `like '%xxx'`、`like '%xxx%'` 失效, 因为索引按前缀有序; `like 'xxx%'` 有效
-3. 对索引列使用函数: `where length(name) = 5` 失效. 解决: MySQL 8.0.13+ 支持函数索引 (functional key parts): `alter table t add key idx_len ((length(name)))`; 5.7 需先加 generated column (虚拟列) 再对其建普通索引
+3. 对索引列使用函数: `where length(name) = 5` 失效. 解决: 用函数索引 (functional key parts, 8.0.13 起): `alter table t add key idx_len ((length(name)))`
 4. 对索引列做表达式计算: `where id + 1 = 7` 失效, `where id = 7 - 1` 有效——优化器不会主动做代数变换
 5. 隐式类型转换: MySQL 比较字符串和数字时把字符串转为数字.
    - `where phone = 13800000000` (phone 是 varchar): 等价于对索引列套 cast 函数, 失效
@@ -297,11 +297,11 @@ select * from users where id = 1 or age = 7;       -- age 无索引则失效
 
 ### count(\*)、count(1)、count(主键)、count(字段) 的区别与优化
 
-语义: `count(expr)` 统计 expr 不为 null 的行数. `count(*)` 被优化器直接优化为 `count(0)`, 与 count(1) 等价.
+语义: `count(expr)` 统计 expr 不为 null 的行数. InnoDB 对 `count(*)` 与 `count(1)` 的处理相同: 不需要读具体列值, 只判断"有这一行".
 
 性能排序: `count(*) = count(1) > count(主键) > count(非索引字段)`
 
-- count(\*) / count(1): 存储引擎只需返回"有这一行", Server 层不需要读取具体列值; InnoDB 会自动选择 key_len 最小的二级索引来扫描 (二级索引比聚簇索引小得多)
+- count(\*) / count(1): 存储引擎只需返回"有这一行", Server 层不需要读取具体列值; InnoDB 会自动选择最小的二级索引来扫描 (二级索引比聚簇索引小得多)
 - count(主键): 需要读出主键值返回给 Server 层判断非空, 略慢
 - count(非主键字段): 若该字段无索引则全表扫描, 且每行都要取值判空, 最慢
 
@@ -576,7 +576,7 @@ MDL (Metadata Lock) 保护表结构, 无需显式申请, 事务提交时才释�
 防范:
 
 - DDL 前检查并 kill 长事务 (查 `information_schema.innodb_trx`)
-- alter table 加超时: `alter table t wait 100 add column ...` (MariaDB) 或 MySQL 设置 `lock_wait_timeout`
+- DDL 前先把会话的 `lock_wait_timeout` 调小, 让 alter table 申请 MDL 写锁时快速失败退出, 而不是长期排队堵住后续所有读请求
 - 使用 gh-ost / pt-online-schema-change 做在线变更 (见第八节 "亿级大表如何做 Online DDL?")
 
 ### 为什么需要意向锁?
@@ -599,11 +599,11 @@ select ... for update;          -- 表 IX + 行 X
 
 自增主键的值由 AUTO-INC 锁保证: 插入时对表加该锁, 语句执行完立即释放 (不等事务提交). 大批量插入 (insert...select) 时锁持有时间长, 并发插入吞吐差.
 
-MySQL 5.1.22 起提供轻量级互斥量, 由 `innodb_autoinc_lock_mode` 控制:
+`innodb_autoinc_lock_mode` 控制自增值的分配方式:
 
 - `0`: 传统模式, 全部用 AUTO-INC 锁
-- `1`: 简单 insert (可预知行数) 用轻量锁申请完 id 立即释放; 批量 insert 仍用 AUTO-INC 锁
-- `2` (8.0 默认): 全部用轻量锁, 并发最好; 但批量插入的自增值可能不连续, 且 statement 格式 binlog 下主从可能不一致, 必须搭配 row 格式 binlog
+- `1`: 简单 insert (可预知行数) 用轻量级互斥量申请完 id 立即释放; 批量 insert 仍用 AUTO-INC 锁
+- `2` (默认): 全部用轻量级互斥量, 并发最好; 但批量插入的自增值可能不连续, 且 statement 格式 binlog 下主从可能不一致, 必须搭配 row 格式 binlog
 
 ### 记录锁、间隙锁、临键锁、插入意向锁分别是什么?
 
@@ -762,7 +762,7 @@ redo log 与直接刷数据页相比的优势:
 - redo log 记录粒度小 (页内 delta), 数据页刷盘至少 16KB
 - 事务提交只需保证 redo log 落盘, 把"每事务一次随机写"聚合成"批量顺序写"
 
-redo log 写满了怎么办? redo log 是环形结构 (write pos 追 checkpoint), 写满时所有更新阻塞, 强制把脏页刷盘、推进 checkpoint 腾出空间——这是线上"写入周期性抖动"的常见原因, 需调大 redo log 或优化刷脏速度. 8.0.30 之前调整容量需要修改 innodb_log_file_size / innodb_log_files_in_group 并重启实例; 8.0.30 起两者合并为 innodb_redo_log_capacity, 支持在线动态调整容量, 环形写的机制本身不变.
+redo log 写满了怎么办? redo log 是环形结构 (write pos 追 checkpoint), 写满时所有更新阻塞, 强制把脏页刷盘、推进 checkpoint 腾出空间——这是线上"写入周期性抖动"的常见原因, 需调大 redo log 容量或优化刷脏速度. 容量由 `innodb_redo_log_capacity` 控制, 支持在线动态调整, 环形写的机制本身不变.
 
 ### redo log 的刷盘时机与 innodb_flush_log_at_trx_commit
 
@@ -850,7 +850,7 @@ binlog 刷盘: 事务执行中先写线程私有的 binlog cache (保证一个�
 
 双 1 配置下每个事务提交都要两次 fsync (redo + binlog), 高并发下 fsync 成为瓶颈. 组提交: 多个并发提交的事务合并成一组, 由组内 leader 执行一次 fsync, 其余 follower 等待搭车, 将 N 次 fsync 摊薄为 1 次.
 
-MySQL 5.7+ 将 commit 细分为三个阶段, 每阶段一个队列, 各阶段可流水线并行:
+commit 细分为三个阶段, 每阶段一个队列, 各阶段可流水线并行:
 
 1. flush 阶段: 组内各事务的 binlog cache write 到文件 (同时完成 redo log 的组内 prepare 刷盘)
 2. sync 阶段: 一次 fsync 刷组内所有 binlog. `binlog_group_commit_sync_delay` (等待微秒数) 与 `binlog_group_commit_sync_no_delay_count` (攒够事务数) 控制"多攒一点再刷"以提高组员数量
@@ -860,7 +860,7 @@ MySQL 5.7+ 将 commit 细分为三个阶段, 每阶段一个队列, 各阶段可
 
 部分页写问题 (partial page write): InnoDB 页 16KB, 而磁盘原子写单位通常是 4KB, 刷脏刷到一半宕机, 页就"半新半旧"损坏了. redo log 记录的是基于完好页的增量修改, 页本身损坏时 redo 无从重放.
 
-Doublewrite Buffer: 刷脏页时先把页顺序写到共享表空间的 doublewrite 区域 (2MB, 8.0.20 起 doublewrite 移出系统表空间, 改为独立的 doublewrite 目录文件), fsync 后再写到真正的表空间位置. 崩溃恢复时若发现某页校验失败 (File Trailer 校验), 就用 doublewrite 中的完整副本还原该页, 再重放 redo log. 代价是每页写两次, 但第一次是顺序写, 开销约 5%~10%.
+Doublewrite Buffer: 刷脏页时先把页顺序写到 doublewrite 区域 (2MB, 落在独立的 doublewrite 文件而非系统表空间), fsync 后再写到真正的表空间位置. 崩溃恢复时若发现某页校验失败 (File Trailer 校验), 就用 doublewrite 中的完整副本还原该页, 再重放 redo log. 代价是每页写两次, 但第一次是顺序写, 开销约 5%~10%.
 
 ### 误删数据后如何恢复? redo log 为什么不能用于恢复被删的库?
 
@@ -907,32 +907,32 @@ binlog 是追加写的全量逻辑日志, 恢复方案:
 ```
 
 1. 主库执行事务, 两阶段提交时写入 binlog
-2. 从库执行 `change master to ... ; start slave;` 后, I/O 线程与主库建立长连接; 主库为其创建 binlog dump 线程, 持续推送 binlog 事件
+2. 从库执行 `change replication source to ... ; start replica;` 后, I/O 线程与主库建立长连接; 主库为其创建 binlog dump 线程, 持续推送 binlog 事件
 3. 从库 I/O 线程把收到的 binlog 写入本地中继日志 (relay log)
-4. 从库 SQL 线程读取 relay log, 回放事件更新从库数据, 并写自己的 binlog (若开启 `log_slave_updates`, 支撑级联复制)
+4. 从库 SQL 线程读取 relay log, 回放事件更新从库数据, 并写自己的 binlog (若开启 `log_replica_updates`, 支撑级联复制)
 
 作用: 读写分离扩展读能力、数据热备、高可用故障切换、大查询/统计分流到从库.
 
 ### 异步复制、半同步复制、组复制的区别?
 
 - 异步复制 (默认): 主库提交后立即返回客户端, 不等从库. 性能最好; 主库宕机时未同步的 binlog 丢失, 切换后丢数据
-- 半同步复制 (semi-sync): 主库提交后, 至少等 1 个从库把事件写入 relay log 并 ACK 才返回客户端 (`rpl_semi_sync_master_wait_for_slave_count`, 默认 1). 折中方案; 注意从库只是收到、还没回放; 超时 (`rpl_semi_sync_master_timeout`, 默认 10s) 会退化为异步. 5.7 起的 AFTER_SYNC (无损半同步, 默认等待点) 在写 binlog 后、引擎 commit 前等 ACK, 避免了 AFTER_COMMIT 下"主库已提交但 ACK 未达即宕机"的幻读窗口. 8.0.26 起这组参数更名为 rpl_semi_sync_source_\* / rpl_semi_sync_replica_\* 系列 (旧名仍可用但已废弃)
+- 半同步复制 (semi-sync): 由 `rpl_semi_sync_source_enabled` 开启, 主库提交时至少等 `rpl_semi_sync_source_wait_for_replica_count` (默认 1) 个从库把事件写入 relay log 并 ACK 才返回客户端. 折中方案; 注意从库只是收到、还没回放; 超时 `rpl_semi_sync_source_timeout` (默认 10s) 后退化为异步. 等待点由 `rpl_semi_sync_source_wait_point` 控制, 默认 AFTER_SYNC: 在写 binlog 之后、引擎 commit 之前等 ACK; 另一种取值 AFTER_COMMIT 在引擎提交后等 ACK, 存在"主库已提交但 ACK 未达即宕机"的窗口
 - 组复制 (MGR, Group Replication): 基于 Paxos 变体的多数派协议, 事务提交需组内多数节点认证通过, 提供强一致与自动故障切换 (单主/多主模式), 是 InnoDB Cluster 的基础. 性能低于异步, 网络要求高
 
 ### 主从延迟的原因有哪些? 如何解决?
 
-延迟 = 从库回放完成时间 - 主库提交时间 (`show slave status` 的 `Seconds_Behind_Master`).
+延迟 = 从库回放完成时间 - 主库提交时间 (`show replica status` 的 `Seconds_Behind_Source`).
 
 原因:
 
-1. 从库单线程回放 vs 主库多线程并发写 (5.6 之前最主要原因)
+1. 从库回放能力不足 vs 主库多线程并发写
 2. 从库机器规格差、从库承担大量读查询挤占资源
 3. 大事务: 主库执行 10 分钟, 从库至少回放 10 分钟 (如一次 delete 百万行、大表 DDL)
 4. 主库写入洪峰 (批量导数)、网络延迟
 
 解决:
 
-1. 并行复制: 5.7 基于组提交并行 (同一组刷盘的事务无写写冲突, 可并行回放, `slave_parallel_type = LOGICAL_CLOCK`); 8.0 进一步提供 WRITESET 依赖跟踪 (`binlog_transaction_dependency_tracking = WRITESET`), 按行级哈希集合而非组提交时间窗判定冲突, 并行度更高; 8.0.27 起 `replica_parallel_workers` 默认为 4, 多线程回放开箱即用 (8.0.26 起 slave_\* 系列参数更名为 replica_\* 系列)
+1. 并行复制: 同一组提交刷盘的事务之间没有写写冲突, 可并行回放; 多线程回放以行级 writeset 哈希集合判定事务间依赖, 并行度更高. 相关参数 `replica_parallel_workers` (默认 4) 与 `replica_parallel_type` (默认 LOGICAL_CLOCK), 开箱即用
 2. 拆大事务: 大删除改为分批 limit 循环; DDL 用 gh-ost
 3. 从库升配、控制单主挂载的从库数量、读流量分散
 4. 业务侧容忍或规避 (见本章 "读写分离下如何保证读到最新数据?")
@@ -953,7 +953,7 @@ GTID (Global Transaction Identifier) = `server_uuid:transaction_id`, 全局唯�
 
 传统位点复制的痛点: 主从切换时, 从库需要人工找到新主库上准确的 binlog 文件名 + 偏移量, 找错会丢数据或重复执行.
 
-GTID 复制 (`gtid_mode = on`, `master_auto_position = 1`):
+GTID 复制 (`gtid_mode = on`, `source_auto_position = 1`):
 
 - 从库自动声明"我已执行过的 GTID 集合", 新主库自动发送缺失的事务, 切换无需人工找位点
 - 天然幂等: 已执行过的 GTID 会被跳过, 避免重复回放
@@ -1040,7 +1040,7 @@ GTID 复制 (`gtid_mode = on`, `master_auto_position = 1`):
 
 方案:
 
-1. MySQL 原生 Online DDL (5.6+, `algorithm=inplace, lock=none`): 多数操作 (加索引、加列) 不锁 DML; 但仍在主库本机执行, 大表耗时长、无法暂停、从库回放该 DDL 时单线程导致延迟. 8.0 的 `algorithm=instant` 对加列等操作秒级完成 (只改元数据), 优先使用
+1. MySQL 原生 Online DDL (`algorithm=inplace, lock=none`): 多数操作 (加索引、加列) 不锁 DML; 但仍在主库本机执行, 大表耗时长、无法暂停、从库回放该 DDL 时单线程导致延迟. `algorithm=instant` 对加列等操作秒级完成 (只改元数据), 优先使用
 2. pt-online-schema-change: 建影子表 → 加触发器同步增量 → 分批拷贝存量 → rename 切换. 缺点: 触发器有性能开销, 与业务写在同一事务
 3. gh-ost (推荐): 建影子表 → 订阅 binlog 获取增量 (无触发器) → 分批拷贝 → 原子 rename. 支持限流、暂停、动态调速, 对业务影响最小
 
@@ -1122,13 +1122,12 @@ show global status like 'Com_%';        -- Com_select / Com_insert / ...
 -- 2. 慢查询日志 (配置 /etc/my.cnf)
 -- slow_query_log=1, long_query_time=2, 日志: localhost-slow.log
 
--- 3. profiling: 单条 SQL 各阶段耗时 (5.6.7 起废弃; have_profiling 变量
---    已在 8.0 移除, SHOW PROFILE / SHOW PROFILES / profiling 变量在 8.4 移除;
---    新版本请改用 performance_schema.events_statements_history 等表)
-set session profiling = 1;            -- 8.0 中仍可用但已废弃
-show profiles;                        -- 各 SQL 的 queryID 与总耗时
-show profile for query <queryID>;     -- 各阶段耗时
-show profile cpu for query <queryID>; -- 各阶段 CPU
+-- 3. 单条 SQL 的阶段耗时: 用 performance_schema 的语句事件表
+--    events_statements_history_long 保留最近执行的语句明细 (耗时、扫描行数、返回行数)
+select sql_text, timer_wait, rows_examined, rows_sent
+from performance_schema.events_statements_history_long
+order by event_id desc limit 20;
+--    按 SQL 指纹聚合平均耗时: performance_schema.events_statements_summary_by_digest
 
 -- 4. 执行计划
 explain select ...;

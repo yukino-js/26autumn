@@ -5,9 +5,9 @@ description: "alibaba/open-code-review 调研: Go CLI ocr 的评审流水线、P
 
 仓库路径: https://github.com/alibaba/open-code-review (本机克隆位于 $HOME/Downloads/open-code-review)
 
-## 一、项目快照 (本机克隆 2026-09-30)
+## 一、项目快照 (本机克隆 HEAD a758d9c, 2026-09-29)
 
-本机克隆 HEAD 为 a758d9c (完整哈希 a758d9cbfb689937c7857ad64b2dd66adb58c0c2), 提交日期 2026-09-29 02:08:37 -0700, 作者 dvd233, 分支 main, 上游为 git@github.com:alibaba/open-code-review.git (以上均由 git -C 核实)。
+本机克隆 HEAD 为 a758d9c (完整哈希 a758d9cbfb689937c7857ad64b2dd66adb58c0c2, 提交主题 "feat(allowlist): add Jinja template support (#1056)", 2026-09-29), 分支 main, 上游为 git@github.com:alibaba/open-code-review.git。
 
 | 指标       | 数值                                                                              | 出处                                                              |
 | ---------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------- |

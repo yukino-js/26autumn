@@ -3,7 +3,7 @@ title: "A2UI"
 description: "A2UI 协议调研: v0.9/v0.9.1 规范的组件与函数目录、扩展机制、Dart/Swift/TypeScript 多语言 SDK、A2A 集成、restaurant_finder 示例源码走读与 yukino-agent 生产级应用案例"
 ---
 
-仓库路径: https://github.com/a2ui-project/a2ui (协议仓库, 本机克隆位于 $HOME/Downloads/a2ui, HEAD 102ec1a0497510eede5dc1938d6d1cc6042b3370)
+仓库路径: https://github.com/a2ui-project/a2ui (协议仓库, 本机克隆位于 $HOME/Downloads/a2ui, HEAD f8b58799f05c027533eb1bdec60b69389c53318f, 2026-10-01)
 应用案例: $HOME/github/yukino-agent (HEAD 536ed8c), A2UI 集成 (catalog 组件、渲染器、prompt 生成器) 全部内联在该仓库内
 
 ## 背景与动机
@@ -223,10 +223,10 @@ A2UI 是 JSON 流式 UI 协议: 服务端 (Agent) 向客户端 (Renderer) 发送
 
 ### 版本家族
 
-- v0.8: 面向支持 structured output 的 LLM, legacy (规范已冻结不再维护); 新语言 SDK (Dart 等) 未实现, 但 TypeScript web_core 与 React/Lit 渲染器仍保留 v0_8 入口
+- v0.8: legacy 版本族 (规范冻结), 面向支持 structured output 的 LLM; TypeScript web_core 与 React/Lit 渲染器保留了 v0_8 入口
 - v0.9: prompt-first 协议族首个稳定版, SDK 已实现
 - v0.9.1: 当前生产版本, 与 v0.9 差异极小 (见 evolution_guide), 多语言 SDK/渲染器/示例均以此为准
-- v1.0: 候选规范 (草案期名为 v0.10), 待足够多渲染器移植后转稳定
+- v1.0: 候选规范 (release candidate), 待足够多渲染器移植后转稳定
 
 v0.9 的 prompt-first 取向: schema 直接嵌入 LLM prompt 让其仿写, 不受 structured output 的表达能力限制, catalog 可以更复杂可读; 代价是生成后必须做校验和修复 (validate + retry).
 
@@ -244,7 +244,7 @@ v0.9.1 由三类 JSON Schema 构成 (specification/v0_9_1/json/):
 
 信封 schema 是 catalog 无关的: 它通过占位文件名 `$ref: "catalog.json#/$defs/anyComponent"` 引用组件定义. 校验时把 catalog.json 映射到具体 catalog 文件即可:
 
-- 用 basic catalog: 映射到 catalogs/basic/catalog.json
+- 用 basic catalog: 映射到 catalogs/basic/v1/catalog.json (v0.9/v0.9.1 的对应文件是 specification/v0_9_1/catalogs/basic/catalog.json)
 - 用自定义 catalog: 映射到自己的 catalog 文件
 
 自定义 catalog 的强制规则 (否则校验器无法检查父子引用完整性):
@@ -290,7 +290,7 @@ Action 机制: 交互组件 (Button 等) 通过 action 属性声明行为, 二�
 - 模板内部可混用绝对路径访问根作用域
 - 渐进渲染期间路径可能解析为 undefined, 渲染器应优雅处理 (空串或 loading)
 
-类型转换规则 (非字符串值插值时): 数字/布尔转标准字符串表示, null/undefined 转空串, 对象/数组转 JSON 字符串. Swift BasicCatalog 的 formatString 实现原先直接跳过对象/数组, #2780 (2026-09-30 合入) 已修复为按该规则序列化输出.
+类型转换规则 (非字符串值插值时): 数字/布尔转标准字符串表示, null/undefined 转空串, 对象/数组转 JSON 字符串. Swift BasicCatalog 的 formatString 按该规则序列化输出 (含对象/数组).
 
 updateDataModel 的 upsert 语义:
 
@@ -370,7 +370,7 @@ macros (#2519, python/a2ui_agent/src/a2ui/transformers/macros/) 为 Python Agent
 - sendDataModel 定向投递: UI 状态只回传给创建该 Surface 的 Server
 - 身份归属防伪: 编排者校验/覆写 iconUrl 与 agentDisplayName
 - 自定义组件的 smart wrapper 模式: 接入第三方内容 (如 iframe) 时由组件自身实施沙箱与信任策略
-- 双 iframe 隔离: 对需要运行不受信第三方代码的场景 (MCP Apps) , 内层 iframe 严格排除 allow-same-origin, 防止 allow-scripts + allow-same-origin 组合导致沙箱逃逸, 同时维持结构化 JSON-RPC 通道 (该承载方式属于生态实践转述; A2UI 官方规范只声明了 "A2UI 可经 MCP 传输" 的绑定, 未规定 iframe 承载细节)
+- 双 iframe 隔离: 对需要运行不受信第三方代码的场景 (MCP Apps) , 内层 iframe 严格排除 allow-same-origin, 防止 allow-scripts + allow-same-origin 组合导致沙箱逃逸, 同时维持结构化 JSON-RPC 通道 (实现见 samples/community/client/shared/mcp_apps_inner_iframe/, 内层 sandbox 为 allow-scripts allow-forms allow-modals; A2UI 官方规范只声明了 "A2UI 可经 MCP 传输" 的绑定, 未规定 iframe 承载细节)
 
 ## 生态与定位
 
@@ -474,11 +474,6 @@ class MessageProcessor<T extends ComponentApi> {
       };
     }
     return result;
-  }
-
-  // @deprecated getRendererCapabilities 的别名
-  getClientCapabilities(options: CapabilitiesOptions): RendererCapabilities {
-    return this.getRendererCapabilities(options);
   }
 
   // 消息分发
@@ -817,7 +812,7 @@ function extractAndValidate(llmOutput) {
 
 校验通过后, A2UI 消息列表被包装为 A2A 响应的 parts (kind: data), 通过流式 status-update 事件逐步下发.
 
-Python SDK 侧一个与 schema 相关的细节 (#2826): 从 JSON Schema 代码生成 Pydantic 模型时 (python/a2ui_core 的 codegen), schema 的 default 关键字只被保留为描述性 hint——注入 "Defaults to X when absent." 到字段 description——而不物化为模型默认值, 属性仍是 Optional/None; 运行时校验器 (payload_validator) 则继续按 schema 语义在函数调用缺参时从 default 补全. 二者分工明确: 代码生成不悄悄固化默认值, 校验与补全留在运行时.
+Python SDK 侧一个与 schema 相关的细节: 从 JSON Schema 代码生成 Pydantic 模型时 (python/a2ui_core 的 codegen), schema 的 default 关键字只被保留为描述性 hint——注入 "Defaults to X when absent." 到字段 description——而不物化为模型默认值, 属性仍是 Optional/None; 运行时校验器 (payload_validator) 则按 schema 语义在函数调用缺参时从 default 补全. 二者分工明确: 代码生成不固化默认值, 校验与补全留在运行时.
 
 ### 阶段 9: Client 流式解析 SSE, 增量渲染
 
@@ -1000,6 +995,8 @@ v0.9 组件对象的结构要点:
 
 处理: 按 JSON Pointer (RFC 6901) 路径做 upsert 写入 DataModel: 路径存在则更新, 不存在则创建, 省略 value 则删除该键. DataModel 变化自动触发绑定了该路径的组件更新.
 
+注: 上例的 rating 字段是评分数据的字符串值 (★ 表示一星, 共五格), 属于示例数据内容而非正文装饰.
+
 ### 阶段 11: 数据绑定与双向绑定
 
 数据绑定是 A2UI 的核心设计, 将组件属性与 DataModel 中的数据关联. v0.9 中任何 Dynamic\* 属性都接受三种取值: 字面量、`{ path }` 绑定、`{ call, args }` 函数调用.
@@ -1066,7 +1063,7 @@ GenericBinder 绑定属性时读取组件的 Zod schema, 将属性分类处理:
 
 ### 阶段 12: React 渲染器内部机制
 
-@a2ui/react/v0_9 把 web_core 的模型层桥接到 React, 核心是 NodeResolver / NodeView 的 node layer 架构 (renderers/react/src/v0_9/A2uiSurface.tsx:119-166): A2uiSurface 构造一个 NodeResolver (由 @a2ui/web_core/v0_9 导出, 实现在 typescript/web_core/src/resolution/node-resolver.ts), 渲染它维护的已解析 ComponentNode 树. 组件解析、数据作用域与属性绑定全部下沉到 web_core 的 node layer, React 侧只做分发渲染:
+@a2ui/react/v0_9 把 web_core 的模型层桥接到 React, 核心是 NodeResolver / NodeView 的 node layer 架构 (renderers/react/src/v0_9/A2uiSurface.tsx:52-100): A2uiSurface 构造一个 NodeResolver (由 @a2ui/web_core/v0_9 导出, 实现在 typescript/web_core/src/resolution/node-resolver.ts), 渲染它维护的已解析 ComponentNode 树. 组件解析、数据作用域与属性绑定全部下沉到 web_core 的 node layer, React 侧只做分发渲染:
 
 ```tsx
 // A2uiSurface: 入口, 用 useSyncExternalStore 订阅 NodeResolver 的 rootNode
@@ -1105,16 +1102,16 @@ export const A2uiSurface = ({ surface }) => {
 
 (1) NodeResolver -- 把组件模型解析为响应式 ComponentNode 树
 
-NodeResolver (typescript/web_core/src/resolution/node-resolver.ts) 把 SurfaceModel 中的每个 ComponentModel 解析为 ComponentNode (typescript/web_core/src/resolution/component-node.ts): 节点 props 是 Signal 驱动的已解析值——动态绑定为 ResolvedBinding, action 属性为可直接调用的闭包, child 属性为活的 ComponentNode 引用 (或其数组) ; 节点另暴露只读的 context (resolver 绑定该节点所用的 ComponentContext, 占位期间为 undefined, #2879 起对渲染器公开, 供视图查询数据作用域与执行边界) . 组件尚未到达时生成 isPlaceholder 占位节点, 到达后原位替换, 渐进渲染由 node layer 统一承担; 属性绑定由 GenericBinder (resolution/generic-binder.ts) 按 catalog schema 刮取的行为 (DYNAMIC / ACTION / STRUCTURAL / CHECKABLE / STATIC, 见阶段 11 分类) 建立订阅.
+NodeResolver (typescript/web_core/src/resolution/node-resolver.ts) 把 SurfaceModel 中的每个 ComponentModel 解析为 ComponentNode (typescript/web_core/src/resolution/component-node.ts): 节点 props 是 Signal 驱动的已解析值——动态绑定为 ResolvedBinding, action 属性为可直接调用的闭包, child 属性为活的 ComponentNode 引用 (或其数组) ; 节点另暴露只读的 context (resolver 绑定该节点所用的 ComponentContext, 占位期间为 undefined, 对渲染器公开, 供视图查询数据作用域与执行边界) . 组件尚未到达时生成 isPlaceholder 占位节点, 到达后原位替换, 渐进渲染由 node layer 统一承担; 属性绑定由 GenericBinder (resolution/generic-binder.ts) 按 catalog schema 刮取的行为 (DYNAMIC / ACTION / STRUCTURAL / CHECKABLE / STATIC, 见阶段 11 分类) 建立订阅.
 
-该 node layer 是框架无关的契约, 并且正在跨语言复制: 2026-10-01 的克隆快照中, Dart 的 a2ui_core 已实现同构的 resolution 层 (#2669, dart/a2ui_core/lib/src/resolution/ 下的 component_node / node_resolver / ref_fields / resolved_binding), 仓库 conformance 套件同步新增 core/node_resolution.yaml 用例, Dart 与 TypeScript web_core 对各自的 NodeResolver 跑同一套用例; 同一 conformance 目录还覆盖 core/expressions.yaml (formatString 背后的客户端表达式解析器, #2874 扩展) 与 core/data_model.yaml、core/data_context.yaml (#2883 新增的 DataModel/DataContext 跨语言 parity 套件: 路径 upsert/删除语义与作用域相对路径解析逐语言对齐) . Dart 侧随之做了破坏性收敛——GenericBinder / Behavior / BehaviorNode / ComponentContext 不再导出 (lib/a2ui_core.dart 对 contexts.dart hide ComponentContext, 对 binder.dart 只 show ChildNode 等少量符号) , 渲染器一律经 NodeResolver / ComponentNode 读组件, 动态属性以 ResolvedBinding 承载 (可写绑定是 WritableBinding, 写入走 WritableBinding.set), SurfaceModel.dispatchAction 只对 event 载荷派发动作, functionCall 由节点的 action 闭包本地执行 (#2846: 闭包先识别 {functionCall: {call, args}} 与展开的 {call, args} 形态并经 dataContext.resolveSync 本地求值, 其余才走 dispatchAction 发往 agent) . web_core 的 universal elements (Lit/Web Components 形态的 basic catalog 实现, typescript/web_core/src/v0_9/universal/) 同样接入了 node layer: renderA2uiNode 新增 ComponentNode 重载 (#2880), 把已解析节点直接渲染为实现的自定义元素并传入 .node 与 .context, 占位、已 dispose 或非 Web Component 实现一律返回 nothing, 原有 (context, catalog) 重载保持兼容.
+该 node layer 是框架无关的契约, 并且已跨语言复制: Dart 的 a2ui_core 实现了同构的 resolution 层 (dart/a2ui_core/lib/src/resolution/ 下的 component_node / node_resolver / ref_fields / resolved_binding), 仓库 conformance 套件以 core/node_resolution.yaml 用例钉住, Dart 与 TypeScript web_core 对各自的 NodeResolver 跑同一套用例; 同一 conformance 目录还覆盖 core/expressions.yaml (formatString 背后的客户端表达式解析器) 与 core/data_model.yaml、core/data_context.yaml (DataModel/DataContext 跨语言 parity: 路径 upsert/删除语义与作用域相对路径解析逐语言对齐) . Dart 侧对外的 API 面很窄——GenericBinder / Behavior / BehaviorNode / ComponentContext 不再导出 (lib/a2ui_core.dart 对 contexts.dart hide ComponentContext, 对 binder.dart 只 show ChildNode 等少量符号) , 渲染器一律经 NodeResolver / ComponentNode 读组件, 动态属性以 ResolvedBinding 承载 (可写绑定是 WritableBinding, 写入走 WritableBinding.set), SurfaceModel.dispatchAction 只对 event 载荷派发动作, functionCall 由节点的 action 闭包本地执行 (闭包先识别 {functionCall: {call, args}} 与展开的 {call, args} 形态并经 dataContext.resolveSync 本地求值, 其余才走 dispatchAction 发往 agent) . web_core 的 universal elements (Lit/Web Components 形态的 basic catalog 实现, typescript/web_core/src/universal/) 同样接入 node layer: renderA2uiNode 有 ComponentNode 重载, 把已解析节点直接渲染为实现的自定义元素并传入 .node 与 .context, 占位、已 dispose 或非 Web Component 实现一律返回 nothing; 另一重载仍是 (context, catalog) 形态.
 
 要点: 组件树解析、存在性与数据作用域 (dataPath) 管理不再由 React 组件逐层订阅事件完成, 而是集中在 NodeResolver 内; 节点仅在自身已解析属性变化时发出信号 (子节点内部属性变化不触发父节点), 更新范围被限制在单个组件粒度, 避免整棵树重渲染.
 
 (2) NodeView -- 按节点状态分发渲染, 递归构建子节点
 
 ```tsx
-// renderers/react/src/v0_9/A2uiSurface.tsx
+// renderers/react/src/v0_9/node-view.tsx (节选, NodeView 在 331 行起)
 const NodeView = memo(({ surface, node }) => {
   // buildChild: 已解析的子节点递归渲染; 解析器未能归类的 id 报告具体原因
   const buildChild = useCallback(
@@ -1132,19 +1129,18 @@ const NodeView = memo(({ surface, node }) => {
   );
 
   if (node.state === "unknown-type")
-    return <div>Unknown component type: ...</div>;
+    return <div>Unknown component type: {node.type}</div>;
   if (node.isPlaceholder)
     return <LoadingPlaceholder componentId={node.componentId} />; // 渐进渲染占位
-  const View = node.impl?.view;
+  const impl = node.impl;
+  const View = impl?.view;
   if (!View)
-    return (
-      <RenderFallback node={node} impl={node.impl} buildChild={buildChild} />
-    );
+    return <RenderFallback node={node} impl={impl} buildChild={buildChild} />;
   return <View node={node} buildChild={buildChild} />;
 });
 ```
 
-要点: surface 只做分发——把每个实现的 view 拿到自己的 node 与渲染已解析子节点的 buildChild. node-view.tsx 中的 useNodeView (renderers/react/src/v0_9/node-view.tsx:236) 通过 useSignalValue 订阅 node.props (仍以 useSyncExternalStore 把 web_core 的信号系统接入 React 18 的外部存储模型), 把解析后的 props 适配回现有视图实现的 ReactA2uiComponentProps 形状, 并构造 ComponentContext 与字符串 id 的 buildChild, 数据变化只重渲染受影响的组件.
+要点: NodeView 只做分发——把每个实现的 view 拿到自己的 node 与渲染已解析子节点的 buildChild. node-view.tsx 中的 useNodeView (renderers/react/src/v0_9/node-view.tsx:240) 通过 useSignalValue 订阅 node.props (仍以 useSyncExternalStore 把 web_core 的信号系统接入 React 18 的外部存储模型), 把解析后的 props 适配回现有视图实现的 ReactA2uiComponentProps 形状, 并构造 ComponentContext 与字符串 id 的 buildChild, 数据变化只重渲染受影响的组件.
 
 (3) createComponentImplementation -- GenericBinder 接入 useSyncExternalStore
 
@@ -1263,7 +1259,7 @@ at address "40 E Broadway, New York, NY 10002". They want to make a reservation.
 
 ## 组件加载时的 Loading (骨架) 实现
 
-A2UI 协议本身没有 loading 语义 (四类消息中没有任何 loading 状态字段) , 渐进渲染期间的占位完全是渲染器/宿主侧的实现问题。协议现状已提供的基础: node layer 对未到达组件以 LoadingPlaceholder (renderers/react/src/v0_9/node-view.tsx:59-61) 渲染 `[Loading {id}...]` 纯文本占位; root 未到达前其余组件更新被缓冲, 不产生可见效果; 绑定路径解析为 undefined 时规范建议按空串或 loading 优雅处理。据此可以把 loading 分为三层, 分别对应三类消息的到达状态:
+A2UI 协议本身没有 loading 语义 (四类消息中没有任何 loading 状态字段) , 渐进渲染期间的占位完全是渲染器/宿主侧的实现问题。协议现状已提供的基础: node layer 对未到达组件以 LoadingPlaceholder (renderers/react/src/v0_9/node-view.tsx:63-64) 渲染 `[Loading {id}...]` 纯文本占位; root 未到达前其余组件更新被缓冲, 不产生可见效果; 绑定路径解析为 undefined 时规范建议按空串或 loading 优雅处理。据此可以把 loading 分为三层, 分别对应三类消息的到达状态:
 
 ### 第一层: Surface 级 (createSurface 已到, 组件与数据未到)
 
@@ -1779,23 +1775,23 @@ POST /api/ai_ops 走 plan-execute-replan 管线 (lib/ai/pipelines/plan-execute-r
 
 A2UI 把"Agent 发 UI"从发代码变成发数据, 用 catalog 契约 + 数据绑定 + 扁平组件树换取 LLM 生成的可靠性与跨信任边界的安全性; yukino-agent 把协议落地所需的两侧能力 (65 组件 catalog、A2uiView 渲染器、四格式 prompt 生成器) 全部内联进应用仓库, 验证了从 prompt 生成、流式渲染到交互原地更新的完整工程闭环, 其自建链路 (而非 CopilotKit) 为自建 agentic 应用提供了可复用的参考实现.
 
-## v0.8 与 v0.9 字段差异对照
+## 版本族之间的消息形态对照 (v0.8 与 v0.9)
 
-阅读旧资料时注意以下差异 (本文全部采用 v0.9 形态):
+A2UI 同时维护多个版本族, 各自的消息形态不同; 本节给出对照, 供阅读不同版本的规范与示例时定位 (本文正文全部采用 v0.9 形态):
 
-| 维度          | v0.8                                                                        | v0.9                                                  |
-| :------------ | :-------------------------------------------------------------------------- | :---------------------------------------------------- |
-| 组件类型字段  | 无 componentType 字段; 仍是 component 键, 值为 \{类型名: props\} 的包裹对象 | component 键直接是类型名字符串 (相当于 componentType) |
-| 组件属性      | 嵌在类型名包裹对象内, 无 params 键                                          | 按实际 schema 直接平铺在组件对象上                    |
-| createSurface | 不存在; 信封为 beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface   | 必须携带 catalogId, 数据由 updateDataModel 下发       |
-| 数据更新      | dataModelUpdate: path + contents (key/value 条目) 数组                      | updateDataModel: path + value, upsert 语义            |
-| 设计取向      | 面向 structured output                                                      | prompt-first, schema 嵌入 prompt, 生成后校验修复      |
+| 维度         | v0.8 (legacy, 规范冻结)                                                     | v0.9 / v0.9.1 (当前)                                          |
+| :----------- | :-------------------------------------------------------------------------- | :------------------------------------------------------------ |
+| 组件类型字段 | 无 componentType 字段; 仍是 component 键, 值为 \{类型名: props\} 的包裹对象 | component 键直接是类型名字符串 (相当于 componentType)         |
+| 组件属性     | 嵌在类型名包裹对象内, 无 params 键                                          | 按实际 schema 直接平铺在组件对象上                            |
+| 表面初始化   | beginRendering; 组件经 surfaceUpdate 下发                                   | createSurface 必须携带 catalogId, 数据由 updateDataModel 下发 |
+| 数据更新     | dataModelUpdate: path + contents (key/value 条目) 数组                      | updateDataModel: path + value, upsert 语义                    |
+| 设计取向     | 面向 structured output                                                      | prompt-first, schema 嵌入 prompt, 生成后校验修复              |
 
 ## A2UI 调研: 协议与 yukino-agent 应用
 
 事实来源:
 
-- $HOME/Downloads/a2ui (A2UI 协议仓库, HEAD 102ec1a0): 规范、多语言 SDK 与示例
+- $HOME/Downloads/a2ui (A2UI 协议仓库, HEAD f8b58799): 规范、多语言 SDK 与示例
 - $HOME/github/yukino-agent (A2UI 应用案例, HEAD 536ed8c): catalog、渲染器与 prompt 生成器全部内联在该仓库内
 
 ---
@@ -1962,14 +1958,14 @@ Catalog (组件目录) 是 A2UI 的关键抽象: renderer 向 agent 提供"我�
 
 Catalog 的 JSON Schema 结构: 一个对象包含 catalogId (唯一标识) 、components (组件定义, 值为 JSON Schema) 、functions (函数定义数组) 、theme (主题属性 schema) .
 
-官方维护一个 Basic Catalog (位于规范目录 specification/v0_9/catalogs/basic/catalog.json) , 包含 Button、Input、Card 等通用组件. 它不是什么特殊类型, 只是一个官方写好 schema 且有开源 renderer 的现成目录, 刻意保持精简以便各 renderer 实现. 官方明确: 不追求跨客户端的标准化 catalog——因为 UI 由 LLM 生成, LLM 可以针对每个前端解释各自的 catalog, 所以"你的设计系统才是重点", 任何组件集合都能注册, catalog 就是 agent 与 renderer 之间的契约.
+官方维护一个 Basic Catalog (位于规范目录 specification/v0_9_1/catalogs/basic/catalog.json) , 包含 Button、TextField、Card 等 18 个通用组件. 它不是什么特殊类型, 只是一个官方写好 schema 且有开源 renderer 的现成目录, 刻意保持精简以便各 renderer 实现. 官方明确: 不追求跨客户端的标准化 catalog——因为 UI 由 LLM 生成, LLM 可以针对每个前端解释各自的 catalog, 所以"你的设计系统才是重点", 任何组件集合都能注册, catalog 就是 agent 与 renderer 之间的契约.
 
 #### 1.8 安全模型
 
 安全是协议的一等原则:
 
 - 沙箱化执行: 禁止 agent 注入任意代码 (如原始 JavaScript) , agent 只能触发预先注册的行为. functionCall 机制是 agent 与 renderer 环境交互的唯一安全通道.
-- 对不受信的第三方代码, A2UI 生态实践记录了运行 MCP Apps 的双 iframe 隔离方案: 内层 iframe 严格排除 allow-same-origin, 防止"allow-scripts + allow-same-origin"组合导致的沙箱逃逸, 同时维持结构化 JSON-RPC 通道. (A2UI 官方规范只声明了 "A2UI 可经 MCP 传输" 的绑定, 未规定 iframe 承载细节, 此条属于生态实践转述)
+- 对不受信的第三方代码, A2UI 仓库提供了运行 MCP Apps 的双 iframe 隔离实现 (samples/community/client/shared/mcp_apps_inner_iframe/ 的 double-iframe isolation pattern): 同源外层代理 iframe 负责消息中继, 内层 iframe 默认 sandbox 为 allow-scripts allow-forms allow-modals (不含 allow-same-origin), 防止"allow-scripts + allow-same-origin"组合导致的沙箱逃逸, 同时维持结构化 JSON-RPC 通道. (A2UI 官方规范只声明了 "A2UI 可经 MCP 传输" 的绑定, 未规定 iframe 承载细节, 双 iframe 属于该示例的实现选择)
 
 #### 1.9 传输层与生态
 

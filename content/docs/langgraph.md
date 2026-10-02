@@ -7,7 +7,7 @@ description: "基于 langgraphjs@73437686 本机克隆: 拆解 monorepo 包布�
 
 ## 一、项目快照 (本机克隆 2026-10-01)
 
-本机克隆于 2026-10-01 核实, 分支 main, 与 origin/main 一致, 工作区干净 (仅含本地未跟踪的 .codegraph 索引目录)。
+正文的行号、包版本与 API 形态均以本机克隆 $HOME/Downloads/langgraphjs 的 HEAD 73437686 工作树源码核实 (提交日期 2026-10-01, 分支 main)。
 
 | 指标        | 数值                                                                                                                                       |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -16,7 +16,7 @@ description: "基于 langgraphjs@73437686 本机克隆: 拆解 monorepo 包布�
 | 提交信息    | fix(sdk): don't retry 4xx on protocol SSE streams, keep HTTP status on errors, reset reconnect attempts after a successful connect (#2918) |
 | 分支        | main                                                                                                                                       |
 | 定位        | Low-level orchestration framework for building stateful agents (README.md 标语)                                                            |
-| 主 npm 包   | @langchain/langgraph 1.4.18, 源码位于 libs/langgraph-core; 根目录 README.md 是指向 libs/langgraph-core/README.md 的符号链接                |
+| 主 npm 包   | @langchain/langgraph 1.4.18, 源码位于 libs/langgraph-core; 根 README.md 与 libs/langgraph-core/README.md 同源                              |
 | 规范包名    | langgraph 1.0.47 (libs/langgraph), 无 scope 便捷包装, 全量 re-export 主包                                                                  |
 | License     | MIT (LICENSE: Copyright (c) 2024 LangChain)                                                                                                |
 | 运行时      | 仓库 engines: node ^22.11 或 ^24 或 26 及以上 (根 package.json); @langchain/langgraph 自身 engines: node 18 及以上                         |
@@ -34,11 +34,11 @@ libs/ 下共 20 个包 (以下版本均来自各包 package.json 的 version 字
 
 核心执行与状态:
 
-| 目录                | npm 名                          | 版本   | 职责                                                                        |
-| ------------------- | ------------------------------- | ------ | --------------------------------------------------------------------------- |
-| libs/langgraph-core | @langchain/langgraph            | 1.4.18 | 核心库: StateGraph、Pregel 引擎、channels、prebuilt、functional API         |
-| libs/langgraph      | langgraph                       | 1.0.47 | 无 scope 规范名, src/index.ts 仅一行 `export * from "@langchain/langgraph"` |
-| libs/checkpoint     | @langchain/langgraph-checkpoint | 1.1.5  | checkpointer 基础接口、MemorySaver、Store、Cache、序列化                    |
+| 目录                | npm 名                          | 版本   | 职责                                                                                  |
+| ------------------- | ------------------------------- | ------ | ------------------------------------------------------------------------------------- |
+| libs/langgraph-core | @langchain/langgraph            | 1.4.18 | 核心库: StateGraph、Pregel 引擎、channels、prebuilt、functional API                   |
+| libs/langgraph      | langgraph                       | 1.0.47 | 无 scope 规范名, src/index.ts 为说明注释加一行 `export * from "@langchain/langgraph"` |
+| libs/checkpoint     | @langchain/langgraph-checkpoint | 1.1.5  | checkpointer 基础接口、MemorySaver、Store、Cache、序列化                              |
 
 持久化后端 (均实现 BaseCheckpointSaver):
 
@@ -98,7 +98,7 @@ export interface StateDefinition {
 - 不带参数: 创建 `LastValue` 通道, 只保留节点最近一次写入的值;
 - 带 reducer: 创建 `BinaryOperatorAggregate` 通道, 用二元归约函数聚合写入, `default` 提供初始值工厂。
 
-工厂函数 `getChannel` (annotation.ts:174) 完成这个分派; `SingleReducer` 类型里的 `value` 字段已标记 deprecated, 应使用 `reducer`。`Annotation.Root(spec)` 返回 `AnnotationRoot` 实例, 通过 `declare State`、`declare Update`、`declare Node` 三个类型投影暴露状态类型、更新类型与节点签名 (annotation.ts:62-70), 并带 `isInstance` 静态守卫识别跨包实例。annotation.ts 文档块给出的标准示例:
+工厂函数 `getChannel` (annotation.ts:174) 完成这个分派; `SingleReducer` 类型的归约字段为 `reducer` (`value` 标注 @deprecated)。`Annotation.Root(spec)` 返回 `AnnotationRoot` 实例, 通过 `declare State`、`declare Update`、`declare Node` 三个类型投影暴露状态类型、更新类型与节点签名 (annotation.ts:62-70), 并带 `isInstance` 静态守卫识别跨包实例。annotation.ts 文档块给出的标准示例:
 
 ```ts
 import { StateGraph, Annotation } from "@langchain/langgraph";
@@ -117,7 +117,7 @@ const AnnotationWithReducer = Annotation.Root({
 });
 ```
 
-除 Annotation 外, 仓库还支持 zod schema 作为状态定义: libs/langgraph-core/src/graph/zod/ 下有 meta.ts、schema.ts、plugin.ts、zod-registry.ts, graph/types.ts 的 `isStateDefinitionInit` 同时接受 Annotation 与 zod 对象形态; `StateGraphAddNodeOptions` 的 `input` 字段类型即 `StateDefinitionInit` (graph/state.ts:214), interrupt 的 responseSchema 也复用同一套 zod 互操作。
+除 Annotation 外, 仓库还支持 zod schema 作为状态定义: libs/langgraph-core/src/graph/zod/ 下有 meta.ts、schema.ts、plugin.ts、zod-registry.ts, graph/types.ts 的 `isStateDefinitionInit` 同时接受 Annotation 与 zod 对象形态; `StateGraphAddNodeOptions` 的 input 字段类型即 `StateDefinitionInit` (类型参数约束见 graph/state.ts:216-224), interrupt 的 responseSchema 也复用同一套 zod 互操作。
 
 ### 通道协议
 
@@ -157,7 +157,7 @@ export abstract class BaseChannel<
 
 ### 内置通道一览
 
-channels/ 目录共 10 个通道实现文件:
+channels/ 目录共 9 个通道实现文件 (另有 base.ts 抽象基类与 index.ts 导出):
 
 | 通道                         | 文件                              | 语义                                                              |
 | ---------------------------- | --------------------------------- | ----------------------------------------------------------------- |
@@ -420,7 +420,7 @@ this.updatedChannels = _applyWrites(
 
 ### Durability、重试默认值与运行控制
 
-`Durability = "exit" | "async" | "sync"` (pregel/types.ts:35), 控制检查点写入时机: 默认 `"async"`——下一个超步执行的同时异步保存检查点 (types.ts:351-354 文档注释 `@default "async"`); `"sync"` 在超步间同步等待落盘 (index.ts:2465); `"exit"` 只在运行结束时持久化。旧的 `checkpointDuring` 选项与 `durability` 互斥, 同时传会报错 (index.ts:1911-1914)。
+`Durability = "exit" | "async" | "sync"` (pregel/types.ts:35), 控制检查点写入时机: 默认 `"async"`——下一个超步执行的同时异步保存检查点 (types.ts:351-354 文档注释 `@default "async"`); `"sync"` 在超步间同步等待落盘 (index.ts:2465); `"exit"` 只在运行结束时持久化。`checkpointDuring` 选项与 `durability` 互斥, 同时传入会抛错 (index.ts:1911-1914)。
 
 `RetryPolicy` (pregel/utils/index.ts:56-94) 默认值: initialInterval 500ms、backoffFactor 2、maxInterval 128000ms、maxAttempts 3、jitter true, 另有 retryOn 谓词与 logWarning 开关。`CachePolicy` (pregel/utils/index.ts:100) 含 keyFunc 与 ttl (秒)。
 
@@ -503,7 +503,7 @@ LangGraph 的会话概念是 thread: 运行配置里的 `thread_id` 标识线程
 
 - `getState(config, options?)` (pregel/index.ts:1057): 要求 checkpointer, 否则抛 `GraphValueError` 且带错误码 MISSING_CHECKPOINTER; 若 config 指向子图命名空间, 先遍历 `getSubgraphsAsync` 委托给对应子图; 未指定 checkpoint_id 时 `applyPendingWrites` 为 true, 快照会应用未决写入; 对动态创建的瞬态子图 (如工具调用子图 `tools:call_...`) 有回退路径, 直接按完整 checkpoint_ns 查 checkpointer (index.ts:1091-1095 注释)。
 - `getStateHistory(config, options?)` (index.ts:1121): 异步迭代器, 对 `checkpointer.list(mergedConfig, options)` 的每个 CheckpointTuple 构造快照; options 支持 limit、before、filter。
-- `updateState(inputConfig, values, asNode?)` (index.ts:1804): 委托给 `bulkUpdateState` (index.ts:1194), 后者接受多个超步、每超步多个更新 (values + asNode); asNode 把更新归属到指定节点, 使后续调度如同该节点刚产生这些写入; 注释明确用途包括 human-in-the-loop、断点期间改状态、注入外部输入。无法归属到任何节点的更新抛 InvalidUpdateError。
+- `updateState(inputConfig, values, asNode?)` (index.ts:1804): 委托给 `bulkUpdateState` (index.ts:1193), 后者接受多个超步、每超步多个更新 (values + asNode); asNode 把更新归属到指定节点, 使后续调度如同该节点刚产生这些写入; 注释明确用途包括 human-in-the-loop、断点期间改状态、注入外部输入。无法归属到任何节点的更新抛 InvalidUpdateError。
 
 快照构造由 `_prepareStateSnapshot` (index.ts:868 附近) 完成: 从检查点重建全部通道 (`channelsFromCheckpoint`, channels/base.ts:306), DeltaChannel 经 checkpointer 从祖先写入重建; 恢复时先应用 NULL_TASK_ID 的空写入, 再跳过 ERROR/INTERRUPT/SCHEDULED 保留键, 把已完成任务的写入回填到对应任务 (index.ts:1330-1360)。
 
@@ -550,7 +550,7 @@ ToolNode 默认 `handleToolErrors = true` 会把工具异常转成 error ToolMes
 
 恢复路径: 以 `new Command({ resume: value })` 作为图输入再次 invoke/stream, 值进入 RESUME 通道 (`"__resume__"`, constants.ts:87), 重放时经 scratchpad.resume 命中上文第 4 步直接返回; 多 interrupt 场景按顺序逐个恢复。`isInterrupted` 守卫 (constants.ts:433) 判断输出对象是否含 `INTERRUPT = "__interrupt__"` 键; invoke 的 values 模式会把 interrupts 合并进最终返回值 (index.ts:2589-2596), 因此即使不消费流也能拿到中断信息。
 
-静态断点在编译期声明: `compile({ interruptBefore, interruptAfter })`, 支持节点名数组或 All (即 `"*"`); 运行期 PregelLoop 在对应节点执行前把 status 置为 interrupt_before 并抛 GraphInterrupt (loop.ts:970-972)。prebuilt/interrupt.ts 还定义了面向 agent 收件箱的结构化中断协议: `HumanInterruptConfig` (allow_ignore/allow_respond/allow_edit/allow_accept 四个布尔位)、`ActionRequest`、`HumanInterrupt` 与 `HumanResponse`, 配套 requestApprovalTool、reviewActionTool 等工具使用。
+静态断点在编译期声明: `compile({ interruptBefore, interruptAfter })`, 支持节点名数组或 All (即 `"*"`); 运行期 PregelLoop 在对应节点执行前把 status 置为 interrupt_before 并抛 GraphInterrupt (loop.ts:970-972)。prebuilt/interrupt.ts 还定义了面向 agent 收件箱的结构化中断协议: `HumanInterruptConfig` (interrupt.ts:10, allow_ignore/allow_respond/allow_edit/allow_accept 四个布尔位)、`ActionRequest` (24)、`HumanInterrupt` (38) 与 `HumanResponse` (57); 这四个类型由 prebuilt/index.ts 统一再导出。
 
 ## 九、流式输出
 
@@ -615,15 +615,11 @@ Pregel 类头文档给出了官方案例 (pregel/index.ts:417-440): 用 `task("a
 
 ## 十一、Prebuilt 与多 agent 套件
 
-### createReactAgent 与其迁移状态
+### createReactAgent: 与主包 createAgent 的关系
 
 prebuilt/ 目录的导出面 (prebuilt/index.ts): createAgentExecutor、createFunctionCallingExecutor、createReactAgent、createReactAgentAnnotation、ToolExecutor、ToolNode、toolsCondition、HumanInterrupt 系列类型、withAgentName。
 
-重要事实: `createReactAgent` 已标记 deprecated, jsdoc 明确迁移指引 (react_agent_executor.ts:624-626):
-
-> `createReactAgent` has been moved to the `langchain` package. Update your import to `import { createAgent } from "langchain";`
-
-`CreateReactAgentParams` (react_agent_executor.ts:485) 同样标注迁往 langchain 包改名 CreateAgentParams。当前仓库内实现的参数面:
+该实现处标注 @deprecated, 指向 `langchain` 包的 `createAgent` (react_agent_executor.ts:625); `CreateReactAgentParams` (react_agent_executor.ts:485) 同样标注 @deprecated, 对应 `langchain` 包的 `CreateAgentParams`。当前仓库内实现的参数面:
 
 | 参数                             | 说明                                                                                                         |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -664,7 +660,7 @@ prebuilt/ 目录的导出面 (prebuilt/index.ts): createAgentExecutor、createFu
 
 ### SDK
 
-@langchain/langgraph-sdk (libs/sdk) 的 `Client` 类在 libs/sdk/src/client/index.ts:10, 按资源域拆分 assistants、threads、runs、crons、store 等子客户端; `threads.updateState` 以 POST /threads/:id/state 提交 values/checkpoint/as_node (client/threads/index.ts:319-342)。子路径导出覆盖 ui、client、auth、react、logging、react-ui、utils、stream。流式客户端核心是 `StreamController` (libs/sdk/src/stream/controller.ts:214): 负责 SSE 解析、interrupt 收集 (`collectActiveInterruptsFromTasks`、`#recordInterrupt`) 与断线/取消后的状态对账 (`#reconcilePendingInterruptsFromServer`), 包括取消 run 后流缓冲与服务端状态的对账。协议 SSE 传输适配器 `ProtocolSseTransportAdapter` (libs/sdk/src/client/stream/transport/http.ts:58) 的重试语义有三点: 4xx 响应不进入重连循环——`isNonRetryableHttpError` (http.ts:44, 判据为 4xx 且排除 408 与 429) 命中时立即以该错误终结事件流, 不消耗重连预算; `request()` 抛出的错误携带 `status` 与响应体 `text` 字段; 重连计数在每次成功 (重) 连接后归零, 重置发生在 `onConnected` 回调之后以便其仍能汇报本次重连所用次数。schema.ts 定义 ThreadState、Interrupt、Config 等协议类型。
+@langchain/langgraph-sdk (libs/sdk) 的 `Client` 类在 libs/sdk/src/client/index.ts:10, 按资源域拆分 assistants、threads、runs、crons、store 等子客户端; `threads.updateState` 以 POST /threads/:id/state 提交 values/checkpoint/as_node (client/threads/index.ts:319-342)。子路径导出覆盖 ui、client、auth、react、logging、react-ui、utils、stream。流式客户端核心是 `StreamController` (libs/sdk/src/stream/controller.ts:214): 负责 SSE 解析、interrupt 收集 (`collectActiveInterruptsFromTasks`、`#recordInterrupt`) 与断线/取消后的状态对账 (`#reconcilePendingInterruptsFromServer`), 包括取消 run 后流缓冲与服务端状态的对账。协议 SSE 传输适配器 `ProtocolSseTransportAdapter` (libs/sdk/src/client/stream/transport/http.ts:58) 的重试语义有三点: 4xx 响应不进入重连循环——`isNonRetryableHttpError` (http.ts:44, 判据为 4xx 且排除 408 与 429) 命中时立即以该错误终结事件流, 不消耗重连预算; `request()` 抛出的错误携带 `status` 与响应体 `text` 字段; 重连计数在每次成功 (重) 连接后归零, 重置发生在 `onConnected` 回调之后以便其仍能汇报本次重连所用次数。schema.ts 定义 ThreadState、Interrupt、Config 等协议类型。克隆当前 .changeset/ 目录尚存两条未随版本发布的 @langchain/langgraph-sdk patch changeset: 上述 SSE 重试/状态码修复 (#2918) 之外, 还有一条 useStream/StreamOrchestrator 的历史对账修复——stop() 取消运行后, 本地流缓冲会与已持久化的线程状态对账 (调用方需要权威线程状态时重新拉取, 否则回退到已缓存的历史值) , 未检查点化的残留消息不再一直停留在界面上, 要等到切换线程或重新挂载才消失 (orchestrator.ts 的 stop() 实现与注释)。
 
 ### 前端框架集成
 
@@ -710,7 +706,7 @@ README 明确立场: LangGraph 由 LangChain Inc 构建但可脱离 LangChain �
 
 - 单元测试与源码同目录 (*.test.ts), 覆盖 pregel 算法 (algo.test.ts)、通道、write/read、runner、stream、messages reducer、interrupt 等;
 - libs/langgraph-core/src/tests/ 下按主题分目录, 含 python_port/ (与 Python 版行为对齐的移植测试: checkpoint、graph_structure 等)、prebuilt、interrupt.test-d.ts (类型级断言)、pregel.test-d.ts、time_travel 系列;
-- internal/environment_tests/ 用 Docker 验证三种消费环境下的导出面 (test-exports-tsc、test-exports-cjs、test-exports-cf 即 Cloudflare Workers), 根 scripts 的 test:exports:docker 驱动;
+- internal/environment_tests/ 用 Docker 验证七个消费环境下的导出面 (test-exports-esm、cjs、tsc、esbuild、vite、vercel、cf 即 Cloudflare Workers), 根 scripts 的 test:exports:docker 驱动 internal/environment_tests/docker-compose.yml;
 - 集成测试经 `pnpm test:int` 起 docker compose 依赖 (Postgres、Redis、MongoDB) 再跑 turbo test:int;
 - socket.yml 表明仓库接入 Socket 供应链安全检查。
 
@@ -720,7 +716,7 @@ README 明确立场: LangGraph 由 LangChain Inc 构建但可脱离 LangChain �
 
 | 主题                | 路径 (相对仓库根)                                                                                                                                                                                           |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pregel 类与主循环   | libs/langgraph-core/src/pregel/index.ts (Pregel:445, stream:1962, invoke:2558, _runLoop:2603, getState:1057, getStateHistory:1121, bulkUpdateState:1194, updateState:1804, getGraphAsync:777)               |
+| Pregel 类与主循环   | libs/langgraph-core/src/pregel/index.ts (Pregel:445, stream:1962, invoke:2558, _runLoop:2603, getState:1057, getStateHistory:1121, bulkUpdateState:1193, updateState:1804, getGraphAsync:777)               |
 | 超步循环            | libs/langgraph-core/src/pregel/loop.ts (PregelLoop:292, tick:958, AsyncBatchedCache:240)                                                                                                                    |
 | 调度与写回          | libs/langgraph-core/src/pregel/algo.ts (_applyWrites:269, _prepareNextTasks:576, _prepareNodeErrorHandlerTask:1203, _procInput:1360)                                                                        |
 | 并发执行            | libs/langgraph-core/src/pregel/runner.ts (PregelRunner.tick:123)                                                                                                                                            |

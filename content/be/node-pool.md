@@ -27,7 +27,7 @@ generic-pool 是一个零运行时依赖的 Node.js 通用资源池库, README (
 | Lint          | eslint ^4.9.0 + prettier ^1.7.4 (README:381 亦有说明)                 |
 | 关键词        | pool / pooling / throttle (package.json keywords)                     |
 
-CHANGELOG 中 3.9.0 一节记录了两处修复: 给 index.d.ts 补上 ready 函数声明 (提交 0a5ef1d); 给 pool 内部的 setTimeout 加 `.unref()` (提交 e94fd37)。当前 HEAD 源码中恰好有两处定时器 `.unref()` 调用点: `_applyDestroyTimeout` 的销毁超时 race (Pool.js:157) 与驱逐调度定时器 (Pool.js:405); 后者是周期性定时器, unref 后不再阻止进程退出。git 历史可精确区分两处 unref 的来源: e94fd37 ("fix: unref setTimeout in pool", 2022-08-03) 只改 lib/Pool.js 一行 — 给驱逐定时器补 `.unref()` (即 Pool.js:405 处); 而销毁超时 race 的 `.unref()` 早在 2021-07-11 的 ea53332 ("Add destroyTimeoutMillis option", 5 个文件、+96 行) 引入 `_applyDestroyTimeout` 时就已存在, 该提交收录于 v3.8.0 (tag a9926ba, 2021-07-12)。需要说明的是, CHANGELOG.md 中没有 3.8.x 一节 (v3.7.1 之后直接跳到 v3.9.0), 3.8.x 的变更记录只能从 git tag 与提交历史考证。
+当前源码中恰好有两处定时器 `.unref()` 调用点: `_applyDestroyTimeout` 的销毁超时 race (Pool.js:157) 与驱逐调度定时器 (Pool.js:405)。两者都不会阻止 Node 进程退出; 后者是周期性定时器, 这一点直接决定了即使把 `evictionRunIntervalMillis` 设成非 0, 空闲驱逐器也不会挂住事件循环。
 
 lib/ 目录 18 个文件与职责 (行数为 `wc -l` 实测):
 
@@ -238,7 +238,7 @@ _destroy (Pool.js:132-151) 的内部顺序值得注意:
 
 由第 1、4 步可推出一个实际后果: factory.destroy 挂起时, 旧资源已不占池内计数, 新资源又会被立刻补建, 真实世界中的资源总数 (池内加销毁挂起) 可以短暂超过 max。destroyTimeoutMillis 超时也只发事件、不做任何强制清理。
 
-use(fn, priority) (Pool.js:478-491) 是 acquire 加自动归还的便捷封装: fn resolve 则 release, fn reject 则 destroy 资源并继续抛出。CHANGELOG 记录 3.7.1 版本修复 #257 后才变成 "reject 时销毁" 的语义, 与文档一致。
+use(fn, priority) (Pool.js:478-491) 是 acquire 加自动归还的便捷封装: fn resolve 则 release, fn reject 则 destroy 资源并继续抛出, 与 README:261 的描述一致。
 
 _ensureMinimum (Pool.js:345-353): 计算 `min - _count` 的缺口并循环 _createResource; draining 状态下直接短路, 不再补池。
 
@@ -305,7 +305,7 @@ Pool 构造时就创建了 _evictionIterator 并在整个生命周期复用 (Poo
 
 ### 调度
 
-驱逐器默认不运行。start() 调用 _scheduleEvictorRun (Pool.js:424、398-407): 仅当 `evictionRunIntervalMillis > 0` 时注册 setTimeout, 回调里先 _evict() 再递归调用 _scheduleEvictorRun 排下一轮; 定时器带 `.unref()`, 不会阻止进程退出 — 与 CHANGELOG 3.9.0 "unref setTimeout in pool" (提交 e94fd37) 的修复意图一致。drain() 完成时 _descheduleEvictorRun 清掉定时器 (Pool.js:409-414、587)。
+驱逐器默认不运行。start() 调用 _scheduleEvictorRun (Pool.js:424、398-407): 仅当 `evictionRunIntervalMillis > 0` 时注册 setTimeout, 回调里先 _evict() 再递归调用 _scheduleEvictorRun 排下一轮; 定时器带 `.unref()`, 不会阻止进程退出。drain() 完成时 _descheduleEvictorRun 清掉定时器 (Pool.js:409-414、587)。
 
 ### _evict 主循环
 
@@ -383,7 +383,7 @@ PoolDefaults.js 集中声明默认值, PoolOptions.js 负责归一化。两者�
 
 start() (Pool.js:416-426) 有三个触发点: 构造时 autostart 为 true (Pool.js:127-129); autostart 为 false 时首次 acquire 懒启动 (Pool.js:441-443); 用户显式调用。方法内先做 draining 与已启动双重守卫, 然后只做两件事: 调度驱逐器、_ensureMinimum 预建 min 个资源。
 
-ready() (Pool.js:644-656) 以 100ms 间隔轮询 `available >= min`, 达标即 resolve。它没有超时上限, 若 min 个资源始终建不出来 (例如工厂一直失败) 会永远轮询; 轮询定时器也未 unref。CHANGELOG 显示 3.9.0 的修复之一就是把 ready 的类型声明补进 index.d.ts。
+ready() (Pool.js:644-656) 以 100ms 间隔轮询 `available >= min`, 达标即 resolve。它没有超时上限, 若 min 个资源始终建不出来 (例如工厂一直失败) 会永远轮询; 轮询定时器也未 unref。
 
 drain() (Pool.js:580-589) 是优雅停机入口, 置 _draining 为 true 后按序等待:
 
@@ -393,7 +393,7 @@ drain() (Pool.js:580-589) 是优雅停机入口, 置 _draining 为 true 后按�
 
 drain 之后: acquire 一律 reject (Pool.js:445-449), _ensureMinimum 不再补池 (Pool.js:346-348)。
 
-clear() (Pool.js:619-636) 强制销毁全部空闲资源, 分三步: 先等所有在途 factory.create 落定 — 这是 CHANGELOG 3.6.0 修复 #159 的成果, 防止 clear 在池生命早期调用时 "漏掉" 刚发起的创建 (回归测试即 test/GH-159-test.js, 其工厂类模拟一半创建带延时的情形); 然后遍历 _availableObjects 逐个 _destroy; 最后等全部销毁操作落定。clear 不回收仍被借出的资源, 也不阻止后续 acquire; Pool.js:613-617 的 JSDoc 特别提醒: min 大于 0 且未 draining 时, clear 掉的空闲资源会被立刻补建, 想真正清空应先把 min 置 0 — README:325-332 推荐的停机组合是 drain 后再 clear。
+clear() (Pool.js:619-636) 强制销毁全部空闲资源, 分三步: 先等所有在途 factory.create 落定 — 防止 clear 在池生命早期调用时 "漏掉" 刚发起的创建 (回归测试即 test/GH-159-test.js, 其工厂类模拟一半创建带延时的情形); 然后遍历 _availableObjects 逐个 _destroy; 最后等全部销毁操作落定。clear 不回收仍被借出的资源, 也不阻止后续 acquire; Pool.js:613-617 的 JSDoc 特别提醒: min 大于 0 且未 draining 时, clear 掉的空闲资源会被立刻补建, 想真正清空应先把 min 置 0 — README:325-332 推荐的停机组合是 drain 后再 clear。
 
 lib/utils.js 的 reflector 是 drain/clear 的粘合剂: `promise.then(noop, noop)`, 把任意 Promise 变成 "只表示完成、不携带值也不会拒绝" 的等待对象 (utils.js:11-13)。
 
@@ -423,7 +423,7 @@ README:222-226 提醒: 这两个事件没有监听器时错误会被静默丢弃
 
 ## 十三、类型定义与测试工程
 
-index.d.ts 头三行注明其派生自 DefinitelyTyped 的 generic-pool 类型 (标注对应 node-pool 3.1)。类型面的要点: `Pool<T>` 继承 EventEmitter; `Factory<T>` 接口要求 create 与 destroy, validate 可选; Options 接口列出 13 个可配置项 (未收录 testOnReturn 与 Promise); IEvictor、IDeque、IPriorityQueue 三个接口与构造函数注入的参数一一对应; PooledResourceStateEnum 以字符串枚举导出。HEAD 提交 ee5db9d 合并的 PR #301 (regevbr/types) 正是类型相关整理, 说明 v3.9.0 标签之后仓库最后的活跃方向是 TypeScript 体验。
+index.d.ts 头三行注明其派生自 DefinitelyTyped 的 generic-pool 类型 (标注对应 node-pool 3.1)。类型面的要点: `Pool<T>` 继承 EventEmitter; `Factory<T>` 接口要求 create 与 destroy, validate 可选; Options 接口列出 13 个可配置项 (未收录 testOnReturn 与 Promise); IEvictor、IDeque、IPriorityQueue 三个接口与构造函数注入的参数一一对应; PooledResourceStateEnum 以字符串枚举导出。
 
 test/ 目录 8 个文件, 跑在 tap 上:
 

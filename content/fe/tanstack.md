@@ -3,7 +3,7 @@ title: "TanStack Query、TanStack Form、TanStack Virtual 技术笔记"
 description: "基于 yukino-chatbot 与 yukino-codegen 真实源码, 梳理 TanStack Query v5 的缓存模型、queryKey 设计、失效策略, 以及与 Jotai、TanStack Form、TanStack Virtual 的职责分工 (leetcode 的 TanStack Start/DB 生态依赖仅作声明参考)"
 ---
 
-> 本文所有"真实项目用法"均来自本机仓库 `$HOME/github/yukino-chatbot` (Jotai + TanStack Query v5 的 LLM 聊天应用) 与 `$HOME/github/yukino-codegen` (TanStack Query + Form + Virtual 的代码生成平台), 另参考 `$HOME/github/leetcode` (其 package.json 声明了全套 TanStack 生态依赖, 见下文). 通用机制论断均对照本机 `node_modules` 内 @tanstack/query-core 5.104.0 与 @tanstack/react-query 5.104.0 的真实 TypeScript 源码核实, 出处以相对路径标注.
+> 本文所有"真实项目用法"均来自本机仓库 `$HOME/github/yukino-chatbot` (Jotai + TanStack Query v5 的 LLM 聊天应用, 前端为 Vite 8) 与 `$HOME/github/yukino-codegen` (TanStack Query + Form + Virtual 的代码生成平台, 前端为 Vite 7), 另参考 `$HOME/github/leetcode` (其 package.json 声明了全套 TanStack 生态依赖, 见下文). 通用机制论断均对照 `$HOME/github/yukino-chatbot/client/node_modules/@tanstack/` 下 @tanstack/query-core 5.104.0 与 @tanstack/react-query 5.104.0 的真实 TypeScript 源码核实, 出处以包内相对路径 (`src/...`) 标注.
 
 ## 一、定位: 服务端状态 vs 客户端状态
 
@@ -105,7 +105,7 @@ export const queryClient = new QueryClient({
 });
 ```
 
-两个项目都把 `refetchOnWindowFocus` 关掉、把 `retry` 降到 1, 这是对话类应用的常见取舍: 聊天页面对焦点切换带来的静默重新拉取很敏感, 重试过多又会放大后端压力.
+两个项目都把 `refetchOnWindowFocus` 关掉、把 queries 的 `retry` 降到 1, 这是交互密集型应用的常见取舍: 页面不希望因焦点切换产生静默重拉, 重试过多也会放大后端压力.
 
 ### QueryCache 与 queryHash 去重
 
@@ -179,11 +179,11 @@ MutationCache 收集 `useMutation` 产生的 Mutation 实例. Mutation 的状态
 | success | mutationFn 成功返回       | `src/mutation.ts:488` |
 | error   | mutationFn 抛出或重试耗尽 | `src/mutation.ts:499` |
 
-与 Query 不同, Mutation 默认不进缓存池长期存活, 也不参与 `invalidateQueries` 的失效匹配 (该 API 只作用于查询缓存); 设置 mutationKey 后, 可以用 `useMutationState` 或 `MutationCache.findAll` 按 key/状态过滤变更实例. Mutation 的职责是承载一次写操作的生命周期回调 (onMutate/onSuccess/onError/onSettled) 与全局状态查询 (`useMutationState`).
+Mutation 实例同样登记在 MutationCache 中 (`src/mutationCache.ts:157`), 并继承 Removable 的 `gcTime` 回收: 失去观察者且状态不为 pending 时从缓存移除, 仍在 pending 时顺延一个 `gcTime` (`src/mutation.ts:203` 的 `scheduleGc`、`src/mutation.ts:212-220` 的 `optionalRemove`). 它与 Query 的区别在于不参与 `invalidateQueries` 的失效匹配 (该 API 只作用于查询缓存); 设置 mutationKey 后, 可以用 `useMutationState` 或 `MutationCache.findAll` 按 key/状态过滤变更实例. Mutation 的职责是承载一次写操作的生命周期回调 (onMutate/onSuccess/onError/onSettled) 与全局状态查询 (`useMutationState`).
 
 ### gc: 缓存回收
 
-Query 与 Mutation 都继承自 Removable (`@tanstack/query-core/src/removable.ts`). 当一个查询失去所有观察者后, 会启动一个 `gcTime` 定时器, 到期调用 `optionalRemove()` 把自己从缓存中移除 (`src/removable.ts:25-30`):
+Query 与 Mutation 都继承自 Removable (`@tanstack/query-core/src/removable.ts`). 当一个查询失去所有观察者后, `scheduleGc` 会启动一个 `gcTime` 定时器, 到期调用 `optionalRemove()` 把自己从缓存中移除 (`src/removable.ts:23-31`, 其中 `optionalRemove()` 的调用在 `src/removable.ts:28`):
 
 ```ts
 protected updateGcTime(newGcTime: number | undefined): void {
@@ -195,7 +195,7 @@ protected updateGcTime(newGcTime: number | undefined): void {
 }
 ```
 
-默认值事实 (同时见 `@tanstack/query-core/src/types.ts:317` 的注释): 浏览器环境默认 5 分钟, 服务端环境 (SSR) 默认 `Infinity`——因为服务端每个请求本来就会创建新的 QueryClient, 无需回收.
+上面的 `updateGcTime` 实现位于 `src/removable.ts:33-39`, 其中的 `Math.max` 保证同一条数据被多处以不同 gcTime 观察时取最长值. 默认值事实 (见 `@tanstack/query-core/src/types.ts:317` 的 `gcTime` 注释): 浏览器环境默认 5 分钟, 服务端环境 (SSR) 默认 `Infinity`——因为服务端每个请求本来就会创建新的 QueryClient, 无需回收.
 
 注意区分: gcTime 决定"多久没人看就删掉缓存", staleTime 决定"多久算过期需要重拉". 一条数据可以"过期但仍留在缓存里" (stale 且未被 gc), 此时组件挂载会先用旧数据渲染, 同时后台重新拉取.
 
@@ -210,7 +210,7 @@ protected updateGcTime(newGcTime: number | undefined): void {
 | status      | `pending` / `success` / `error` | 有没有数据可展示                   |
 | fetchStatus | `idle` / `fetching` / `paused`  | 当前是否在请求 (paused 为离线挂起) |
 
-组合出常见的界面状态: `pending + fetching` 首屏加载; `success + fetching` 有旧数据时的后台刷新; `error + idle` 重试耗尽后的终态. v5 中 `isPending` 取代了 v4 的 `isLoading`, `isFetching` 描述后台刷新, 两者的区分直接对应上表.
+组合出常见的界面状态: `pending + fetching` 首屏加载; `success + fetching` 有旧数据时的后台刷新; `error + idle` 重试耗尽后的终态. 对应到布尔字段: `isPending` 表示还没有数据可展示, `isFetching` 表示当前有在途请求 (含成功后的后台刷新), `isLoading` 是二者的交集 (`isPending && isFetching`, 即首屏加载).
 
 React 绑定层非常薄: `useBaseQuery` 用 `QueryObserver` 订阅核心缓存, 通过 `useSyncExternalStore` 接入 React 18+ 的并发渲染, 并用 `trackResult` 做属性访问追踪以减少不必要的重渲染 (`@tanstack/react-query/src/useBaseQuery.ts:95`、`src/useBaseQuery.ts:138`).
 
@@ -230,13 +230,13 @@ React 绑定层非常薄: `useBaseQuery` 用 `QueryObserver` 订阅核心缓存,
 
 staleTime 为 0 意味着: 默认配置下每次组件挂载、每次窗口重新聚焦 (且数据已过期) 都会触发后台重新拉取. 两个真实项目都显式调大了 staleTime 并关闭了聚焦重拉 (见第二章), 这是生产应用的常规操作.
 
-### v5.104.0 的新变化: `staleTime: 'static'` 与 `queryClient.query`
+### 5.104.0 的关键 API: `staleTime: 'static'` 与 `queryClient.query`
 
-本机安装的 5.104.0 源码中有几处值得注意的演进:
+本机安装的 5.104.0 源码中, 有三处 API 事实需要在使用前明确:
 
-1. staleTime 除数字外还支持字面量 `'static'`, 表示"永不视为过期" (`@tanstack/query-core/src/query.ts:418-424`, 判断走 `resolveQueryValue(observer.options.staleTime, this) === 'static'`).
-2. `ensureQueryData`、`fetchQuery`、`prefetchQuery`、`fetchInfiniteQuery`、`prefetchInfiniteQuery` 均已标记 `@deprecated` (`src/queryClient.ts:196`、`src/queryClient.ts:607`、`src/queryClient.ts:641`、`src/queryClient.ts:700`、`src/queryClient.ts:723`), 取而代之的是新的 `queryClient.query()` 与 `queryClient.infiniteQuery()`. 新方法语义合并: 缓存未过期时直接返回缓存数据, 过期时拉取; 传 `staleTime: 'static'` 等价于旧的 `ensureQueryData`, 吞错误用 `.catch(noop)` 等价于旧的 `prefetchQuery`.
-3. 命令式 `query()` 默认 `retry: false` (`src/queryClient.ts:583-584`), 因为没有组件来承接重试.
+1. staleTime 除数字外还支持字面量 `'static'`, 表示"永不视为过期" (`@tanstack/query-core/src/query.ts:418-424`, 判断走 `resolveQueryValue(observer.options.staleTime, this) === 'static'`; `isStaleByTime` 在 `src/query.ts:479` 对该字面量直接返回 `false`).
+2. 命令式取数入口是 `queryClient.query()` 与 `queryClient.infiniteQuery()` (`src/queryClient.ts` 的这两个方法, JSDoc 说明 `query()` "replaces the deprecated `fetchQuery`", 见 `src/queryClient.ts:551-552`). `ensureQueryData`、`fetchQuery`、`prefetchQuery`、`fetchInfiniteQuery`、`prefetchInfiniteQuery` 均带 `@deprecated` 标记 (`src/queryClient.ts:196`、`src/queryClient.ts:607`、`src/queryClient.ts:641`、`src/queryClient.ts:700`、`src/queryClient.ts:723`), JSDoc 指向 `query()`/`infiniteQuery()`. 新入口语义合并: 缓存未过期时直接返回缓存数据, 过期时拉取; 按 `staleTime: 'static'` 调用等价于 `ensureQueryData`, 吞掉错误用 `.catch(noop)` 等价于 `prefetchQuery`.
+3. 命令式 `query()` 在没有显式传入时默认 `retry: false` (`src/queryClient.ts:584`), 因为没有组件来承接重试.
 
 ### 条件拉取: enabled
 
@@ -339,7 +339,7 @@ export const queryKeys = {
 
 1. 全部用 `as const` 固化字面量类型, 配合 `InferDataFromTag` 等类型工具可以让 `setQueryData(queryKeys.user.current, data)` 获得精确的数据类型推导.
 2. 列表查询把整个 params 对象放进 key, 得益于 `hashKey` 对对象键排序, 同一组过滤条件无论字段书写顺序如何都命中同一缓存.
-3. `byAppPaged` 用游标参数 `lastCreateTime` 区分页, 页与页各自独立缓存, 翻页不覆盖上一页.
+3. `byAppPaged` 的参数类型同时接受页码 (`pageSize`) 与可选游标 (`lastCreateTime`), 整个 params 对象进入 key, 页与页各自独立缓存, 翻页不覆盖上一页.
 
 对比 yukino-chatbot 的 key 组织 (`client/src/hooks/queries/use-sessions.ts`、`use-chat-history.ts`): 采用就近导出的常量与函数 (`SESSIONS_QUERY_KEY = ["sessions"]`、`CHAT_HISTORY_QUERY_KEY(sessionId)`), 没有集中工厂. 这在小型应用里足够, 但一旦失效需求变复杂 (例如"登出时清掉所有会话与历史"), 分散的 key 就容易漏. 两个仓库的对比正好说明了 key 工厂模式的适用阈值.
 
@@ -369,7 +369,7 @@ export function useUpdateApp(): UseMutationResult<
 - `invalidateQueries({ queryKey: queryKeys.app.byId(variables.id) })` 精确失效被修改的那条详情 (按前缀匹配, 命中以该 id 开头的 key).
 - `invalidateQueries({ queryKey: queryKeys.app.all })` 失效整个 app 域, 覆盖我的列表、精选列表、管理列表等所有分页视图——因为更新可能影响任意一个列表的排序或可见性.
 
-新增与删除 (`useAddApp`、`useDeleteApp`、`useDeleteAppByAdmin`) 则只失效 `app.all`, 因为它们必然影响列表而不存在需要单独失效的详情条目.
+新增与删除 (`useAddApp`、`useDeleteApp`、`useDeleteAppByAdmin`) 则只失效 `app.all`, 因为它们必然影响列表而不存在需要单独失效的详情条目; 管理端的 `useUpdateAppByAdmin` 与 `useUpdateApp` 结构一致, 同样先失效 `app.byId(variables.id)` 再失效 `app.all`.
 
 ### 写后直写: setQueryData 同步当前用户
 
@@ -488,7 +488,7 @@ await queryClient.query({
 
 SSR 链路: 服务端用 `dehydrate(client)` 把缓存序列化为纯数据 (`@tanstack/query-core/src/hydration.ts:208`, 单条查询的序列化在 `src/hydration.ts:149`), 随 HTML 下发; 客户端用 `hydrate(client, dehydratedState)` 还原 (`src/hydration.ts:265`), React 层由 `HydrationBoundary` 组件包装 (`@tanstack/react-query/src/HydrationBoundary.tsx`). 被水合的查询进入缓存后与正常查询无异, 该过期的过期、该 gc 的 gc.
 
-本机事实: yukino-chatbot 与 yukino-codegen 都是纯 Vite SPA, 未使用 `dehydrate`/`hydrate`/`HydrationBoundary` (两仓库 `client/src` 全量 grep 无命中). yukino-codegen 的 `client/src/app/app-providers.tsx` 里有一个名字相近的 `AuthHydrationGate`, 但它是自研的鉴权门控组件 (等待当前用户查询稳定后再渲染受保护路由), 与 TanStack Query 的水合机制无关.
+本机事实: yukino-chatbot 与 yukino-codegen 都是纯 Vite SPA, 未使用 `dehydrate`/`hydrate`/`HydrationBoundary` (两仓库 `client/src` 全量 grep 无命中). yukino-codegen 的 `client/src/app/app-providers.tsx` 里有一个名字相近的 `AuthHydrationGate`, 但它是自研的鉴权门控组件: 它在 zustand store (`client/src/shared/auth/user-store.ts`) 的 `status` 为 `idle` 时触发 `hydrate()`, 该函数直接调用 `getCurrentUser()` 而不是走 Query 缓存, 加载完成前渲染 fallback, 与 TanStack Query 的水合机制无关.
 
 ### 缓存持久化
 
@@ -511,7 +511,7 @@ byAppPaged: (
 ) => ["chatHistory", "app", appId, params] as const,
 ```
 
-使用侧 `useAppChatHistoryPage` (`client/src/shared/query/hooks/use-chat-history-queries.ts`) 以当前页参数构造 key, 每页独立缓存.
+使用侧 `useAppChatHistoryPage` (`client/src/shared/query/hooks/use-chat-history-queries.ts`) 以 `AppChatHistoryParams` 即 `{ current, pageSize }` 构造 key, 每页独立缓存, 并以 `enabled: appId !== undefined` 控制拉取时机; 同文件的 `useAdminChatHistoryPage` 则用 `chatHistory.adminList(params)` 把过滤条件整体并入 key.
 
 两种分页形态的取舍:
 
@@ -520,7 +520,7 @@ byAppPaged: (
 | 普通分页 useQuery (codegen 现状) | 页码式导航、管理后台 | 每页独立缓存与失效, 逻辑简单 | 跨页滚动加载需自己拼接           |
 | useInfiniteQuery                 | 滚动信息流、聊天历史 | 多页自动聚合、游标语义内建   | pages 是整体缓存, 局部失效不灵活 |
 
-聊天记录这类"只向后追加、按时间游标翻页"的数据, 是 useInfiniteQuery 的经典场景; 管理端"按页码跳转 + 过滤条件"则是普通分页更合适. codegen 的聊天历史页目前处于两者之间 (游标参数 + 普通 useQuery), 后续若要接"上拉加载更多"交互, 迁移到 useInfiniteQuery 只需改 hooks 层, key 工厂已预留 `byAppPaged`.
+聊天记录这类"只向后追加、按时间游标翻页"的数据, 是 useInfiniteQuery 的经典场景; 管理端"按页码跳转 + 过滤条件"则是普通分页更合适. codegen 的聊天历史页当前是页码参数 + 普通 useQuery, 但 key 工厂 `byAppPaged` 的参数类型里已经预留了可选游标 `lastCreateTime`, 后续若要接"上拉加载更多"交互, 切到 useInfiniteQuery 只需改 hooks 层.
 
 ## 八、与 Jotai 的职责分工 (yukino-chatbot)
 
@@ -565,7 +565,7 @@ const form = useForm({
 
 流程: TanStack Form 负责字段值与校验 -> `useLogin` (useMutation) 负责请求生命周期 -> 成功后通过 Jotai 的 write-only 原子 `setTokenAtom` 把 token 落进客户端状态 (`stores/auth.ts` 中该原子同时维护 localStorage) -> 路由跳转. token 不进入任何 query key; 请求侧由 `fetchClient` (axios 实例) 统一附带, 与缓存层解耦.
 
-流式消息 (`client/src/hooks/queries/use-stream-message.ts`) 则是另一个边界案例: 它用 `useMutation` 只是借用其 pending/error 状态管理, 流内容通过回调 (`onChunk`) 写入 ref 与 Jotai 原子, 完全不进 Query 缓存——因为流式增量是瞬态客户端状态, 既不需要缓存也不需要失效.
+流式消息 (`client/src/hooks/queries/use-stream-message.ts`) 则是另一个边界案例: 它用 `useMutation` 只是借用其 pending/error 状态管理, 流内容通过回调传出——调用侧 (`client/src/pages/ai-chat/index.tsx`) 的 `onChunk` 只写 `streamTextRef` (热路径避免逐 chunk 触发 re-render), 流结束后才把完整内容提交进 Jotai 的会话原子. 整个过程中流式增量都不进 Query 缓存, 因为它是瞬态客户端状态, 既不需要缓存也不需要失效.
 
 ### 分工判据
 
@@ -578,7 +578,7 @@ const form = useForm({
 
 ### TanStack Form 1.33.5
 
-@tanstack/react-form 1.33.5 (核心 @tanstack/form-core 1.33.5) 是框架无关的表单状态库, 特点: 字段级订阅 (字段变化只重渲染该字段的渲染函数)、类型推导到字段路径、验证器以插件形式接入.
+@tanstack/react-form 1.33.5 (核心 @tanstack/form-core 1.33.5) 是框架无关的表单状态库, 特点: 字段级订阅 (字段变化只重渲染该字段的渲染函数)、类型推导到字段路径、验证器可绑定 Standard Schema (源码 `@tanstack/form-core/src/standardSchemaValidator.ts`, zod schema 因此可以直接传给 `validators`).
 
 yukino-chatbot 登录页 (`client/src/pages/login/index.tsx`) 的真实用法, 覆盖三个核心概念:
 
@@ -586,7 +586,7 @@ yukino-chatbot 登录页 (`client/src/pages/login/index.tsx`) 的真实用法, �
 2. 字段级渲染: `form.Field` 以 render props 暴露 `field.state.value`、`field.state.meta.errors`、`field.handleChange`、`field.handleBlur`, 字段之外不重渲染.
 3. 提交桥接: `onSubmit` 里调用 `loginMutation.mutate`, 并用 `loginMutation.isPending` 禁用提交按钮——表单库管值与校验, Query 管请求, 两者在提交点汇合.
 
-yukino-codegen 在 `client/src/pages/user-login/user-login-page.tsx`、`user-register/user-register-page.tsx`、`app-edit/app-edit-form.tsx` 中采用相同模式.
+yukino-codegen 在 `client/src/pages/user-login/user-login-page.tsx`、`user-register/user-register-page.tsx`、`app-edit/app-edit-form.tsx` 三处沿用同一套组合: `useForm` 管字段与校验, 提交时在 `onSubmit` 里调用 `useMutation` 的 hook; 区别只在校验触发器, 这三处用 `validators.onSubmit` 绑定 zod schema, 而 chatbot 登录页用 `validators.onChange`.
 
 ### TanStack Virtual 3.14.13
 
@@ -618,7 +618,7 @@ const virtualizer = useVirtualizer({
 4. 在条件分支里调用 hook, 或用 `enabled` 模拟"卸载". `enabled` 只是暂停拉取, 组件仍持有 observer; 真正按条件换数据应把条件放进 queryKey.
 5. setQueryData 的 key 与查询侧不一致. 手写 key 字面量极易与工厂函数生成的 key 差一个字段, 导致"写了缓存但没生效". 坚持用同一份 key 工厂.
 6. 误以为 gcTime 控制过期. gcTime 只负责无人观察后的删除; 过期由 staleTime 决定. 把 gcTime 调大不会减少请求, 只会多占内存.
-7. 期望 mutation 自动重试. retry 默认值只对 queries 生效 (客户端 3), 两个项目也都显式把 mutations 的 retry 设为 0; 写操作重试可能造成重复提交.
+7. 期望 mutation 跟随 queries 的 retry 次数. `MutationOptions.retry` 的默认值是 0 (`@tanstack/query-core/src/types.ts:1341`), 与 queries 的客户端 3 分开; yukino-codegen 在 `mutations: { retry: 0 }` 里又显式写了一遍, chatbot 则依赖默认值. 写操作重试可能造成重复提交.
 8. 乐观更新忘写 cancelQueries. 在途旧请求的响应会覆盖乐观值, 表现为"界面闪回旧数据".
 9. structuralSharing 与非 JSON 数据冲突. queryFn 返回 Map、Set、含循环引用的对象时, 控制台会出现"Structural sharing requires data to be JSON serializable"警告 (`@tanstack/query-core/src/utils.ts:472`), 此时应关闭 structuralSharing 或改造返回值.
 10. 用 invalidateQueries 不带 queryKey. 无过滤条件时命中缓存中所有查询, 等于全站重拉; 生产代码应始终传明确的 key 前缀.

@@ -5,13 +5,12 @@ description: "结合 yukino-codegen 客户端源码与 @webcontainer/api 1.6.4 �
 
 本文回答四个问题：WebContainer 是什么、怎么工作；WASM 共享内存（SharedArrayBuffer）与跨源隔离是什么关系；浏览器内的并行化是怎么做的；以及为什么一个完整的 Vite dev server 能够在浏览器标签页里跑起来。
 
-文中引用的代码有三处来源，均为真实产物，非示意代码：
+文中引用的代码有两处来源，均为真实产物，非示意代码：
 
-- yukino-codegen 仓库（github.com/hangtiancheng/yukino-codegen, 本机克隆位于 $HOME/github/yukino-codegen）的 client 端源码，这是官方 WebContainer API 的一个完整生产级集成；
-- @webcontainer/api 1.6.4 的 npm 发布产物（dist/index.js 等），即 StackBlitz 官方 SDK 的实际实现（$HOME/github/yukino-codegen/client/node_modules 下的安装版本即为 1.6.4）；
-- yukino-codegen 仓库曾随附一份根目录调研报告 yukino-codegen.md，其中包含对某同类产品自研 "webc" 运行时的线上实测证据（Service Worker 注册表、网络请求清单、控制台日志），用于对照官方方案与自研方案；该文件现已不在仓库中，下文引用的实测数据均来自这份归档报告。
+- yukino-codegen 仓库（github.com/hangtiancheng/yukino-codegen, 本机克隆位于 $HOME/github/yukino-codegen, HEAD 1bdef29）的 client 端源码，这是官方 WebContainer API 的一个完整生产级集成；
+- @webcontainer/api 1.6.4 的 npm 安装产物（$HOME/github/yukino-codegen/client/node_modules/@webcontainer/api 的 dist/index.js 等），即 StackBlitz 官方 SDK 的实际实现。
 
-涉及实现细节但缺乏一手证据的地方，文中会明确标注"官方说法"或"推断"。
+涉及实现细节但缺乏一手证据的地方（主要是官方运行时自身的行为，SDK 只通过 iframe 与之通信），文中会明确标注"官方说法"或"推断"；浏览器平台层面的机制（跨源隔离、Atomics、Service Worker、Emscripten pthreads）按标准与规范陈述。
 
 ## 一、总览：浏览器标签页如何变成一台开发机
 
@@ -41,7 +40,7 @@ WebContainer 是 StackBlitz 推出的浏览器内 Node.js 运行时。官方博�
 容器内进程: npm install → npm run dev → Vite 监听容器内端口
 ```
 
-宿主页与容器分属不同源是刻意的：StackBlitz 的基础设施域（stackblitz.com / \*.webcontainer.io / \*.webcontainer-api.io）自己配好了 COOP/COEP，宿主页只需要通过 MessageChannel 做 RPC；而容器的 HTTP 出口由运行在预览域源上的 Service Worker 承接。第五节会对照一个反例：某产品把这一切塞回同源路径的自研方案。
+宿主页与容器分属不同源是刻意的：StackBlitz 的基础设施域（stackblitz.com / \*.webcontainer.io / \*.webcontainer-api.io）自己配好了 COOP/COEP，宿主页只需要通过 MessageChannel 做 RPC；而容器的 HTTP 出口由运行在预览域源上的 Service Worker 承接。第五节会把这条约束展开：Service Worker 的同源 scope 决定了容器必须拥有自己的源。
 
 与"远程开发容器"（GitHub Codespaces 一类）的本质区别在于算力归属：Codespaces 的 dev server 跑在云主机上，浏览器只是一块屏幕；WebContainer 把编译、依赖安装、dev server 全部放进用户的标签页，服务器只下发静态资源，平台侧零构建成本、零并发压力。代价是后面各节要逐一处理的一系列浏览器沙箱限制。
 
@@ -200,11 +199,11 @@ const url = iframeSettings.url; // https://stackblitz.com/headless?coep=credenti
 iframe.src = url.toString();
 ```
 
-`allow="cross-origin-isolated"` 是 W3C Feature Policy 体系里的标准开关，让官方源上的子框架继承宿主页的隔离状态，容器内部的 Worker 与 WASM 线程才拿得到 SAB。归档实测报告里，同类产品自研方案的预览 iframe 也带同样的属性，且主页面响应头完全一致（COOP same-origin + COEP credentialless）。
+`allow="cross-origin-isolated"` 是 W3C Feature Policy 体系里的标准开关，让官方源上的子框架继承宿主页的隔离状态，容器内部的 Worker 与 WASM 线程才拿得到 SAB。这也是为什么 boot 时 `coep` 选项必须与宿主页响应头一致：iframe 继承的是宿主页的隔离状态，头一旦撤掉，运行时容器里的 WASM 线程就会失去 SAB。
 
 ### 2.4 COEP 的工程代价
 
-COEP 是这套方案最容易被低估的摩擦点：一旦启用，页面里所有跨源子资源（第三方图片、字体、统计脚本）都必须配合 CORS 或 CORP，否则直接加载失败。credentialless 取值是 Chrome 后来给的折中方案（参考 Chrome 官方博客 coep-credentialless-origin-trial），yukino-codegen 与实测产品都选了它而不是更严的 require-corp。给宿主页配 COEP 时，要把第三方资源清单过一遍，这也是 README 特别提醒"自己托管构建产物时必须补上这两个头"的原因。
+COEP 是这套方案最容易被低估的摩擦点：一旦启用，页面里所有跨源子资源（第三方图片、字体、统计脚本）都必须配合 CORS 或 CORP，否则直接加载失败。credentialless 取值是 Chrome 后来给的折中方案（参考 Chrome 官方博客 coep-credentialless-origin-trial），yukino-codegen 选了它而不是更严的 require-corp。给宿主页配 COEP 时，要把第三方资源清单过一遍，这也是 README 特别提醒"自己托管构建产物时必须补上这两个头"的原因。
 
 ## 三、WASM 与共享内存
 
@@ -329,20 +328,11 @@ return new WebContainerProcessImpl(
 
 ### 4.3 运行时内部的并行模型
 
-官方运行时内部的 Worker 拓扑没有公开源码，但可以从公开描述与行为推出框架：每个容器进程（npm、vite、bash）对应一个或多个 Worker 中的 WASM 实例，pthread 池提供线程，Service Worker 在自己的全局作用域里承担网络入口，彼此通过共享内存与消息总线协作。此为推断，官方只说了"virtualized TCP network stack mapped to ServiceWorkers"。
+官方运行时内部的 Worker 拓扑没有公开源码，SDK 只通过一条 MessagePort 与之通信，所以只能从公开描述与 SDK 可观测行为推出框架：每个容器进程（npm、vite、bash）对应一个或多个 Worker 中的 WASM 实例，pthread 池提供线程，Service Worker 在自己的全局作用域里承担网络入口，彼此通过共享内存与消息总线协作。此为推断，官方只说了"virtualized TCP network stack mapped to ServiceWorkers"。
 
-对照组是实测报告里的自研 webc 运行时，它的 Worker 分工是被实测证据（SW 脚本导出的协议符号名、控制台日志）钉死的：
+SDK 侧可观测到的边界有三点：boot 强制单实例（同一个页面只允许一个运行时，`Only a single WebContainer instance can be booted`，dist/index.js:224，内部用 bootPromise 自旋锁串行化 boot）；全部容器操作都是跨 iframe 的方法调用（Comlink over MessagePort），二进制载荷走 transferable 而非拷贝；进程的 stdout/stderr 通过 Comlink.proxy 把回调派到容器侧执行，再进入本地 ReadableStream。三点共同说明：运行时是一个独立执行域，宿主页只持有它的 RPC 代理。
 
-```text
-webc_service_worker   Service Worker: 整站 scope, 拦 /_i/{instanceId}/_p/{port}/** 交给容器
-webc_worker           进程执行 (控制台可见 "run wasm /bin/bash @ blob:...")
-webc_lite_worker      轻量进程
-webc_io_worker        文件系统 IO
-webc_monitor_worker   调度/监控 (对应 Monitor2Main 消息通道)
-+ 5 个 wasm 包: wasm-webc-sys / wasm-bash / wasm-git / wasm-coreutils / wasm-npm-tools
-```
-
-SW 脚本头部的导出符号（isWasmPipe / isJSPipe / SWTopic / SWActions / Worker2MainAsks / Main2FSWorkerAsks ...）勾勒出与 Emscripten pthreads 同构的消息总线：按方向定义 Ask/Tell 消息对，FS 与 Monitor 各占独立通道，进程管道分 WASM 与 JS 两种实现。两套实现殊途同归，说明这类运行时的并行结构由问题本身决定：文件系统一个执行域、进程执行一个执行域、网络一个执行域，中间用共享内存与消息总线缝合。
+平台层面能确定的只有一条结构：文件系统一个执行域、进程执行一个执行域、网络一个执行域，中间用共享内存（SAB + Atomics）与消息通道缝合——这是把 Node 用户态跑进浏览器时问题本身决定的形状，而非某个实现的自由选择。容器进程与文件系统之间的调度细节，只有官方运行时内部可见，本文不做猜测。
 
 ## 五、Service Worker 网络虚拟化
 
@@ -357,58 +347,28 @@ Service Worker 是浏览器在页面之外运行的一段脚本，注册时声�
 
 ### 5.2 官方方案：独立子域
 
-@webcontainer/api 的 server-ready 事件回调签名是 `(port, url)`，url 指向 StackBlitz 托管的预览子域（yukino-codegen 使用的 credentialless 模式下为 \*.local-credentialless.webcontainer-api.io，require-corp 模式下为 \*.webcontainer.io）。预览子域的具体命名来自官方运行时的线上实测与公开资料——本地 SDK 产物中不含这些域名常量，url 由运行时在 boot 后动态下发。结构上是：预览 iframe 挂在官方预览域上，SW 注册并拦截该源的全部请求，URL 到容器端口的映射由该源的子域约定完成。同源 iframe 才能被本源 SW 覆盖，因此容器"必须"拥有自己的源，这也是 WebContainer 对宿主页要求 COI 头、对子域做独立部署的根本原因。
+@webcontainer/api 的 server-ready 事件回调签名是 `(port, url)`（dist/index.d.ts:192 的 `ServerReadyListener`），url 指向 StackBlitz 托管的预览子域（credentialless 模式下为 \*.local-credentialless.webcontainer-api.io，require-corp 模式下为 \*.webcontainer.io，域名为官方文档公开信息）。这些预览域名不在本地 SDK 产物里：dist 中唯一的官方源常量是 internal/constants.js 的 `DEFAULT_EDITOR_ORIGIN = 'https://stackblitz.com'`（运行时 iframe 的 headless 地址，internal/iframe-url.js 在 boot 时追加 coep 与 version 查询参数），预览 url 由运行时事后动态下发。结构上是：预览 iframe 挂在官方预览域上，SW 注册并拦截该源的全部请求，URL 到容器端口的映射由该源的子域约定完成。同源 iframe 才能被本源 SW 覆盖，因此容器"必须"拥有自己的源，这也是 WebContainer 对宿主页要求 COI 头、对子域做独立部署的根本原因。
 
-### 5.3 实测：自研同源方案
+### 5.3 同源 scope 的两条推论
 
-归档实测报告记录了一个把整套运行时塞回同源的实现，URL 形态完全不同：
+SW 只能拦截自己源上的请求，这条约束推出两个形态选择：
 
-```text
-预览 iframe: https://站点域名/_i/<instanceId:7>/_p/3000/
-             sandbox: allow-scripts allow-forms allow-popups allow-modals
-                      allow-storage-access-by-user-activation allow-same-origin
-             allow="cross-origin-isolated"
-```
+- 容器需要一个独立的源。宿主页的源上没法同时承载"产品应用"与"容器虚拟服务器"：SW scope 会互相干扰，而宿主页自身的 URL 又不能随容器端口变化。官方因此把容器出口放到独立子域，按实例/端口映射到不同子域。
+- 如果要塞回宿主站点自己的源（例如内网部署、不愿引入官方预览域），唯一可行形态是把实例与端口编码进路径，由站点根 scope 的 SW 按路径前缀分流：容器请求前缀交给虚拟 FS 应答，站点自身资源与真实 API 放行。代价是 SW 必须自行区分多类请求，且多实例要靠路径里的实例标识隔离（`instanceId` 一类），同源下无法靠域名区分路由。
 
-- SW scope 是整站根路径，因此必须自行区分三类请求（实测规则）：`/example-app/api/**` 是真后端，透传（transferSize 非 0）；`/_i/{instanceId}/_p/{port}/**` 是容器请求，交给虚拟 FS 应答（transferSize 为 0，即没有真实网络传输）；其余是站点自身资源，放行。
-- 端口编码进路径（`_p/3000`）而非子域，是同源方案的必然选择：同源下无法按端口或域名区分路由，只能靠路径。instanceId 隔离多会话，避免多应用互相串扰。
-- SW 的升级策略是"先注销再注册"（保证发版立即换新，不进 waiting 队列）：
+需要额外注意的是路径方案下预览 iframe 的 sandbox 属性：iframe 与宿主同源时，`allow-same-origin` 会与 `allow-scripts` 形成沙箱逃逸组合（脚本可摘掉自己的沙箱）；因此同源承载容器产物时，要么让 iframe 落到独立源/子域，要么在 sandbox 中收紧 `allow-same-origin`。这与承载不受信第三方代码的 iframe 方案（如 MCP Apps 的沙箱模型）遵循的是同一条浏览器规则。
 
-```js
-let regs = await navigator.serviceWorker.getRegistrations();
-for (let r of regs)
-  if (r.active.scriptURL === WebCSystem.getServiceWorkerUrl())
-    await r.unregister();
-let reg = await navigator.serviceWorker.register(
-  WebCSystem.getServiceWorkerUrl(),
-);
-```
-
-最硬的证据是流量形态：预览 iframe 内 36 个资源中，Vite 开发态产物（/@vite/client、/src/_.tsx、node_modules/.vite/deps/_）的 transferSize 全部为 0——`fetch('/_i/<hash>/_p/3000/@vite/client')` 没有产生任何真实网络传输，全部被 SW 用容器内存里的内容直接应答。报告甚至从虚拟 FS 里直接读到了 Vite 依赖预构建的 `_metadata.json`，证明浏览器内存里确实存在一个完整的 Vite 工作目录。
+无论选子域还是路径，预览 iframe 都只能被"它自己源上的" SW 接管，因此 iframe 的 src 必须落在 SW 的 scope 内——这是第五节全部形态差异的同一根源。
 
 ### 5.4 出站网络：npm install 怎么出去
 
-SW 解决的是"入站"（浏览器请求容器）。容器进程也有"出站"需求：npm install 要访问 registry。WASM 环境没有真实 TCP socket，官方的说法是虚拟化 TCP 栈映射到 SW 通道，出站调用最终被桥接到浏览器侧以 fetch 方式发出、经 StackBlitz 的代理服务访问外网；自研 webc 则显式配置了两个代理出口（chat.js 内嵌配置原文）：
-
-```js
-cors_proxy: 'https://webc-net-helper.example-company.com/cors/',
-ws_proxy:   'https://webc-net-helper.example-company.com',
-```
-
-即容器内外网请求改写到代理域转发，绕开浏览器 CORS；这也是自研方案必须有独立代理域名的原因。对 yukino-codegen 的实际影响在后文 6.6 节：npm 在"浏览器网络栈"里跑，包的平台二进制选择与常规服务器不同。
+SW 解决的是"入站"（浏览器请求容器）。容器进程也有"出站"需求：npm install 要访问 registry。WASM 环境没有真实 TCP socket，官方的说法是虚拟化 TCP 栈映射到 SW 通道，出站调用最终被桥接到浏览器侧以 fetch 方式发出、经 StackBlitz 的代理服务访问外网。对 yukino-codegen 的实际影响在后文 6.5 节：npm 在"浏览器网络栈"里跑，包的平台二进制选择与常规服务器不同。
 
 ### 5.5 WebSocket 的例外与 HMR
 
-SW 拦不住 WebSocket，于是出现了实测报告里最能说明架构差异的一条控制台日志（自研 webc）：
+Service Worker 的 fetch 事件只覆盖 HTTP(S) 请求，WebSocket 升级请求不经过它——这是平台规则，任何基于 SW 的网络虚拟化都必须单独处理 WS。官方 WebContainer 的运行时在预览文档内桥接 WebSocket（ws 请求经运行时转交容器），因此 Vite HMR 能正常工作；yukino-codegen 的日常体验（改一行代码预览热更新）依赖的正是这条桥接。该桥接发生在官方运行时内部，本地 SDK 产物中不可见（dist 里没有 websocket 相关代码），此处按官方行为陈述而非代码核实。
 
-```text
-[vite] failed to connect to websocket.
-your current setup:
-  (browser) example-app.example-company.com/_i/<hash:7>/_p/3000/ <--[HTTP]-->  localhost:3000/ (server)
-  (browser) example-app.example-company.com:/ <--[WebSocket (failing)]-->  localhost:3000/ (server)
-```
-
-HTTP 通道被 SW 桥接得天衣无缝，WS 直连 localhost:3000 却无人监听，HMR 推送通道断了；该产品靠"文件改动全量写盘 + 页面重载"兜底。官方 WebContainer 的做法是在预览文档内桥接/补丁 WebSocket（ws 请求经运行时转交容器），因此 Vite HMR 能正常工作。yukino-codegen 的日常体验（改一行代码预览热更新）依赖的正是这条官方桥接。
+对自研运行时而言，这条规则是最容易被低估的缺口：HTTP 通道被 SW 接管后看起来"一切正常"，但 HMR 的 WS 直连容器内端口却无人应答，只能靠文件变更全量写盘 + 页面重载兜底。
 
 ## 六、为什么 Vite 能在浏览器里跑
 
@@ -436,7 +396,7 @@ Vite dev server 是 connect 风格的中间件链跑在 Node http server 上，�
 ```text
 Vite 的 http server 监听容器内端口 (WASM net)
         ↓ server-ready
-宿主页 iframe 指向预览 URL (*.webcontainer.io 或 /_i/{id}/_p/{port}/)
+宿主页 iframe 指向预览 URL (*.local-credentialless.webcontainer-api.io 等官方预览子域)
         ↓ fetch
 Service Worker 拦截 → 容器虚拟 FS + Vite 现场转译 → Response
         ↓
@@ -560,14 +520,14 @@ SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页�
 
 ### 6.5 平台二进制：npm/cli#4828 的由来
 
-6.3 节 install 前删除 package-lock.json 的注释值得单独展开。Vite 生态大量依赖平台原生二进制（esbuild、@rollup/rollup-\*），npm 用 optionalDependencies 按 os/libc 选择。容器里的环境是 linux-x64-musl（WASM Node 用户态的 libc 模拟），而 lockfile 如果是在 macOS 或 glibc 机器上解析的，里面就没有 musl 变体条目；npm 按这份 lockfile 装出来的依赖"看起来装好了"，Vite 启动时却找不到原生绑定直接崩。这是 AI 代码生成产品的独特问题：lockfile 在服务器（agent 的 tmp 目录）上产生、在浏览器（WebContainer）里消费，两个环境的平台三元组不一致。yukino-codegen 的解法是装之前删锁文件让 npm 在容器内现场解析；实测报告中同类产品的解法更激进——vite-plugin-externals 把 react 系依赖指向项目内预置文件、HTML 直接从 CDN 引 UMD 包，让"冷启动"根本不需要装包。两条路线解决的是同一个约束：浏览器容器的安装速度决定产品体验。
+6.3 节 install 前删除 package-lock.json 的注释值得单独展开。Vite 生态大量依赖平台原生二进制（esbuild、@rollup/rollup-\*），npm 用 optionalDependencies 按 os/libc 选择。容器里的环境是 linux-x64-musl（WASM Node 用户态的 libc 模拟），而 lockfile 如果是在 macOS 或 glibc 机器上解析的，里面就没有 musl 变体条目；npm 按这份 lockfile 装出来的依赖"看起来装好了"，Vite 启动时却找不到原生绑定直接崩。这是 AI 代码生成产品的独特问题：lockfile 在服务器（agent 的 tmp 目录）上产生、在浏览器（WebContainer）里消费，两个环境的平台三元组不一致。yukino-codegen 的解法是装之前删锁文件让 npm 在容器内现场解析；更彻底的路线是把依赖外置（预置文件 + CDN），让冷启动根本不需要装包。两条路线解决的是同一个约束：浏览器容器的安装速度决定产品体验。
 
 ## 七、工程实践要点（yukino-codegen 实录）
 
 - 全局单例。@webcontainer/api 的 boot 强制单实例（`Only a single WebContainer instance can be booted`，内部用 bootPromise 自旋锁等前一次 boot 结束），yukino-codegen 用模块级 bootPromise 缓存启动 Promise、失败时清空重试，组件随便重挂载 dev server 不重启。
 - 预览生命周期自成一代数系统。每次 startPreview 递增 generation，五个阶段每过一个 await 都断言"本代仍是最新的且宿主组件仍挂载"，取消、超时、新预览抢占统一走 cancelledOutcome 竞速，进程一律 safelyKill 兜底。这是浏览器单实例容器上多应用切换的正确写法。
 - 日志钳制。容器进程输出在进入预览日志面板前 clamp 到 12000 字符（MAX_LOG_LENGTH），防止长会话内存膨胀。
-- 冷启动三板斧：node_modules 跨次保留、依赖指纹跳过安装、npm install 前删锁文件。对照实测报告，同类产品还有第四板斧（依赖外置 + CDN UMD）与列表页的服务端快照预览（/preview/snapshot），按需取用。
+- 冷启动三板斧：node_modules 跨次保留、依赖指纹跳过安装、npm install 前删锁文件。三点分别对应"重装依赖是分钟级开销"、"锁文件平台三元组不匹配"、"容器内现场解析依赖"这三个约束，是同一目标的三种手段。
 - 服务端照常备份。容器的 FS 是内存文件系统，标签页一关就没了；yukino-codegen 在服务端维护真实项目目录（tmp/code_output/\{appId\}）与 git 快照，容器只是"预览执行环境"，权威数据永远在服务器侧。
 
 ## 八、局限与边界
@@ -576,7 +536,7 @@ SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页�
 - 单标签页单实例、算力受限。所有编译、安装、dev server 都消耗用户标签页的 CPU 与内存，复杂项目（大依赖树、全量打包构建）体验会明显衰减。
 - 网络面窄。没有真实 TCP socket，出站靠浏览器网络栈桥接（官方经其代理服务），WS 靠桥接，任何依赖原始 socket、本机二进制（非 npm 分发的平台包）、长驻守护进程的东西都跑不了。
 - COOP/COEP 的连带成本。宿主页自身也要隔离，第三方资源接入需逐个审查（第二、二.4 节）。
-- 官方 API 的商业边界。运行时托管在 StackBlitz 基础设施（stackblitz.com/headless + \*.webcontainer.io / \*.webcontainer-api.io 预览子域），官方文档对商用规模、水印与授权有单独条款，重度使用需要评估这一点；自研运行时（如实测报告的 webc）本质上是把这笔成本换成了自建 Worker/WASM/代理域的研发成本。
+- 官方 API 的商业边界。运行时托管在 StackBlitz 基础设施（stackblitz.com/headless + \*.webcontainer.io / \*.webcontainer-api.io 预览子域），官方文档对商用规模、水印与授权有单独条款，重度使用需要评估这一点；自研运行时本质上是把这笔成本换成了自建 Worker/WASM/代理域的研发成本。
 
 ## 九、参考资料
 
@@ -588,4 +548,4 @@ SDK 提供的 `setPreviewScript` 会把一段脚本注入未来所有预览页�
 - MDN：Cross-Origin-Embedder-Policy（developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cross-Origin-Embedder-Policy）
 - Emscripten 文档：Pthreads support（emscripten.org/docs/porting/pthreads.html）
 - StackBlitz 博客：Cross-Browser support with Cross-Origin isolation（blog.stackblitz.com/posts/cross-browser-with-coop-coep/）
-- 本机源码：$HOME/github/yukino-codegen 仓库 client/src（shared/webcontainer/boot.ts、vite.config.ts、pages/app-chat/workspace/webcontainer-runtime.ts、pages/app-chat/workspace/webcontainer-fs.ts、pages/app-chat/workspace/use-workspace-controller.ts、pages/app-chat/use-visual-editor.ts）；$HOME/github/yukino-codegen/client/node_modules/@webcontainer/api 1.6.4 dist（index.js、entities.d.ts、preview-message-types.d.ts、internal/iframe-url.js、internal/constants.js）；曾存放于 yukino-codegen 仓库根目录的调研报告 yukino-codegen.md（webc 运行时实测证据，已从仓库移除，第三、四、五节转引其中数据）
+- 本机源码：$HOME/github/yukino-codegen 仓库 client/src（shared/webcontainer/boot.ts、vite.config.ts、pages/app-chat/workspace/webcontainer-runtime.ts、pages/app-chat/workspace/webcontainer-fs.ts、pages/app-chat/workspace/use-workspace-controller.ts、pages/app-chat/use-visual-editor.ts）；$HOME/github/yukino-codegen/client/node_modules/@webcontainer/api 1.6.4 dist（index.js、index.d.ts、entities.d.ts、preview-message-types.d.ts、internal/iframe-url.js、internal/constants.js）

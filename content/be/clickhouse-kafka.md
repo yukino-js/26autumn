@@ -172,7 +172,7 @@ ZooKeeper 的角色:
 - 不存储数据本身, 只存元数据和复制日志
 - 提供分布式协调: leader 选举、part 分配、DDL 同步
 - ZK 不可用时: 读不受影响 (本地有完整数据), 但副本表的 INSERT 与 DDL/ALTER 都会失败 (写入依赖 ZK 中的 replication log, 常见表现为表进入只读模式)
-- ClickHouse Keeper 于 21.3 实验性引入、22.3+ 生产可用, 用 Raft 协议替代 ZK, 去掉 Java 依赖
+- ClickHouse Keeper 用 Raft 协议实现与 ZooKeeper 等价的协调能力, 去掉 Java 依赖, 是当前推荐的部署形态 (原 ZooKeeper 配置下两者可互换)
 
 副本 vs 分片:
 
@@ -303,7 +303,7 @@ ClickHouse 的 JOIN 实现:
 
 1. Hash JOIN (默认): 将右表构建为内存中的哈希表, 左表逐行探测. 右表必须能放进内存, 否则 OOM
 2. Partial Merge JOIN: 右表太大时, 分块加载右表, 排序后与左表做归并. 速度慢但不 OOM
-3. Grace Hash JOIN: 右表按哈希分桶写磁盘, 逐桶加载构建哈希表. 2022 年的 22.x 版本引入 (`join_algorithm = 'grace_hash'`)
+3. Grace Hash JOIN: 右表按哈希分桶写磁盘, 逐桶加载构建哈希表, 适合右表大到无法一次放进内存的场景 (`join_algorithm = 'grace_hash'`)
 4. Distributed JOIN: 分布式表 JOIN 时, 数据需要在节点间 shuffle, 网络开销大
 
 性能陷阱与优化:
@@ -335,20 +335,20 @@ ALTER TABLE events DELETE WHERE user_id = 12345;
 1. ReplacingMergeTree: 插入新版本行, 合并时自动去重, 查询用 FINAL 或 argMax
 2. CollapsingMergeTree: 插入 -1 行抵消旧行, +1 行写入新值
 3. 分区级操作: `ALTER TABLE DROP PARTITION` 删除整个分区 (瞬间完成)
-4. 轻量删除 (22.8 实验性引入, 23.3 起 DELETE FROM 语法正式可用): `DELETE FROM events WHERE ...` (注意不是 ALTER TABLE DELETE), 只标记行删除, 不重写 part, 查询时过滤; 合并时物理清除. 比 mutation 快很多, 但标记期间仍占磁盘
+4. 轻量删除: `DELETE FROM events WHERE ...` (注意不是 `ALTER TABLE DELETE`), 只把命中的行标记为删除, 不重写 part, 查询时过滤掉; 合并时物理清除. 比 mutation 快很多, 但标记行在物理清除前仍占磁盘
 
 ### ClickHouse 与 MySQL 在 OLAP 场景下的性能差异根源是什么?
 
 同样一条 `SELECT count(*) FROM orders WHERE status = 'paid' GROUP BY region` (1 亿行, 20 列):
 
-| 环节     | MySQL (InnoDB)                                  | ClickHouse                                                     |
-| -------- | ----------------------------------------------- | -------------------------------------------------------------- |
-| I/O      | 读所有 20 列 (行存, 即使只需 3 列)              | 只读 status + region 两列                                      |
-| 压缩     | 页级压缩, 压缩率约 2x                           | 列级 LZ4/ZSTD, 压缩率 5~10x                                    |
-| 执行模型 | 逐行 Volcano, 每行一次虚函数调用                | 向量化, 按 block (max_block_size 默认 65536 行) 批量 SIMD 处理 |
-| 并行度   | 单线程执行 (per query, 即使 8.0 也以单线程为主) | 多核并行, 每个 part 一个线程                                   |
-| 索引     | B+ 树定位行, 回表读数据                         | 稀疏索引定位 granule, 顺序扫描                                 |
-| 聚合     | 逐行累加                                        | 列数据连续, cache 友好, SIMD 加速                              |
+| 环节     | MySQL (InnoDB)                                                     | ClickHouse                                                     |
+| -------- | ------------------------------------------------------------------ | -------------------------------------------------------------- |
+| I/O      | 读所有 20 列 (行存, 即使只需 3 列)                                 | 只读 status + region 两列                                      |
+| 压缩     | 页级压缩, 压缩率约 2x                                              | 列级 LZ4/ZSTD, 压缩率 5~10x                                    |
+| 执行模型 | 逐行 Volcano, 每行一次虚函数调用                                   | 向量化, 按 block (max_block_size 默认 65536 行) 批量 SIMD 处理 |
+| 并行度   | 通用查询单线程执行 (仅少数场景如并行 DDL、聚簇索引 count 可多线程) | 多核并行, 每个 part 一个线程                                   |
+| 索引     | B+ 树定位行, 回表读数据                                            | 稀疏索引定位 granule, 顺序扫描                                 |
+| 聚合     | 逐行累加                                                           | 列数据连续, cache 友好, SIMD 加速                              |
 
 综合效果: 典型 OLAP 聚合查询 ClickHouse 比 MySQL 快 100~1000 倍.
 
@@ -379,7 +379,7 @@ ALTER TABLE events DELETE WHERE user_id = 12345;
                               ^                    |
                               │                    v
                          Controller           Consumer Group
-                        (KRaft/ZK)           (C0, C1, C2)
+                         (KRaft)              (C0, C1, C2)
 ```
 
 核心组件:
@@ -388,7 +388,7 @@ ALTER TABLE events DELETE WHERE user_id = 12345;
 - Topic: 逻辑上的消息分类, 一个 topic 可以有多个 partition
 - Partition: topic 的物理分片, 是并行度和顺序性的基本单位; 每个 partition 是一个只追加的有序日志
 - Leader / Follower: 每个 partition 有一个 leader 处理所有读写, 多个 follower 同步数据
-- Controller: 集群中的一个 broker 担任, 负责 partition leader 选举、broker 上下线感知
+- Controller: 集群中的一个节点担任 (KRaft 角色), 负责 partition leader 选举、broker 上下线感知
 - Consumer Group: 一组消费者共同消费一个 topic, 每个 partition 只被组内一个消费者消费
 - Offset: 每条消息在 partition 内的唯一递增编号, 消费者通过 offset 记录消费进度
 
@@ -427,7 +427,7 @@ ISR (In-Sync Replicas): 与 leader 保持同步的副本集合.
 同步标准:
 
 - LEO (Log End Offset): 该副本下一条将要写入的 offset (即已写入的最大 offset + 1)
-- Kafka 2.5 起判定依据是时间而非落后条数: follower 在最近 `replica.lag.time.max.ms` (默认 30s) 内向 leader 拉取并追平到 leader 的 LEO, 就认为同步; 超过该时间窗口没追上则被踢出 ISR (2.5 之前只看"最近一次 fetch 请求的时间", 更早的 0.9 之前还有按落后消息条数判定的 replica.lag.max.messages, 已移除)
+- Kafka 对副本是否同步的判定依据是时间而非落后条数: follower 在最近 `replica.lag.time.max.ms` (默认 30s) 内向 leader 拉取并追平到 leader 的 LEO, 就认为同步; 超过该时间窗口没追上则被踢出 ISR
 
 HW (High Watermark): ISR 中所有副本的最小 LEO, 消费者只能读到 HW 之前的消息 (保证读到的数据不会因 leader 切换而丢失).
 
@@ -439,7 +439,7 @@ Follower2: [msg0, msg1]                    LEO=2  (在 ISR 中)
 消费者只能读到 msg0, msg1
 ```
 
-Leader 选举流程 (KRaft 模式, 2.8+):
+Leader 选举流程 (KRaft 模式):
 
 1. Controller 检测到某 partition 的 leader broker 下线 (心跳超时)
 2. 从该 partition 的 ISR 列表中选第一个存活副本作为新 leader
@@ -453,9 +453,9 @@ Leader 选举流程 (KRaft 模式, 2.8+):
 发送流程:
 
 1. 序列化: key 和 value 经过 Serializer 转为字节数组
-2. 分区路由: 指定了 partition 则直接发; 指定了 key 则 `hash(key) % partition_count`; 都没有则粘性分区 (Sticky Partitioner, 2.4+): 攒满一个 batch 后换下一个 partition, 兼顾负载均衡和批量效率
+2. 分区路由: 指定了 partition 则直接发; 指定了 key 则按 key 的哈希 (murmur2) 对 partition 数取模; 都没有则粘性分区: 消息先集中写入随机选中的 partition, 攒满一个 batch 后换下一个, 兼顾负载均衡和批量效率
 3. 攒批: 消息进入 RecordAccumulator, 按 partition 分组, 每个 partition 维护一个或多个 ProducerBatch
-4. 触发发送: batch 大小达到 `batch.size` (默认 16KB) 或等待时间达到 `linger.ms` (Kafka 3.0 起默认 5ms, 3.0 之前为 0; 可按吞吐需要设 5~100ms) 时, Sender 线程取出 batch
+4. 触发发送: batch 大小达到 `batch.size` (默认 16KB) 或等待时间达到 `linger.ms` (默认 5ms, 可按吞吐需要上调到 5~100ms) 时, Sender 线程取出 batch
 5. 压缩: 按 `compression.type` (lz4/zstd/snappy) 压缩整个 batch
 6. 网络发送: Sender 线程将 batch 通过 NIO 发送到对应 partition 的 leader broker
 7. 回调/重试: 收到 broker 响应后执行 Callback; 可重试的错误 (如 NOT_LEADER) 自动重试 `retries` 次
@@ -524,12 +524,12 @@ Eager 协议的问题:
 
 - Stop-the-world: Rebalance 期间所有消费者停止消费, 等待重新分配
 - 重复消费: 消费者在 Rebalance 前未提交的 offset 会被重新分配给其他消费者
-- 频繁 Rebalance: 0.10.1 起心跳由后台线程独立发送, 业务处理慢并不会导致 `session.timeout.ms` (默认 45s, Kafka 3.0 起由 10s 上调) 超时, 它只在进程挂起/断网时生效; 处理慢真正触发的是超过 `max.poll.interval.ms` (默认 5min) 没有再次调用 poll, 消费者主动离组引发 Rebalance, 形成恶性循环
+- 频繁 Rebalance: 心跳由后台线程独立发送, 业务处理慢并不会导致 `session.timeout.ms` (默认 45s) 超时, 它只在进程挂起/断网时生效; 处理慢真正触发的是超过 `max.poll.interval.ms` (默认 5min) 没有再次调用 poll, 消费者主动离组引发 Rebalance, 形成恶性循环
 
 优化:
 
-1. Cooperative Rebalance (增量式, 2.4+): 只迁移需要变动的 partition, 不涉及的 partition 继续消费, 大幅减少停顿
-2. Static Membership (2.3+): 消费者设置 `group.instance.id`, 短暂离线 (如 GC、重启) 不触发 Rebalance, 在 `session.timeout.ms` 内重连则恢复原分配
+1. Cooperative Rebalance (增量式): 只迁移需要变动的 partition, 不涉及的 partition 继续消费, 大幅减少停顿; 通过 `partition.assignment.strategy` 指定 CooperativeStickyAssignor 启用
+2. Static Membership: 消费者设置 `group.instance.id`, 短暂离线 (如 GC、重启) 不触发 Rebalance, 在 `session.timeout.ms` 内重连则恢复原分配
 3. 调参: 增大 `session.timeout.ms` (如 45s)、增大 `max.poll.interval.ms` (如 5min)、减小 `max.poll.records` 避免处理超时
 4. 手动提交 offset: 处理完再提交, 避免自动提交导致的重复消费
 
@@ -625,7 +625,7 @@ Kafka 使用 sendfile 系统调用:
 | 消息过滤   | 不支持 (需消费端过滤) | Tag / SQL92 过滤             | Routing Key / Header 匹配 |
 | 死信队列   | 不原生支持            | 支持                         | 支持                      |
 | 协议       | 自定义二进制协议      | 自定义协议                   | AMQP / MQTT / STOMP       |
-| 运维复杂度 | 中 (依赖 ZK/KRaft)    | 中 (NameServer 轻量)         | 低 (Erlang 单节点)        |
+| 运维复杂度 | 中 (KRaft 元数据管理) | 中 (NameServer 轻量)         | 低 (Erlang 单节点)        |
 
 选型建议:
 
@@ -633,27 +633,21 @@ Kafka 使用 sendfile 系统调用:
 - 电商交易、金融支付、需要延迟消息和事务回查: RocketMQ
 - 中小规模、复杂路由、多协议接入: RabbitMQ
 
-### Kafka 的 Controller 是怎么选举的? KRaft 模式与 ZooKeeper 模式的区别?
+### Kafka 的 Controller 是怎么选举的? KRaft 元数据管理有哪些优势?
 
-ZooKeeper 模式 (旧):
+Kafka 用 KRaft 管理集群元数据与 Controller, 不需要外部协调服务:
 
-- 所有 broker 启动时在 ZK 的 `/controller` 节点创建临时节点, 先创建成功的成为 Controller
-- Controller 宕机后, ZK 的 Watch 通知其他 broker, 它们竞争创建临时节点, 新 Controller 产生
-- 元数据 (topic、partition、ISR) 存在 ZK 中, Controller 负责变更并同步
-
-KRaft 模式 (2.8+, 3.3 生产就绪):
-
-- 去掉 ZooKeeper 依赖, 用 Raft 共识协议管理元数据
-- 集群中部分 broker 配置为 Controller 角色 (`process.roles=controller`), 组成 Raft 组
-- 元数据存在内部 topic `__cluster_metadata` 中, 通过 Raft 日志复制到多数派 Controller
-- Leader Controller 处理元数据变更, Follower Controller 同步日志
+- 部分节点配置为 Controller 角色 (`process.roles=controller`), 组成一个 Raft 组; 其余节点为 broker 角色 (`process.roles=broker`), 也可以配置为 broker+controller 混合角色
+- Controller 组内通过 Raft 选举: 拿到多数派选票的节点成为 active controller, 其余为 follower; 元数据变更以日志形式复制到多数派
+- 元数据存放在内部日志 `__cluster_metadata` 中, active controller 处理元数据变更, follower controller 同步日志
+- 某 partition 的 leader broker 下线时, active controller 感知心跳超时后从该 partition 的 ISR 中选出新 leader 并广播给所有 broker
 
 KRaft 的优势:
 
-1. 去掉 ZK 依赖: 运维简化, 不需要额外维护 ZK 集群
-2. 元数据管理更高效: 元数据作为 Kafka 内部日志, 利用 Kafka 自身的复制机制
-3. 启动更快: 不需要与 ZK 交互, 元数据从本地日志恢复
-4. 支持更大规模: ZK 的 Watch 机制在大量 partition 时性能下降, KRaft 无此问题
+1. 元数据管理只需一套系统: 不必额外维护 ZooKeeper 集群
+2. 元数据作为 Kafka 内部日志, 复用 Kafka 自身的复制与持久化机制
+3. 启动更快: 元数据从本地日志恢复, 不需要与外部协调服务交互
+4. 支持更大规模: 不受 ZooKeeper Watch 机制在大量 partition 下性能下降的制约
 5. 元数据变更可追溯: 所有变更是 Raft 日志, 天然有审计能力
 
 ### Kafka 消费者的 Offset 管理策略? 自动提交和手动提交的区别?
@@ -883,7 +877,7 @@ ENGINE = Buffer(default, events, 16, 10, 100, 10000, 100000, 1000000, 10000000);
 -- 16 个 buffer, 最短 10s / 最长 100s 刷一次, 最少 10000 行 / 最多 100000 行刷一次
 ```
 
-3. 异步 INSERT (21.11+): `SET async_insert = 1`, ClickHouse 服务端攒批, 多个客户端的小 INSERT 合并为一次写入
+3. 异步 INSERT: `SET async_insert = 1`, ClickHouse 服务端攒批, 多个客户端的小 INSERT 合并为一次写入
 4. 分区设计: 分区键不要太细 (按天或按月), 避免同一批数据写入太多分区
 5. 写入时排序: 数据按 ORDER BY 键预排序后再写入, 减少合并时的排序开销
 6. 避免写入时更新: 用 ReplacingMergeTree 追加新版本, 不要 ALTER UPDATE
@@ -925,7 +919,7 @@ ALTER TABLE events ADD PROJECTION proj_by_type (
 
 3. 合理设置 `max_threads`: 默认用所有 CPU 核, 高并发时每个查询用少量核 (如 4), 避免资源争抢
 4. 读写分离: 写入走一个副本, 查询走其他副本
-5. 缓存: 对重复查询开启 query cache (23.1+): `SET use_query_cache = true`
+5. 缓存: 对重复查询开启 query cache: `SET use_query_cache = true`
 
 常见坑:
 
@@ -1029,7 +1023,7 @@ kafka-consumer-groups.sh --bootstrap-server broker:9092 \
 
 - 扩容期间 Distributed 表的读请求: 新分片无数据时返回空, 不影响正确性 (只是新分片暂时没贡献数据)
 - 扩容期间写入: 修改 Distributed 配置后新数据自动写入新分片, 旧分片继续接收数据
-- 数据迁移: 在低峰期执行, 限制 `INSERT SELECT` 的并发 (`max_threads`) 和速率 (`max_insert_bytes_per_second`)
+- 数据迁移: 在低峰期执行, 限制 `INSERT SELECT` 的并发与资源 (`max_insert_threads`、`max_execution_time`、`max_memory_usage`)
 - 副本保障: 迁移期间如果某分片压力大, 查询可以路由到该分片的副本
 
 缩容 (更复杂):

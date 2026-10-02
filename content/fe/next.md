@@ -1,6 +1,6 @@
 ---
 title: "React + Next.js 技术笔记"
-description: "React 与 Next.js 渲染模型笔记: CSR/SSR/SSG/ISR 对比、水合机制、请求瀑布流消除、Bundle 体积优化、Server Components 与客户端数据获取、重渲染优化"
+description: "React 与 Next.js 渲染模型笔记: CSR/SSR/SSG/ISR 对比、水合机制、请求瀑布流消除、Bundle 体积优化、Server Components 与客户端数据获取、缓存策略、重渲染优化, 以及 Next.js 16 关键变化"
 ---
 
 ## 一、React 核心概念与渲染机制
@@ -13,7 +13,7 @@ Render 阶段 (协调/Reconciliation) :
 
 1. 触发更新 (setState、props 变化、Context 变化、父组件重渲染)
 2. React 调用组件函数, 生成新的 React Element 树 (Virtual DOM)
-3. 将新树与旧树进行 Diff (Fiber 协调) , 计算出最小变更集 (React 18 起通过 Fiber 节点的 flags/subtreeFlags 标记副作用, 不再维护单独的 Effect List 链表)
+3. 将新树与旧树进行 Diff (Fiber 协调) , 计算出最小变更集 (Fiber 通过节点的 flags/subtreeFlags 标记副作用)
 
 Commit 阶段 (提交) :
 
@@ -44,13 +44,13 @@ const element = {
 };
 ```
 
-延伸: React 18 引入的 Automatic Batching 使得即使在 setTimeout、Promise 回调中的多次 setState 也会自动合并为一次渲染, 而 React 17 及之前只在 React 事件处理器中批处理.
+延伸: Automatic Batching 使得即使在 setTimeout、Promise 回调中的多次 setState 也会自动合并为一次渲染.
 
 ---
 
 ### React Fiber 架构解决了什么问题?
 
-React 15 的 Stack Reconciler 是递归同步的: 一旦开始 Diff, 就必须一次性遍历完整棵树, 无法中断. 对于大型组件树, 这会导致主线程长时间阻塞, 产生掉帧 (jank) .
+朴素的协调实现是递归同步的: 一旦开始 Diff, 就必须一次性遍历完整棵树, 无法中断. 对于大型组件树, 这会导致主线程长时间阻塞, 产生掉帧 (jank) .
 
 Fiber 的核心思想: 将渲染工作拆分为可中断的小单元 (Unit of Work) , 每个 Fiber 节点就是一个工作单元.
 
@@ -98,7 +98,7 @@ Fiber 带来的能力:
 
 ### React 的并发特性 (Concurrent Features) 有哪些?
 
-React 18+ 的并发特性允许应用同时准备多个版本的 UI, 根据优先级决定先展示哪个.
+并发特性允许应用同时准备多个版本的 UI, 根据优先级决定先展示哪个.
 
 核心 API:
 
@@ -189,14 +189,13 @@ RSC (React Server Components) :
 
 核心区别对比:
 
-| 维度      | SSR                                  | RSC                             |
-| --------- | ------------------------------------ | ------------------------------- |
-| 输出      | HTML 字符串                          | RSC Payload (序列化的 React 树) |
-| JS Bundle | 包含所有组件代码                     | 只包含 Client Component 代码    |
-| 水合      | 需要完整水合                         | Server Component 无需水合       |
-| 数据获取  | 需要额外机制 (getServerSideProps 等) | 组件内直接 async/await          |
-| 交互性    | 水合后完全交互                       | Server Component 无状态、无交互 |
-| 运行时机  | 每次请求                             | 每次请求 (或构建时)             |
+| 维度      | SSR              | RSC                             |
+| --------- | ---------------- | ------------------------------- |
+| 输出      | HTML 字符串      | RSC Payload (序列化的 React 树) |
+| JS Bundle | 包含所有组件代码 | 只包含 Client Component 代码    |
+| 水合      | 需要完整水合     | Server Component 无需水合       |
+| 交互性    | 水合后完全交互   | Server Component 无状态、无交互 |
+| 运行时机  | 每次请求         | 每次请求 (或构建时)             |
 
 Next.js App Router 中的组合:
 
@@ -305,29 +304,30 @@ SSR 的代价:
 Next.js App Router 中的配置:
 
 ```tsx
-// SSG (默认)
+// SSG (默认): 路由不含请求期 API 时在构建时预渲染
 export default async function Page() {
-  const data = await fetch("https://api.example.com/posts", {
-    cache: "force-cache",
-  });
+  const data = await fetch("https://api.example.com/posts");
   return <PostList posts={data} />;
+}
+
+// 显式启用 Data Cache: 跨请求复用该 fetch 结果
+async function getPosts() {
+  return fetch("https://api.example.com/posts", { cache: "force-cache" });
 }
 
 // ISR: 每 60 秒重验证
 export const revalidate = 60;
 
-// SSR: 每次请求都重新获取
+// SSR: 每次请求都重新渲染
 export const dynamic = "force-dynamic";
 
 // 按需重验证
 import { revalidatePath, revalidateTag } from "next/cache";
 revalidatePath("/blog");
-// Next.js 16: revalidateTag 需要第二个参数指定 cacheLife profile,
-// 单参数写法已废弃并会触发 TypeScript 报错
 revalidateTag("posts", "max");
 ```
 
-> Next.js 16 的缓存失效 API 有调整: `revalidateTag(tag, profile)` 标记为过期 (stale-while-revalidate, 用户先看到旧数据再后台刷新) ; 若需要"写后立即读到最新值" (read-your-writes) , 改用 Server Action 专用的 `updateTag(tag)` (同请求内立即过期并刷新) ; 客户端路由刷新则用 `refresh()`。`cacheLife`、`cacheTag` 也已去掉 `unstable_` 前缀转正。
+> Next.js 16 的缓存失效 API: `revalidateTag(tag, profile)` 的第二个参数用于指定 `cacheLife` profile (或 `{ expire }` 对象) , 语义为 stale-while-revalidate, 用户先看到旧数据再由后台刷新; 若需要"写后立即读到最新值" (read-your-writes) , 在 Server Action 中使用 `updateTag(tag)` (同请求内立即过期并刷新) ; 客户端路由缓存则用 `refresh()`。`cacheLife` 与 `cacheTag` 均为稳定 API, 由 `next/cache` 导出。
 
 ---
 
@@ -433,13 +433,13 @@ SSR 输出的 HTML 是"死"的——它只是字符串, 没有事件绑定、没
 水合的代价:
 
 - 需要下载完整的 Client Component JS Bundle
-- 水合过程本身消耗 CPU (对大型页面可能 100-500ms)
+- 水合过程本身消耗 CPU, 页面越大越明显
 - 水合完成前页面不可交互 ("恐怖谷": 看得到但点不动)
 - 要求服务端和客户端渲染输出一致
 
-React 18 的改进——Selective Hydration:
+Selective Hydration (选择性水合) :
 
-React 18 支持部分水合:
+React 支持部分水合:
 
 - 配合 Suspense, 可以只水合用户正在交互的部分
 - 如果用户点击了尚未水合的区域, React 会优先水合该区域
@@ -598,7 +598,7 @@ export default function Page() {
 
 Selective Hydration (选择性水合) :
 
-React 18 的特性, 配合 Streaming SSR 使用:
+选择性水合配合 Streaming SSR 使用:
 
 1. 不需要等所有 JS 下载完才开始水合
 2. 先水合已到达的、优先级高的部分
@@ -894,7 +894,7 @@ export { Dialog } from "./Dialog";
 当你写 `import { Check } from 'lucide-react'` 时:
 
 1. 打包器需要解析 `lucide-react` 的入口文件
-2. 入口文件 re-export 了上千个图标模块 (Vercel 优化博客实测为 1583 个模块; 本机 `/Users/hangtiancheng/github/26autumn/node_modules/lucide-react` (版本 1.49.0) 的 `dist/esm/dynamicIconImports.mjs` 导出映射实测为 2121 个图标组件, 数量随版本持续增长, 且 package.json 标记 `"sideEffects": false` 以便摇树)
+2. 入口文件 re-export 了上千个图标模块 (Vercel 优化博客实测为 1583 个模块; 本机安装的 `lucide-react@1.49.0` 在 `/Users/hangtiancheng/github/26autumn/node_modules/lucide-react/dist/esm/icons` 下实测有 2121 个图标组件模块, 数量随版本持续增长, 且 package.json 标记 `"sideEffects": false` 以便摇树)
 3. 即使你只用 1 个图标, 开发模式下也需要加载所有模块
 4. 运行时开销: 200-800ms 的冷启动时间
 
@@ -907,7 +907,7 @@ export { Dialog } from "./Dialog";
 解决方案:
 
 ```tsx
-// Next.js: optimizePackageImports 目前仍位于 experimental 配置下 (Next 16.3 源码
+// Next.js: optimizePackageImports 仍位于 experimental 配置下 (本机 next@16.3.7 的
 // dist/server/config-shared.d.ts 中 ExperimentalConfig 仍包含该字段)
 // lucide-react、@mui/material、react-icons、@headlessui/react 等常用库默认已启用,
 // 只需为默认列表之外的库在 next.config.js 的 experimental 下追加配置
@@ -921,9 +921,9 @@ module.exports = {
 import Button from "@mui/material/Button";
 ```
 
-受影响的常见库: `lucide-react`、`@mui/material`、`react-icons`、`@headlessui/react`、`@radix-ui/react-*`、`lodash`、`date-fns`、`rxjs`
+Next.js 默认优化的库 (节选) : `lucide-react`、`@mui/material`、`@mui/icons-material`、`react-icons/*`、`@headlessui/react`、`@heroicons/react/*`、`antd`、`@ant-design/icons`、`@tabler/icons-react`、`date-fns`、`lodash-es`、`ramda`、`rxjs`、`recharts`、`@tremor/react` 等 (完整名单见 Next.js 内置的 optimizePackageImports 文档) . 注意 `@radix-ui/react-*` 与 `lodash` (非 `lodash-es`) 不在默认名单内, 需在 `experimental.optimizePackageImports` 中手动追加.
 
-效果: 15-70% 更快的开发启动、28% 更快的构建、40% 更快的冷启动.
+效果: Vercel 公布的数据为 15-70% 更快的开发启动、28% 更快的构建、40% 更快的冷启动.
 
 ---
 
@@ -1240,19 +1240,22 @@ export async function updateProfile(data: unknown) {
 
 ```tsx
 import { after } from "next/server";
+import { headers } from "next/headers";
 
 export async function POST(request: Request) {
+  // 请求数据需在 after 回调之外读取, after 内部再调用 headers()/cookies() 会报错
+  const userAgent = (await headers()).get("user-agent") ?? "unknown";
   await updateDatabase(request);
 
   after(async () => {
-    await logUserAction({ userAgent: (await headers()).get("user-agent") });
+    await logUserAction({ userAgent });
   });
 
   return Response.json({ status: "success" });
 }
 ```
 
-适用: 分析上报、审计日志、通知发送、缓存失效. 即使响应失败或重定向, `after()` 仍会执行.
+适用: 分析上报、审计日志、通知发送、缓存失效. 即使响应失败、抛错, 或调用了 `notFound`/`redirect`, `after()` 仍会执行.
 
 ---
 
@@ -1425,7 +1428,7 @@ const removeItem = useCallback((id: string) => {
 }
 ```
 
-浏览器跳过视口外元素的布局和绘制. 1000 条消息只渲染可见的约 10 条, 初始渲染速度提升约 10 倍. 相比虚拟滚动, 实现更简单、DOM 完整 (可访问性好) .
+浏览器跳过视口外元素的布局和绘制. 1000 条消息只渲染可见的约 10 条, 大幅减少初始渲染与布局工作量. 相比虚拟滚动, 实现更简单、DOM 完整 (可访问性好) .
 
 ---
 
@@ -1584,7 +1587,7 @@ requestIdleCallback(processChunk);
 
 ### useEffectEvent 解决了什么问题?
 
-在 Effect 中需要调用使用最新 props/state 的回调, 但不想让它成为 Effect 依赖. `useEffectEvent` 在 React 19.2 转正 (此前为实验性) .
+在 Effect 中需要调用使用最新 props/state 的回调, 但不想让它成为 Effect 依赖. `useEffectEvent` 是 React 19.2 的稳定 API.
 
 ```tsx
 const onSearchEvent = useEffectEvent(onSearch);
@@ -1615,7 +1618,7 @@ hidden 时: DOM 保留、Effect cleanup; visible 时: 恢复显示、Effect 重�
 
 ### React Compiler 对性能优化的影响?
 
-React Compiler 自动进行组件级记忆化 (等效于自动 memo/useMemo/useCallback) . 它已于 2025 年 10 月发布 1.0, 以独立 Babel 插件启用, 兼容 React 17+, 需手动接入 (Next.js 可通过 next.config 的 reactCompiler 选项开启) .
+React Compiler 自动进行组件级记忆化 (等效于自动 memo/useMemo/useCallback) . 它已于 2025 年 10 月发布 1.0, 以 Babel 插件 `babel-plugin-react-compiler` 启用, 编译期规则诊断由 `eslint-plugin-react-hooks` 的 `recommended` 预设提供, 兼容 React 17+, 需手动接入 (Next.js 可通过 next.config 的 `reactCompiler` 选项开启) .
 
 启用后无需手动: useMemo、useCallback、React.memo、静态 JSX 提升.
 
@@ -1627,16 +1630,16 @@ Compiler 解决"组件级记忆化", 不解决"架构级性能".
 
 ### Next.js 中的缓存策略全景图?
 
-| 层级                | 机制           | 作用域   | 失效方式           |
-| ------------------- | -------------- | -------- | ------------------ |
-| Request Memoization | fetch 自动去重 | 单次请求 | 请求结束释放       |
-| Data Cache          | fetch 持久缓存 | 跨请求   | revalidatePath/Tag |
-| Full Route Cache    | 整页 HTML      | 跨请求   | revalidate/dynamic |
-| Router Cache        | 客户端路由缓存 | 用户会话 | 导航/refresh       |
+| 层级                    | 机制                                           | 作用域                      | 失效方式                                                                                    |
+| ----------------------- | ---------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------- |
+| Memoization             | 同一渲染过程中 URL 与选项相同的 GET fetch 去重 | 单次渲染 (render pass)      | 渲染结束自动释放                                                                            |
+| fetch Data Cache        | 显式 opt-in 的服务端持久缓存                   | 跨请求 (跨部署与实例持久化) | `next.revalidate` / `revalidateTag` / `revalidatePath`                                      |
+| 预渲染产物 (静态 shell) | 构建期生成的 HTML 与 RSC Payload               | 跨请求                      | `revalidate` / `revalidatePath` / `dynamic = "force-dynamic"`                               |
+| Client Cache            | 浏览器内存中的 RSC Payload 缓存                | 用户浏览会话                | 刷新/导航, 或 `revalidateTag`/`revalidatePath`/`updateTag`/`router.refresh()`/`cookies.set` |
 
-注意: 自 Next.js 15 起, fetch 默认不再持久缓存. 在 Next.js 16.3.7 中默认行为被明确表述为 `auto no cache`: 开发态每次请求都重新拉取, `next build` 时因路由会被静态预渲染而只拉取一次; 若路由检测到请求期 API (如 `cookies()`/`headers()`) 则每次请求都拉取. 它与 `no-store` 的区别在于: `no-store` 强制每次请求都拉取, 而 `auto no cache` 在静态预渲染场景下构建期仍会缓存一次. Data Cache 需要显式 opt-in (`cache: "force-cache"` 或 `next: { revalidate }` / `next: { tags }` 配合 `revalidateTag`)。同一渲染过程内、URL 与选项相同的 GET fetch 会被自动 memoization 去重 (仅持续单次渲染, Route Handler 中不生效) 。
+fetch 的默认行为是 `auto no cache`: 开发态每次请求都重新拉取, `next build` 时因路由会被静态预渲染而只拉取一次; 若路由检测到请求期 API (如 `cookies()`/`headers()`) 则每次请求都拉取. 它与 `no-store` 的区别在于: `no-store` 强制每次请求都拉取, 而 `auto no cache` 在静态预渲染场景下构建期仍会缓存一次. 持久化缓存需要显式 opt-in (`cache: "force-cache"` 或 `next: { revalidate }` / `next: { tags }` 配合 `revalidateTag`) . 同一渲染过程内 URL 与选项相同的 GET fetch 会被自动 memoization 去重, 这一去重仅持续单次渲染, 且在 Route Handler 中不生效 (Route Handler 不属于 React 组件树) .
 
-Next.js 16 移除了实验性的 `ppr` 与 `dynamicIO`/`useCache` 开关, 统一由顶层 `cacheComponents` 配置承接 (即原 PPR 的演进方向) : 开启后通过 `"use cache"` 指令声明缓存边界, 把缓存从"默认全开"转变为"显式声明"模型, 未缓存的数据若不在 `<Suspense>` 内会触发构建错误. `cacheComponents` 在 16.3.7 中已是顶层配置 (`experimental.cacheComponents` 与 `experimental.ppr` 均标记 deprecated)。
+Next.js 16 的下一代缓存模型由顶层 `cacheComponents` 配置承接 (即 Partial Prerendering 的演进) : 开启后通过 `"use cache"` 指令声明缓存边界, 把缓存从"默认全开"转变为"显式声明", 未缓存的数据若不在 `<Suspense>` 内会触发构建错误. 本仓库 (`next.config.mjs`) 未启用 `cacheComponents`, 因此适用上表的默认模型.
 
 补充缓存:
 
@@ -1664,49 +1667,54 @@ revalidateTag("posts", "max");
 
 ### 13.1 Turbopack 成为 dev 与 build 的默认打包器
 
-Next.js 16 起 Turbopack 转为稳定, `next dev` 与 `next build` 默认都使用 Turbopack, 不再需要 `--turbopack` 标志. 仍可用 `--webpack` 显式退回 Webpack (例如"dev 用 Turbopack、build 用 Webpack")。若项目存在自定义 `webpack` 配置又直接跑默认的 `next build`, 构建会失败以防止误配置. Turbopack 相关配置从 `experimental.turbopack` 提升为顶层 `turbopack` 选项, 并默认开启文件系统缓存 (`experimental.turbopackFileSystemCacheForDev` / `ForBuild`) 以加速重启.
+Turbopack 是 Next.js 16 的默认打包器, `next dev` 与 `next build` 都直接使用它, 无需 `--turbopack` 标志. 仍可用 `--webpack` 显式切回 Webpack (例如"dev 用 Turbopack、build 用 Webpack") . 若项目存在自定义 `webpack` 配置又运行默认的 `next build`, 构建会失败以提示误配置. Turbopack 配置位于顶层 `turbopack` 选项, 并默认开启文件系统缓存 (`experimental.turbopackFileSystemCacheForDev` / `ForBuild`) 以加速重启.
 
 ### 13.2 `middleware` 更名为 `proxy`
 
-`middleware.ts` 文件名已废弃, 更名为 `proxy.ts`, 以强调其网络边界与路由职责. 官方 `upgrade` codemod 会自动迁移.
+请求边界的文件约定为 `proxy.ts` (由 `middleware.ts` 更名) , 以强调其网络边界与路由职责, 命名导出为 `proxy`. `proxy` 的运行时固定为 Node.js, 不支持 edge runtime; 相关配置项也一并更名 (如 `skipMiddlewareUrlNormalize` 改为 `skipProxyUrlNormalize`) . 官方 `upgrade` codemod 会自动迁移.
 
-### 13.3 请求期 API 全面异步化 (Breaking change)
+### 13.3 请求期 API 只能异步访问 (Breaking change)
 
-Next.js 15 引入的异步请求 API 在 16 中彻底移除了同步兼容写法. 以下只能 `await` 异步访问:
+以下请求期 API 只能通过 `await` 异步访问, 不再提供同步写法:
 
 - `cookies()`、`headers()`、`draftMode()`
 - `layout.js`/`page.js`/`route.js`/`default.js` 及 `opengraph-image`/`twitter-image`/`icon`/`apple-icon` 中的 `params`
 - `page.js` 中的 `searchParams`
-- 图片生成函数 (`opengraph-image` 等) 的 `params` 与 `id` 也变为 Promise; `generateImageMetadata` 仍收同步 `params`
+- 图片生成函数 (`opengraph-image` 等) 的 `params` 与 `id` 也是 Promise; `generateImageMetadata` 仍接收同步 `params`
+- `sitemap` 生成函数经 `generateSitemaps` 传入的 `id` 也是 Promise
 
-配套可用 `npx next typegen` 生成 `PageProps<'/blog/[slug]'>`、`LayoutProps`、`RouteContext` 等全局类型助手, 让 `await props.params` 获得类型安全.
+配套可用 `npx next typegen` 生成 `PageProps<'/blog/[slug]'>`、`LayoutProps`、`RouteContext` 等全局类型助手, 让 `await props.params` 获得类型安全. 本仓库即使用该模式: `app/(docs)/[...slug]/page.tsx` 以 `PageProps<"/[...slug]">` 声明页面 props 并 `await props.params`, `app/layout.tsx` 以 `LayoutProps<"/">` 声明布局 props.
 
 ### 13.4 React Compiler 转为稳定 (默认不开启)
 
-跟随 React Compiler 1.0, Next.js 16 的 `reactCompiler` 配置从 `experimental` 提升为顶层稳定选项 (`reactCompiler: true`) , 需安装 `babel-plugin-react-compiler`. 出于对构建性能的持续观测, 它默认不启用; 开启后因依赖 Babel, dev 与 build 编译时间会上升.
+Next.js 16 的 `reactCompiler` 是顶层稳定选项 (`reactCompiler: true`) , 需安装 `babel-plugin-react-compiler`. 出于对构建性能的持续观测, 它默认不启用; 开启后因依赖 Babel, dev 与 build 编译时间会上升.
 
 ### 13.5 运行时与浏览器要求
 
-| 要求       | 变化                                                  |
+| 要求       | 要求值                                                |
 | ---------- | ----------------------------------------------------- |
-| Node.js    | 最低 20.9.0 (LTS) , 不再支持 18                       |
+| Node.js    | 最低 20.9.0 (LTS)                                     |
 | TypeScript | 最低 5.1.0                                            |
 | 浏览器     | Chrome 111+ / Edge 111+ / Firefox 111+ / Safari 16.4+ |
 
 ### 13.6 其他值得注意的变化
 
-- `next/image` 多项默认值收紧 (如 `minimumCacheTTL`、`imageSizes`、`qualities`) , `next/legacy/image` 与 `images.domains` 配置标记废弃.
-- 移除 AMP 支持、`next lint` 命令 (改用 ESLint CLI) 、运行时配置 (`serverRuntimeConfig`/`publicRuntimeConfig`) 、`unstable_rootParams` (改用 `next/root-params`)。
-- 路由与导航重构: 布局去重 (共享 layout 只下载一次) 与增量预取 (只预取缓存中缺失的部分) , 无需改代码, 代价是单个预取请求数可能变多但总传输量更小.
-- 静态导出仍以 `output: 'export'` 配置, 产物为纯静态 HTML; Server Components 会渲染进静态 HTML, 但依赖动态服务端能力 (Route Handler、`cookies()` 等) 的特性不被支持.
+- `next/image` 默认值收紧: `minimumCacheTTL` 为 4 小时 (14400 秒) , `imageSizes` 不再包含 16px, `qualities` 为 `[75]`, `maximumRedirects` 为 3, 并默认禁止优化内网 IP (`images.dangerouslyAllowLocalIP`) .
+- AMP 支持、`next lint` 命令、运行时配置 (`serverRuntimeConfig`/`publicRuntimeConfig`) 均已移除, Lint 改用 ESLint / Biome CLI, `@next/eslint-plugin-next` 默认使用 ESLint Flat Config; `unstable_rootParams` 由 `next/root-params` 取代.
+- 路由与导航: 布局去重 (共享 layout 只下载一次) 与增量预取 (只预取缓存中缺失的部分) , 无需改代码, 代价是单个预取请求数可能变多但总传输量更小.
+- `next dev` 与 `next build` 使用独立的输出目录 (dev 输出到 `.next/dev`) , 可并行执行; 并行的路由插槽必须显式提供 `default.js`.
+- 静态导出: `output: 'export'` 生成纯静态站点 (默认输出到 `out/`) , Server Components 在构建时渲染进静态 HTML 与 RSC Payload; 依赖 Node.js 服务端能力或请求时数据的特性不被支持, 包括读取请求的 Route Handler、`cookies()`、Server Actions、ISR、默认 `loader` 的图片优化、proxy、rewrites/redirects/headers、Draft Mode、`dynamicParams: true` 的动态路由等. 静态 GET Route Handler 需声明 `export const dynamic = "force-static"` 并在构建时渲染为静态文件. 本仓库 (`next.config.mjs`) 即采用 `output: "export"`, 并以 `basePath: "/26autumn"` 与 `images.unoptimized: true` 部署到 GitHub Pages.
 
 ---
 
 ## 参考资料
 
-- Vercel React Best Practices (v1.0.0, January 2026)
+- Vercel React Best Practices
 - React 官方文档: https://react.dev
-- Next.js 官方文档: https://nextjs.org
+- React 19.2 发布公告: https://react.dev/blog/2025/10/01/react-19-2
+- React 19.3 发布公告: https://react.dev/blog/2026/09/09/react-19-3
+- React Compiler v1.0 发布公告: https://react.dev/blog/2025/10/07/react-compiler-1
+- Next.js 官方文档 (本机 next@16.3.7 随包内置于 `node_modules/next/dist/docs/`)
 - SWR: https://swr.vercel.app
 - better-all: https://github.com/shuding/better-all
 - node-lru-cache: https://github.com/isaacs/node-lru-cache

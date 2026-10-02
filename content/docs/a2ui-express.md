@@ -3,7 +3,7 @@ title: "A2UI Express DSL"
 description: "A2UI Express DSL 实验性提案调研: 更低成本生成 A2UI 的 DSL 语法规则、编译到 v1.0 wire protocol、Python 参考实现与 Gemma 小模型评测"
 ---
 
-本机路径: $HOME/Downloads/a2ui/specification/proposals/express (上游: github.com/a2ui-project/a2ui)
+本机路径: $HOME/Downloads/a2ui/specification/proposals/express (上游: github.com/a2ui-project/a2ui, 本机克隆 HEAD f8b58799, 2026-10-01)
 实现位置: a2ui/python/a2ui_agent/src/a2ui/inference_formats/experimental/express/
 状态: 实验性提案 (proposal), 非正式规范; 编译目标为 A2UI v1.0 wire protocol
 主要来源: 本地规范 a2ui_express.md / create_surface_design.md / README.md / express_dsl_examples.md / scripts, 以及 AGenUI 团队评测文章 "更低成本地生成A2UI协议: Express DSL 的功能特性"
@@ -33,7 +33,7 @@ root = Card(main_column)
 main_column = Column([header_row, route_row], "stretch")
 ```
 
-据 AGenUI 团队评测文章, Express DSL 于 2026 年 6 月由官方引入仓库。它的定位 (官方规范原文):
+Express DSL 被官方以实验性提案的形式随仓库引入 (仓库内处于 specification/proposals/ 而非已认证目录)。它的定位 (官方规范原文):
 
 "A2UI Express is a compact, model-optimized declarative syntax... It acts as an intermediate, highly compressed representation that on-device large language models generate to describe user interfaces. A host-side compiler parses this syntax and compiles it into standard A2UI v1.0 wire protocol payloads."
 
@@ -194,11 +194,11 @@ $/user = {firstName: "Alice", age: 30}
 - 编译器侧: 按会话状态决定信封 —— 会话中不存在该 Surface 时发 createSurface, 已存在时发 updateComponents; 作用域在下一个 surface() 调用、deleteSurface 调用或 DSL 块结束时终止
 - deleteSurface 保持显式独立命令
 
-设计原则五条 (子提案原文): 模型简单性、编译器状态处理、多 Surface 支持、向后兼容 (缺省 default_surface)、deleteSurface 显式化。
+设计原则五条 (子提案原文): 模型简单性、编译器状态处理、多 Surface 支持、缺省回退 (省略 surface() 时用 default_surface)、deleteSurface 显式化。
 
 ## 5. 编译产物与 v1.0 信封形态
 
-设计文档规定编译结果是单个 createSurface 消息, 内嵌 components、dataModel 与 surfaceParams 字段 (下方 JSON 即提案文档 a2ui_express.md 中的信封示例)。需要注意两处与现状的出入: (1) 已认证的 v1.0 schema (specification/v1_0/json/agent_to_renderer.json) 中 CreateSurfaceMessage 的 createSurface 现已含可选内嵌 components ($ref ComponentsList) 与 dataModel 属性, 这部分与提案一致 (schema 描述仍期待渲染端随后接收同 surfaceId 的 updateComponents / updateDataModel 消息来定义组件树), 但 schema 中不存在 surfaceParams; (2) express compiler.py 的实际编译产物同样不含 surfaceParams。也就是说, "内嵌单 createSurface 信封"约定中 components / dataModel 已被认证 schema 接纳, 仅 surfaceParams 一处仍停留在 Express 提案层面:
+设计文档规定编译结果是单个 createSurface 消息, 内嵌 components、dataModel 与 surfaceParams 字段 (下方 JSON 即提案文档 a2ui_express.md 中的信封示例)。需要注意两处与现状的出入: (1) 已认证的 v1.0 schema (specification/v1_0/json/agent_to_renderer.json) 中 CreateSurfaceMessage 的 createSurface 含可选内嵌 components ($ref ComponentsList) 与 dataModel 属性, 这部分与提案一致 (schema 描述仍期待渲染端随后接收同 surfaceId 的 updateComponents / updateDataModel 消息来定义组件树), 但 schema 中不存在 surfaceParams; (2) express compiler.py 的实际编译产物同样不含 surfaceParams。也就是说, "内嵌单 createSurface 信封"约定中 components / dataModel 已被认证 schema 接纳, 仅 surfaceParams 一处仍停留在 Express 提案层面:
 
 ```json
 {
@@ -341,7 +341,7 @@ Python SDK 实现: python/a2ui_agent/src/a2ui/inference_formats/experimental/exp
 
 ## 8. 实测数据
 
-官方提案评测数据 (AGenUI 评测): 轻量模型 gemini-3.1-flash-lite, 47 个样本, 对比 "标准 A2UI" 与 "Express DSL" 两种策略:
+下列数据来自外部评测文章 (AGenUI 团队 "更低成本地生成A2UI协议: Express DSL 的功能特性"), 不是本仓库内的产物, 本地无法复核原始样本与统计过程。评测配置: 轻量模型 gemini-3.1-flash-lite, 47 个样本, 对比 "标准 A2UI" 与 "Express DSL" 两种策略:
 
 | 策略        | 语法准确率 | 语义准确率 | 平均延迟       | 输出 token     | 总 token         |
 | :---------- | :--------- | :--------- | :------------- | :------------- | :--------------- |

@@ -387,6 +387,7 @@ return func(ctx *Context, next func()) {
         return
     }
     // 先刷新延迟 header
+    header := ctx.Writer.Header()
     for k, v := range ctx.headers {
         header.Set(k, v)
     }
@@ -532,7 +533,7 @@ WebSocket 握手过程如何实现? 为什么选择 Hijack 而非标准 Response
 A: 握手流程 (`websocket.go:71-158`) :
 
 1. 校验 Origin: 仅当 `UpgradeOptions.CheckOrigin` 非 nil 时执行, 不通过则 `Throw(403)` 并返回错误
-2. 验证请求: 依次检查 Method == GET、Connection: upgrade、Upgrade: websocket、Sec-WebSocket-Version 包含 13、Sec-WebSocket-Key 非空; 版本不符时还会通过 `ctx.Set` 回写 `Sec-WebSocket-Version: 13` 响应头
+2. 验证请求: 依次检查 Method == GET、Connection: upgrade、Upgrade: websocket、Sec-WebSocket-Version 的逗号分隔取值中存在 token 13 (大小写不敏感)、Sec-WebSocket-Key 非空; 版本不符时还会通过 `ctx.Set` 回写 `Sec-WebSocket-Version: 13` 响应头
 3. 子协议协商: `negotiateSubprotocol` 按服务端优先级匹配客户端提供的协议列表
 4. Hijack 连接: `http.NewResponseController(ctx.Writer).Hijack()` 获取底层 `net.Conn` 与 `bufio.ReadWriter`; Hijack 成功后立即置 `flushed = true`、`Status = 101`、`statusSet = true`, 再用 `conn.SetDeadline(time.Time{})` 清空 HTTP Server 可能遗留的读写超时
 5. 构造 101 响应: 手动拼接 HTTP 响应头 (包含 `Sec-WebSocket-Accept`, 协商成功时附带 `Sec-WebSocket-Protocol`)

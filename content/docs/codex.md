@@ -9,9 +9,9 @@ description: "面向 TS/JS 开发者的 openai/codex 调研: 产品形态、Type
 
 ## 一、项目快照 (本机克隆 2026-10-02)
 
-本机克隆是浅克隆 (shallow clone): remote 为 org-14957082@github.com:openai/codex.git (.git/config), .git/shallow 记录的边界是 e53e932 (#49836, voice 会话的麦克风通道选择), 基点 commit e53e932 因浅嫁接呈现为一次整树导入 (8870 个文件、约 235 万行); 本地对象库共 32 个 commit (e53e932..9552906), 边界之前的演进无法在本机复核。当前 HEAD 为 9552906b2b8358121f71695e1e6602791cdcecc0, 分支 main, 主题 "Protect the guardian decisions API key from environment forwarding (#50019)", 提交时间 2026-10-01 15:41 UTC。
+本机克隆是浅克隆 (shallow clone): remote 为 org-14957082@github.com:openai/codex.git (.git/config), .git/shallow 记录的边界是 e53e932 (#49836, voice 会话的麦克风通道选择), 基点 commit e53e932 因浅嫁接呈现为一次整树导入; 本地对象库共 58 个 commit (e53e932..e7ea5f4), 边界之前的演进无法在本机复核。当前 HEAD 为 e7ea5f4a8658ebe49e879be933effed2340fa276, 分支 main, 主题 "Add managed worktree tools to the TUI (#50148)", 提交时间 2026-10-02。
 
-工作树是完整检出: git ls-files 共 8892 个文件, git status 除未跟踪的 .codegraph/ 外干净; codex-rs/ 下全部 crate (app-server-protocol、hooks、codex-mcp、exec-server 等) 都在磁盘上, 结构类结论均可直接对照源码复核。
+工作树是完整检出: git ls-files 共 8940 个文件, git status 除未跟踪的 .codegraph/ 外干净; codex-rs/ 下全部 crate (app-server-protocol、hooks、codex-mcp、exec-server 等) 都在磁盘上, 结构类结论均可直接对照源码复核。
 
 仓库没有根级 AGENTS.md 与 .codex/ 工程规范目录 (浅克隆基点 e53e932 的树里即无它们)。仓库内唯一的 AGENTS.md 是 codex-rs/tui/src/bottom_pane/AGENTS.md (模块级规范); AGENTS.md 本身是产品特性 (codex-rs/core/src/agents_md.rs 负责读取用户仓库的 AGENTS.md, docs/agents_md.md 跳转 developers.openai.com/codex/guides/agents-md)。
 
@@ -28,7 +28,7 @@ description: "面向 TS/JS 开发者的 openai/codex 调研: 产品形态、Type
 
 产品形态是一个矩阵: 终端里的 Codex CLI (TUI)、非交互的 codex exec、编辑器扩展 (VS Code/Cursor/Windsurf)、桌面应用 (codex app)、云端 agent Codex Web (chatgpt.com/codex)。本仓库是 CLI 及其配套的开源部分 (README.md 开头即这四条入口)。
 
-本地 32 个 commit 的窗口 (e53e932..9552906, 前 21 个的提交时间全部落在 2026-10-01 UTC 02:59-07:08 这几个小时内, 可见上游合入速度) 能看出几条活跃主线: Daybreak 网络安全访问计划在 exec 与 TUI 落地并持久化 (#49856/#49857/#49858/#49859/#49861); 权限与审批模型收紧 — permission grants 绑定发起 turn (#49880)、extension 文件系统访问限定 callback 权限 (#49898)、临时 structured threads 尊重 approval 策略 (#49912); world-state 快照与 context 更新一起返回并持久化 (#49847/#49894); TUI 启动呈现与执行配置解耦、personality 管线移除 (#49875/#49876), usage/credit 链接指向 ChatGPT 设置 (#49874); Windows 侧 daemon 工作目录与提权嵌入模式 (#49850/#49855); 以及 voice 麦克风通道选择 (#49836) 与 TUI keybindings 校验错误保留 (#49910)。在此之上, #49939 给 exec 与 TypeScript SDK 加了逐轮 Cyber 访问计划选择; 区间 6b4daaf..9552906 的 10 个 commit 集中在安全与执行基础设施: guardian decisions API key 防环境转发 (#50019)、descriptor-safe 可执行测试夹具 helper (#50018)、新 TUI 线程尊重服务端 model defaults (#50013)、async Guardian 历史前缀保留为 retained context changes (#49993)、可续期 EMA HTTP 认证与凭据版本化 (#49987)、exec-server 输出块共享不可变字节缓冲 (#49972)、session index thread-name 增删测试 (#49959)、MCP hook 占位符正则缓存 (#49956)、Guardian sender review 携带前置 assistant 上下文 (#49951)、防止过期文件搜索结果被贴上新查询标签 (#49946)。
+本地 58 个 commit 的窗口 (e53e932..e7ea5f4) 能看出几条活跃主线: Daybreak 网络安全访问计划在 exec 与 TUI 落地并持久化 (#49856/#49857/#49858/#49859/#49861); 权限与审批模型收紧 — permission grants 绑定发起 turn (#49880)、extension 文件系统访问限定 callback 权限 (#49898)、临时 structured threads 尊重 approval 策略 (#49912); world-state 快照与 context 更新一起返回并持久化 (#49847/#49894); TUI 启动呈现与执行配置解耦、personality 管线移除 (#49875/#49876), usage/credit 链接指向 ChatGPT 设置 (#49874); Windows 侧 daemon 工作目录与提权嵌入模式 (#49850/#49855); 以及 voice 麦克风通道选择 (#49836) 与 TUI keybindings 校验错误保留 (#49910)。在此之上, #49939 给 exec 与 TypeScript SDK 加了逐轮 Cyber 访问计划选择; 靠近 HEAD 的区间集中在安全与执行基础设施: guardian decisions API key 防环境转发 (#50019)、descriptor-safe 可执行测试夹具 helper (#50018)、新 TUI 线程尊重服务端 model defaults (#50013)、async Guardian 历史前缀保留为 retained context changes (#49993)、可续期 EMA HTTP 认证与凭据版本化 (#49987)、exec-server 输出块共享不可变字节缓冲 (#49972)、session index thread-name 增删测试 (#49959)、MCP hook 占位符正则缓存 (#49956)、Guardian sender review 携带前置 assistant 上下文 (#49951)、防止过期文件搜索结果被贴上新查询标签 (#49946); HEAD 提交为 TUI 的 managed worktree 工具 (#50148)。
 
 ## 二、安装与运行 (README.md 与 docs/install.md)
 
@@ -206,4 +206,4 @@ docs/contributing.md 明确: 不接受外部代码贡献与 PR, 社区贡献聚�
 3. app-server v2 规范是一份能直接跑在源码上的跨语言 API 设计 checklist: camelCase 线上格式、判别联合显式 tag、Unix 秒 *_at 时间戳、游标分页、experimental 字段级门控、schema fixture 回归 — 全部可在 codex-rs/app-server-protocol 里逐条找到实现。
 4. 上下文工程的可移植经验: ContextualUserFragment 类型化约束 (context-fragments crate) 与 world-state section 的 SectionTransition 契约 (#49894), 用类型系统兜底防止随手塞无界字符串进模型上下文。
 5. 记忆管线的两阶段设计 (并行提取 + 串行整合, DB lease + git 基线 + watermark) 展示了如何把"长期记忆"做成可审计的文件系统工件而非黑盒向量库; memories/README.md 是仓库内最好的架构文档。
-6. 本机快照是完整工作树, 结构类结论都能直接对照源码复核; 但浅历史只有 32 个 commit 的窗口 (e53e932..9552906), 且仓库没有根 AGENTS.md 与 .codex/ — 涉及仓库工程文化或更早演进的问题, 需要 unshallow 或查 GitHub 上的历史。
+6. 本机快照是完整工作树, 结构类结论都能直接对照源码复核; 但浅历史只有 58 个 commit 的窗口 (e53e932..e7ea5f4), 且仓库没有根 AGENTS.md 与 .codex/ — 涉及仓库工程文化或更早演进的问题, 需要 unshallow 或查 GitHub 上的历史。

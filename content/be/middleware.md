@@ -97,7 +97,7 @@ Revision 是全局递增的逻辑时钟:
 
 ```go
 // Range 请求处理
-func (s *store) Range(ctx context.Context, key, end []byte, ro RangeOptions) (*RangeResult, error) {
+func (s *store) Range(ctx context.Context, key, end []byte, curRev int64, ro RangeOptions) (*RangeResult, error) {
     // 1. 确定读取的 revision
     //    - ro.Rev == 0: 使用当前 latest revision (线性一致性读)
     //    - ro.Rev > 0: 读取历史版本
@@ -800,7 +800,7 @@ Redis Stack 在 Redis 核心之上集成了 RediSearch (全文搜索 + 向量搜
 ```text
 数据层:
   - Redis Hash / JSON 存储原始文档和向量字段
-  - 向量以 BLOB 格式存储 (FLOAT32/FLOAT64)
+  - 向量以 BLOB 格式存储 (TYPE 可选 FLOAT32/FLOAT64 或 BFLOAT16/FLOAT16/INT8/UINT8 等低位宽类型)
 
 索引层 (RediSearch):
   - FT.CREATE 创建索引, 指定 VECTOR 字段
@@ -1087,9 +1087,9 @@ func retrieve(ctx context.Context, question string, topK int) ([]Chunk, error) {
 
 ```text
 1. 向量类型选择:
-   - RediSearch 的 VECTOR 字段只支持 FLOAT32 (4 bytes/dim) 与 FLOAT64 (8 bytes/dim) 两种类型
-   - 不提供原生 FP16/INT8 量化 (与部分专用向量数据库不同), 低位宽量化无法在 Redis 存储层降低内存
-   - 默认使用 FLOAT32; FLOAT64 仅在需要更高数值精度时才有意义, 代价是向量内存翻倍
+   - RediSearch 的 VECTOR 字段支持 FLOAT32 (4 bytes/dim)、FLOAT64 (8 bytes/dim), 也支持 BFLOAT16、FLOAT16、INT8、UINT8 等低位宽类型
+   - 低位宽类型在存储层直接压缩每个分量, 距离计算与内存带宽开销同步下降, 是以精度换内存的直接手段
+   - 默认使用 FLOAT32; FLOAT64 仅在需要更高数值精度时才有意义, 代价是向量内存翻倍; 低位宽类型的具体收益与召回损失以实测为准
 
 2. 降维:
    - PCA / 自编码器将 1536 维降到 256-512 维

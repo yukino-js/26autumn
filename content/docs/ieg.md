@@ -87,7 +87,7 @@ IEG 的 ToB 项目是腾讯 NoSQL 的管理端, 页面上存在多个公共选�
 
 ### 性能优化 hooks: 如何避免重复请求、优化渲染
 
-迁移完成后针对选择器做的第二轮优化, 直接动因是两类重复请求: 同一选择器在多个面板同时挂载, 每个实例各自发一次拉取选项的请求; 级联切换 (集群 -> 数据库 -> 表) 时, 传给请求 hook 的参数对象每次渲染都是新引用, hook 判定"参数变了"又发一次. 解法分三层:
+迁移完成后针对选择器又做了一轮性能优化, 直接动因是两类重复请求: 同一选择器在多个面板同时挂载, 每个实例各自发一次拉取选项的请求; 级联切换 (集群 -> 数据库 -> 表) 时, 传给请求 hook 的参数对象每次渲染都是新引用, hook 判定"参数变了"又发一次. 解法分三层:
 
 1. 请求参数稳定化
 
@@ -118,7 +118,7 @@ IEG 的 NoSQL 管理端中, 表文件的格式是 xml, Koa 后端需要对这些
 
 - 使用 valgrind 排查发现 C++ 侧 protobuf 的使用存在内存泄漏
 - 为了避免解密、解析 xml 时崩溃 (例如 segfault) 影响主 Koa 进程, 使用 generic-pool 编写进程池, 把 .so 调用隔离到子进程
-- 每次解析 xml 都需要创建一个大对象 (该对象的部分属性是一块大 buffer), 基于 V8 隐藏类创建对象池, 降低 Koa 服务的 GC 压力
+- 每次解析 xml 都需要创建一个大对象 (该对象的部分属性是一块大 buffer), 为此创建对象池复用这些对象, 并保持对象结构稳定 (V8 隐藏类单态), 降低 Koa 服务的 GC 压力
 
 下面按知识点逐个展开.
 
@@ -132,7 +132,7 @@ IEG 的 NoSQL 管理端中, 表文件的格式是 xml, Koa 后端需要对这些
 - maxWaitingClients: 排队等待队列的上限, 和 acquireTimeout 一起构成背压机制
 - idleTimeoutMillis: worker 空闲多久后被回收 (数量高于 min 的部分). 解析任务是突发型流量, 空闲回收可以释放内存
 - evictionRunIntervalMillis / numTestsPerEvictionRun: 空闲驱逐检查的周期和每次检查的数量
-- testOnBorrow / testOnReturn: 借出/归还时是否做健康检查. 进程池场景可以检查子进程是否还存活, 避免把已经崩溃的进程借给调用方
+- testOnBorrow: 借出时是否调用 factory.validate 做健康检查 (generic-pool 中 validate 只挂在借出路径上). 进程池场景可以在这里检查子进程是否还存活, 避免把已经崩溃的进程借给调用方; 注意 generic-pool 的 testOnReturn 虽被解析进配置, 归还路径却没有实现, 归还前的校验要在业务侧自己做
 - fifo: 是否按先进先出复用空闲 worker
 
 参数调优的思路:
@@ -208,7 +208,7 @@ Buffer / 指针场景, 是真正的共享内存:
 - JS 把 Buffer 传给 C++ 函数时, 传的是这块内存的地址, C++ 侧直接在这块内存上读写, 零拷贝; C++ 写入的内容 JS 侧立刻可见, 这正是解密、解析这类场景需要的: JS 分配 buffer, C++ 原地写入解析结果
 - 共享带来两个必须注意的问题:
   - 生命周期: C++ 侧如果只在同步调用期间使用这块内存, 是安全的; 如果 C++ 把指针存下来异步使用, 而 JS 侧已经没人引用这个 Buffer, GC 可能回收它, C++ 侧就拿到悬垂指针. 规避方式是 JS 侧保持引用直到 C++ 用完, 或者 C++ 侧同步拷贝走
-  - 小 Buffer 的池化陷阱: Node 对小于 Buffer.poolSize >>> 1 的 Buffer (poolSize 默认 8KB, 即默认 4KB 以下) 会从共享内存池里切片分配, 把这种切片的地址交给 C++ 有越界读写相邻数据的风险; 传给 native 的 buffer 建议用 Buffer.allocUnsafeSlow 或确保独立分配
+  - 小 Buffer 的池化陷阱: Node 对小于 `Buffer.poolSize >>> 1` 的 Buffer (poolSize 默认 8KB, 即默认 4KB 以下) 会从共享内存池里切片分配, 把这种切片的地址交给 C++ 有越界读写相邻数据的风险; 传给 native 的 buffer 建议用 `Buffer.allocUnsafeSlow` 或确保独立分配
 
 C++ 侧分配的内存, 不受 JS GC 控制:
 
@@ -359,7 +359,7 @@ const pool = genericPool.createPool(factory, {
 处理:
 
 - TCP keepalive: 开启 socket 的 keepalive 并设置较短的探测间隔, 让操作系统层面尽早发现死连接; 注意默认的两小时探测间隔在生产环境基本没有意义, 必须调短
-- 应用层心跳: 比 keepalive 更可靠, 定期在协议层发 ping 并期待 pong, 连续 N 次无响应就判定连接死亡并驱逐. keepalive 只能证明链路存在, 心跳能证明对端的应用层还活着
+- 应用层心跳: 比 keepalive 更可靠, 定期在协议层发 ping 并期待 pong, 连续 N 次无响应就判定连接死亡并驱逐. keepalive 探测包由对端内核的 TCP 协议栈直接应答, 不经过业务代码, 只能证明链路和对端协议栈活着; 心跳走业务协议, 能证明对端应用层还活着
 - 请求超时兜底: 即使前两者都漏了, 请求级超时仍然能保证调用方不会永久挂起, 超时后按"状态不确定"原则销毁连接
 - 三层防御的关系: keepalive 和心跳负责"提前发现死连接", 请求超时负责"出了问题也能止损", 缺一不可
 
@@ -428,14 +428,15 @@ emitter.on("refresh", () => {
 function handle(hugeXml) {
   const parsed = parseXml(hugeXml); // 大对象
   registerCallback(() => {
-    // 闭包只需要 tiny, 但 V8 的 scope 共享机制下,
-    // 同一作用域里被其他闭包引用的 parsed 也可能被一并保留
-    log(tiny);
+    log(tiny); // 这个闭包只用到 tiny
+  });
+  registerAnother(() => {
+    use(parsed); // 同作用域的另一个闭包捕获了 parsed, 两者共享同一个 context
   });
 }
 ```
 
-V8 会对同一作用域的变量做 context 共享: 只要该作用域里有任何一个变量被某个存活闭包引用, 整个 context 对象都可能被保留, 导致"闭包明明只用了小变量, 大对象却也漏了".
+V8 只把被内层函数引用的变量放进作用域的 context, 同一作用域创建的所有闭包共享同一个 context: 只要有一个闭包捕获了 parsed, 另一个只用到 tiny、却被长生命周期持有的闭包也会让 parsed 一起常驻, 导致"闭包明明只用了小变量, 大对象却也漏了".
 
 4. 缓存只进不出
 
@@ -457,7 +458,7 @@ function load(key, bigValue) {
 
 2. heap snapshot 三次快照对比法 (核心手段)
 
-- 在 Chrome DevTools (node --inspect 连接) 或 memwatch-next、heapdump 这类堆分析工具里:
+- 在 Chrome DevTools (node --inspect 连接), 或用 Node 内置的 v8.writeHeapSnapshot() 把堆快照落盘后在 DevTools 里分析:
   - 快照 1: 服务稳定后拍一次
   - 执行可疑操作 N 次 (例如反复触发解析 xml 的请求)
   - 快照 2: 再拍一次
@@ -479,8 +480,8 @@ function load(key, bigValue) {
 按泄漏模式对症:
 
 - 定时器: 保存句柄, 在明确的生命周期点 clearInterval/clearTimeout; 服务类对象要有 dispose 语义
-- 事件监听: 注册和移除成对出现; Node 侧可以用 `{ once: true }` 或 AbortController 统一管理移除
-- 缓存: 加淘汰策略, 容量上限用 lru (参考 Tiktok 项目的 lru 实现), 或键是对象时改用 WeakMap, 让条目随键的回收自动消失
+- 事件监听: 注册和移除成对出现; EventTarget 类 API (浏览器 DOM、Node 的 EventTarget) 可以用 `{ once: true }` 或 AbortController 的 signal 统一管理移除, 经典 EventEmitter 则维护好对应的 removeListener
+- 缓存: 加淘汰策略, 容量上限用 lru (参考 TikTok 项目的 lru 实现), 或键是对象时改用 WeakMap, 让条目随键的回收自动消失
 - 缩小闭包捕获面: 把大对象的使用收敛到局部, 注册回调前把需要的字段提取成小变量, 避免闭包拖着整个大作用域; 必要时把注册逻辑拆到独立函数, 切断与大作用域的联系
 - 全局引用: 代码审查中禁止随手挂全局, 调试代码不进主干
 

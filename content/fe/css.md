@@ -1573,13 +1573,31 @@ Critical CSS (关键 CSS):
 - purgecss: 移除未使用的 CSS
 - uncss: 分析 HTML, 移除未使用的 CSS
 
-Tailwind CSS 的按需生成:
+Tailwind CSS 的按需生成: v4 采用 CSS-first 配置, 入口样式表只需 `@import "tailwindcss"`, 默认自动扫描项目源文件, 只为命中的工具类生成 CSS; 设计 token 用 `@theme` 声明 (如 `--color-brand` 会自动派生出 `bg-brand` 等工具类), 插件用 `@plugin` 加载. 本站安装的 tailwindcss@4.3.3 的 `/Users/hangtiancheng/github/26autumn/app/global.css` 即为此写法 (下面为节选, 该文件还用 `.dark { ... }` 覆盖同名变量实现暗色主题):
+
+```css
+/* app/global.css — Tailwind v4 CSS-first 配置 */
+@import "tailwindcss";
+@import "@fumadocs/base-ui/css/neutral.css";
+@import "@fumadocs/base-ui/css/preset.css";
+@plugin "tailwindcss-animate";
+
+@theme {
+  --color-brand: #8d72e0;
+}
+```
+
+构建链通过官方 PostCSS 插件接入 (本站安装 `@tailwindcss/postcss`@4.3.3 与 postcss@8.5.28), 配置文件为 `/Users/hangtiancheng/github/26autumn/postcss.config.mjs`:
 
 ```javascript
-// tailwind.config.js
-module.exports = {
-  content: ["./src/**/*.{js,jsx,ts,tsx}"],
+// postcss.config.mjs
+const config = {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
 };
+
+export default config;
 ```
 
 最佳实践:

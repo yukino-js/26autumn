@@ -5,6 +5,8 @@ description: "yukino-chatbot 源码级问答: pnpm workspace 全栈 LLM 聊天�
 
 > 本机器路径 `$HOME/github/yukino-chatbot`
 
+本机仓库快照: HEAD `344c2b1` "feat: Update npm registry [skip ci]" (2026-09-30), remote `git@github.com:hangtiancheng/yukino-chatbot.git`, 分支 `main`. 版本号以各 package.json 为准: client `react ^19.3.0` / `vite ^8.3.1` / `typescript ~5.9.3` / `streamdown ^2.6.0` / `@tanstack/react-query ^5.104.0` / `jotai ^2.20.3`, server `koa ^3.2.1` / `@koa/router ^15.7.0` / `knex ^3.3.0` / `mysql2 ^3.24.4` / `@langchain/openai ^1.6.0` / `@langchain/classic ^1.0.50` / `ioredis ^5.11.1` / `jsonwebtoken ^9.0.3` / `lru-cache ^11.5.3`.
+
 ## 一、项目概述与架构设计
 
 ### 请介绍 yukino-chatbot 项目的整体架构
@@ -114,7 +116,6 @@ fetchClient.interceptors.response.use(
 2. timeout 为 0 即不限时, 因为 AI 生成回答的耗时不可预估
 3. 请求拦截器从 localStorage 读取 token 注入 Bearer header, 与 Jotai token atom 共享同一个 storage key, 拦截器不经过 React 体系
 4. 响应拦截器统一处理 401: 清除本地 token 并跳转 /login, 各业务 mutation 无需重复编写登出逻辑 (fetch-client.ts:19-28)
-5. 旧的 `api/index.ts` 已标注 `@deprecated`, 仅为向后兼容保留, 新代码统一使用 hooks/queries 下的封装
 
 React Query 全局默认值在 api/query-client.ts:3-11 配置: retry: 1、refetchOnWindowFocus: false、staleTime 5 分钟. 流式请求则完全绕开 axios, 用原生 fetch 消费 SSE (hooks/queries/use-stream-message.ts:30-38), 因为需要手动控制 body 的 ReadableStream.
 
@@ -415,15 +416,17 @@ const virtualizer = useVirtualizer({
 
 Streamdown (Vercel 出品的流式 Markdown 渲染器, 本项目使用 2.6.0) 的核心优化:
 
-1. 块级分割: 将 Markdown 文本按语义块分割 (段落、代码围栏、标题、列表等), 每个块独立解析为 React 元素. 2.6.0 的实现是用 marked 的 Lexer 做词法切分 (导出函数 parseMarkdownIntoBlocks), 天然感知围栏边界.
+说明: 以下为 Streamdown 2.6.0 作为依赖所提供的行为, 不属于本仓库源码, 细节以其发布的实现为准.
 
-2. 已定型块缓存: 一旦某个块被完整接收 (例如代码围栏的 ` ``` ` 闭合), 该块的解析结果被 memoize, 后续渲染直接复用, 不再重新解析. Block 组件用 memo 包裹并带自定义比较函数 (只比较 content/index/isIncomplete 等 props), 已定型块在父组件更新时直接跳过 diff.
+1. 块级分割: 将 Markdown 文本按语义块分割 (段落、代码围栏、标题、列表等), 每个块独立解析为 React 元素, 分块天然感知围栏边界.
+
+2. 已定型块缓存: 一旦某个块被完整接收 (例如代码围栏的 ` ``` ` 闭合), 该块的解析结果被缓存, 后续渲染直接复用, 不再重新解析; 已定型块在父组件更新时不会重复参与 diff.
 
 3. 仅解析尾部块: 每次文本更新时, 只有最后一个未完成的块需要重新解析. 例如一段 2000 字的回复, 当第 1900 字到达时, 前 1800 字对应的块全部命中缓存, 只解析最后 200 字.
 
-4. 未闭合标记修复: 流式文本中大量出现写到一半的代码围栏、粗体标记、链接, Streamdown 通过 remend 包 ("self-healing markdown") 把未闭合的标记智能补全, 避免半个围栏把后续所有内容吞进代码块. 本项目的 Markdown 组件经 mode="streaming" 启用该行为 (components/markdown/index.tsx).
+4. 未闭合标记修复: 流式文本中大量出现写到一半的代码围栏、粗体标记、链接, Streamdown 会智能补全未闭合的标记, 避免半个围栏把后续所有内容吞进代码块. 本项目的 Markdown 组件经 mode="streaming" 启用该行为 (components/markdown/index.tsx).
 
-5. 代码高亮: 通过 `@streamdown/code` (1.1.1) 集成 Shiki, 代码块在流式过程中也能实时高亮, 且围栏闭合后高亮结果随块缓存一起固化.
+5. 代码高亮: 通过 `@streamdown/code` (package.json ^1.1.1) 提供代码块高亮, 代码块在流式过程中也能实时高亮, 且围栏闭合后高亮结果随块缓存一起固化.
 
 这使得渲染成本与消息总长度解耦, 只与当前增量成正比, 长消息的流式渲染不会越来越卡.
 
@@ -465,8 +468,8 @@ rAF 胜出的三个决定性理由:
 | 组件层 | memo + 稳定引用隔离已定型消息         | 已实现 (MessageItem 为 memo, message-item/index.tsx:21; 流式期间只有尾部气泡渲染)                                   |
 | 组件层 | 虚拟化控制 DOM 规模                   | 已实现 (useVirtualizer, estimateSize 120, overscan 5, message-list/index.tsx:27-31)                                 |
 | 滚动层 | ResizeObserver 驱动贴底, 近底门控     | 已实现 (isNearBottomRef, 阈值 80px, message-list/index.tsx:15)                                                      |
-| 渲染层 | 块级增量解析, 已定型块缓存            | 已实现 (Streamdown: marked Lexer 分块 + memo 化 Block, remend 修复未闭合标记)                                       |
-| 渲染层 | 代码高亮与流式热路径解耦              | 已实现 (@streamdown/code 集成 Shiki, 高亮结果随已定型块缓存)                                                        |
+| 渲染层 | 块级增量解析, 已定型块缓存            | 已实现 (Streamdown 块级分割 + 已定型块缓存 + 未闭合标记补全)                                                        |
+| 渲染层 | 代码高亮与流式热路径解耦              | 已实现 (@streamdown/code 提供代码高亮, 高亮结果随已定型块缓存)                                                      |
 | 服务端 | 关闭代理缓冲                          | 已实现 (X-Accel-Buffering: no, controller/session.ts:69, 138)                                                       |
 | 服务端 | 避免逐 token 日志                     | 未实现 (service/session.ts:79 每 chunk 一条 logger.info, 高并发下日志 IO 成为热路径负担, 生产建议降为 debug 或移除) |
 | 渲染层 | content-visibility: auto 跳过屏外绘制 | 未实现 (虚拟化已把 DOM 规模压下来, 收益有限, 可选项)                                                                |
@@ -888,11 +891,11 @@ db/cache.ts
 扩展新模型示例:
 
 ```typescript
-// 注册新模型只需一行 (MyModel 为新增的 AiModel 实现类)
-factory.registerModel("my-model", (config) => new MyModel(config));
+// 先在 ModelType 枚举中新增取值, 再注册该取值的创建器
+factory.registerModel(ModelType.NEW_MODEL, (config) => new NewModel(config));
 ```
 
-无需修改 Agent、Manager、Controller 的任何代码.
+新增取值后, 无需修改 Agent、Manager、Controller 的任何代码; 工厂构造时已内置注册 `openai` 与 `openai-rag` 两种创建器 (ai/factory.ts:10-15), RAG 创建器要求 config 中带 `username`.
 
 ### 如果要支持水平扩展, 当前架构需要做哪些改造?
 

@@ -223,7 +223,7 @@ Go 版引入粗粒度时钟是为了规避高 QPS 下 `time.Now()` 的 vDSO 开�
 
 ## 6. SingleFlight 并发去重
 
-SingleFlightGroup 的实现原理是什么? 与 Go 版 x/sync/singleflight 有何异同?
+SingleFlightGroup 的实现原理是什么? 与 x/sync/singleflight 以及本仓库 Go 版实现有何异同?
 
 对应 `single-flight.ts`:
 
@@ -260,7 +260,7 @@ class SingleFlightGroup {
 
 如果 fn 内部抛异常会怎样?
 
-共享的 Promise 被 reject, 所有 await 它的调用方同时收到同一个错误 (执行者一侧还会 rethrow). 与 Go 版把 recover 包装成 error 的做法不同, 这里没有吞异常的逻辑 — JS 的异常本身就是一等错误值, 每个调用方可以自行 catch 处理; 预挂的空 catch 只是保证无等待者时进程不会因为 unhandledRejection 告警. 对缓存场景而言, 一次回源失败会让该 key 的所有并发等待者一起失败, 下一个请求会重新触发加载.
+共享的 Promise 被 reject, 所有 await 它的调用方同时收到同一个错误 (执行者一侧还会 rethrow). 与本仓库 Go 版 (`yukino_cache/single_flight.go`) 把 recover 包装成 error 的做法不同, 这里没有吞异常的逻辑 — JS 的异常本身就是一等错误值, 每个调用方可以自行 catch 处理; 预挂的空 catch 只是保证无等待者时进程不会因为 unhandledRejection 告警. 对缓存场景而言, 一次回源失败会让该 key 的所有并发等待者一起失败, 下一个请求会重新触发加载.
 
 ---
 

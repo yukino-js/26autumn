@@ -37,19 +37,19 @@ const sectionCards = [
   {
     key: "fe",
     title: "前端",
-    description: "React、Next.js、CSS、Vite、TanStack 以及 Yukino 前端系列",
+    description: "语言、运行时与 CSS, 框架与工程化, 以及 Yukino 前端系列",
     icon: AppWindow,
   },
   {
     key: "be",
     title: "后端",
-    description: "Go、MySQL、Redis、ClickHouse、Kafka 以及 Yukino 后端系列",
+    description: "Go 语言基础, 存储与中间件, 以及 Yukino Go 系列",
     icon: Server,
   },
   {
     key: "docs",
     title: "工作文档",
-    description: "实习与工作期间的技术记录、项目复盘与源码解析",
+    description: "工作实践复盘、协议与 Coding Agent 调研、AI 框架与平台调研",
     icon: NotebookPen,
   },
 ] as const;

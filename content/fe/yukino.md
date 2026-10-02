@@ -1,14 +1,16 @@
 ---
 title: "Yukino Code — 技术笔记"
-description: "围绕 apps/yukino 终端 Coding Agent 实现细节的 104 组深度问答"
+description: "围绕 apps/yukino (@yukino.js/yukino@0.0.8) 终端 Coding Agent 实现细节的 104 组深度问答"
 ---
 
 > 本机器路径 `$HOME/github/yukino-code/apps/yukino`
 
+> `$HOME/github/yukino-code` 是 pnpm monorepo (packageManager pnpm@10.33.1) : 本文档聚焦的 `apps/yukino` 发布为 `@yukino.js/yukino@0.0.8` (bin 为 `yukino`, 要求 Node >= 20) ; 同仓库还有 `apps/mcp` (`@yukino.js/mcp@0.0.1`, 官方 MCP 工具集合, `src/tools` 含 chrome/create-app/docs/github 四组) 与 `apps/docs` (私有官网前端包) .
+
 > 本文档围绕 `apps/yukino` (一个运行在终端中的 Coding Agent, 类似 Claude Code) 的实现细节设计深度问答.
 > 所有回答均基于真实源码 (`apps/yukino/src/`) , 回答中标注了关键文件与机制, 可作为系统学习材料.
 > 全文共 104 组问答, 覆盖架构、循环、协议、工具、权限、TUI、上下文管理、会话与记忆、多智能体、工程化、运行模式、命令系统、基础设施、手写代码题、场景设计题、开放题与补充子系统.
-> 注: 文中的文件路径与行号已对照仓库 HEAD `526dd77` (2026-09-30) 逐一核对; 早期版本的 `src/tui/` 已并入 `src/ui/`、`src/agent/agent.ts` 现为 `src/agent/index.ts`、`src/conversation/conversation.ts` 现为 `src/conversation/index.ts` 等, 引用一律使用当前路径.
+> 注: 文中的文件路径与行号已对照仓库 `https://github.com/hangtiancheng/yukino-code` 的 HEAD `526dd77` (2026-09-30) 逐一核对, 引用一律使用当前路径.
 
 ## 一、项目整体架构与设计决策
 
@@ -105,14 +107,14 @@ Ink 的核心价值是把声明式 UI 和组件化心智模型带进终端, 而 
 | 60     | TextOutput       | 进度汇报与输出约定 (`# Updates`)                                 |
 | 70     | Environment      | 运行时环境 (workDir、OS、shell、git 分支、模型、日期)            |
 
-注意: 技能清单、项目指令 (AGENTS.md: 用户级 `~/.yukino/AGENTS.md` + 项目内自 git root 至 workDir 各级的 `AGENTS.md`/`.yukino/AGENTS.md`) 与长期记忆不再是系统提示词段落, 而是通过 `conversation.injectLongTermMemory()` (conversation/index.ts:133-166) 以 system-reminder 形式注入对话 —— 技能清单是项目级内容, 放进系统提示词会破坏跨项目的 prompt cache 前缀.
+注意: 技能清单、项目指令 (AGENTS.md: 用户级 `~/.yukino/AGENTS.md` + 项目内自 git root 至 workDir 各级的 `AGENTS.md`/`.yukino/AGENTS.md`) 与长期记忆都不是系统提示词段落, 而是通过 `conversation.injectLongTermMemory()` (conversation/index.ts:133-166) 以 system-reminder 形式注入对话 —— 技能清单是项目级内容, 放进系统提示词会破坏跨项目的 prompt cache 前缀.
 
 解决的问题:
 
 1. 可组合性: 不同运行模式 (TUI / print / subagent) 可以裁剪不同段落组合, 例如子代理可注入 `systemPromptOverride` 完全替换.
 2. 可测试性: 每个 section 是独立纯函数, 可单测.
 3. 缓存友好: Anthropic 客户端在系统提示词上打 `cache_control: { type: "ephemeral" }` 断点 (`anthropic.ts:324-331`) , 系统提示词整体稳定不变才能命中 prompt cache —— 如果把易变内容 (如日期) 混在正文里会破坏缓存, 所以日期等信息放在靠后的 Environment 段, 且会话内不变.
-4. 身份保护: Identity 段 (sections.ts:7-13) 只定义 "You are Yukino..." 一句身份声明 (安全禁令在 System 段的 `# Context` 里) . 旧版 remote 模式初始化时注入的 "IDENTITY OVERRIDE" system-reminder (要求不得提及 Claude/Anthropic/OpenAI 等) 在当前代码中已删除, 全仓无匹配 —— 身份约束现在只来自系统提示词.
+4. 身份保护: Identity 段 (sections.ts:7-13) 只定义 "You are Yukino..." 一句身份声明 (安全禁令在 System 段的 `# Context` 里) , 全仓没有任何额外的身份覆盖注入 —— 身份约束只来自系统提示词这一段.
 
 ---
 
@@ -134,7 +136,7 @@ main.tsx ──┬── TUI      → Ink <App>, 消费 AgentEvent → React sta
 对可测试性的意义:
 
 1. Agent 核心可无头测试: 测试里直接 `for await (const e of agent.run())`, 注入 mock `LLMClient` (返回预置 StreamEvent 序列) 即可驱动完整循环, 不需要终端. `tests/agent.test.ts` 正是这样做的.
-2. print 模式即 E2E 测试载体: print 与 TUI 共享同一核心, `yukino -p "..."` 非交互模式可直接跑真实端到端场景, print 通过即核心逻辑通过 (当前仓库未附带独立的 e2e 脚本, tests/ 全部为 Vitest 用例) .
+2. print 模式即 E2E 测试载体: print 与 TUI 共享同一核心, `yukino -p "..."` 非交互模式可直接跑真实端到端场景, print 通过即核心逻辑通过 (当前仓库未附带独立的 e2e 脚本, tests/ 为 110 个 Vitest 用例与少量配套脚本/夹具) .
 3. 权限等交互可注入: `onPermissionRequest` 是一个返回 `Promise<PermissionAction>` 的回调, 测试中可以注入"总是允许", TUI 中注入"弹对话框" —— 同一套代码路径, 不同的交互策略.
 
 ---
@@ -518,7 +520,7 @@ interface Tool {
 
 ### Bash 工具是如何执行命令的? 为什么必须用异步 API 而不是同步?
 
-`tools/bash.ts` 用异步 `spawn(prepared.executable, prepared.args, { cwd, detached: true, env, stdio: ["ignore", fd, fd] })` 执行 (bash.ts:330-338) : 每条命令先用 `createShellOutputFile` 开一个临时输出文件, 子进程的 stdout+stderr 以文件描述符模式直写该文件, 输出不经过 JS 内存. 源码注释记录了这段演进史: 最初用 `spawnSync` 同步执行, 结果在整条命令执行期间 TUI 冻结 (spinner 动画、elapsed 计时器、键盘输入全部卡死) ; 换成异步 spawn 后 Node 事件循环保持空闲, UI 才能继续响应 (bash.ts:308-311) .
+`tools/bash.ts` 用异步 `spawn(prepared.executable, prepared.args, { cwd, detached: true, env, stdio: ["ignore", fd, fd] })` 执行 (bash.ts:330-338) : 每条命令先用 `createShellOutputFile` 开一个临时输出文件, 子进程的 stdout+stderr 以文件描述符模式直写该文件, 输出不经过 JS 内存. 必须异步而不能用同步的 `spawnSync`: 同步执行会让 UI 在整条命令执行期间冻结 (spinner 动画、elapsed 计时器、键盘输入全部卡死) ; 异步 spawn 让 Node 事件循环保持空闲, UI 才能继续响应 (bash.ts:308-311) .
 
 异步是必然选择的原因:
 
@@ -547,9 +549,9 @@ interface Tool {
 - Layer 1 — 显式规则前置: 用户/项目规则中的 deny/ask 最先短路 (连 Layer 0 的计划文件例外也被其拦截) ; 显式 allow 则刻意不在此返回, 落到 Layer 5 再兑现 —— 让危险命令、拒写名单与沙箱子命令检查仍能优先于 allow 生效.
 - Layer 0 — plan 模式计划文件例外: mode 为 `plan` 且目标是 WriteFile/EditFile 且 `file_path` 规范化后与当前注册的计划文件路径相等 (且不落在拒写名单) → 直接 allow. 让模型在只读的计划模式下也能写计划文件, 是"模式约束内的合法出口".
 - Layer 2 — 只读命令白名单: command 类工具过 `isSafeCommand()` (见「isSafeCommand 的元字符守卫」) , 命中 → allow.
-- Layer 3 — 危险命令黑名单: `detectDangerous()` 检查 `DANGEROUS_PATTERNS`, 命中 → 直接 deny, 不问用户 —— 有些操作连"用户误点允许"的风险都不能冒. 值得注意现状: 源码中该模式数组当前为空 (index.ts:38-41, 注释明言 Layer-3 deny 在补充模式之前保持失活; rm -rf、fork 炸弹等旧模式已整体移除) , 即这一层目前不会命中任何命令, 机制保留但规则集清空.
+- Layer 3 — 危险命令黑名单: `detectDangerous()` 检查 `DANGEROUS_PATTERNS`, 命中 → 直接 deny, 不问用户 —— 有些操作连"用户误点允许"的风险都不能冒. 值得注意现状: 源码中该模式数组当前为空 (index.ts:38-41, 注释明言 Layer-3 deny 在补充模式之前保持失活) , 即这一层目前不会命中任何命令, 机制保留但规则集为空.
 - Layer 3.5 — 沙箱自动放行: OS 沙箱可用且工具为 Bash 时, 把复合命令按 `&&`/`||`/单个 `&`/`;`/`|`/换行 拆分为子命令逐个过规则引擎 —— 任一 deny 则整体 deny、有 ask 则整体 ask, 否则 allow. 命令将在内核级隔离中运行, 即使恶意也伤不到宿主, HITL 询问无增量价值.
-- Layer 4 — 路径沙箱 (PathSandbox) : 文件类工具限定在项目目录 + os.tmpdir 内; 拒写名单 (`DEFAULT_DENY_WRITE`, permissions/index.ts:241) 当前为空数组 —— 旧版列入的 `.yukino/config.yaml`、`.yukino/permissions.local.yaml`、`.yukino/skills/` 条目已移除, 机制保留但名单清空 (与 Layer 3 的 `DANGEROUS_PATTERNS` 同一处理方式) , 即这一层目前不会对任何路径命中 deny-write.
+- Layer 4 — 路径沙箱 (PathSandbox) : 文件类工具限定在项目目录 + os.tmpdir 内; 拒写名单 (`DEFAULT_DENY_WRITE`, permissions/index.ts:241) 当前为空数组 —— 机制保留但名单为空 (与 Layer 3 的 `DANGEROUS_PATTERNS` 同一处理方式) , 即这一层目前不会对任何路径命中 deny-write.
 - Layer 4b — "allow always" 规则: 用户点"不再询问"后, `allowAlways()` (`index.ts:734-759`) 把授权转为一条 scoped 规则并持久化 —— 文件类工具按"父目录 + `/*`", 命令类按"前 1-2 个词 + `*`" (即整个命令族) , 经 `ruleEngine.appendProjectRule()` (`index.ts:488-510`) 写入项目本地规则 YAML (同 `Tool(pattern)` 格式、去重) . 该规则下次检查经 Layer 5 的规则引擎命中 → allow, 且跨会话重启仍然生效.
 - Layer 5 — YAML 规则引擎 (RuleEngine) : 用户级 `~/.yukino/permissions.yaml` 与项目级 `{workDir}/.yukino/permissions.yaml` 两个规则文件 (permissions/index.ts:443-444) , `ToolName(pattern)` 形式的 glob 规则 → 按规则 allow/deny/ask. 规则文件按 mtime+size 缓存, 文件变化后下一次检查即读到新规则, 改规则立即生效.
 - Layer 6 — 模式矩阵兜底 (`modeDecide()`) : `default` (read 放行, write/command 询问) 、`acceptEdits` (write 放行, command 询问) 、`plan` (write/command 均询问) 、`bypassPermissions` (全放行) .
@@ -741,7 +743,7 @@ if (cache.prefix !== prefix || cache.width !== width || cache.theme !== theme) {
 
 ### 输入框 (InputBox) 在 Ink 里是如何从零实现的? 包括光标、多行、历史、自动补全.
 
-Ink 没有 `<input>` 组件, `input.tsx` (1071 行) 基于 `useInput` 原始按键事件自建了微型文本编辑器:
+Ink 没有 `<input>` 组件, `input.tsx` (约 1070 行) 基于 `useInput` 原始按键事件自建了微型文本编辑器:
 
 文本模型: `lines: string[]` + `cursorLine`/`cursorCol` 光标坐标. 字符插入是切片拼接 `line.slice(0, col) + input + line.slice(col)`; Shift+Enter/Ctrl+J 在光标处拆行实现多行; 光标渲染用 `<Text inverse>` 反色显示光标位字符. 粘贴被 Ink 合并为单条含 `\r\n` 的输入, 按多字符批量插入处理.
 
@@ -915,11 +917,11 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 
 1. 从尾部扫描找最后一条 boundary (多次压缩只认最新) ;
 2. 有 boundary: 合成"本会话延续自之前的对话…"user 消息 (含摘要) → 依序回放 keep 消息 → 回放 boundary 之后的普通消息;
-3. 无 boundary: 全量回放 (向后兼容旧会话文件) .
+3. 无 boundary: 全量回放 (未压缩会话的常规路径) .
 
 这个设计的精妙之处: 持久化格式与运行时压缩共用同一份数据结构 —— 压缩算法产出的 (summary, keep) 二元组直接序列化为 boundary, 恢复算法就是压缩重建算法的镜像. 不需要单独的"检查点格式", 语义自洽且单调: JSONL 是纯追加的, 恢复时只需线性扫描.
 
-附带机制: 会话 30 天过期清理 —— `cleanExpiredSessions()` (`src/session/index.ts:560-611`) 直接 `rmSync` 整个会话子目录, jsonl、budget 落盘的 `tool-results/` 目录与对应的 `file-history/{id}/` 目录 (备份快照、剪贴板图片) 一并清除 (源码注释专门点明: 目录名带连字符, 一次 rm 同时覆盖) . 历史插曲: 早期版本里 budget 落盘写的是 `tool-results` (连字符) , 而清理代码删的却是 `tool_results` (下划线) , 目录名不匹配导致清理删不到真实落盘目录——这种"写入方与清理方各执一词"的目录名漂移是真实项目里常见的 bug 形态, 最终以"删整个会话目录"的方式收敛. 另 `newSessionId()` 用 `Date.now().toString(36) + "-" + randomBytes(4).hex` 保证可读性与唯一性.
+附带机制: 会话 30 天过期清理 —— `cleanExpiredSessions()` (`src/session/index.ts:560-611`) 直接 `rmSync` 整个会话子目录, jsonl、budget 落盘的 `tool-results/` 目录与对应的 `file-history/{id}/` 目录 (备份快照、剪贴板图片) 一并清除 (源码注释专门点明: 落盘目录名是带连字符的 `tool-results`, 与 jsonl 同处会话目录内, 一次 rm 同时覆盖) . 另 `newSessionId()` 用 `Date.now().toString(36) + "-" + randomBytes(4).hex` 保证可读性与唯一性.
 
 ---
 
@@ -1004,7 +1006,7 @@ PTL 重试: 摘要请求本身可能超长 —— `requestSummaryWithPTLRetry()`
 
 - `reject` (仅 pre_tool_use) : hook 返回拒绝即阻止工具执行, 拒绝原因作为工具结果回喂模型 —— 实现"策略即代码" (如"禁止在 main 分支直接写文件") ; 与 `async` 互斥 (异步无法同步否决) , 配置时校验.
 - `once`: `firedOnce` 集合按 hook id 去重, 成功触发过的钩子本会话不再触发 —— 解决"会话开场白""首次提醒"类需求, 避免每轮重复注入; 执行失败时槽位释放, 允许后续重试 (hooks/index.ts:118-131) .
-- `async`: 后台执行 (`.then()` 不 await) , 主循环立即继续处理下一个钩子 (不再有占位结果) , 真实输出完成后经 `recordNotification()` 排队注入下一轮 —— 慢操作 (如 http 上报) 不阻塞 Agent 主循环; 失败沿用 `on_error` 语义 (`ignore` 仅记日志, 其余上报 "Async hook error: ...") (hooks/index.ts:133-153) .
+- `async`: 后台执行 (`.then()` 不 await) , 主循环立即继续处理下一个钩子, 真实输出完成后经 `recordNotification()` 排队注入下一轮 —— 慢操作 (如 http 上报) 不阻塞 Agent 主循环; 失败沿用 `on_error` 语义 (`ignore` 仅记日志, 其余上报 "Async hook error: ...") (hooks/index.ts:133-153) .
 
 钩子输出统一走 `recordNotification()` 队列, 在下一轮开头被 Agent drain 成 system-reminder (见「Agent 循环 run() 的单轮迭代流程」第 3 步) —— 异步世界与生成器主线的汇合点.
 
@@ -1086,7 +1088,7 @@ JSONL (每行一条 JSON, 纯追加) 的优势在该场景下非常契合:
 
 lead 侧感知: `TeamManager.drainLeaderMailbox()` 把各邮箱未读消息包装为 `<task-notification team="...">` XML, 经 Agent 循环的 `notificationFn` 注入主线 system-reminder (复用「Agent 循环 run() 的单轮迭代流程」第 3 步的 drain 通道) .
 
-后端 (`backend.ts`) : `detectBackend()` (line 43-68) 在 win32 上直接返回 `"in-process"`, 否则调 `detectBackendFromEnv()` 按环境探测 —— 检测到 `TMUX` 环境变量返回 `"tmux"` (每 teammate 一个独立 tmux 会话) , 检测到 `ITERM_SESSION_ID` 返回 `"iterm"`, 都没有才回退 `"in-process"`. iterm 后端已实现 : 用 osascript 驱动 iTerm2 AppleScript, 在当前窗口开新标签页执行 teammate 命令 ; 标签页没有可编程句柄, 取消动作交给邮箱 shutdown 流程. tmux 后端则为每个 teammate 直接 `tmux new-session -d -s yukino-<base36 时间戳> -n teammate` 建独立会话 (不再尝试 new-window) , 取消用 `tmux kill-session`.
+后端 (`backend.ts`) : `detectBackend()` (backend.ts:22-41) 在 win32 上直接返回 `"in-process"`, 否则调 `detectBackendFromEnv()` 按环境探测 —— 检测到 `TMUX` 环境变量返回 `"tmux"` (每 teammate 一个独立 tmux 会话) , 检测到 `ITERM_SESSION_ID` 返回 `"iterm"`, 都没有才回退 `"in-process"`. iterm 后端已实现 : 用 osascript 驱动 iTerm2 AppleScript, 在当前窗口开新标签页执行 teammate 命令 ; 标签页没有可编程句柄, 取消动作交给邮箱 shutdown 流程. tmux 后端则为每个 teammate 直接 `tmux new-session -d -s yukino-<base36 时间戳> -n teammate` 建独立会话, 取消用 `tmux kill-session`.
 
 为什么用文件而不是 IPC/socket: 跨后端可移植 —— 同一套协议在 in-process、子进程、tmux 窗格间都成立; 崩溃恢复天然 (邮箱是持久化的) ; 调试友好 (直接 cat 邮箱文件) . 代价是轮询延迟与锁竞争, 在" teammate 数量少、消息频率低"的场景下完全可接受.
 
@@ -1202,7 +1204,7 @@ Vitest v4 (v8 coverage) , 测试分层 (`tests/`, 110 个测试文件) :
 
 集成层: `agent.test.ts` (注入 mock LLMClient 驱动完整循环: 工具执行、压缩、恢复、中断) ; `skills.test.ts`、`teams.test.ts` + `file-mailbox.test.ts` (锁、游标、过期) ; `memory.test.ts` + `consolidation.test.ts`; `code-review.test.ts`、`ask-user.test.ts`、`plan-file.test.ts`、`command-loader.test.ts`、`install-skill.test.ts`.
 
-E2E 层: 仓库当前未附带独立 E2E 脚本 (旧版的 run-e2e.mjs / run-failing.mjs 已移除) ; print 模式 (`yukino -p`) 仍是天然的端到端载体, 因为 print 与 TUI 共享同一 Agent 核心 (见「六种运行模式复用同一套核心逻辑」) —— headless 模式天然是 E2E 测试的入口点.
+E2E 层: 仓库当前未附带独立 E2E 脚本; print 模式 (`yukino -p`) 仍是天然的端到端载体, 因为 print 与 TUI 共享同一 Agent 核心 (见「六种运行模式复用同一套核心逻辑」) —— headless 模式天然是 E2E 测试的入口点.
 
 测试策略的两个关键决策:
 
@@ -1374,11 +1376,9 @@ SPA fallback: 请求路径找不到文件时回退到 `index.html` (server.ts:10
 
 ---
 
-### remote 模式下, 系统提示词与 system-reminder 各放什么内容? (旧版的"IDENTITY OVERRIDE" reminder 已删除)
+### remote 模式下, 系统提示词与 system-reminder 各放什么内容?
 
-先修正一个历史事实: 旧版 remote `server.ts` 曾在初始化时注入一条 "IDENTITY OVERRIDE" system-reminder (禁止提及 Claude/Anthropic/OpenAI 等品牌名, 被问身份只答 Yukino) . 该机制在当前代码中已删除 —— 全仓检索无 `IDENTITY OVERRIDE` 匹配, 身份约束只来自系统提示词的 Identity 段.
-
-现行的分层原则不变: 系统提示词放"不变的、需缓存的", system-reminder 放"可变的、需重申的". remote 模式当前经 reminder 通道注入的内容包括:
+分层原则: 系统提示词放"不变的、需缓存的", system-reminder 放"可变的、需重申的" —— 身份约束只来自系统提示词的 Identity 段, reminder 通道没有任何身份覆盖类注入. remote 模式当前经 reminder 通道注入的内容包括:
 
 1. 项目指令与长期记忆: `conv.injectLongTermMemory(instructions, memReminder)` (server.ts:571-572) —— `memoryManager.buildSystemReminder()` 生成 active memories 清单, 与项目指令一起以 reminder 注入; 这些是项目相关内容, 放进系统提示词会破坏跨项目的 prompt cache 前缀.
 2. 计划模式提醒: 重新进入 plan 模式时 `buildPlanModeReentryReminder` 重建提醒 (server.ts:1855-1860) , 退出时 `buildPlanModeExitReminder` (server.ts:1997-1998) —— 这是会话级运行时状态, 不可能进创建 client 时固化的提示词.
@@ -1501,7 +1501,7 @@ convRef.current.addUserMessage(expanded);
 2. 前缀名匹配 (`/cle` → clear)
 3. Fuse.js 模糊匹配 (`/clar` → clear, 容错)
 
-旧版还有"精确别名匹配/前缀别名匹配"两级 (如 `/re` → resume) , 现命令已无别名字段 (input.tsx 里合成条目一律 `aliases: []`) , 别名级随之取消.
+命令没有别名字段 (input.tsx 里合成条目一律 `aliases: []`) , 因此管道只有三级, 没有别名相关的匹配层.
 
 排序逻辑: 确定性结果优先于概率性结果. 前两级是字符串运算, 结果唯一可预期; 第三级是评分排序, 可能有多个候选. 用户输入越完整, 命中的级别越靠前 —— 补全体验是"越认真打字, 结果越确定".
 
@@ -1578,7 +1578,7 @@ export const logger = new Proxy(silentFallback, {
 
 `plan-file/index.ts`:
 
-命名 (`generateSlug()`, `utils/slug.ts:3-7`) : `Date.now().toString(36) + "-" + randomBytes(6).toString("hex")`, 落盘为 `<slug>.md` (plan-file/index.ts:33-34) , 如 `lz3k9x2a-3f8b1c9d2e4a.md`. 旧版的"形容词-名词-时间戳"词表命名已不存在. 为什么用 base36 时间戳 + 随机字节:
+命名 (`generateSlug()`, `utils/slug.ts:3-7`) : `Date.now().toString(36) + "-" + randomBytes(6).toString("hex")`, 落盘为 `<slug>.md` (plan-file/index.ts:33-34) , 如 `lz3k9x2a-3f8b1c9d2e4a.md`. 为什么用 base36 时间戳 + 随机字节:
 
 - 紧凑: base36 把毫秒时间戳压成短串, 6 字节随机数 (12 个 hex 字符) 提供独立熵 —— 同毫秒创建也不撞;
 - 可排序: 时间戳在前, 文件名天然按创建时间大致有序, plans 目录里易指认;
@@ -1606,11 +1606,11 @@ export const logger = new Proxy(silentFallback, {
 
 ### `model-resolver` 的 `createModelResolver` 闭包工厂解决什么问题?
 
-`model-resolver.ts` 现在只有一层 (model-resolver.ts:5-18) . 旧版的 `MODEL_ALIASES` 别名表 (haiku/sonnet/opus → claude 全名) 与 `resolveModelId()` 已从代码中删除, 不再有"语义别名 → 全名"的间接层.
+`model-resolver.ts` 只有一层 (model-resolver.ts:5-18) : 仅提供下述 `createModelResolver` 闭包工厂, 没有"语义别名 → 全名"的间接层.
 
 `createModelResolver(baseConfig, systemPrompt)` 闭包工厂: 返回 `(modelName) => Promise<LLMClient>`, 内部展开 `baseConfig` (保留 api_key/base_url/protocol) 只换 model 字段再 `createClient()`. 解决的问题: 换模型 ≠ 换供应商. 子代理指定不同模型时, 凭证、端点、协议、系统提示词都应继承父级 —— 闭包把这些"不变量"捕获起来, 调用方只关心变量 (模型名) . 这是工厂模式的标准收益: 构造逻辑 (加载配置、选协议、建客户端) 单点收敛, 运行时按需产出. (当前 src 内没有调用方, `spawnSubagent` 直接用同样的展开逻辑内联调 `createClient`, spawn.ts:80-88) .
 
-model 字段现在直接写具体模型 ID: 内置 explore 角色即 `model: "deepseek-flash"` (definition.ts:40) . 别名档位抽象去掉后, 模型升级需改各引用处, 换来的是名字所见即所得、无隐性别名漂移.
+model 字段直接写具体模型 ID: 内置 explore 角色即 `model: "deepseek-flash"` (definition.ts:40) . 没有别名档位抽象, 模型名字所见即所得、无隐性别名漂移; 升级模型需要改各引用处.
 
 联动: `spawnSubagent()` 的模型解析优先级 (调用覆盖 > 定义指定 > 父级, spawn.ts:73-75) , 指定模型 (或定义带 systemPromptOverride) 时新建 client, 否则直接复用父 client (省一次初始化与连接) .
 
@@ -2088,7 +2088,7 @@ class TokenEstimator {
    - 静态信号: 子代理定义的 `disallowedTools` (只读任务→低档) 、`maxTurns` (大预算→高档) 、提示词长度;
    - 动态信号: 首轮工具调用数 (大量并行读→探索型→低档) 、产生错误的频率;
    - 用户信号: `/model fast|smart` 显式指定偏好.
-2. 路由策略实现: `createModelResolver` (见「model-resolver 的 createModelResolver 闭包工厂」) 已是"按名建 client"的工厂, 扩展为 `resolveForTask(def, prompt): ProviderConfig` —— 打分映射到档位 (fast/balanced/strong 三档, 档位映射表可配置; 现版本代码已无别名表, 档位映射需作为新配置引入) . Router 本身可以是规则引擎 (确定性、零成本) 或一个小模型调用 (灵活但每次子代理多花一次调用 —— 对 explore 这种高频派生不划算) .
+2. 路由策略实现: `createModelResolver` (见「model-resolver 的 createModelResolver 闭包工厂」) 已是"按名建 client"的工厂, 扩展为 `resolveForTask(def, prompt): ProviderConfig` —— 打分映射到档位 (fast/balanced/strong 三档, 档位映射表可配置; 仓库没有现成的别名/档位映射表, 档位映射需作为新配置引入) . Router 本身可以是规则引擎 (确定性、零成本) 或一个小模型调用 (灵活但每次子代理多花一次调用 —— 对 explore 这种高频派生不划算) .
 3. 升级逃生舱: 低档模型执行中连续失败 (如连续 N 轮无进展/工具错误率超阈值) 时, 中断并以高档模型重跑 —— spawn 层捕获失败信号, 把已有对话历史交给强模型续跑 (ConversationManager 可传递, 只是换 client) .
 4. 成本观测: usage 事件已带模型维度 (client 各自统计) , 状态栏分行显示各模型消耗 —— 自动降档的收益可见化.
 5. 护栏: 涉及写操作 (EditFile/WriteFile) 的子代理不允许低档 —— 档位策略与工具能力联动, 不只是文本启发式.
@@ -2123,12 +2123,12 @@ class TokenEstimator {
 
 1. 零配置、自包含: 克隆项目即获得全部 Agent 状态上下文; 团队邮箱、计划文件随项目走, 协作语义自然.
 2. 可观测性与可调试性: 全部是文本 (JSONL/MD/JSON) , `cat`/`jq`/`tail -f` 即可调试 —— 对开发工具而言, "用户能看懂自己的状态"是信任基础.
-3. 生命周期对齐: 项目删除即状态删除, 无全局残留; `config.local.yml` 天然 gitignore 友好.
+3. 生命周期对齐: 项目删除即状态删除, 无全局残留; 项目级状态集中在 `.yukino/` 与项目内 `.agents/` 两个目录, 一并加入 `.gitignore` 即可, 状态无需随仓库分发.
 4. 无外部依赖: 不需要数据库服务, 离线可用, 符合 CLI 工具的分发约束.
 
 弊与缓解:
 
-1. 污染工作区: `.yukino/` 混入用户项目 —— 缓解: 单一目录收敛 + 文档引导加入 `.gitignore` (`config.local.yml` 的设计已考虑这点) .
+1. 污染工作区: `.yukino/` 混入用户项目 —— 缓解: 项目级状态全部收敛在 `.yukino/` 与项目内 `.agents/` 两个目录, 只需把它们加入 `.gitignore`; 用户级状态 (配置、记忆、命令) 落在 `~/.yukino/`, 不进入任何仓库.
 2. 并发与性能: 文件锁、轮询在规模上有上限 —— 但 Agent 场景的写入者是"几个进程", 远未到瓶颈; 邮箱锁 (见「手写文件邮箱的互斥锁」) 已做 stale 与退避.
 3. 跨项目状态: 用户级记忆/命令放 `~/.yukino/` —— 按作用域分层 (项目态 vs 用户态) 是正确的边界划分, 与技能/配置的级联 (见「用户自定义命令的加载机制」) 一致.
 
@@ -2274,9 +2274,9 @@ LLM 输出用 Zod 校验是 Agent 应用的特殊要点: 模型的 function call
 
 工程启示: 不重新发明 IDE 协议, 直接寄生在已有生态的发现机制 (锁文件 + 环境变量) 上, 用最小代码 (三个文件) 拿到"编辑器选中代码 → 终端 Agent 精确上下文"的高价值体验.
 
-### `/code-review` 代码评审子系统现在长什么样? (旧版 `/review` 与团队式多角色评审已移除)
+### `/code-review` 代码评审子系统长什么样?
 
-先说两个旧版事实的更正: ① 轻量 `/review` 命令 (prompt 类型, 让模型跑 `git status`/`git diff` 后报告 bug) 已不存在 —— `commands.ts` 中没有名为 `review` 的命令; ② 旧版"评审团队 + 评审请求 + 批评者再评估"的团队式评审 (对应旧 `code-review/handler.ts`、`manager.ts`、`session.ts` 结构) 已整体废弃. 当前 `/code-review` 是重构后的"确定性管线 + 隔离子代理评审".
+`/code-review` 是"确定性管线 + 隔离子代理评审": 命令系统里没有轻量的 `/review` 命令, `code-review/` 目录中也没有团队式评审或会话式评审模块 —— 评审全部经下面这条确定性管线一次完成.
 
 入口 (`commands.ts:237-242`) : `/code-review` 类型为 `local_ui` —— 无参数时 handler 返回 `"code-review"`, TUI 打开评审配置对话框 (app.tsx:1680-1682) ; 带参数时返回 `"code-review-usage"` 提示用法 (app.tsx:1683-1691) . 表单收集 focus (需求背景) / from / to / commit / exclude 五个字段 (`form.ts` 的 Zod schema) , 提交后经 `handleCodeReview()` (app.tsx:2720) 调 `runCodeReview()`; remote 浏览器端有等价对话框.
 

@@ -453,21 +453,31 @@ state.count = 1; // 修改 -> 触发依赖 -> 重新打印 1
 
 ### 4.2 数据结构
 
-reactive 维护了几张全局的 WeakMap 和栈结构 (定义在 environment.ts 中) :
+reactive 的全局运行时状态集中定义在 environment.ts 中. 下面是其中的关键项 (节选, 原文件还导出 MakeObModelSymbol 等几个 Symbol) :
 
 ```ts
 // 原始对象 -> 代理对象 的映射
 export const RawProxy = new WeakMap();
 // 代理对象 -> 原始对象 的映射
 export const ProxyRaw = new WeakMap();
+// 浅代理 (observable.shallow) 场景下的 原始对象 -> 代理对象 映射
+export const RawShallowProxy = new WeakMap();
+// 原始对象 -> DataNode (数据树节点) 的映射
+export const RawNode = new WeakMap<object, DataNode>();
 // 原始对象 -> 依赖关系图 的映射 (核心! )
 export const RawReactionsMap = new WeakMap<object, ReactionsMap>();
 // 当前正在执行的 reaction 栈
 export const ReactionStack: Reaction[] = [];
-// 批处理计数器
+// 批处理计数器 / 关闭依赖收集的计数器 / batch.scope 开关
 export const BatchCount = { value: 0 };
-// 待执行的 reactions 队列
+export const UntrackCount = { value: 0 };
+export const BatchScope = { value: false };
+// 待执行的 reactions 队列 (batch 期间 / batch.scope 期间)
 export const PendingReactions = new ArraySet<Reaction>();
+export const PendingScopeReactions = new ArraySet<Reaction>();
+// 批处理结束时统一执行的回调, 以及 observe() 注册的观察者
+export const BatchEndpoints = new ArraySet<() => void>();
+export const ObserverListeners = new ArraySet<ObservableListener>();
 ```
 
 其中 RawReactionsMap 的结构是:
@@ -480,20 +490,24 @@ WeakMap<target, Map<key, ArraySet<Reaction>>>
 
 ### 4.3 Proxy 拦截: 依赖收集
 
-当你调用 observable(obj) 时, reactive 会创建一个 Proxy 包裹原始对象. Proxy 的 get 拦截器 (handlers.ts) 做了两件事:
+当你调用 observable(obj) 时, reactive 会创建一个 Proxy 包裹原始对象. Proxy 的 get 拦截器 (handlers.ts 的 baseHandlers) 的核心逻辑是:
 
 ```ts
 get(target, key, receiver) {
   const result = target[key]
-  // 第一步: 依赖收集 -- 将当前 reaction 与 target[key] 绑定
   bindTargetKeyWithCurrentReaction({ target, key, receiver, type: 'get' })
-  // 第二步: 深度代理 -- 如果 result 是对象, 递归创建 Proxy
+  // 已经代理过的对象直接复用已有 Proxy
+  const observableResult = RawProxy.get(result)
+  if (observableResult) return observableResult
+  // 尚未代理的普通对象/集合, 递归创建 Proxy 并记录到数据树
   if (!isObservable(result) && isSupportObservable(result)) {
     return createObservable(target, key, result)
   }
   return result
 }
 ```
+
+(真实实现还先行跳过 well-known Symbol, 并在 createObservable 分支里跳过不可写不可配置的自有属性, 这里不再展开.)
 
 bindTargetKeyWithCurrentReaction 的实现 (reaction.ts) :
 
@@ -503,7 +517,9 @@ export const bindTargetKeyWithCurrentReaction = (operation) => {
   const reactionLen = ReactionStack.length;
   if (reactionLen === 0) return; // 没有正在执行的 reaction, 跳过
   const current = ReactionStack[reactionLen - 1]; // 取栈顶
+  if (isUntracking()) return; // untracked() 作用域内不收集依赖
   if (current) {
+    DependencyCollected.value = true;
     // 双向绑定:
     // 1. target[key] -> current (写入 RawReactionsMap)
     // 2. current -> target[key] 的 reactionsMap (写入 reaction._reactionsSet)
@@ -579,6 +595,8 @@ Tracker 是 autorun 的变体, 专为 React 渲染设计. 它多了一个 schedu
 export class Tracker {
   constructor(scheduler) {
     this.track._scheduler = (callback) => {
+      // 依赖变化时先清空旧依赖绑定, 再交给 scheduler
+      if (this.track._boundary === 0) this.dispose();
       scheduler(callback); // 调用 forceUpdate
     };
   }
@@ -592,6 +610,8 @@ export class Tracker {
     batchEnd();
     return this.results;
   };
+
+  dispose = () => disposeBindingReactions(this.track);
 }
 ```
 
@@ -634,13 +654,14 @@ reaction(
 
 ### 4.8 与 MobX 的区别
 
-| 维度     | Formily Reactive                   | MobX             |
-| -------- | ---------------------------------- | ---------------- |
-| 体积     | 约 5KB gzip                        | 约 16KB gzip     |
-| 依赖收集 | 每次执行前释放旧依赖、重新收集     | 类似             |
-| 批处理   | 内置 batch, 支持嵌套               | 内置 transaction |
-| 数据树   | 内置 DataNode 树结构, 支持路径寻址 | 无               |
-| 设计目标 | 为表单场景优化                     | 通用状态管理     |
+| 维度     | Formily Reactive                   | MobX         |
+| -------- | ---------------------------------- | ------------ |
+| 依赖收集 | 每次执行前释放旧依赖、重新收集     | 类似         |
+| 批处理   | 内置 batch, 支持嵌套与 batch.scope | 内置批处理   |
+| 数据树   | 内置 DataNode 树结构, 支持路径寻址 | 无           |
+| 设计目标 | 为表单场景优化                     | 通用状态管理 |
+
+另外, @formily/reactive 零运行时依赖: packages/reactive/package.json 没有 dependencies 字段, devDependencies 里的 mobx 与 @vue/reactivity 只用于 benchmark 脚本的对比测试.
 
 ---
 
@@ -827,13 +848,17 @@ Heart 继承自 Subscribable, 是 Formily 的发布-订阅事件系统:
 ```ts
 export class Heart extends Subscribable {
   lifecycles: LifeCycle[] = []; // 内部生命周期
-  outerLifecycles: Map<any, LifeCycle[]> = new Map(); // 外部生命周期
+  outerLifecycles: Map<any, LifeCycle[]> = new Map(); // 外部生命周期 (addEffects 动态挂载)
+  context: Context; // 默认的发布上下文 (通常是 Form 实例)
 
   publish = (type, payload, context) => {
-    // 遍历所有 lifecycle, 调用 notify
-    this.lifecycles.forEach((lc) => lc.notify(type, payload, context));
+    if (!isStr(type)) return;
+    // 遍历所有 lifecycle, 调用 notify (context 缺省时用 this.context)
+    this.lifecycles.forEach((lc) =>
+      lc.notify(type, payload, context || this.context),
+    );
     this.outerLifecycles.forEach((lcs) =>
-      lcs.forEach((lc) => lc.notify(type, payload, context)),
+      lcs.forEach((lc) => lc.notify(type, payload, context || this.context)),
     );
     // 同时通知 Subscribable 的订阅者
     this.notify({ type, payload });
@@ -871,12 +896,21 @@ createEffectHook 的核心逻辑:
 ```ts
 export const createEffectHook = (type, callback) => {
   return (...args) => {
-    // 必须在 effects 函数体中同步调用
-    GlobalState.lifecycles.push(
-      new LifeCycle(type, (payload, ctx) => {
-        callback(payload, ctx)(...args);
-      }),
-    );
+    // 必须在 effects 函数体的同步执行阶段调用
+    if (GlobalState.effectStart) {
+      GlobalState.lifecycles.push(
+        new LifeCycle(type, (payload, ctx) => {
+          if (isFn(callback)) {
+            // GlobalState.context 里装着 useEffectForm 提供的 Form 实例
+            callback(payload, ctx, ...GlobalState.context)(...args);
+          }
+        }),
+      );
+    } else {
+      throw new Error(
+        "Effect hooks cannot be used in asynchronous function body",
+      );
+    }
   };
 };
 ```
@@ -922,10 +956,15 @@ observer 是连接 reactive 和 React 的桥梁. 它的核心逻辑非常简洁:
 
 ```ts
 export function observer(component, options) {
-  const wrappedComponent = (props) => {
-    return useObserver(() => component(props), options);
-  };
-  return memo(wrappedComponent);
+  const realOptions = { forwardRef: false, ...options };
+  const wrappedComponent = realOptions.forwardRef
+    ? forwardRef((props, ref) =>
+        useObserver(() => component({ ...props, ref }), realOptions),
+      )
+    : (props) => useObserver(() => component(props), realOptions);
+  const memoComponent = memo(wrappedComponent);
+  hoistNonReactStatics(memoComponent, component);
+  return memoComponent;
 }
 ```
 
@@ -937,8 +976,13 @@ export const useObserver = (view, options) => {
   const tracker = useCompatFactory(
     () =>
       new Tracker(() => {
-        forceUpdate(); // 依赖变化时, 强制 React 重渲染
-      }),
+        // 可选的自定义 scheduler, 缺省即 forceUpdate
+        if (typeof options?.scheduler === "function") {
+          options.scheduler(forceUpdate);
+        } else {
+          forceUpdate(); // 依赖变化时, 强制 React 重渲染
+        }
+      }, options?.displayName),
   );
   return tracker.track(view); // 执行渲染函数, 收集依赖
 };
@@ -958,8 +1002,16 @@ export const useObserver = (view, options) => {
 ```ts
 export function useForceUpdate() {
   const [, setState] = useState([]);
+  const firstRenderedRef = useRef(false);
+  const needUpdateRef = useRef(false);
   // ...
   const scheduler = useCallback(() => {
+    if (!firstRenderedRef.current) {
+      // StrictMode 下第一次渲染函数的 setState 会触发第二次渲染并清理依赖,
+      // 因此这里拦截掉, 只记下待更新标记
+      needUpdateRef.current = true;
+      return;
+    }
     if (RENDER_COUNT.value === 0) {
       update(); // 没有正在渲染的组件, 直接更新
     } else {
@@ -970,7 +1022,7 @@ export function useForceUpdate() {
 }
 ```
 
-这里有一个全局的 RENDER_COUNT 计数器和 RENDER_QUEUE 队列. 它解决的问题是: 如果在 React 渲染过程中同步触发另一个组件的 setState, 会导致 React 警告或错误. 所以 formily 会检测当前是否有组件正在渲染, 如果有, 就把更新延迟到渲染结束后统一执行.
+这里有一个全局的 RENDER_COUNT 计数器和 RENDER_QUEUE 队列. 它解决的问题是: 如果在 React 渲染过程中同步触发另一个组件的 setState, 会导致 React 警告或错误. 所以 formily 会检测当前是否有组件正在渲染, 如果有, 就把更新延迟到渲染结束后统一执行. firstRenderedRef/needUpdateRef 则是为 StrictMode 准备的: 组件首次渲染完成前到来的更新不会直接 setState, 而是记下来等 useLayoutEffect 里补一次.
 
 ### 6.3 useCompatFactory 与垃圾回收
 
@@ -1071,9 +1123,11 @@ connect 用于将第三方 UI 组件适配为 Formily 字段组件:
 ```ts
 export function connect(target, ...mappers) {
   const Target = mappers.reduce((target, mapper) => mapper(target), target);
-  return React.forwardRef((props, ref) => {
+  const Destination = React.forwardRef((props, ref) => {
     return React.createElement(Target, { ...props, ref });
   });
+  if (target) hoistNonReactStatics(Destination, target);
+  return Destination;
 }
 ```
 
@@ -1090,8 +1144,17 @@ export function mapProps(...args) {
             return Object.assign(props, mapper(props, field));
           } else {
             // 对象映射: { value: 'checked' } 表示把 field.value 映射为 props.checked
+            // each(obj) 的回调签名是 (value, key), 所以这里 to 是值, extract 是键
             each(mapper, (to, extract) => {
-              FormPath.setIn(props, to, FormPath.getIn(field, extract));
+              const extractValue = FormPath.getIn(field, extract);
+              const targetValue = isStr(to) ? to : extract;
+              const originalValue = FormPath.getIn(props, targetValue);
+              if (extract === "value" && to !== extract) {
+                delete props.value; // 值被改名映射走, 清掉原始 value
+              }
+              // props 已有值而 field 侧为空时不覆盖
+              if (isValid(originalValue) && !isValid(extractValue)) return;
+              FormPath.setIn(props, targetValue, extractValue);
             });
             return props;
           }
@@ -1250,6 +1313,7 @@ const getUserReactions = (schema, options) => {
     return (field) => {
       const baseScope = getBaseScope(field, options);
       const reaction = shallowCompile(unCompiled, baseScope);
+      if (!reaction) return;
 
       if (isFn(reaction)) {
         return reaction(field, baseScope); // 函数式: 直接执行
@@ -1259,14 +1323,23 @@ const getUserReactions = (schema, options) => {
       const { when, fulfill, otherwise, target, effects } = reaction;
       const run = () => {
         const $deps = getDependencies(field, reaction.dependencies);
+        const $dependencies = $deps;
         const scope = lazyMerge(baseScope, {
           $target: null,
           $deps,
-          $dependencies: $deps,
+          $dependencies,
         });
-        const condition = when ? shallowCompile(when, scope) : true;
+        const compiledWhen = shallowCompile(when, scope);
+        const condition = when ? compiledWhen : true;
         const request = condition ? fulfill : otherwise;
-        setSchemaFieldState({ field, target, request, scope });
+        const runner = request?.run;
+        setSchemaFieldState({
+          field,
+          target,
+          request,
+          runner,
+          scope,
+        });
       };
 
       // 有 target 时, effects 缺省为 ['onFieldInit', 'onFieldValueChange']
@@ -1650,4 +1723,4 @@ Formily 用路径 (Path) 作为字段的唯一标识. 这带来了:
 12. packages/react/src/components/RecursionField.tsx -- 理解 Schema 递归渲染
 13. packages/json-schema/src/transformer.ts -- 理解 x-reactions 的执行
 
-每个文件都不大 (最大的 Form.ts 约 618 行, Field.ts 约 522 行) , 代码质量很高, 注释适中, 非常适合学习.
+每个文件都不大 (上面清单里最长的 Form.ts 619 行, Field.ts 523 行) , 代码质量很高, 注释适中, 非常适合学习.

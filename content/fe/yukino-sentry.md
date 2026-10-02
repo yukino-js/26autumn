@@ -5,6 +5,8 @@ description: "@yukino.js/sentry 框架无关浏览器端监控 SDK 的问答式�
 
 > 本机器路径 `$HOME/github/yukino-sentry/sentry`, 基于 `@yukino.js/sentry` 0.0.1 源码
 
+本机仓库快照: HEAD `da4dc3e` "feat: Update npm registry" (提交日期 2026-09-30), remote `git@github.com:hangtiancheng/yukino-sentry.git`, 分支 `main`; 包版本以 sentry/package.json 为准 (`@yukino.js/sentry` 0.0.1, `type: module`, 六个 exports 入口).
+
 ## 项目整体架构设计是怎样的? 核心模块有哪些?
 
 @yukino.js/sentry 是一个框架无关的浏览器端监控与分析 SDK, 采用分层架构设计, 核心模块如下:
@@ -1885,8 +1887,8 @@ export async function resolveFrame(loadMap: MapLoader, frame: RawFrame) {
 export async function enrichReportData(loadMap, records) {
   // type === "Error" 且有 line/column: 用 record.name (出错脚本 URL) 反解单帧
   // payload.extra 是堆栈字符串: 反解整条堆栈
-  // type === "React"/"Vue"/"OtherFrameworks": 从 payload.extra.stack 取堆栈
-  //    (payload.stack 作为旧版载荷的兜底) 反解整条堆栈
+  // type === "React"/"Vue"/"OtherFrameworks": 先取 payload.stack,
+  //    无则取 payload.extra.stack, 反解整条堆栈
 }
 ```
 
@@ -1919,7 +1921,7 @@ export default defineConfig({
 
 ## Vite dev-server mock 插件 (@yukino.js/sentry/vite) 是做什么的?
 
-`sentry/src/vite.ts` 只导出 `sentryPlugin` (default 导出同物) , 类型签名对齐 vite 8 (sentry 包 devDependencies 为 vite ^8.3.1) ; 文件头部注释保留了 `pnpm add -D vite7@npm:vite@7` 的别名安装说明, 表示曾按 vite 7 做过兼容验证. 它是开发环境的「mock 上报服务端」, 解决本地开发没有日志服务的问题.
+`sentry/src/vite.ts` 只导出 `sentryPlugin` (default 导出同物) , 类型签名对齐 vite 8 (sentry 包 devDependencies 为 vite ^8.3.1) ; 文件头部注释列出了 `npm view vite versions` 与 `pnpm add -D vite7@npm:vite@7` 的别名安装说明. 它是开发环境的「mock 上报服务端」, 解决本地开发没有日志服务的问题.
 
 注意: yukino-codegen 的 client/vite.config.ts 以 `import { sentryPlugin7 } from "@yukino.js/sentry/vite"` 的方式引用了一个 `sentryPlugin7` 具名导出, 但当前 sentry 源码与已发布的 0.0.1 (npm 上也仅有此版本) 均无该导出, 属于两个仓库之间的版本脱节.
 

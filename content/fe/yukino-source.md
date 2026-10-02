@@ -1,11 +1,12 @@
 ---
 title: "Yukino 源代码深度解析"
-description: "基于 apps/yukino 源码逐文件阅读整理的 Coding Agent 深度解析"
+description: "基于 apps/yukino (@yukino.js/yukino@0.0.8) 源码逐文件阅读整理的 Coding Agent 深度解析"
 ---
 
 > 本机器路径: `$HOME/github/yukino-code/apps/yukino`
-> 基于 `apps/yukino/src`（`@yukino.js/yukino`）源码逐文件阅读整理，代码事实核对于仓库 HEAD `526dd77`（2026-09-30）。
+> 基于 `apps/yukino/src`（`@yukino.js/yukino@0.0.8`）源码逐文件阅读整理，代码事实核对于仓库 `https://github.com/hangtiancheng/yukino-code` 的 HEAD `526dd77`（2026-09-30）。
 > 代码入口：`src/main.tsx`；核心循环：`src/agent/index.ts`；系统提示词：`src/prompt/*`。
+> `$HOME/github/yukino-code` 是 pnpm monorepo（packageManager pnpm@10.33.1）：`apps/yukino` 发布为 `@yukino.js/yukino@0.0.8`（bin `yukino`，Node >= 20）；同仓库还有 `apps/mcp`（`@yukino.js/mcp@0.0.1`，官方 MCP 工具集合，`src/tools` 含 chrome/create-app/docs/github 四组）与 `apps/docs`（私有官网前端包）。
 
 ---
 
@@ -279,7 +280,7 @@ interface Tool {
 
 ### 4.1 命令系统（`commands/commands.ts` + `loader.ts`）
 
-`CommandRegistry` 支持 name、冲突检测（重名注册抛错）、前缀补全（`complete(prefix)`）。当前代码中命令没有别名字段（补全管道里的 `aliases` 权重槽恒为空数组）。命令类型：`local`（本地返回文本）、`local_ui`（触发 UI 动作）、`prompt`（展开成发给模型的 prompt）、`skill_fork`（fork 模式技能）。
+`CommandRegistry` 支持 name、冲突检测（重名注册抛错）、前缀补全（`complete(prefix)`）。命令没有别名字段（补全管道里的 `aliases` 权重槽恒为空数组）。命令类型：`local`（本地返回文本）、`local_ui`（触发 UI 动作）、`prompt`（展开成发给模型的 prompt）、`skill_fork`（fork 模式技能）。
 
 **内置命令：**
 
@@ -311,7 +312,7 @@ interface Tool {
 
 ### 4.2 Skills（技能）
 
-- **加载路径**（`skills/catalog.ts`）：`~/.agents/skills/<name>/SKILL.md`（用户级）+ `<workDir>/.agents/skills/<name>/SKILL.md`（项目级，优先）。**当前代码只有这两层**——README 提到的「built-in」层在现版本代码里没有实现，仓库本身也不附带任何 SKILL.md。
+- **加载路径**（`skills/catalog.ts`）：`~/.agents/skills/<name>/SKILL.md`（用户级）+ `<workDir>/.agents/skills/<name>/SKILL.md`（项目级，优先）。只有这两层，同名时项目级覆盖用户级；仓库本身不附带任何 SKILL.md。
 - **SKILL.md frontmatter**：`name`(必)、`description`、`mode`(inline/fork)、`model`、`fork_context`(full/recent/none)。`context: fork` 等价于 `mode: fork`（兼容其他生态）。
 - **热重载**：目录 mtime 变化触发 `reload()`；单文件 mtime 变化在 `get()` 时惰性重读。
 - **渐进披露**：技能元数据清单不进系统提示词，而是经首条 system-reminder 注入（`buildSkillSection` 生成 `<available-skills>` XML，由 `Agent.restoreContext → injectLongTermMemory` 走 reminder 通道），正文由 `LoadSkill` 按需载入，避免污染跨项目缓存前缀。
@@ -348,8 +349,8 @@ interface Tool {
 
 **OpenAI / openai-compat**（`llm/openai.ts`）：
 
-- `reasoning: { effort, summary: "auto" }`（effort 为 `"none"` 时省略 summary）。effort 字符串原样透传，只接受模型支持的等级。
-- 思考内容经 `response.reasoning_summary_text.delta` 流式返回，映射成 `thinking_delta`/`thinking_complete` 事件。
+- **Responses**（`openai.ts`）：`reasoning: { effort, summary: "auto" }`（effort 为 `"none"` 时省略 summary）；思考内容经 `response.reasoning_summary_text.delta` 流式返回，映射成 `thinking_delta`/`thinking_complete` 事件。
+- **Chat Completions**（`openai-compat`）：请求侧用 `reasoning_effort`；思考内容来自非标准 `delta.reasoning_content` 字段，同样映射成 `thinking_delta`。effort 由 `thinking_level_map` 决定，openai/openai-compat 无原生 `xhigh`/`max`，未显式映射时收敛为 `high`，其余等级原样透传。
 
 ### 5.3 运行时切换
 
@@ -418,7 +419,7 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
   - 仍可用的工具名列表；
   - 一条「以上为重建上下文，需精确内容请重读源码」的 Note。
 
-  激活过的技能 SOP 不再走附件：压缩后由 `Agent.restoreContext → ConversationManager.injectLongTermMemory` 重新注入（`recovery.ts` 头部注释）。
+  激活过的技能 SOP 不走附件：压缩后由 `Agent.restoreContext → ConversationManager.injectLongTermMemory` 重新注入（`recovery.ts` 头部注释）。
 
 - `conversation.replaceWithCompacted(summaryContent, toKeep)`：历史替换为 `[摘要 user 消息, ...保留的尾部]`；`longTermMemoryInjected=false` 以便重新注入指令/记忆/技能。
 - Agent 主循环在压缩后调用 `restoreContext()` 重新注入项目指令/记忆/技能。
@@ -426,7 +427,7 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 ### 6.7 与 resume 的衔接（session 层）
 
 - 压缩产生 `boundary = { summary, keep }`，由持有 sessionId 的一方调 `saveCompactBoundary` 追加一条 `type: compact_boundary` 的 JSONL 记录（summary 与保留尾部内联其中）。
-- `rebuildFromSession`：有 boundary 就取**最后一个**，重建 `[摘要] + 内联保留尾部 + boundary 之后的普通消息`；boundary 之前的原始消息仍在文件里但不再回放。无 boundary 则全量回放（向后兼容）。损坏的 boundary 会回退到上一个有效 boundary。
+- `rebuildFromSession`：有 boundary 就取**最后一个**，重建 `[摘要] + 内联保留尾部 + boundary 之后的普通消息`；boundary 之前的原始消息仍在文件里但不再回放。无 boundary 则全量回放（未压缩会话的正常路径）。损坏的 boundary 会回退到上一个有效 boundary。
 - 会话 30 天过期自动清理（`cleanExpiredSessions`）。
 
 ---
@@ -539,7 +540,7 @@ effectiveWindow = contextWindow − min(maxOutput, SUMMARY_OUTPUT_RESERVE=20000)
 
 `spawnSubagent` 决定子代理的运行参数：
 
-- **模型**：调用级 `model` 覆盖 > 定义级 `definition.model` > 父代理模型（`spawn.ts` 的 `modelOverride ?? definition.model` 展开逻辑；旧版 `resolveModelId` 别名层已移除）。
+- **模型**：调用级 `model` 覆盖 > 定义级 `definition.model` > 父代理模型（`spawn.ts` 的 `modelOverride ?? definition.model` 展开逻辑）。
 - **思考强度**：继承 `parentClient.getThinkingLevel() ?? parentProvider.thinking`。
 - **上下文窗口 / 输出上限**：`getContextWindow(provider)` / `getMaxOutputTokens(provider)`——即**沿用父代理同一 Provider 的配置**，所以窗口大小与父一致。
 - **系统提示词**：`definition.systemPromptOverride ?? buildSystemPrompt(env)`。
@@ -603,7 +604,7 @@ fork 用 `cloneRegistryForFork`：只剥 `MAIN_AGENT_ONLY_TOOLS`，保留 Agent�
 
 ### 10.4 结构化协议（`protocol.ts`）
 
-消息类型：`text`、`shutdown_request/response`、`plan_approval_request/response`。结构化消息带 `requestId`（`req-<随机hex>`，跨进程安全）供响应关联，`approve` 用可选字段区分「未响应」与「明确拒绝」。`isShutdownRequest` 既认 type 也认 `[shutdown]` 文本前缀（兼容旧版本/手工写入）。
+消息类型：`text`、`shutdown_request/response`、`plan_approval_request/response`。结构化消息带 `requestId`（`req-<随机hex>`，跨进程安全）供响应关联，`approve` 用可选字段区分「未响应」与「明确拒绝」。`isShutdownRequest` 既认 type 也认 `[shutdown]` 文本前缀（容忍直接向邮箱文件手工写入的关停消息）。
 
 ### 10.5 teammate 主循环（in-process，`spawnInProcess`）
 
@@ -621,7 +622,7 @@ while active:
 ```
 
 - **plan-mode teammate**（`plan_mode_required=true`）：以 `PermissionChecker(mode:"plan")` 起步，只能读；teammate 没有 ExitPlanMode 工具——**结束一轮即提交信号**（此时计划应已写入计划文件），随后把计划经 `planApprovalRequest` 发给 Lead，**无限期阻塞**等审批（只读无害，宁可不超时）；Lead 用 `SendMessage type=plan_approval_response + approve` 回复，批准则原地把 `checker.mode="default"` 放行执行，拒绝则带 feedback 让其修订。
-- teammate 状态经 `progress.ts` 的 uiState 暴露给 lead 侧 UI（status/progress），旧版的对话转录持久化（transcript.ts）已移除。
+- teammate 状态经 `progress.ts` 的 uiState 暴露给 lead 侧 UI（status/progress）。
 
 ### 10.6 共享任务板（`shared-task.ts` + `task-tools.ts`）
 
@@ -692,7 +693,7 @@ while active:
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 系统提示词在哪    | `src/prompt/sections.ts` + `builder.ts`，`buildSystemPrompt()`，建客户端时绑定；只含项目无关内容                                                                                                                                                                                            |
 | 工具清单          | 文件(ReadFile/EditFile/WriteFile/Glob/Grep)、命令(Bash/PowerShell/ComputerUse)、流程(AskUserQuestion/ExitPlanMode/Enter&ExitWorktree/WebFetch)、委派(Agent/Team*/SendMessage/TaskStop)、任务(TaskCreate/Get/List/Update)、元工具(ToolSearch/McpCall/LoadSkill/InstallSkill/SyntheticOutput) |
-| Slash 命令        | `/login /model /help /clear /compact /status /session /plan /resume /quit /memory /skills /worktree /code-review /rewind /mcp /sandbox /thinking /provider` + 用户自定义 + 技能命令（当前无命令别名；旧版 `/review` 已移除）                                                                |
+| Slash 命令        | `/login /model /help /clear /compact /status /session /plan /resume /quit /memory /skills /worktree /code-review /rewind /mcp /sandbox /thinking /provider` + 用户自定义 + 技能命令（无命令别名）                                                                                           |
 | 内置 skills       | 包本身不附带 SKILL.md；从 `~/.agents/skills` 与 `.agents/skills` 发现，支持 inline/fork 与热重载                                                                                                                                                                                            |
 | Thinking          | 7 级 off→max，默认 high；Anthropic 用 budget/adaptive，OpenAI 用 reasoning.effort；`/thinking` 运行时切换并持久化；只降不升                                                                                                                                                                 |
 | 自动压缩          | token 预算阈值触发；保留尾部 10k token/5 条(≤40k)；结构化摘要提示词(Goal/Constraints/Progress/Decisions/NextSteps/CriticalContext)；缓存共享调用；PTL 重试；recovery 附件                                                                                                                   |

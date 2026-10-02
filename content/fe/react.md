@@ -1,6 +1,6 @@
 ---
 title: "React 核心知识点"
-description: "React 核心知识点问答: 闭包陷阱、Fiber 架构、Virtual DOM 与 Diff、Hooks 原理、setState 批处理、并发调度与性能优化体系"
+description: "React 核心知识点问答: 闭包陷阱、Fiber 架构、Virtual DOM 与 Diff、Hooks 原理、setState 批处理、并发调度、性能优化体系, 以及 React 19 Actions 与新增 API"
 ---
 
 > 本文档涵盖运行时机制、性能优化、Hooks 原理等核心主题. 每个知识点均附详细解析. React 19 的 Actions 模型与新增 API 见「React 19: Actions 与新增 API」一节, 相关版本事实以本机 `/Users/hangtiancheng/github/26autumn/node_modules` 中安装的 react@19.3.0 与 React 官方博客为准.
@@ -161,7 +161,7 @@ function Parent({ children }) {
 
 设计目标:
 
-React 15 的 Stack Reconciler 采用递归方式同步遍历整棵组件树. 一旦组件树规模庞大, 主线程会被长时间占用 (超过 16ms) , 导致动画掉帧、用户输入无响应. Fiber 的核心目标是:
+朴素的协调实现是递归式同步遍历: 一旦开始就必须一次性走完整棵组件树, 中途无法让出主线程. 当组件树规模庞大时, 主线程会被长时间占用, 导致动画掉帧、用户输入无响应. Fiber 的核心目标是:
 
 1. 可中断 (Interruptible) : 将渲染工作拆分为小单元, 可在任意单元间暂停
 2. 可恢复 (Resumable) : 暂停后可从断点继续, 无需从头开始
@@ -191,7 +191,7 @@ interface FiberNode {
 
   // 副作用标记
   flags: Flags; // Placement | Update | Deletion | ...
-  subtreeFlags: Flags; // 子树的副作用 (React 18 优化)
+  subtreeFlags: Flags; // 子树的副作用聚合, 用于在遍历中提前剪枝
   deletions: Fiber[] | null;
 
   // 优先级
@@ -225,7 +225,7 @@ function workLoopConcurrent() {
 }
 
 function shouldYield() {
-  return getCurrentTime() >= deadline; // 默认 5ms 时间片
+  return getCurrentTime() >= deadline; // 时间片预算耗尽则让出主线程 (Scheduler 默认 frameInterval 为 5ms)
 }
 ```
 
@@ -332,7 +332,7 @@ React 对列表采用两轮遍历:
 | `useCallback`       | 缓存传递给子组件的回调          | 主要对 memo 子组件或其他 Hook 的依赖项有意义 |
 | 状态下沉            | 高频变化的 state 仅影响局部 UI  | 最本质的优化, 减少渲染范围                   |
 | 组合模式 (children) | 父组件 state 变化不应影响子组件 | 利用 children 引用稳定性                     |
-| `useDeferredValue`  | 大列表搜索、输入联想            | React 18 并发特性                            |
+| `useDeferredValue`  | 大列表搜索、输入联想            | 延迟消费更新, 值跟在紧急更新之后             |
 | `useTransition`     | 非紧急状态更新                  | 标记为 transition, 可被打断                  |
 | 虚拟化列表          | 长列表 (>1000 条)               | react-window / react-virtuoso                |
 
@@ -363,7 +363,7 @@ const cache = new WeakMap();
 - 代码分割: `React.lazy` + `Suspense` 按路由/组件级别分割
 - 预加载: `<link rel="preload">` 或 `import()` 提前触发
 - 服务端渲染 (SSR) / 流式渲染: 减少首屏白屏时间
-- React 18 Streaming SSR: `renderToPipeableStream`, 分块发送 HTML
+- Streaming SSR: `renderToPipeableStream` (Node 流) 与 `renderToReadableStream` (Web 流) , 分块发送 HTML
 - 数据预取: 在路由级别并行加载数据, 避免瀑布流请求
 
 ### 5.4 性能度量
@@ -465,7 +465,7 @@ function BadComponent({ flag }) {
 
 React Compiler 现状:
 
-React Compiler 已于 2025 年 10 月 (React Compiler v1.0, 官方博客 2025-10-07) 发布 1.0 并可用于生产, 以独立的 Babel 插件 `babel-plugin-react-compiler` 形式接入, 并配套 `eslint-plugin-react-compiler` 做静态检查, 兼容 React 17+. 运行时依赖 `react/compiler-runtime` (本机 react@19.3.0 的 package.json 已导出该子路径). 它在编译期自动插入记忆化 (等效于自动 memo/useMemo/useCallback) , 但 Hooks 必须无条件调用的规则并未放宽——编译器同样依赖调用顺序稳定这一前提, 底层链表结构没有改变.
+React Compiler 已于 2025 年 10 月 (React Compiler v1.0, 官方博客 2025-10-07) 发布 1.0 并可用于生产, 以 Babel 插件 `babel-plugin-react-compiler` 形式接入, 编译期校验 Rules of React 的诊断规则由 `eslint-plugin-react-hooks` 的 `recommended` 预设提供, 兼容 React 17+. React 19 已内置运行时, 通过 `react/compiler-runtime` 子路径导出 (本机 react@19.3.0 的 package.json 已导出该子路径). 它在编译期自动插入记忆化 (等效于自动 memo/useMemo/useCallback) , 但 Hooks 必须无条件调用的规则并未放宽——编译器同样依赖调用顺序稳定这一前提, 底层链表结构没有改变.
 
 ---
 
@@ -473,7 +473,7 @@ React Compiler 已于 2025 年 10 月 (React Compiler v1.0, 官方博客 2025-10
 
 ### 题目
 
-请解释 React 17 与 React 18 中 `setState` 批量更新 (Batching) 的差异, 并分析以下代码的输出.
+请解释 React 的自动批量更新 (Automatic Batching) 机制, 并分析以下代码的输出.
 
 ```jsx
 function App() {
@@ -499,53 +499,47 @@ function App() {
 
 ### 解析
 
-### React 17 的行为
+自动批量更新的语义: 在同一次同步执行中连续触发的多个 `setState`, 无论调用点位于 React 事件处理器、`setTimeout`、`Promise` 回调还是原生事件监听器, 都会被合并到同一个渲染周期, 只产生一次重渲染.
 
-React 17 仅在 React 事件处理函数 和 生命周期方法 中进行批量更新. 在 `setTimeout`、`Promise.then`、原生事件监听器等异步上下文中, 每次 `setState` 都会立即触发一次重渲染.
-
-```
-// React 17 输出:
-// 事件处理中: console.log(count) → 0 (state 尚未更新)
-//   setCount + setCount + setFlag → 批量合并为 1 次渲染
-
-// setTimeout 中: console.log(count) → 0 (闭包中的旧值)
-//   setCount → 触发第 1 次渲染
-//   setFlag  → 触发第 2 次渲染
-//   共 2 次渲染
-```
-
-### React 18 的行为 (Automatic Batching)
-
-React 18 引入自动批量更新: 无论在何种上下文中 (事件处理、setTimeout、Promise、原生事件) , 连续的 `setState` 都会被自动合并为一次渲染.
+本题的输出:
 
 ```
-// React 18 输出:
-// 事件处理中: console.log(count) → 0
-//   setCount + setCount + setFlag → 1 次渲染
+// 事件处理器中:
+//   console.log(count) → 0 (state 尚未更新, 读到的是本次渲染的闭包旧值)
+//   setCount + setCount + setFlag → 合并为 1 次渲染
 
-// setTimeout 中: console.log(count) → 0 (闭包旧值)
-//   setCount + setFlag → 1 次渲染 (自动批量)
+// setTimeout 回调中:
+//   console.log(count) → 0 (闭包仍捕获本次渲染的 count)
+//   setCount + setFlag → 合并为 1 次渲染
+
+// 共 2 次渲染
 ```
+
+两次 `setCount((c) => c + 1)` 都是函数式更新, 会在 render 阶段对最新的 state 依次执行, 因此最终 `count` 增加 2, 而不是像直接赋值那样只增加 1. 每次批量更新的渲染结果:
+
+- 事件处理器结束后: `count = 2`, `flag = true`
+- `setTimeout` 回调结束后: `count = 3`, `flag = false`
 
 ### 实现原理
 
 ```javascript
-// React 18 内部简化逻辑
+// React 内部简化逻辑
 function dispatchSetState(fiber, queue, action) {
   const update = createUpdate(action);
   enqueueUpdate(fiber, queue, update);
 
-  // 关键: 不再判断是否在 React 事件上下文中
-  // 统一通过调度器安排更新
+  // 更新入队后统一交给调度器, 与调用点处于哪种上下文无关
   scheduleUpdateOnFiber(fiber, lane);
 }
 
-// 调度器将同一 lane 的更新合并到同一个渲染周期
+// 调度器负责把同一优先级的更新合并到同一个渲染周期
 function scheduleUpdateOnFiber(fiber, lane) {
   markUpdateLaneFromFiberToRoot(fiber, lane);
-  ensureRootIsScheduled(root); // 微任务/宏任务级别去重
+  ensureRootIsScheduled(root); // 已有同优先级任务在排队时不再重复调度
 }
 ```
+
+更新的合并发生在调度层: 每次 `setState` 只是把 update 追加到该 Fiber 的更新队列, 真正的重渲染由 `ensureRootIsScheduled` 去重后统一发起, 因此同步连续多次入队只对应一次渲染.
 
 ### 如何退出批量更新?
 
@@ -583,7 +577,7 @@ setCount((c) => c + 1); // 链式执行, 最终 +2
 
 ### 题目
 
-请解释 React 18 的并发渲染 (Concurrent Rendering) 机制, 以及 `useTransition` 和 `useDeferredValue` 的区别与适用场景.
+请解释 React 的并发渲染 (Concurrent Rendering) 机制, 以及 `useTransition` 和 `useDeferredValue` 的区别与适用场景.
 
 ### 解析
 
@@ -717,7 +711,7 @@ const derived = useMemo(() => computeFrom(props), [props]);
 
 ### Strict Mode 下的双重调用
 
-React 18+ 开发模式 (需启用 StrictMode) 下, `useEffect` 会执行 mount → unmount → mount 序列:
+在开发模式下启用 StrictMode 时, `useEffect` 会执行 mount → unmount → mount 序列:
 
 ```
 第一次 mount: 执行 effect
@@ -802,7 +796,7 @@ React 19 引入了 Actions 模型与一批新 Hook, React 19.2 / 19.3 又陆续�
 
 ### 11.1 Actions: 把"异步交互"变成一等公民
 
-React 19 之前, 处理一个异步表单提交需要手动维护 `isPending`、`error`、乐观值等多套状态. Actions 把"提交一个异步操作"抽象为一等概念: 传给 `form action`、`onClick` 等事件处理器的异步函数就是一个 Action, React 负责跟踪其生命周期 (pending / error / 成功) , 并在必要时自动处理过渡.
+处理一个异步表单提交通常需要手动维护 `isPending`、`error`、乐观值等多套状态. Actions 把"提交一个异步操作"抽象为一等概念: 传给 `form action`、`onClick` 等事件处理器的异步函数就是一个 Action, React 负责跟踪其生命周期 (pending / error / 成功) , 并在必要时自动处理过渡.
 
 配套的三个 Hook 分别覆盖三类需求:
 
@@ -843,7 +837,7 @@ function AddMessage({ formAction }) {
 
 要点:
 
-- `useActionState(action, initialState, permalink?)` 返回 `[state, formAction, isPending]`, 是 React 19 取代早期 `useFormState` 的稳定 API.
+- `useActionState(action, initialState, permalink?)` 返回 `[state, formAction, isPending]`, 是 React 19 的稳定 API, 用于管理 Action 的返回值与 pending 状态.
 - `useFormStatus` 必须从 `react-dom` 导入, 且只能在 `<form>` 的子组件中调用.
 - Actions 与 `startTransition`/`useTransition` 是同一套并发机制的上层封装: Action 内部的更新默认以 transition 优先级执行, 可被更高优先级更新打断.
 
@@ -877,7 +871,7 @@ function Page({ commentsPromise }) {
 
 ### 11.3 React 19.2 稳定的能力
 
-React 19.2 (2025-10-01) 主要稳定了两个长期处于实验阶段的 API:
+React 19.2 (2025-10-01) 稳定的两个 API:
 
 - `useEffectEvent`: 把"读取最新 props/state 但不想成为依赖"的回调从 Effect 中抽离. 返回的函数不应出现在依赖数组中. 它正是闭包陷阱 (见第 1 节) 的官方解法之一.
 - `Activity`: 以 `mode="visible" | "hidden"` 控制子树的显示, hidden 时保留 DOM 与状态、清理 Effect, 回到 visible 时恢复. 适用于 Tab 面板、下拉菜单等"频繁切换但不想销毁重建"的场景.
@@ -889,12 +883,16 @@ React 19.2 还引入了 React Performance Tracks 等性能可观测性改进.
 React 19.3 (2026-09-09) 将 View Transitions 与 Fragment Refs 转为稳定, 并新增若干能力:
 
 - `<ViewTransition>`: 包裹需要动画的子树, 在被 transition 标记的更新导致其挂载/卸载/样式变化时, 借助浏览器 View Transition API 播放 enter/exit/update/share 动画. 默认交叉淡入淡出, 可通过 View Transition Class 或事件属性 (`onEnter`/`onExit`/`onShare`/`onUpdate`) 自定义. 配合 `addTransitionType` 可为同一次状态更新附加"原因"标记 (如轮播的 next/previous) , 从而播放不同方向的动画. 目前仅支持 DOM 平台.
-- Fragment Refs: 给 `<Fragment ref={...}>` 传入 ref 可得到一个 `FragmentInstance`, 以"成组"方式操作 Fragment 的一级子 DOM 而不改变其结构. 提供 `addEventListener`/`removeEventListener`/`dispatchEvent`、`focus`/`focusLast`/`blur`、`observeUsing`/`unobserveUsing` (对接 IntersectionObserver / ResizeObserver) 、`getClientRects`/`getRootNode`/`compareDocumentPosition`/`scrollIntoView`.
-- `react-dom` 的 `browser()`: 在组件中调用 `use(browser())` 可让该组件退出服务端渲染——SSR 时触发最近的 Suspense fallback, 客户端水合后 `use(browser())` 不再挂起, 组件正常渲染. 它遵循 `use` 的规则, 可放在条件分支或提前 return 之后.
+- Fragment Refs: 给 `<Fragment ref={...}>` 传入 ref 可得到一个 `FragmentInstance`, 以"成组"方式操作 Fragment 的一级子 DOM 而不改变其结构. 提供 `addEventListener`/`removeEventListener`/`dispatchEvent`、`focus`/`focusLast`/`blur`、`observeUsing`/`unobserveUsing` (对接 IntersectionObserver / ResizeObserver) 、`getClientRects`/`getRootNode`/`compareDocumentPosition`/`scrollIntoView`. 其中前三类方法与 `getClientRects`/`getRootNode`/`scrollIntoView` 均在本机安装的 @types/react-dom@19.3.0 中有类型声明; `compareDocumentPosition` 由 React 19.3 官方公告列为 `FragmentInstance` 的能力, 但该版本类型声明尚未收录.
+- `react-dom` 的 `browser()`: 在组件中调用 `use(browser())` 可让该组件退出服务端渲染——SSR 时触发最近的 Suspense fallback, 客户端水合后 `use(browser())` 不再挂起, 组件正常渲染. 它遵循 `use` 的规则, 可放在条件分支或提前 return 之后. 该能力由 `react-dom` 导出, 标注版本 19.3.0.
 - Trusted Types 支持: 当站点以 `Content-Security-Policy: require-trusted-types-for 'script'` 强制 Trusted Types 时, React 不再把传入 DOM sink (如 `innerHTML`) 的值强制转为字符串, 从而保留 `TrustedHTML`/`TrustedScript`/`TrustedScriptURL` 类型对象, 让浏览器的校验与开发者的净化策略生效.
 - Server Components 中可直接渲染 `<Context>`: 从 `'use client'` 模块导入的 Context 现在能在 Server Component 里直接作为 Provider 渲染, 不必再额外导出一个包装用的 Provider 组件.
 
-### 11.5 与并发特性的关系
+### 11.5 ref 作为普通 prop
+
+React 19 起, 函数组件可以直接从 props 接收 `ref`, 不再必须用 `forwardRef` 包一层. 类型层面即在 props 类型中声明 `ref?: Ref<T>`: `@types/react@19.3.0` 的 `FunctionComponent<Props>` 允许 `Props` 携带 `ref` 字段, 例如 `interface Props { ref?: React.Ref<HTMLDivElement> }` 配合 `React.FunctionComponent<Props>` 即可. `forwardRef` 与 `ForwardRefExoticComponent` 仍然是公开导出的 API.
+
+### 11.6 与并发特性的关系
 
 Actions、`use`、`Activity`、`<ViewTransition>` 都构建在第 8 节所述的并发渲染与 Lanes 优先级模型之上: Action 与 `<ViewTransition>` 依赖 transition 优先级来"可被打断地"播放过渡; `use` 的 Promise 挂起依赖 Suspense 与并发协调; `Activity` 的 hidden 子树则以低优先级保持. 理解第 8 节是理解这些新 API 的前提.
 
@@ -970,4 +968,4 @@ function useDebounce(value, delay = 300) {
 
 ---
 
-_本文档由 Yukino 编写, 最后更新: 2026-10-01_
+_本文档由 Yukino 编写, 最后更新: 2026-10-02_
