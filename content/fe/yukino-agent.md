@@ -1151,7 +1151,7 @@ zod 使用点全景: API 请求体 (`chat/route.ts:5-8`)、API 响应 (前端 `u
 
 模式 (`lib/config.ts`):所有 `process.env` 读取集中一处, `??` 提供默认值, 导出 `as const` 对象.
 
-价值:① 环境变量的使用可审计——grep 全仓库 `process.env` 基本只出现在 config.ts (含 langfuse 配置块, `config.ts:62-67`; 例外是 chat.ts:24-25 读 LOG_TOPIC_REGION/LOG_TOPIC_ID, P3-5 相关读取, 理想情况应一并迁入 config; instrumentation.ts:6 读 NEXT_RUNTIME 属于框架钩子的运行时守卫; scripts/ai-ops-graph-smoke.ts:76,82 读 AI_OPS_SMOKE_LIVE/AI_OPS_SMOKE_QUERY 属于脚本入口开关);② 默认值即文档——新人看 config.ts 就知道系统依赖哪些外部服务及其默认地址 (如 LLM 默认走火山引擎 Ark `ark.cn-beijing.volces.com/api/v3`, 模型默认 `deepseek-v4-flash`, `config.ts:9-20`); ③ `as const` 使导出的字面量类型精确 (如 `provider: "openai"` 而非 string), 消费方获得穷举检查能力.
+价值:① 环境变量的使用可审计——grep 全仓库 `process.env` 基本只出现在 config.ts (含 langfuse 配置块, `config.ts:62-67`; 例外是 chat.ts:24-25 读 LOG_TOPIC_REGION/LOG_TOPIC_ID, P3-5 相关读取, 理想情况应一并迁入 config; instrumentation.ts:6 读 NEXT_RUNTIME 属于框架钩子的运行时守卫; scripts/ai-ops-graph-smoke.ts:76,82 读 AI_OPS_SMOKE_LIVE/AI_OPS_SMOKE_QUERY 属于脚本入口开关);② 默认值即文档——新人看 config.ts 就知道系统依赖哪些外部服务及其默认地址 (如 LLM 默认走火山引擎 Ark `ark.cn-beijing.volces.com/api/v3`, 模型默认 `deepseek-flash`, `config.ts:9-20`); ③ `as const` 使导出的字面量类型精确 (如 `provider: "openai"` 而非 string), 消费方获得穷举检查能力.
 
 细节:
 

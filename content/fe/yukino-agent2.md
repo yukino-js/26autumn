@@ -75,7 +75,7 @@ pnpm --filter fe dev        # 前端 Vite dev server (5173), /api/* 代理到后
 
 | 组                   | 变量                                                                   | 说明                                                    |
 | -------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------- |
-| 对话上游 (必填)      | `CHAT_BASE_URL`, `CHAT_MODEL`, `CHAT_API_KEY`                          | OpenAI 兼容聊天上游; 示例为 deepseek-v4-flash           |
+| 对话上游 (必填)      | `CHAT_BASE_URL`, `CHAT_MODEL`, `CHAT_API_KEY`                          | OpenAI 兼容聊天上游; 示例为 deepseek-flash              |
 | 思考链               | `CHAT_THINKING`, `CHAT_REASONING_EFFORT`, `CHAT_REASONING_SPLIT`       | adaptive/disabled; MiniMax 专用 reasoning_split         |
 | 意图/摘要上游 (可选) | `INTENT_*`, `SUMMARY_*`                                                | 留空则回落到 chat 组 (`src/core/llm.ts:39 resolveSlot`) |
 | Embedding (必填)     | `EMBED_MODEL`, `EMBED_API_KEY`, `EMBED_BASE_URL`                       | 默认 qwen3.7-text-embedding-flash, 阿里云兼容网关       |
@@ -427,7 +427,7 @@ peak    = max_user_input + MAX_AGENT_STEPS * (tool_result_max + agent_step_ai)  
 sliding = min(CONTEXT_BUDGET_TURNS * steady_per_turn, window - fixed - peak)     # 历史滑窗额度
 ```
 
-注释特意区分两个"每轮"数字 (`src/core/budget.ts:1-6`): `turnPeakTokens()` 是当前 ReAct 轮的瞬时峰值 (自检用), `historyPerTurn()` 是该轮压缩进历史后的稳态占用 (滑窗覆盖轮数用). `KNOWN_WINDOWS` 是本地前缀表 (deepseek-v4-flash 1M、minimax-m3 1M、qwen3 128K 等), 因为 OpenAI 兼容 `/v1/models` 不暴露上下文长度 (`src/core/budget.ts:9-27`).
+注释特意区分两个"每轮"数字 (`src/core/budget.ts:1-6`): `turnPeakTokens()` 是当前 ReAct 轮的瞬时峰值 (自检用), `historyPerTurn()` 是该轮压缩进历史后的稳态占用 (滑窗覆盖轮数用). `KNOWN_WINDOWS` 是本地前缀表 (deepseek-flash 1M、minimax-m3 1M、qwen3 128K 等), 因为 OpenAI 兼容 `/v1/models` 不暴露上下文长度 (`src/core/budget.ts:9-27`).
 
 ## 九、数据模型 (Prisma + PostgreSQL)
 
