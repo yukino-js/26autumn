@@ -1,0 +1,28 @@
+{
+  "root": true,
+  "title": "工作文档",
+  "pages": [
+    "index",
+    "---工作实践---",
+    "tiktok",
+    "ieg",
+    "data",
+    "---协议与方案调研---",
+    "a2ui",
+    "a2ui-express",
+    "mcp-app",
+    "webc",
+    "---Coding Agent 调研---",
+    "codegraph",
+    "claude-code",
+    "codex",
+    "pi",
+    "open-code-review",
+    "---AI 框架与平台调研---",
+    "insforge",
+    "langchain",
+    "langgraph",
+    "openspec",
+    "superpowers"
+  ]
+}

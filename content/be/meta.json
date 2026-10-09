@@ -1,0 +1,25 @@
+{
+  "root": true,
+  "title": "后端",
+  "pages": [
+    "index",
+    "---语言基础---",
+    "go",
+    "---存储与中间件---",
+    "mysql",
+    "redis",
+    "clickhouse-kafka",
+    "middleware",
+    "node-pool",
+    "---Yukino Go 系列---",
+    "yukino-http",
+    "yukino-rpc",
+    "yukino-orm",
+    "yukino-cache",
+    "yukino-agent-proxy",
+    "yukino-components",
+    "yukino-go-agent",
+    "yukino-go-taskflow",
+    "yukino-go-taskflow2"
+  ]
+}

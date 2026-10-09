@@ -1,0 +1,62 @@
+{
+  "name": "26autumn",
+  "version": "0.0.0",
+  "private": true,
+  "description": "2026 autumn --- Best wishes",
+  "keywords": [
+    "2026",
+    "autumn"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "author": "https://github.com/yukino-js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "eslint --fix --cache --quiet .",
+    "format": "prettier -w ./ --experimental-cli",
+    "git:config": "git config user.name hangtiancheng && git config user.email '161043261@qq.com'",
+    "git:commit": "git add -A && git commit -m \"feat: Introduce new features\"",
+    "git:push": "pnpm git:commit && git push origin main",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{json,jsonc,js,cjs,mjs,jsx,ts,cts,mts,tsx,html,vue,css,scss,md,mdx}": [
+      "sh -c 'pnpm format'"
+    ]
+  },
+  "dependencies": {
+    "@fumadocs/base-ui": "^16.16.2",
+    "@paper-design/shaders-react": "^0.0.81",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.3.3",
+    "fumadocs-core": "^16.16.2",
+    "fumadocs-mdx": "^15.4.6",
+    "lucide-react": "^1.54.0",
+    "next": "^16.4.0",
+    "next-themes": "^0.4.6",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/mdx": "^2.0.14",
+    "@types/node": "^24.19.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "postcss": "^8.5.29",
+    "prettier": "^3.9.9",
+    "tailwindcss": "^4.3.3",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.1"
+  },
+  "packageManager": "pnpm@12.10.1"
+}

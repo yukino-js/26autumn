@@ -1,0 +1,213 @@
+# Logs
+*.log
+logs/
+
+.astro/
+
+# npm/yarn/pnpm debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+pnpm-debug.log*
+
+# Node.js diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Process pid files
+*.pid
+# Seed files
+*.seed
+# Process pid lock files
+*.pid.lock
+
+# macOS junk
+.DS_Store
+**/.DS_Store
+
+# IDE junk
+.idea/
+**/.idea/
+*.iml
+
+# .vscode/
+# !.vscode/tasks.json
+# !.vscode/launch.json
+# !.vscode/extensions.json
+
+# Environment variables
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# npm cache
+.npm/
+
+# eslint cache
+.eslintcache
+**/.eslintcache
+
+# stylelint cache
+.stylelintcache
+**/.stylelintcache
+
+# parcel cache
+.parcel-cache/
+**/.parcel-cache/
+
+# turbopack/turborepo cache
+.turbo/
+**/.turbo/
+
+# nx cache
+.nx/
+**/.nx/
+
+# pnpm store directory
+.pnpm-store/
+**/.pnpm-store/
+
+# yarn junk
+.pnp
+.pnp.*
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Coverage
+coverage/
+**/coverage/
+
+# Build artifacts
+dist/
+**/dist/
+dis-vite/
+**/dist-vite/
+dist-webpack/
+**/dist-webpack/
+
+# SSR build artifacts
+dist-ssr/
+**/dist-ssr/
+
+# Build artifacts
+build/
+**/build/
+out/
+**/out/
+
+bin/
+**/bin/
+output/
+**/output/
+tmp/
+**/tmp/
+temp/
+**/temp/
+upload/
+**/upload/
+
+# Docker
+volumes/
+**/volumes/
+
+# Next.js junk
+.next/
+**/.next/
+
+# Nuxt junk
+.nuxt/
+**/.nuxt/
+
+# vite cache
+.vite/
+**/.vite/
+
+storybook-static/
+**/storybook-static/
+.docusaurus/
+**/.docusaurus/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+
+.venv/
+**/.venv/
+venv/
+**/venv/
+env/
+**/env/
+
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# C++
+CMakeFiles/
+**/CMakeFiles/
+CMakeCache.txt
+**/CMakeCache.txt
+cmake_install.cmake
+**/cmake_install.cmake
+CTestTestfile.cmake
+**/CTestTestfile.cmake
+Testing/
+**/Testing/
+compile_commands.json
+**/compile_commands.json
+
+cmake-build-*/
+**/cmake-build-*/
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+
+# clangd cache
+.cache/
+**/.cache/
+
+*.swp
+*.swo
+
+tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
+
+target
+**/target
+
+*.local.yaml
+**/*.local.yaml
+
+.yukino/
+**/.yukino/
+
+.playwright-cli/
+
+*.mp4
+
+# fumadocs-mdx generated imports
+.source/
+**/.source/
