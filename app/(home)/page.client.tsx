@@ -4,7 +4,6 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 
-// WebGL shaders are browser-only, so they must never be server-rendered
 const GrainGradient = dynamic(
   () => import("@paper-design/shaders-react").then((mod) => mod.GrainGradient),
   { ssr: false },
@@ -22,7 +21,6 @@ export function Hero() {
   const [showShaders, setShowShaders] = useState(false);
 
   useEffect(() => {
-    // delay until uniform images are fully loaded (same workaround as fumadocs.dev)
     const timer = setTimeout(() => {
       setShowShaders(true);
     }, 400);

@@ -5,8 +5,6 @@ export default defineConfig({
   mdxOptions: {
     rehypeCodeOptions: {
       ...rehypeCodeDefaultOptions,
-      // rspress had `markdown.showLineNumbers: true`; keep line numbers on
-      // every code block by extending the default meta parser
       parseMetaString(meta, node, tree) {
         const data =
           rehypeCodeDefaultOptions.parseMetaString?.(meta, node, tree) ?? {};

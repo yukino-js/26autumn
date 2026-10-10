@@ -39,7 +39,6 @@ export const linkItems: LinkItemType[] = [
 ];
 
 export const logo = (
-  // favicon URLs are not resolved against basePath, so carry /26autumn manually
   <img src="/26autumn/favicon.svg" alt="" width={24} height={24} />
 );
 

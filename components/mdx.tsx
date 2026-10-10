@@ -23,8 +23,6 @@ import {
 import type { MDXComponents } from "mdx/types";
 import type { ComponentProps, ReactNode } from "react";
 
-// The vendored Claude Code whitepaper is authored with Mintlify-style MDX
-// components. Map them onto fumadocs base-ui primitives so the pages render.
 const iconMap: Record<string, ReactNode> = {
   toolbox: <Wrench />,
   terminal: <Terminal />,

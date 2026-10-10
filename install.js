@@ -1,13 +1,4 @@
 #!/usr/bin/env node
-/**
- * Provision the reference repositories used for research in this workspace.
- *
- * Existing checkouts are refreshed with `git pull`; missing ones are cloned,
- * have their dependencies installed, and are indexed with CodeGraph.
- * Every repository is processed concurrently.
- *
- * Usage: node install.js [--dry-run]
- */
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -18,14 +9,6 @@ const TARGET_DIR = path.join(os.homedir(), "Downloads");
 const REGISTRY = "https://registry.npmmirror.com";
 const dryRun = process.argv.includes("--dry-run");
 
-/**
- * @typedef {object} Repository
- * @property {string} name - directory name inside TARGET_DIR
- * @property {string} url - clone URL used when the directory is missing
- * @property {string[] | null} install - dependency install command, null when the project needs none
- */
-
-/** @type {Repository[]} */
 const repositories = [
   {
     name: "a2ui",
@@ -101,22 +84,10 @@ const repositories = [
 
 const nameWidth = Math.max(...repositories.map((repo) => repo.name.length));
 
-/**
- * Prefix every line of a repository's output so concurrent runs stay readable.
- * @param {string} name
- * @returns {string}
- */
 function tag(name) {
   return `[${name}]`.padEnd(nameWidth + 2);
 }
 
-/**
- * Run one command, streaming its output under the repository's tag.
- * @param {string} name - repository tag used as the log prefix
- * @param {string[]} argv - command followed by its arguments
- * @param {string} cwd
- * @returns {Promise<void>} rejects when the command cannot start or exits non-zero
- */
 function run(name, argv, cwd) {
   const [command, ...args] = argv;
   const label = tag(name);
@@ -152,23 +123,11 @@ function run(name, argv, cwd) {
   });
 }
 
-/**
- * Refresh a repository index. `codegraph sync` fails on a directory that was
- * never indexed, so build the first index with `codegraph init` instead.
- * @param {string} name
- * @param {string} dir
- * @returns {Promise<void>}
- */
 async function reindex(name, dir) {
   const command = existsSync(path.join(dir, ".codegraph")) ? "sync" : "init";
   await run(name, ["codegraph", command], dir);
 }
 
-/**
- * Pull an existing checkout, or clone, install and index a missing one.
- * @param {Repository} repo
- * @returns {Promise<void>}
- */
 async function provision(repo) {
   const dir = path.join(TARGET_DIR, repo.name);
 

@@ -2,3 +2,8 @@ allowBuilds:
   esbuild: true
 
 minimumReleaseAge: 0
+
+# lightningcss < 1.33 warns on the valid ::highlight(fd-search) pseudo-element
+# (CSS Custom Highlight API) used by @fumadocs/base-ui search styles
+overrides:
+  lightningcss: 1.33.0

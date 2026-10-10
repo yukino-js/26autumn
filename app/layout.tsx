@@ -14,7 +14,6 @@ export const metadata: Metadata = {
   },
   description: "技术知识整理、实习与工作期间的技术笔记、项目源码解析",
   icons: {
-    // icon URLs bypass metadataBase resolution, prefix /26autumn manually
     icon: "/26autumn/favicon.svg",
   },
   openGraph: {

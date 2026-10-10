@@ -28,8 +28,6 @@ export function NotFoundSuggestions() {
       for (const result of results) {
         if (result.type !== "page" || seen.has(result.url)) continue;
         seen.add(result.url);
-        // the static index is in "advanced" mode, where `content` is the
-        // highlighted page body; the page title is the last breadcrumb
         const title =
           result.breadcrumbs?.[result.breadcrumbs.length - 1] ?? result.url;
         next.push({ title, url: result.url });

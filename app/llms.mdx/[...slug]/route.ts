@@ -9,7 +9,6 @@ export async function GET(
   { params }: RouteContext<"/llms.mdx/[...slug]">,
 ) {
   const { slug } = await params;
-  // remove the appended "content.md"
   const page = source.getPage(slug.slice(0, -1));
   if (!page) notFound();
 

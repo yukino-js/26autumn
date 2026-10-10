@@ -2,8 +2,6 @@ import type { MetadataRoute } from "next";
 import { siteUrl } from "@/lib/shared";
 import { source } from "@/lib/source";
 
-// replaces @rspress/plugin-sitemap; URLs must be absolute (metadataBase is
-// not applied to sitemap entries), and page.url carries no basePath
 export const revalidate = false;
 
 export default function sitemap(): MetadataRoute.Sitemap {
