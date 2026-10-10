@@ -16,7 +16,7 @@ description: "工作实践与开源项目调研: TikTok/IEG/Data 工作复盘、
 ## 协议与方案调研
 
 - [a2ui](a2ui): A2UI 声明式 UI 协议. 消息与 Catalog 契约、数据绑定与事件回传语义、多语言 SDK 能力面、A2A/MCP 集成, 以及生产应用的落地形态与降级策略.
-- [a2ui-express](a2ui-express): A2UI Express 实验性提案. 紧凑 DSL 的语法设计、编译到 v1.0 wire protocol 的映射规则、Python 参考实现的编译链路, 以及小模型评测结论与适用边界.
+- [a2ui-express](a2ui-express): A2UI Express 实验性提案. 紧凑 DSL 的语法设计、编译到 v1.0 wire protocol 的映射规则、Python 参考实现的编译链路、conformance 固化规则, 以及小模型评测结论与适用边界.
 - [mcp-app](mcp-app): MCP Apps 扩展. 工具与 UI 资源的声明契约、宿主与 iframe 的通信与安全模型、以真实工具为例的工程实践与降级路径, 以及与 A2UI 的对比.
 - [webc](webc): WebContainer 与浏览器内 Vite. WASM 运行时与共享内存、COOP/COEP 跨源隔离、Atomics 与 Emscripten pthreads 的浏览器内并行化、SDK 与官方运行时的 iframe 边界.
 

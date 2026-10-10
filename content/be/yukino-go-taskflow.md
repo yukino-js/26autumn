@@ -76,7 +76,7 @@ taskflow 是一个用 Go 编写的单体分布式任务执行服务, 定位是�
 pending -> reserved -> queued -> running -> succeeded
    ^          |                     \----> failed
    |          +--(TCC Cancel 回滚)--+
-   +--(可被取消)--> cancelled
+pending / reserved / queued --(取消)--> cancelled
 ```
 
 - `pending`: 已物化但尚未派发, 是所有触发路径的统一起点。
@@ -102,7 +102,7 @@ pending -> reserved -> queued -> running -> succeeded
 
 1. **布隆预检 (最便宜)**。复用 `timer` 组件的 Redis 布隆过滤器, 每个 key 用两个 Murmur3 位位置 (每个日 key 一张 2 MiB 位图), 按 UTC 日分 key (`taskflow:bloom:exec:YYYY-MM-DD`), 同时查询今天与昨天以覆盖跨日延迟重触发。命中只是 "可能见过", 必须回查持久 `fire_key` 行确认状态非 `pending` 才抑制; 未命中绝不短路后续更强的层。错误一律 fail-open。
 2. **Redis SETNX 快速认领**。`idem.Service.ClaimFire` 用 `SETNX` + TTL (默认 `claim_ttl_hours` = 72h) 抢占 fire key。抢不到时回查行: 若仍是 `pending` 且 `updated_at` 已超过 5 分钟的 stuck 阈值, 说明上一个认领者派发前崩溃了, 允许接管竞争; 否则判定为重复触发并抑制。
-3. **MySQL 唯一索引**。`InsertPending` 用 `ON DUPLICATE KEY DO NOTHING` 插入, 且**不信任驱动返回的 LAST_INSERT_ID**, 一律按 `fire_key` 回查真实行 ID —— 因为 MySQL 在 no-op 时也可能回填 LAST_INSERT_ID。这是最终的持久防线, Redis 认领丢失也不可能产生第二行。
+3. **MySQL 唯一索引**。`InsertPending` 用 GORM 的 `OnConflict{DoNothing}` 子句写入 (MySQL 上渲染为唯一键冲突时的 no-op `ON DUPLICATE KEY UPDATE`), 且**不信任驱动返回的 LAST_INSERT_ID**, 一律按 `fire_key` 回查真实行 ID —— 因为 MySQL 在 no-op 时也可能回填 LAST_INSERT_ID。这是最终的持久防线, Redis 认领丢失也不可能产生第二行。
 4. **条件更新 (CAS)**。所有状态迁移都是 `WHERE id = ? AND status IN (...)` 的受限 UPDATE, 认领 running 时再叠加 `AND tx_id = ?` (`TransitionOwned`), 返回 `RowsAffected` 判定是否赢得竞争。
 
 一个容易被忽略的细节: 派发事务若内联取消, `ExecutionReserveComponent.Cancel` 会把行回滚到 `pending` 并释放 Redis 认领, 让后续恢复清扫能重新派发; 而 `releaseIfPending` 也会在派发出错时主动释放仍被自己持有的认领, 避免恢复被自己的残留锁阻塞。
@@ -128,7 +128,7 @@ pending -> reserved -> queued -> running -> succeeded
 - 因为触发器与业务变更同事务, **回滚会连带删除变更记录**; 直接 SQL 插入也能被捕获; 载荷在被其他参与者更新或删除之前就已固化。
 - 表名需通过白名单校验 (简单标识符, 排除 `taskflow_*` 前缀与 `condition_tasks`/`scheduled_tasks`/`tcc_tx_records`/`mq_dead_letters` 等控制表), 条件任务的监视表还额外排除 `executions`, 防止递归生成任务。
 
-捕获之后由 `Relay` 中继, 它每秒 `Drain` 一次, 分两段, 都用 `SELECT ... FOR UPDATE SKIP LOCKED` 让多副本并行处理互不冲突的行:
+捕获之后由 `Relay` 中继, 它每秒 `Drain` 一次 (每轮两段各最多处理 100 条), 都用 `SELECT ... FOR UPDATE SKIP LOCKED` 让多副本并行处理互不冲突的行:
 
 1. **fanout**: 取一条 `processed_at IS NULL` 的变更, 对每个 `enabled` 且 `created_at <= occurred_at` 的条件任务, 生成 `cond:{taskId}:change:{eventUUID}` 的 pending 执行行与一条 outbox 记录, 最后标记变更已处理。整个动作在一个事务里, 执行行与 outbox 同生共死。
 2. **publish**: 取一条 `published_at IS NULL` 的 outbox, 用 5s 超时 `SendMsg` 到条件 topic, 成功后标记已发布。若在 XADD 之后、提交之前崩溃, 会重投同一 key —— 由唯一执行 key 与 CAS 吸收。
@@ -196,7 +196,7 @@ SQL 策略 `validateSQL` 用自研的 `sqlTokens` 词法器区分数据与标识
 - **落盘**: 按 `reports/YYYY-MM-DD/exec-{id}.md` 分目录, 用临时文件 + `Sync` + `Rename` 原子写入。报告体同时写入执行行的 `report_body`, 因此任何节点都能从 MySQL 供报告, 即使本地文件缺失。
 - **缓存**: 报告进入 `yukino_cache` 的报告 Group, 按字节预算 (`report_cache_bytes_mib`) 与 TTL (`report_expire_seconds`) 管理, key 形如 `exec:{id}`。Getter 回源到执行行的 `report_body`, 空则报 "report not ready"。配置了 `etcd_endpoints` 时, `OpenReportPeers` 启动 `taskflow.reports` 缓存服务并注册 etcd 对等环, 未命中可跨节点 read-through; 未配置则是单节点模式。终态落盘成功后 `Warm` 主动回填缓存。
 
-任务定义走另一套缓存 `consistent_cache`: 定义读取优先命中 Redis, 写路径用 "禁用标记 -> 删缓存 -> 写库 -> 延迟重新启用" 的一致性流程; 零值安全更新 (如 `enabled=false`) 走显式列映射。监控清扫还会做**漂移修复** (`SyncDrift`): 对每个缓存条目比对其与 DB 行的序列化, 不一致就在短禁用标记下删除, 让下次读从权威源重建, 保证旁路写入 (迁移器簿记、直接 SQL) 造成的漂移不会存活超过一个清扫周期。
+任务定义走另一套缓存 `consistent_cache`: 定义读取优先命中 Redis, miss 后从 DB 读并经 `PutWhenEnable` 回填 (写入窗口内的禁回填标记会抑制旧读者回填)。API 更新路径先设置短 TTL 禁回填标记并删除缓存, 再做零值安全的显式列映射更新 (如 `enabled=false`), 标记靠 TTL 自然过期; 组件本身还提供带 "延迟重新启用" 的完整 `Service.Put` 协议 (禁标记 -> 删缓存 -> 写库 -> 独立短 context 中延迟缩短标记), taskflow 的定义创建走直接 DAO 插入, 不经过该协议。监控清扫还会做**漂移修复** (`SyncDrift`): 对每个缓存条目比对其与 DB 行的序列化, 不一致就在短禁用标记下删除, 让下次读从权威源重建, 保证旁路写入 (迁移器簿记、直接 SQL) 造成的漂移不会存活超过一个清扫周期。
 
 ## 集群协调: 一致性哈希单例角色
 
@@ -259,7 +259,7 @@ HTTP 服务由 `yukino_http` 组装, 中间件链为 CORS -> Trace -> SentryReco
 
 ## 配置与部署形态
 
-配置是单一 YAML 源, 机密 (MySQL 密码、LLM key、Sentry DSN、API token) 通过 `*_env` 字段名从环境变量解析, 值内支持 `${VAR}` 展开。主要段落: `server`、`node`、`mysql` (含 `replica_addresses`)、`redis` (`mode` 支持 standalone/sentinel/cluster)、`llm`、`scheduler`、`mq`、`executor`、`cache`、`reports`、`journal`、`consensus`、`sentry`、`telemetry`。Redis standalone、Sentinel 与 Cluster 客户端共享同一配置连接池, 手写组件全部复用。
+配置是单一 YAML 源, 机密 (MySQL 密码、LLM key、Sentry DSN、API token) 通过 `*_env` 字段名从环境变量解析, 值内支持 `${VAR}` 展开。MySQL DSN 固定 `loc=UTC` 并把会话时区设为 `+00:00`, 应用内所有时间以 UTC 持久化。主要段落: `server`、`node`、`mysql` (含 `replica_addresses`)、`redis` (`mode` 支持 standalone/sentinel/cluster)、`llm`、`scheduler`、`mq`、`executor`、`cache`、`reports`、`journal`、`consensus`、`sentry`、`telemetry`。Redis standalone、Sentinel 与 Cluster 客户端共享同一配置连接池, 手写组件全部复用。
 
 Docker 一键部署: 基础 compose 起前端 Nginx 容器 (8080, 反代 `/api` 到后端 8090) + 单后端 + MySQL 8.4 + Redis 7; 集群叠加层 (`docker-compose.cluster.yml`) 增加三节点 etcd (报告缓存发现)、MySQL GTID 副本 + 复制初始化、两个 Redis 副本 + 三 Sentinel、第二个后端实例, 并把前端 Nginx 换成对两个后端做负载均衡的配置。节点日志与 trace 文件用独立卷, 报告用共享卷且同时落 MySQL, 因此任意节点都能供报告。`deployment/` 下提供 MySQL 复制与 Redis Sentinel 的初始化脚本及集群 Nginx 配置。
 
@@ -270,7 +270,7 @@ taskflow 提供的核心保证是: **一条持久执行行只会被认领并执�
 - 进程崩溃或外部响应不确定时, 无法保证 "一定完成", 只能保证 "不会重复"; 悬挂的 pending/queued 由监控补偿, 卡死的 running 被判失败但不会自动重跑。
 - 运维要求的 "重新跑一次" 是一次新执行 (新的请求 key), 不是对旧行的重试。
 - 还原一个不含执行历史的数据库备份, 也会一并丢掉幂等历史, 因此备份必须把执行 key、事务记录、变更事件与 outbox 状态同源数据一起保留。
-- 部署不提供 MySQL 多主写入与自动主提升; MySQL 主从切换、Redis Sentinel 提升都是运维显式操作, 提升后靠 SQL 的 pending/queued 行恢复丢失的协调数据。
+- 部署不提供 MySQL 多主写入与自动主提升, MySQL 主从切换是运维显式操作; Redis Sentinel 在集群部署里会自动完成主提升。提升之后, 应用靠 SQL 的 pending/queued 行与 outbox 恢复丢失的协调数据。
 
 适用场景: 需要把 "周期巡检 + 事件驱动审计" 交给 LLM 自动产出结构化报告, 且对触发幂等、可审计、可恢复有硬性要求的企业内部系统; 希望复用一套手写分布式组件 (时间轮、TCC、一致性哈希、Stream MQ、LSM、Raft) 而不引入重型外部调度器的场景。不适合的场景: 需要毫秒级精确定时、需要跨数据中心强一致、或把执行归属寄托在 Redis/账本而非关系型数据库上的架构。
 

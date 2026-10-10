@@ -32,10 +32,16 @@ local_path: "$HOME/Downloads/node-pool"
 库的模块入口暴露了一个工厂函数 `createPool`，它把默认的驱逐策略、空闲队列和优先级队列组装进池对象。也就是说，池主体并不依赖具体的数据结构，而是依赖三个可替换的契约：
 
 ```js
-// 组装方式示意
-function createPool(factory, config) {
-  return new Pool(DefaultEvictor, Deque, PriorityQueue, factory, config);
-}
+// index.js 的实际导出
+module.exports = {
+  Pool,
+  Deque,
+  PriorityQueue,
+  DefaultEvictor,
+  createPool(factory, config) {
+    return new Pool(DefaultEvictor, Deque, PriorityQueue, factory, config);
+  },
+};
 // Pool 的构造签名：Evictor, Deque, PriorityQueue, factory, options
 ```
 
@@ -165,8 +171,11 @@ if (numWaitingClients < 1) return;
 const resourceShortfall =
   numWaitingClients - this._potentiallyAllocableResourceCount;
 
-const toCreate = Math.min(this.spareResourceCapacity, resourceShortfall);
-for (let i = 0; toCreate > i; i++) {
+const actualNumberOfResourcesToCreate = Math.min(
+  this.spareResourceCapacity,
+  resourceShortfall,
+);
+for (let i = 0; actualNumberOfResourcesToCreate > i; i++) {
   this._createResource();
 }
 ```
@@ -273,13 +282,13 @@ for (let i = 0; toCreate > i; i++) {
 默认驱逐策略只比较空闲时长，逻辑可以压缩成两段判断：
 
 ```js
-evict(config, resource, availableCount) {
-  const idleTime = Date.now() - resource.lastIdleTime;
+evict(config, pooledResource, availableObjectsCount) {
+  const idleTime = Date.now() - pooledResource.lastIdleTime;
 
   // 软超时：只收缩超出下限的富余空闲资源
   if (config.softIdleTimeoutMillis > 0 &&
       config.softIdleTimeoutMillis < idleTime &&
-      config.min < availableCount) {
+      config.min < availableObjectsCount) {
     return true;
   }
 

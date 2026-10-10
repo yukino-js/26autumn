@@ -12,7 +12,7 @@ Codex CLI 是 OpenAI 的本地编码 Agent, 以 Rust 单体内核为核心, 通�
 
 ### 1.1 单体内核, 多形态出口
 
-Codex 的核心判断是: Agent 内核只写一次, 产品形态通过协议接口分化。`codex-rs/` 是一个包含约 160 个 workspace member 的 Rust 单体内核, 其中 `core` crate 承载 Agent 循环、工具编排、会话管理; `protocol` crate 定义内核与 UI 之间的 SQ/EQ (Submission Queue / Event Queue) 消息模型; `app-server` 与 `app-server-protocol` 将内核能力包装为 JSON-RPC 服务; `tui` 与 `exec` 是两个直接消费内核的 CLI 形态。
+Codex 的核心判断是: Agent 内核只写一次, 产品形态通过协议接口分化。`codex-rs/` 是一个包含 155 个 workspace member 的 Rust 单体内核, 其中 `core` crate 承载 Agent 循环、工具编排、会话管理; `protocol` crate 定义内核与 UI 之间的 SQ/EQ (Submission Queue / Event Queue) 消息模型; `app-server` 与 `app-server-protocol` 将内核能力包装为 JSON-RPC 服务; `tui` 与 `exec` 是两个直接消费内核的 CLI 形态。
 
 | 形态           | 入口                | 内核接入方式                               | 典型场景                   |
 | -------------- | ------------------- | ------------------------------------------ | -------------------------- |
@@ -33,7 +33,7 @@ TypeScript SDK (`sdk/typescript/`) 复用同一套平台解析逻辑: `CodexExec
 
 ### 1.3 arg0 多调用二进制
 
-`codex-rs/arg0/` 实现了 "arg0 trick": 同一个二进制文件根据 `argv[0]` 的 basename 分发到不同的入口。例如 `codex-linux-sandbox` 会直接执行 Linux 沙箱辅助进程, `apply_patch` 会进入独立的 apply-patch 工具, `codex-execve-wrapper` (Unix) 会进入 shell 升级的 execve 包装器; 此外还通过 `argv[1]` 哨兵参数分发内部辅助进程 (如 `--codex-run-as-arg0-exec-helper`、`--codex-run-as-fs-helper` 与 Windows 沙箱包装器)。这让单个二进制可以扮演多个角色, 减少分发复杂度。
+`codex-rs/arg0/` 实现了 "arg0 trick": 同一个二进制文件根据 `argv[0]` 的 basename 分发到不同的入口。`codex-linux-sandbox` 会直接进入 Linux 沙箱辅助进程的 `run_main`; `apply_patch` (连拼错的 `applypatch` 别名也兼容) 会进入独立的 apply-patch 工具。`argv[1]` 哨兵参数则分发各类内部辅助进程: `--codex-run-as-arg0-exec-helper` (exec-server 的 exec 辅助)、`--codex-run-as-fs-helper` (文件系统辅助)、`--run-as-windows-sandbox` (Windows 沙箱包装器)、`--__codex-windows-mxc` (Windows MXC 沙箱) 与 `--codex-run-as-apply-patch`。启动时还会在临时目录创建 `apply_patch` 软链接 (Unix) 或 `apply_patch.bat` (Windows) 并加入 PATH。这让单个二进制可以扮演多个角色, 减少分发复杂度。
 
 ## 二、Rust 内核架构
 
@@ -46,14 +46,17 @@ protocol (消息类型定义)
     ↑
 core (Agent 循环、工具编排、会话管理)
     ↑
-├── tui (交互式终端 UI)
-├── exec (非交互执行)
-├── app-server (JSON-RPC 服务)
+app-server (JSON-RPC 服务, 嵌入 core)
+    ↑
+├── app-server-client (统一客户端 facade)
+│       ↑
+│   ┌───┴───┐
+│  tui     exec (同时直接依赖 core)
 ├── codex-mcp (MCP client)
 └── cloud-tasks (云任务浏览器)
 ```
 
-`protocol` crate 定义 `Op` (提交队列操作) 与 `EventMsg` (事件队列消息) 两个核心枚举, 以及 `SandboxPolicy`、`AskForApproval`、`ReviewDecision` 等安全相关类型。`core` crate 消费这些类型, 实现 Agent 循环; 上层形态 crate 通过 `app-server-client` 或直接嵌入 `core` 来驱动内核。
+`protocol` crate 定义 `Op` (提交队列操作) 与 `EventMsg` (事件队列消息) 两个核心枚举, 以及 `SandboxPolicy`、`AskForApproval`、`ReviewDecision` 等安全相关类型。`core` crate 消费这些类型, 实现 Agent 循环; 上层形态 crate 通过 `app-server-client` (进程内或远程) 或直接嵌入 `core` 来驱动内核: `tui` 只依赖 `app-server-client`/`app-server-daemon` 而不直接依赖 `core`, `exec` 则同时依赖 `core` 与 `app-server-client`。
 
 辅助 crate 包括: `sandboxing` (Seatbelt/Landlock/bwrap 封装)、`execpolicy` (Starlark 规则引擎)、`rollout` (会话持久化)、`history` (历史项类型)、`config` (分层配置加载)、`login` (认证)、`codex-api` (Responses API client)、`model-provider` (provider 抽象)、`tools` (工具定义与路由)、`exec-server` (远程执行服务)。
 
@@ -139,7 +142,7 @@ Codex 使用 JSON-RPC 2.0 方言, 但**省略 `"jsonrpc": "2.0"` 字段** (既�
 - `JSONRPCResponse` — 成功响应
 - `JSONRPCError` — 错误响应
 
-`ClientRequest` 枚举由 `client_request_definitions!` 宏生成, 包含 170+ 个方法, 覆盖:
+`ClientRequest` 枚举由 `client_request_definitions!` 宏生成, 包含 175 个方法, 覆盖:
 
 - 线程生命周期: `thread/start`、`thread/resume`、`thread/fork`、`thread/archive`、`thread/delete`
 - Turn 控制: `turn/start`、`turn/interrupt`、`turn/steer`、`turn/settings/update`
@@ -159,8 +162,11 @@ Codex 使用 JSON-RPC 2.0 方言, 但**省略 `"jsonrpc": "2.0"` 字段** (既�
 - `item/tool/requestUserInput` — 工具请求用户输入
 - `mcpServer/elicitation/request` — MCP elicitation
 - `item/permissions/requestApproval` — 权限审批
+- `item/tool/call` — 动态工具调用
+- `account/chatgptAuthTokens/refresh` — ChatGPT token 刷新
+- `attestation/generate` / `currentTime/read` — 远程证明与时间读取
 
-`ServerNotification` 枚举 (80+ 个通知) 用于服务端向客户端推送事件:
+`ServerNotification` 枚举 (86 个通知) 用于服务端向客户端推送事件:
 
 - `thread/started`、`turn/started`、`turn/completed` — 生命周期
 - `item/started`、`item/completed` — 项生命周期
@@ -224,8 +230,9 @@ SDK 的核心类:
 - `sandboxMode` — `read-only` / `workspace-write` / `danger-full-access`
 - `approvalPolicy` — `never` / `on-request` / `on-failure` / `untrusted`
 - `workingDirectory` / `additionalDirectories` — 工作目录
-- `networkAccessEnabled` / `webSearchMode` — 网络与搜索
+- `networkAccessEnabled` / `webSearchMode` / `webSearchEnabled` — 网络与搜索
 - `skipGitRepoCheck` — 跳过 Git 仓库检查
+- `threadSource` — 线程创建时的来源分类
 
 `TurnOptions` 支持:
 
@@ -310,7 +317,7 @@ Linux 沙箱通过 `linux-sandbox` crate 实现, 使用 Landlock 进行文件系
 - `request_permissions` — `request_permissions` 工具审批
 - `mcp_elicitations` — MCP elicitation 审批
 
-审批请求通过 `EventMsg::ExecApprovalRequest` 或 `EventMsg::ApplyPatchApprovalRequest` 发送到 UI, UI 通过 `Op::ExecApproval` 或 `Op::PatchApproval` 返回 `ReviewDecision` (Approved / Denied / ApprovedForSession)。
+审批请求通过 `EventMsg::ExecApprovalRequest` 或 `EventMsg::ApplyPatchApprovalRequest` 发送到 UI, UI 通过 `Op::ExecApproval` 或 `Op::PatchApproval` 返回 `ReviewDecision`, 其变体为: `Approved` (批准本次)、`ApprovedForSession` (会话内自动批准)、`ApprovedExecpolicyAmendment` (批准并落盘 execpolicy 修正案)、`ApprovedMcpPolicyAmendment` (MCP 工具调用策略修正)、`NetworkPolicyAmendment` (持久化某主机的网络放行/拒绝规则)、`Denied { rejection }`、`TimedOut` 与 `Abort`。
 
 ### 5.3 execpolicy: Starlark 规则引擎
 
@@ -368,7 +375,7 @@ env = { KEY = "value" }
 
 MCP 工具在 Codex 内部的命名规则是 `mcp__<server_name>__<tool_name>`, 例如 `mcp__filesystem__read_file`。工具定义通过 `McpCatalogBuilder` 收集, 并注入到模型的工具列表中。
 
-MCP server 支持 OAuth 认证, 通过 `mcpServer/oauth/login` app-server 方法或 `codex mcp login` CLI 命令触发。OAuth token 存储在 `$CODEX_HOME/secrets/mcp_oauth.age` (age 加密文件, 解密密钥存于系统 keyring, keyring 不可用时落盘)。
+MCP server 支持 OAuth 认证, 通过 `mcpServer/oauth/login` app-server 方法或 `codex mcp login` CLI 命令触发。OAuth token 存储在 `$CODEX_HOME/secrets/mcp_oauth.age` (age 加密文件, 同目录还有 `codex_auth.age`、`gateway_oauth.age` 等命名空间), 解密密钥存于系统 keyring, keyring 不可用时直接报错, 没有磁盘降级。
 
 MCP elicitation (服务端向客户端请求用户输入) 通过 `EventMsg::ElicitationRequest` 发送到 UI, UI 通过 `Op::ResolveElicitation` 返回用户决策。关于 MCP 协议本身的更多背景, 参见 [MCP App](mcp-app)。
 
@@ -386,16 +393,18 @@ Apps 的配置通过 `config.toml` 的 `[apps]` 表管理, 支持全局默认 (`
 
 ### 7.1 分层配置
 
-`config` crate 实现了分层配置加载, 优先级从高到低:
+`config` crate 实现了分层配置加载, 每层有明确的 precedence 数值, 从高到低:
 
-1. `LegacyManagedConfigTomlFromMdm` — MDM 交付的 `managed_config.toml`
-2. `LegacyManagedConfigTomlFromFile` — 文件系统的 `managed_config.toml`
-3. `SessionFlags` — CLI 覆盖 (作为 dotted-path TOML 写入)
-4. `Project` — 项目配置 (`.codex/config.toml`)
-5. `User` profile — 用户 profile 配置
-6. `User` — 用户配置 (`$CODEX_HOME/config.toml`)
-7. `EnterpriseManaged` — 云管理配置 bundle
-8. `System` — 系统配置 (`/etc/codex/config.toml` 或 Windows 系统路径)
+1. `LegacyManagedConfigTomlFromMdm` (50) — MDM 交付的 `managed_config.toml`
+2. `LegacyManagedConfigTomlFromFile` (40) — 文件系统的 `managed_config.toml`
+3. `SessionFlags` (30) — 会话级 CLI 覆盖
+4. `Project` (25) — 项目配置 (`.codex/config.toml`)
+5. `User` 带 profile (21) — 用户配置叠加选中的 profile
+6. `User` (20) — 用户配置 (`$CODEX_HOME/config.toml`)
+7. `EnterpriseManaged` (15) — 云管理配置 bundle
+8. `System` (10) — 主机级配置 (`/etc/codex/config.toml` 或 Windows 系统路径)
+9. `Mdm` (0) — 新版 MDM managed preferences
+10. `PackagedDefaults` (-10) — 随安装包分发的默认配置
 
 `ConfigLayerStack` 持有所有层, 提供 `effective_config()` (合并后的 TOML) 与 `origins()` (每 key 的来源元数据)。层可以标记为 `disabled_reason`, 此时仍 surfaced 给 UI 但不参与合并。
 
@@ -453,18 +462,21 @@ Profile 是命名的配置预设, 通过 `--profile <name>` 激活: 对应配置
 
 ### 8.1 Rollout 持久化
 
-`rollout` crate 实现了会话持久化, 将会话历史写入 JSONL 文件。文件路径为 `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread_id>.jsonl` (按日期分桶), 归档会话移至 `$CODEX_HOME/archived_sessions/`。
+`rollout` crate 负责会话持久化, 将会话历史写入 JSONL 文件。文件路径为 `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread_id>.jsonl` (按日期分桶), 归档会话移至 `$CODEX_HOME/archived_sessions/`。
 
-`RolloutLine` 是每行的结构:
+行级与条目类型定义在 `history` crate。`RolloutLine` 是每行的结构:
 
 ```rust
 pub struct RolloutLine {
     pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ordinal: Option<u64>,
     #[serde(flatten)]
     pub item: RolloutItem,
 }
 ```
+
+`RolloutLine` 刻意不实现 `Deserialize`: JSONL 读取必须走 `rollout` crate 的规范解析器, 以保证嵌套小数等值在 flatten 的 envelope 下不失真。
 
 `RolloutItem` 枚举:
 
@@ -500,11 +512,11 @@ pub struct RolloutLine {
 
 `core/src/compact.rs` 实现了上下文压缩, 当会话历史超过 token 限制时自动触发, 或用户通过 `Op::Compact` 手动触发。
 
-压缩策略:
+压缩分类枚举定义在 `analytics` crate (用于遥测归因), 实际压缩逻辑在 `core`:
 
 - `CompactionTrigger`: `Auto` (自动) / `Manual` (手动)
 - `CompactionReason`: `UserRequested` / `ContextLimit` / `ModelDownshift` / `CompHashChanged`
-- `CompactionImplementation`: `Responses` (本地模型摘要) / `ResponsesCompactionV2` (远程压缩)
+- `CompactionImplementation`: `Responses` (本地模型摘要) / `ResponsesCompactionV2` (远程压缩, 即 `compact_remote_v2.rs`)
 - `CompactionStrategy`: `Memento` (保留关键信息) / `PrefixCompaction` (前缀压缩)
 
 压缩流程:
@@ -531,15 +543,21 @@ Token-budget 压缩 (`compact_token_budget.rs`) 跳过模型摘要, 直接安装
 - `RetainedContext` — 保留上下文
 - `Heartbeat` — 心跳项
 
-`TurnItem` 枚举 (在 `protocol` crate) 定义了 Turn 内的项类型:
+`TurnItem` 枚举 (在 `protocol` crate) 定义了 Turn 内的项类型, 完整变体为:
 
+- `UserMessage` / `HookPrompt` / `FunctionCallOutput` — 输入与钩子
 - `AgentMessage` — 模型消息
 - `Reasoning` — 推理
 - `CommandExecution` — 命令执行
+- `DynamicToolCall` — 动态工具调用
+- `CollabAgentToolCall` / `SubAgentActivity` — 多 Agent 协作与子代理活动
 - `FileChange` — 文件变更
 - `McpToolCall` — MCP 工具调用
-- `WebSearch` — 网页搜索
+- `WebSearch` — 网页搜索 (宿主 Responses API 路径)
+- `ImageView` / `ImageGeneration` — 图像查看与生成
+- `Extension` — schema 由扩展自持的项 (独立网页搜索、sleep、图像生成等)
 - `Plan` — 计划 (待办列表)
+- `EnteredReviewMode` / `ExitedReviewMode` — 审查模式进出
 - `ContextCompaction` — 上下文压缩
 
 ## 九、适用场景与边界

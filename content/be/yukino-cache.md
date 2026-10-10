@@ -205,7 +205,7 @@ watchServiceChanges:
 | `Set(Request)`    | group + key + value | 回显 value   |
 | `Delete(Request)` | group + key         | 布尔是否成功 |
 
-`NewServer` 在构造时就注册该服务与 gRPC 健康检查服务 (按服务名置 `SERVING`), 并把 `MaxRecvMsgSize` 默认限制为 4 MiB (可经 `ServerOptions.MaxMsgSize` 调整), 防止超大 value 打爆内存; `Stop` 时先把健康状态置为 `NOT_SERVING`、关闭停止信号, 再 `GracefulStop` 并关闭 etcd 客户端。请求进入后按 group 名字查全局注册表, 找不到返回错误; `Get` 请求会被注入 peer 标记后再交给 Group, 从而强制归属节点本地回源。
+`NewServer` 在构造时就注册该服务与 gRPC 健康检查服务 (按服务名置 `SERVING`), 并把 `MaxRecvMsgSize` 默认限制为 4 MiB (取值来自 `DefaultServerOptions.MaxMsgSize`; 当前 `ServerOption` 只有 `WithEtcdEndpoints` 与 `WithDialTimeout`, 没有对应选项, 只能改写这个全局默认值), 防止超大 value 打爆内存; `Stop` 时先把健康状态置为 `NOT_SERVING`、关闭停止信号, 再 `GracefulStop` 并关闭 etcd 客户端。请求进入后按 group 名字查全局注册表, 找不到返回错误; `Get` 请求会被注入 peer 标记后再交给 Group, 从而强制归属节点本地回源。
 
 客户端 `Client` 用 `grpc.NewClient` 建立明文连接并启用 `WaitForReady(true)`, 使请求在连接重建期间等待而不是立即失败。`Get`/`Delete` 使用固定 3 秒超时; `Set` 复用调用方传入的上下文 (因此继承了写传播的 3 秒超时)。
 

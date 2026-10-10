@@ -67,7 +67,7 @@ dispatch = func(i int) {
 
 重复调用 `next()` 会 panic, 而不是返回错误; 这个 panic 会沿栈向上传播, 由 Recovery 中间件转成 500。因此建议把 Recovery 放在洋葱链的最外层 (靠近 `Use` 的第一次调用), 这样它能覆盖所有内层中间件与 handler 的 panic。
 
-执行顺序以 `[Logger, Recovery, Auth]` + handler 为例: 进入阶段为 Logger → Recovery → Auth → handler, 退出阶段为 Auth → Recovery → Logger。Logger 因此能在 `next()` 返回后读到最终状态码并记录耗时; Recovery 能在 `next()` 返回后捕获任何内层 panic。
+执行顺序以 `[Logger, Recovery, Auth]` + handler 为例: 进入阶段为 Logger → Recovery → Auth → handler, 退出阶段为 Auth → Recovery → Logger。Logger 因此能在 `next()` 返回后读到最终状态码并记录耗时; Recovery 则通过 `defer` + `recover` 捕获内层 panic —— 发生 panic 时 `next()` 不会返回, 延迟函数在栈展开过程中执行并改写响应。
 
 分组中间件的收集发生在一个循环里, 遍历顺序就是注册顺序: 根 Router 的中间件先入列, 之后创建的子 Router 依次追加。前缀匹配使用 `matchRouterPath`, 因此 `/api` 分组的中间件只会作用于 `/api` 与 `/api/...`, 不会误伤 `/apikeys`。
 
@@ -121,7 +121,7 @@ dispatch = func(i int) {
 
 几个已知边界:
 
-- 同一层可同时注册 `/users/:id` 与 `/users/:name`, 它们是两个不同的通配子节点, 匹配时按插入顺序取第一个能命中叶节点的分支, 行为不确定; 应在应用层避免这种冲突写法。
+- 同一层可同时注册 `/users/:id` 与 `/users/:name`, 它们是两个不同的通配子节点, 但匹配时按插入顺序逐个尝试, 总是命中先注册的分支, 后注册的路由永远不可达; 应在应用层避免这种冲突写法。
 - 路由注册使用普通 map 与切片, 没有加锁, 因此必须在 `Listen` 之前完成, 这与多数 Go 框架的约定一致。
 
 ## 分组 Router 与静态文件

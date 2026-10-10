@@ -209,9 +209,9 @@ replace github.com/hangtiancheng/yukino.go/components/red_mq => ../../../compone
 2. 创建生命周期 context, 监听 SIGINT/SIGTERM.
 3. 初始化 OpenTelemetry 和 Sentry.
 4. 连接 MySQL, 创建 schema, 在迁移锁下 AutoMigrate.
-5. 安装数据库变化捕获 trigger.
+5. 为 schema 内所有合法业务表安装 INSERT/DELETE 捕获 trigger.
 6. 打开统一 Redis client, Ping 检查连接.
-7. 创建 DAO, Fleet 诊断, Redis 幂等/Bloom, 模型 agent.
+7. 创建 DAO, 为每个启用条件任务的监视表补装 capture trigger, 再创建 Fleet 诊断, Redis 幂等/Bloom, 模型 agent.
 8. 打开本地 LSM journal 和单节点 Raft ledger.
 9. 创建报告 cache group, 按配置启用 etcd/gRPC peers.
 10. 创建任务定义缓存和各 Redis 组件适配器.
@@ -2623,7 +2623,7 @@ XAUTOCLAIM idle threshold 960s
 running stuck threshold  1800s
 ```
 
-run timeout 应小于 handle timeout, 给终态保存留预算. stuck threshold 也应明显大于正常 run timeout, 避免正常执行被误判.
+run timeout 应小于 handle timeout, 给终态保存留预算. stuck threshold 也应明显大于正常 run timeout, 避免正常执行被误判. 配置校验 (conf.Validate) 强制了这两个关系: executor timeout 必须为正且小于 MQ handle timeout, 且 stuck-running 预算必须大于 run timeout, 否则启动失败.
 
 XAUTOCLAIM idle 指的是 pending 消息自上次投递/认领后的空闲时间, 不知道模型是否仍在执行. 将其设得很短, 会让另一个消费者提前拿到同一消息; SQL running CAS 能拒绝第二次 claim, 但仍造成额外负载和诊断混乱.
 

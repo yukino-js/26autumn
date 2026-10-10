@@ -129,13 +129,13 @@ Anthropic 路径上有一个值得注意的兼容补丁 `signaturePatchingTransp
 
 对话图与 Plan-Execute 执行器共享同一套工具, 保证两条流水线能力对等 (注册顺序略有差异, 集合一致)。四个内置工具 (`query_prometheus_alerts`、`mysql_crud`、`get_current_time`、`query_internal_docs`) 都用 `utils.InferOptionableTool` 从 Go 函数签名与 struct tag (`jsonschema` / `jsonschema_description`) 反推 JSON Schema; MCP 工具则不经推断, 由适配器直接携带服务器下发的 `InputSchema`。
 
-| 工具                      | 能力                                     | 容错取向                             |
-| ------------------------- | ---------------------------------------- | ------------------------------------ |
-| MCP 日志工具 (动态)       | 连接 MCP 服务器, 枚举其工具并逐个适配    | 连不上则降级为空工具集, 不阻断构建   |
-| `query_prometheus_alerts` | 拉取活跃告警, 按 alertname 去重          | `prometheus_url` 为空则返回空结果    |
-| `mysql_crud`              | 对 MySQL 执行 query/insert/update/delete | 运行期错误转成 JSON 错误载荷回喂模型 |
-| `get_current_time`        | 返回多格式当前时间                       | 无参工具, 容忍空 Arguments           |
-| `query_internal_docs`     | 对知识库做 RAG 检索                      | 运行期错误转成 JSON 错误载荷         |
+| 工具                      | 能力                                     | 容错取向                                                  |
+| ------------------------- | ---------------------------------------- | --------------------------------------------------------- |
+| MCP 日志工具 (动态)       | 连接 MCP 服务器, 枚举其工具并逐个适配    | 连不上则降级为空工具集, 不阻断构建                        |
+| `query_prometheus_alerts` | 拉取活跃告警, 按 alertname 去重          | `prometheus_url` 为空返回空结果; 运行期错误转成 JSON 载荷 |
+| `mysql_crud`              | 对 MySQL 执行 query/insert/update/delete | 运行期错误转成 JSON 错误载荷回喂模型                      |
+| `get_current_time`        | 返回多格式当前时间                       | 无参工具, 容忍空 Arguments                                |
+| `query_internal_docs`     | 对知识库做 RAG 检索                      | 运行期错误转成 JSON 错误载荷                              |
 
 几个实现要点:
 
@@ -145,7 +145,7 @@ Anthropic 路径上有一个值得注意的兼容补丁 `signaturePatchingTransp
 
 **无参工具的兼容** (`empty_arguments.go`): `TolerateEmptyArguments[T]` 是一个自定义的 `utils.UnmarshalArguments`, 把空/纯空白的 Arguments 归一成 `"{}"` 再解码。因为 Eino 默认的 sonic 反序列化会把空串当语法错误, 而部分模型 (如 Qwen) 对无参工具就是返回空串而非规范的 `"{}"`。`get_current_time` 与 `query_prometheus_alerts` 都挂了这个选项。
 
-**错误即观测**: MySQL 与文档检索工具在运行期失败时, 不返回 Go error, 而是返回一个 `{success:false, error, message}` 的 JSON 字符串 (error 为 nil)。这样错误会作为"工具观测结果"回喂给模型, 让 Agent 有机会推理并重试 (比如修正 DSN), 而不是直接中断整个 ReAct 流。
+**错误即观测**: MySQL、Prometheus 告警与文档检索工具在运行期失败时, 不返回 Go error, 而是返回一个 `{success:false, error, message}` 的 JSON 字符串 (error 为 nil)。这样错误会作为"工具观测结果"回喂给模型, 让 Agent 有机会推理并重试 (比如修正 DSN), 而不是直接中断整个 ReAct 流。
 
 ## 向量知识库: Milvus 引导与读写
 
@@ -201,7 +201,7 @@ collection 的 schema 由 `Fields(dim)` 定义, 四个字段与 `internal/consts
 
 `sentry_metrics_handler.go` 是一个独立的子系统, 把 `@yukino.js/sentry` 浏览器 SDK 的上报转成 Prometheus 指标。它维护一个**私有 registry** (`sentryRegistry`), 与全局默认 registry 隔离, 在 `init()` 里注册三类东西:
 
-1. **Go 运行时指标**: 用 `collectors.NewGoCollector` 并显式开启 `runtime/metrics` 的 GC/内存/调度器规则, 外加 `/cpu/classes/*`、`/sync/*`、`/cgo/*`。默认的 GoCollector 只暴露 `go_memstats_*` 等少量指标, 这里补上了排查 Go 服务真正需要的调度延迟、GC 暂停、各状态 goroutine 数、互斥锁竞争等; `/godebug/*` 被排除 (五十多条恒为零的序列没有排查价值)。还注册了进程指标、构建信息, 以及两个自定义 Gauge: `yukino_go_memory_limit_bytes` (GOMEMLIMIT, 未设时为 0) 与 `yukino_go_heap_used_ratio` (存活堆 / GOMEMLIMIT, 未设 GOMEMLIMIT 时报 0 而非臆造一个)。
+1. **Go 运行时指标**: 用 `collectors.NewGoCollector` 并显式开启 `runtime/metrics` 的 GC/内存/调度器规则, 外加 `/cpu/classes/*`、`/sync/*`、`/cgo/*`。默认的 GoCollector 只暴露 `go_memstats_*` 等少量指标, 这里补上了排查 Go 服务真正需要的调度延迟、GC 暂停、各状态 goroutine 数、互斥锁竞争等; 采集规则只包含这些显式枚举的组, `/godebug/*` 等恒为零的序列不会被引入。还注册了进程指标、构建信息, 以及两个自定义 Gauge: `yukino_go_memory_limit_bytes` (GOMEMLIMIT, 未设时为 0) 与 `yukino_go_heap_used_ratio` (存活堆 / GOMEMLIMIT, 未设 GOMEMLIMIT 时报 0 而非臆造一个)。
 2. **一批 `yukino_sentry_*` 指标**: 覆盖 SDK 的几乎每种上报类型 (唯独不含只携带 rrweb 不透明 blob 的 ScreenRecord)。
 3. 指标命名与标签集**保持稳定**, 以便一个 Prometheus 实例能用同一套 `prometheus.rules.yml` 抓取多个生产者。
 
@@ -225,9 +225,9 @@ collection 的 schema 由 `Fields(dim)` 定义, 四个字段与 `internal/consts
 
 **优雅降级**是贯穿全局的容错主线: MCP 连不上降级为空工具集; Prometheus 未配置则告警工具返回空; 知识库为空则检索返回空列表而非报错; 工具运行期错误转成 JSON 载荷回喂模型而非中断; Replanner 的 panic 被 recover 成事件错误。这些设计共同保证"任何一个外部依赖缺席, 都不会让整个 Agent 构建或请求失败"。
 
-**配置加载** (`internal/config`) 读 `config.json` (而非环境变量), 但允许 JSONC: `stripJSONC` 在解码前剥掉 `//` 行注释、`/* */` 块注释与尾随逗号。剥离器**逐字符扫描并感知字符串字面量**, 因此字符串里的 `//` (如 `https://api.example.com/v1`) 不会被误判成注释; 尾随逗号的判定用 `nextSignificant` 跳过空白与注释后看下一个有效 token 是否为 `}`/`]`。`applyDefaults` 为缺省字段填默认值 (`:8123`、`openai`、`max_tokens=4096`、`./data/docs`、`localhost:19530`、`agent`/`biz`、`streamable_http` 等)。`config.example.jsonc` 逐字段注释了每个配置项, 可原样拷贝成 `config.json` (后者因含真实密钥而被 git 忽略)。
+**配置加载** (`internal/config`) 读 `config.json` (而非环境变量), 但允许 JSONC: `stripJSONC` 在解码前剥掉 `//` 行注释、`/* */` 块注释与尾随逗号。剥离器**逐字符扫描并感知字符串字面量**, 因此字符串里的 `//` (如 `https://api.example.com/v1`) 不会被误判成注释; 尾随逗号的判定用 `nextSignificant` 跳过空白与注释后看下一个有效 token 是否为 `}`/`]`。`applyDefaults` 为缺省字段填默认值 (`:8123`、`openai`、`max_tokens=4096`、`./data/docs`、`localhost:19530`、`agent`/`biz`、`streamable_http` 等)。`config.example.jsonc` 提供逐字段的完整示例配置 (无注释), 可原样拷贝成 `config.json` (后者因含真实密钥而被 git 忽略)。
 
-**日志与可观测**: `internal/utility/logger` 用 `log/slog` 的文本 handler 统一结构化日志 (取代散落的 `fmt.Printf`); `internal/utility/log_callback` 是一个 Eino 回调 handler, 把流水线各组件的 start/end/error 生命周期事件经 slog 打出, 默认开启输入载荷详情。
+**日志与可观测**: `internal/utility/logger` 用 `log/slog` 的文本 handler 统一结构化日志; `internal/utility/log_callback` 是一个 Eino 回调 handler, 把流水线各组件的 start/end/error 生命周期事件经 slog 打出, 默认开启输入载荷详情。
 
 ## 部署形态
 

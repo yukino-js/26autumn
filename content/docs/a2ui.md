@@ -81,32 +81,34 @@ A2UI 本身传输无关, 但任何传输层承担 A2UI 时必须满足四条契�
 
 协议按族演进, 不同族面向不同的模型使用方式。
 
-| 版本族 | 状态                     | 取向与关键差异                                                                                                                             |
+| 版本族 | 状态 (仓库规范目录声明)  | 取向与关键差异                                                                                                                             |
 | :----- | :----------------------- | :----------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.8   | 已关闭 (legacy)          | 面向支持结构化输出 (structured output) 的模型; 组件用 `{类型名: 属性}` 包裹, 表面初始化用 `beginRendering`, 数据更新用 `dataModelUpdate`   |
+| v0.8   | closed                   | 面向支持结构化输出 (structured output) 的模型; 组件用 `{类型名: 属性}` 包裹, 表面初始化用 `beginRendering`, 数据更新用 `dataModelUpdate`   |
 | v0.9   | 稳定                     | prompt-first 协议族首个版本; 组件类型字段直接是类型名, 属性平铺, 表面初始化用 `createSurface`, 数据更新用 `updateDataModel` 的 upsert 语义 |
-| v0.9.1 | 当前生产版本             | 与 v0.9 差异极小, 多语言 SDK 与渲染器以此为准                                                                                              |
+| v0.9.1 | 当前生产版本, closed     | 与 v0.9 差异极小, 多语言 SDK 与渲染器以此为准                                                                                              |
 | v1.0   | 候选 (release candidate) | 双向函数 RPC、单消息建 Surface、多 catalog 混用、`@` 前缀指令、去 theme 化; 详见下节                                                       |
 
-v0.8 的规范目录已明确声明 closed、不再接受变更, 仓库保留它只为存量实现; SDK 侧仍提供 v0.8 适配器以消费历史消息。v0.8 与 v0.9 的核心分野不是字段改名, 而是生成方式: v0.8 假设模型受结构化输出格式约束, 协议可以略显冗长; v0.9 假设 JSON Schema 直接嵌进 prompt 让模型仿写, 因此可以把 schema 做得更复杂可读。代价是生成结果必须经过校验与修复, 这一点在"生成可靠性"一节展开。
+v0.8 与 v0.9 的核心分野不是字段改名, 而是生成方式: v0.8 假设模型受结构化输出格式约束, 协议可以略显冗长; v0.9 假设 JSON Schema 直接嵌进 prompt 让模型仿写, 因此可以把 schema 做得更复杂可读。代价是生成结果必须经过校验与修复, 这一点在"生成可靠性"一节展开。各版本 SDK 适配器 (TypeScript `web_core` 的 `./v0_8` 子路径、Python Core 的 v0.8 适配器) 按消息的 `version` 字段与 v0.8 特有的动作键 (`beginRendering` / `surfaceUpdate` / `dataModelUpdate`) 分流。
 
 ### v1.0 候选版的关键变化
 
 v1.0 已有完整规范 (协议文档、JSON Schema、A2A 扩展、basic catalog) 与多语言适配器, 相对 v0.9.1 的变化集中在六个方面。
 
-**1. 双向函数 RPC。** 消息从四类扩为六类: agent 到 renderer 增加 `callRendererFunction` 与 `agentFunctionResponse`, renderer 到 agent 增加 `callAgentFunction` 与 `rendererFunctionResponse`。函数调用有了显式的执行边界: catalog 可为每个函数声明 `allowedCallers` (`rendererOnly` / `agentOnly` / `rendererOrAgent`, 缺省 `rendererOnly`), 渲染器在运行时按 catalog 配置强制校验——收到对 `rendererOnly` 或未注册函数的远程调用时, 以 `INVALID_FUNCTION_CALL` 错误拒绝; `agentOnly` 函数不允许绑定到组件属性或由 UI 动作触发。调用必须携带 `functionCallId`, 渲染器无论返回类型是否为 void 都必须回 `rendererFunctionResponse` (携带同一个 `functionCallId` 与结果值) 或 `error` 消息。basic catalog 的 `openUrl` 标注 `requiresUserActivation: true`, 即需要用户手势激活。
+**1. 双向函数 RPC。** agent 到 renderer 的消息从四类扩为六类: 增加 `callRendererFunction` 与 `agentFunctionResponse`; renderer 到 agent 增加 `callAgentFunction` 与 `rendererFunctionResponse`。函数调用有了显式的执行边界: catalog 为每个函数声明 `allowedCallers` (`rendererOnly` / `agentOnly` / `rendererOrAgent`, 缺省 `rendererOnly`), 渲染器在运行时按 catalog 配置强制校验——收到对 `rendererOnly` 或未注册函数的远程调用时, 以 `INVALID_FUNCTION_CALL` 错误拒绝; `agentOnly` 函数不允许绑定到组件属性或由 UI 动作触发, 只能由 agent 经 `callRendererFunction` 执行。调用必须携带 `functionCallId`, 渲染器无论返回类型是否为 void 都必须回 `rendererFunctionResponse` (携带同一个 `functionCallId` 与结果值) 或 `error` 消息; renderer 的 `error` 消息支持 `functionCallId`, 且与 `surfaceId` 互斥。`allowedCallers` 与 `returnType` 只存在于 catalog 函数定义, 不允许出现在 wire 层的 `FunctionCall` 载荷里——边界检查与返回类型校验完全交给运行时。basic catalog 的 `openUrl` 标注 `requiresUserActivation: true`, 即需要用户手势激活。
 
-**2. 单消息建 Surface。** `createSurface` 可直接内嵌 `components` 与 `dataModel` (以及 `metadata.extensions`), 一条消息完成整块 UI 的组合; `catalogId` 变为可选, 仅作为该 Surface 的缺省 catalog。这正是 [A2UI Express](a2ui-express) 编译产物的目标形态。
+**2. 单消息建 Surface 与 Surface 容器。** `createSurface` 可直接内嵌 `components` 与 `dataModel` (以及 `metadata.extensions`), 一条消息完成整块 UI 的组合; `catalogId` 变为可选, 仅作为该 Surface 的缺省 catalog。这正是 [A2UI Express](a2ui-express) 编译产物的目标形态。`createSurface` 会隐式实例化规范的 `Surface` 容器组件 (`common_types.json#/$defs/Surface`), 它恒定持有 `"child": "root"` 且不能被 `updateComponents` 修改; `surfaceId` 必须在渲染器整个生命周期内全局唯一, 编排器负责给子 Agent 的 surfaceId 加前缀或要求其用 UUID 以避免冲突。
 
-**3. 多 catalog 混用与解析顺序。** 组件与函数调用可各自携带 `catalogId`, 一个 Surface 内可混合多个 catalog 的组件与函数 (混用的 catalog 必须同属一个协议版本)。解析顺序是: 组件/调用自身的 `catalogId` → Surface 缺省 `catalogId` → 两者皆无则报错不渲染, 不回退到能力声明里的 catalog。
+**3. 多 catalog 混用与解析顺序。** 组件与函数调用可各自携带 `catalogId`, 一个 Surface 内可混合多个 catalog 的组件与函数 (混用的 catalog 必须同属一个协议版本)。解析顺序是: 组件/调用自身的 `catalogId` → Surface 缺省 `catalogId` → 两者皆无则报错不渲染, 不回退到能力声明里的 catalog。catalog 定义新增 `protocolVersion` 字段 (目标 1.0 及以上的 catalog 必须显式声明), 以及可选的 `instructions` 字段把设计指南直接嵌进 catalog (取代外置 rules.txt); catalog 组件定义还可声明 `allowedParents` / `allowedChildren` 组合约束 (以 `"Surface"` 为规范根组件类型, 该名字被协议保留), 违反时渲染器报 `UNALLOWED_PARENT` / `UNALLOWED_CHILD` 错误。
 
-**4. `@` 前缀指令。** 动态值指令改用 `@` 前缀: 数据绑定 `{"@path": "/x"}`, 函数调用 `{"@call": "f", "args": {...}}`, 模板迭代上下文 `@index` (仅限模板作用域)。普通对象中的 `path` / `call` 键从此是字面量数据, 不再被截获为指令; 字面 `@` 开头的键用双写转义 (`"@@path"` 表示字面 `"@path"`)。注意 ChildList 模板对象与 `updateDataModel` 信封上的 `path` 是消息参数而非绑定, 保持不带前缀。
+**4. `@` 前缀指令。** 动态值指令改用 `@` 前缀: 数据绑定 `{"@path": "/x"}`, 函数调用 `{"@call": "f", "args": {...}}`。`@` 前缀被保留给协议的系统级上下文求值, 自定义 catalog 不得定义 `@` 开头的函数名; 内置 `@index` 系统函数返回模板迭代的 0 基索引, 接受可选 `offset` 参数 (`{"@call": "@index", "args": {"offset": 1}}` 得到 1 基序号), 且只允许在列表模板的 Collection Scope 内求值, 在根作用域调用是错误。普通对象中的 `path` / `call` 键从此是字面量数据, 不再被截获为指令; 动态对象里未识别的单 `@` 键会被拒绝, 字面 `@` 开头的键用双写转义 (`"@@path"` 表示字面 `"@path"`)。注意 ChildList 模板对象与 `updateDataModel` 信封上的 `path` 是消息参数而非绑定, 保持不带前缀。
 
-**5. 去 theme 化与命名规范。** catalog 与 `createSurface` 上的 `theme` (含 `primaryColor`) 被整体移除, 视觉品牌完全交给目标框架的原生主题; v0.9.1 中承载 Agent 身份归属的 `iconUrl` / `agentDisplayName` 也随之离开协议层。所有 catalog 实体名 (组件名、函数名、参数键) 必须符合 Unicode UAX #31 标识符规则; `ComponentCommon` 与 `createSurface` 支持扩展元数据 (UAX #31 键, 保留 `a2ui_` 命名空间)。
+**5. 去 theme 化与命名规范。** catalog 与 `createSurface` 上的 `theme` (含 `primaryColor`) 被整体移除, 视觉品牌完全交给目标框架的原生主题; v0.9.1 中承载 Agent 身份归属的 `iconUrl` / `agentDisplayName` 也随之离开协议层。所有 catalog 实体名 (组件名、函数名、参数键) 必须符合 Unicode UAX #31 标识符规则; `ComponentCommon`、`createSurface` 与 catalog 的 `ComponentDefinition` 支持扩展元数据 (UAX #31 键, 保留 `a2ui_` 命名空间)。
 
-**6. 其余语义收紧。** `updateDataModel` 的 `value` 变为必填, 删除键要显式写 `null` (v0.9.1 的"省略 value 即删除"不再合法); `CheckRule` 支持函数直接返回动态 `ValidationResult` 对象 (`valid` / `code` / `message` / `severity`), `message` 退化为兜底文案; catalog 的 `functions` 定型为函数名到定义的对象映射, 内联 catalog 允许携带标准 JSON Schema 元数据 (`$schema` / `$id` / `title` / `description`); 术语全局改名, client → renderer、server → agent, schema 文件随之更名 (`agent_to_renderer.json` 等); basic catalog 增补 `Video.posterUrl`、`TextField.placeholder`、`Slider.steps` 等可选属性。
+**6. 其余语义收紧。** `updateDataModel` 的 `value` 变为必填, 删除键要显式写 `null` (v0.9.1 的"省略 value 即删除"不再合法); `CheckRule` 支持函数或数据绑定直接返回动态 `ValidationResult` 对象 (`valid` / `code` / `message` / `severity`, 允许附加自定义扩展键), 标准校验函数 (`required` / `regex` / `length` / `numeric` / `email`) 的 returnType 从 boolean 改为 `validationResult`, `CheckRule.message` 退化为可选兜底文案; catalog 的 `functions` 定型为函数名到定义的对象映射, 内联 catalog 允许携带标准 JSON Schema 元数据 (`$schema` / `$id` / `title` / `description`); `ComponentCommon` 统一挂载 `AccessibilityAttributes` (WAI-ARIA `label` / `description` / `live` 区域 `"off"|"polite"|"assertive"` / `hidden`); 术语全局改名, client → renderer、server → agent, schema 文件随之更名 (`agent_to_renderer.json` 等); basic catalog 增补 `Video.posterUrl`、`TextField.placeholder`、`Slider.steps` 等可选属性。
 
-迁移时最危险的坑是"全局替换 `path` → `@path`": 只有处于动态值 (DynamicValue) 位置的绑定与调用才加前缀, ChildList 模板、`updateDataModel` 信封参数、以及普通数据里恰好叫 `call` 的键 (如 Icon 的名字枚举) 都必须原样保留。
+**7. 函数调用的多态执行。** 组件属性绑定、校验规则与 action 里的 `FunctionCall` 语法完全一致, 渲染器按 catalog 解析结果决定本地执行还是发出 `callAgentFunction` 走远程。依赖远程 (或异步) 函数的绑定进入 pending 状态 (渲染器保持 loading 或原值); 失败传播规则明确: 动态值绑定失败解析为 `null` 或声明的回退值并记录错误, 不拖垮组件树; 校验失败按无效处理并显示错误文案; action 管线失败中止后续步骤、保留已执行步骤的副作用。
+
+迁移时最危险的坑是"全局替换 `path` → `@path`": 只有处于动态值 (DynamicValue) 位置的绑定与调用才加前缀, ChildList 模板、`updateDataModel` 信封参数、以及普通数据里恰好叫 `call` 的键 (如 Icon 的名字枚举) 都必须原样保留 (v1.0 evolution guide 对此有显式警告)。
 
 ### 一个最小消息序列
 
@@ -114,7 +116,7 @@ v1.0 已有完整规范 (协议文档、JSON Schema、A2A 扩展、basic catalog
 
 ```jsonc
 // 1. 建 Surface, 绑定 catalog
-{"version": "v0.9.1", "createSurface": {"surfaceId": "contact_form", "catalogId": "https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json"}}
+{"version": "v0.9.1", "createSurface": {"surfaceId": "contact_form", "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"}}
 
 // 2. 下发组件树 (扁平邻接表): root 引用子组件, 输入组件绑定数据路径
 {"version": "v0.9.1", "updateComponents": {"surfaceId": "contact_form", "components": [
@@ -166,11 +168,13 @@ v1.0 已有完整规范 (协议文档、JSON Schema、A2A 扩展、basic catalog
 
 ### 组件与函数的目录: Catalog
 
-Catalog 是 Agent 与渲染器之间的契约, 一个对象包含 catalogId、components (组件名到 JSON Schema 的映射)、functions (函数定义) 与 theme (主题属性 schema)。
+Catalog 是 Agent 与渲染器之间的契约, 一个对象包含 catalogId、components (组件名到 JSON Schema 的映射)、functions (函数定义) 与 theme (主题属性 schema, 仅 v0.9 族)。
 
 官方维护一份 basic catalog, 提供 18 个通用组件与 14 个函数。它刻意保持精简以便各渲染器实现, 官方明确不追求跨客户端的标准化 catalog——UI 由 LLM 生成, LLM 可以针对每个前端解释各自的 catalog, 因此关键在于"你的设计系统是什么", 任何组件集合都能注册。
 
-官方另提供一份 MCP catalog (`catalogs/mcp`): 定义 `callMcpTool` (按名字调用 MCP 工具, 返回原始 `CallToolResult`) 与五个数据函数 (`jmespath`、`split`、`regexCapture`、`regexReplace`、`updateDataModel`), 让 Surface 内的控件直接调用 MCP 工具、把结果变换后写回数据模型; payload 只携带工具名, 多服务器路由由宿主解析。
+catalog 与协议版本独立演进: 仓库根的 `catalogs/` 目录只放当前世代的 catalog, basic catalog 的主版本目录是 `catalogs/basic/v1/catalog.json` (面向 v1.0 协议, `$id` 与 `catalogId` 同为 `https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json`, 声明 `protocolVersion: "1.0"`, 不含 theme, 并携带内联的 `instructions` 指南); v1.0 之前的 basic catalog 留在各自规范目录 (`specification/v0_9/catalogs/basic` 与 `specification/v0_9_1/catalogs/basic`, 两份文件内容完全一致, 共用 `$id` `https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json`)。catalog 以自身声明的 `$id` 而非仓库路径被识别。
+
+官方另提供一份 MCP catalog (`catalogs/mcp/catalog.json`, catalogId `https://a2ui.org/specification/v0_9/catalogs/mcp/mcp_catalog.json`, 无组件只有函数): `callMcpTool` 接受 `name` (DynamicString, 必填) 与 `arguments` (对象, 缺省 `{}`), 返回原始 MCP `CallToolResult`; 客户端无法解析、无结果或结果 `isError: true` 时抛 `A2uiExpressionError`。五个数据函数把工具结果变换后写回数据模型: `jmespath(expression, data)` (缺失字段返回 null)、`split(value, separator)`、`regexCapture(value, pattern)` (RE2, 无匹配返回 null)、`regexReplace(value, pattern, replacement)`、`updateDataModel(updates)` (键以 `/` 开头为绝对路径, 否则在调用方的数据上下文——如模板行作用域——内解析)。payload 只携带工具名不携带服务器名, 多服务器路由由宿主在 `getMcpClientForTool` 里解析; TypeScript 实现在 `@a2ui/catalog-mcp` (`typescript/catalogs/mcp`)。
 
 basic catalog 的组件:
 
@@ -189,7 +193,7 @@ basic catalog 的函数:
 | 行为   | openUrl                                                           |
 | 逻辑   | and、or、not                                                      |
 
-theme 在 v0.9.1 支持三个属性: `primaryColor` (主色)、`iconUrl` 与 `agentDisplayName` (Agent 身份归属)。在多 Agent 或编排器场景下, 编排者负责设置或覆写后两个身份字段并校验其与真实 Agent 服务一致, 防止恶意 Agent 冒充可信服务。注意这是 v0.9.1 的机制: v1.0 把 theme 连同这三个属性整体移除, 视觉品牌交给目标框架的原生主题, 身份归属改由传输层或宿主应用自行承载。
+theme 在 v0.9 族定义在 catalog 的 `$defs.theme`, 支持三个属性: `primaryColor` (主色)、`iconUrl` 与 `agentDisplayName` (Agent 身份归属)。在多 Agent 或编排器场景下, 编排者负责设置或覆写后两个身份字段并校验其与真实 Agent 服务一致, 防止恶意 Agent 冒充可信服务。注意这是 v0.9.1 的机制: v1.0 把 theme 连同这三个属性整体移除, 视觉品牌交给目标框架的原生主题, 身份归属改由传输层或宿主应用自行承载。
 
 ### Catalog 扩展
 
@@ -336,17 +340,17 @@ Core SDK 提供协议的语言原生表示: 强类型的 Catalog 声明 (Catalog
 
 各语言的能力面 (以仓库当前实现为准):
 
-| 平台       | Core                                            | Inference                                                  | 渲染/适配层                                                      |
-| :--------- | :---------------------------------------------- | :--------------------------------------------------------- | :--------------------------------------------------------------- |
-| TypeScript | `@a2ui/web_core` (含 v0.8 / v0.9 / v1.0 子路径) | `@a2ui/agent`                                              | `@a2ui/react`、`@a2ui/lit`、`@a2ui/angular`、`@a2ui/markdown-it` |
-| Python     | `a2ui-core`                                     | `a2ui-agent-sdk` (含 a2a、adk、macros、四种推理格式)       | 无独立渲染器 (服务端为主)                                        |
-| Dart       | `a2ui_core`                                     | `a2ui_agent` (v0.9 协议 API, 含 DirectJson / Express 格式) | `a2ui_flutter` 仍是占位包, Flutter 渲染由独立的 GenUI SDK 提供   |
-| Swift      | `A2UICore`                                      | —                                                          | `A2UISwiftUI` 适配层 + `BasicCatalog`                            |
-| Kotlin     | —                                               | 仅存 `agent_sdk_legacy`                                    | —                                                                |
+| 平台       | Core                                            | Inference                                                                       | 渲染/适配层                                                      |
+| :--------- | :---------------------------------------------- | :------------------------------------------------------------------------------ | :--------------------------------------------------------------- |
+| TypeScript | `@a2ui/web_core` (含 v0.8 / v0.9 / v1.0 子路径) | `@a2ui/agent` (direct-json 与 express 两种推理格式)                             | `@a2ui/react`、`@a2ui/lit`、`@a2ui/angular`、`@a2ui/markdown-it` |
+| Python     | `a2ui-core`                                     | `a2ui-agent-sdk` (a2a、adk、macros、builder、skill 生成器; 四种推理格式)        | 无独立渲染器 (服务端为主)                                        |
+| Dart       | `a2ui_core`                                     | `a2ui_agent` (v0.9 协议 API, 含 DirectJson / Express 格式); `a2ui_cli` 开发工具 | `a2ui_flutter` 仍是占位包, Flutter 渲染由独立的 GenUI SDK 提供   |
+| Swift      | `A2UICore`                                      | —                                                                               | `A2UISwiftUI` 适配层 + `BasicCatalog` / `BasicCatalogSwiftUI`    |
+| Kotlin     | —                                               | 仅存 `agent_sdk_legacy`                                                         | —                                                                |
 
-TypeScript 与 Dart 的 Core 都实现了同构的解析层 (节点解析器 / 组件节点 / 已解析绑定), 仓库的 conformance 套件以同一组用例钉住两者的行为: 节点解析、表达式解析、数据模型与数据上下文 (路径 upsert/删除语义、作用域相对路径解析) 逐语言对齐。Core 的对外 API 面刻意收窄, 渲染器统一经节点解析器读取组件, 不直接接触绑定器内部。
+TypeScript 与 Dart 的 Core 都实现了同构的解析层 (节点解析器 / 组件节点 / 已解析绑定), 仓库的 conformance 套件 (`conformance/` 下语言无关的 YAML 用例, 分 core / agent / extensions 三类) 以同一组用例钉住各语言 SDK 的行为: 节点解析、表达式解析、数据模型与数据上下文 (路径 upsert/删除语义、作用域相对路径解析)、多 catalog、RPC 函数、组合约束等逐语言对齐; agent 侧的推理格式用例按格式分目录 (direct_json 与 express 各自拥有 prompt 生成、编译、反编译、响应解析四套断言)。Core 的对外 API 面刻意收窄, 渲染器统一经节点解析器读取组件, 不直接接触绑定器内部。
 
-Python Core 用版本适配器工厂消化协议差异: v0.8 / v0.9 / v0.9.1 / v1.0 各注册一个适配器 (v0.9.1 复用 v0.9 适配器), 按消息的 `version` 字段解析, 缺失时回退 v0.9, 也支持动态注册自定义适配器。TypeScript 的 web_core 则以版本子路径并存 (`@a2ui/web_core/v0_8` / `v0_9` / `v1_0`), 渲染器按所用协议版本选择入口; v1.0 basic catalog 在 web_core 中还以通用 custom elements 提供 (`./v1_0` 与 `./catalogs/basic/v1` 子路径), 但 React / Lit / Angular 渲染器尚未开放 v1.0 入口。
+Python Core 用版本适配器工厂 (`a2ui.core.processing.adapters`) 消化协议差异: v0.8 / v0.9 / v0.9.1 / v1.0 各注册一个适配器 (v0.9.1 复用 v0.9 适配器), 按消息的 `version` 字段解析, 缺失时回退 v0.9, 也支持动态注册自定义适配器; 无 version 字段但携带 v0.8 动作键的消息会被识别为 v0.8。TypeScript 的 web_core 则以版本子路径并存 (`@a2ui/web_core/v0_8` / `v0_9` / `v1_0`), 渲染器按所用协议版本选择入口; `./catalogs/basic/v1` 子路径提供 v1 basic catalog 的类型安全 API (zod schema + 函数实现), `./universal` 子路径提供框架无关的 Lit custom element 渲染层 (`A2uiLitElement` / `registerUniversalElement`, 其 basic catalog 组件实现同时覆盖 v0.9 与 v1 catalog API), `./rpc` 子路径承载 v1.0 的函数 RPC 处理。渲染器对 v1.0 的开放程度不一: Angular 自带 v1.0 basic catalog 的 universal 实现 (`renderers/angular/src/basic-catalog.ts`), Lit 构建在 web_core universal 之上并配有 v1.0 surface 测试, React 则仍只开放 v0.8 / v0.9 入口。
 
 Python Core 同时是 wire schema 的生成源: specification 目录下 v0.8 / v0.9 / v0.9.1 的 `server_to_client.json` 与 v1.0 的 `agent_to_renderer.json` 由 `a2ui.core.schema` 的 Pydantic 模型重建 (模型本身由代码生成工具从 spec schema 产出), conformance 套件 (`core/agent_to_renderer.yaml`) 断言各版本重建结果与已发布 spec 文件完全一致; catalog 的 `catalog_schema` 同样从模型重建后与已发布 `catalog.json` 比对 (`core/catalog.yaml`)。模型与 spec 文件由此互相钉住, 不会单边漂移。
 
@@ -453,12 +457,12 @@ A2A 基于 JSON-RPC, 核心方法为 `message/send` (同步) 与 `message/stream
 
 仓库内的示例覆盖了从最小可运行到产品级集成的不同层次。
 
-- restaurant_finder (ADK Agent): 一个搜索餐厅、推荐、预订的多轮 Agent。它演示了 ReAct 循环与 A2UI 生成如何结合——第一轮模型调用工具取餐厅数据, 第二轮生成"餐厅卡片列表"的 A2UI 消息, 用户点"预订"按钮触发 action, 服务端据此生成预订表单 (新的 Surface), 提交后再生成确认卡片。这条"列表 → 表单 → 确认"的链路说明了结构 (updateComponents) 与数据 (updateDataModel) 分离的价值: 改数据不必重发结构。
+- restaurant_finder (samples/agent 下的 ADK Python 版与 Node 版各一份): 一个搜索餐厅、推荐、预订的多轮 Agent。它演示了 ReAct 循环与 A2UI 生成如何结合——第一轮模型调用工具取餐厅数据, 第二轮生成"餐厅卡片列表"的 A2UI 消息, 用户点"预订"按钮触发 action, 服务端据此生成预订表单 (新的 Surface), 提交后再生成确认卡片。这条"列表 → 表单 → 确认"的链路说明了结构 (updateComponents) 与数据 (updateDataModel) 分离的价值: 改数据不必重发结构。
 - React / Lit 客户端 shell: 两个 shell 跑同一个协议, 差别只在传输层与响应式桥接。React shell 用浏览器 fetch 到本地开发中间件, 由中间件做协议转换与 SSE 流式转发; Lit shell 直接在浏览器里用 A2A 客户端连 Server。两者的 MessageProcessor、SurfaceModel、绑定器全部来自框架无关的 Core SDK, 适配层只是两种技术栈的桥接。这印证了"协议层代码可复用, 渲染器按技术栈选择"的设计。
 - custom-components-example: 演示自定义 catalog。服务端用内联 catalog 声明一组自定义组件 (如联系人卡片), 客户端注册对应实现——Agent 只能请求渲染这些已注册组件。
 - community/macros: 社区 macros 示例——演示服务器与交互式 React 客户端: 用 `@macro` 注册高层布局宏, 模型输出走 Express DSL, 服务端同步展开为标准组件, 含服务端 resolver 注入敏感数值的演示。
-- A2UI over MCP: 把 A2UI 消息作为 MCP 工具的返回内容, 由支持 A2UI 的客户端渲染。
-- MCP Apps in A2UI: 反过来让 A2UI 客户端承载不受信的第三方 MCP App。仓库把这条路径做成一个可复用的双 iframe 隔离件 (samples/client/shared/mcp_apps_inner_iframe, Angular 与 Lit 客户端共用): 同源、不加沙箱的外层代理 iframe 负责消息中继 (顺带消除 Angular DevTools 与浏览器扩展触发的 SecurityError), 内层 iframe 固定 `sandbox="allow-scripts allow-forms allow-popups allow-modals"`, 刻意不含 `allow-same-origin` (隔离存储与 cookie), 也不含 `allow-top-navigation` 一族 (防止内层脚本劫持顶层窗口), 防止"allow-scripts + allow-same-origin"组合导致的沙箱逃逸。示例里内层 App 再把收到的 A2UI JSON 渲染为 Surface, 验证了"MCP App 内嵌 A2UI 渲染"的组合。需要注意, A2UI 官方规范只声明了"A2UI 可经 MCP 传输"的绑定, 双 iframe 承载是实现选择而非协议规定。
+- A2UI over MCP (samples/community/mcp/a2ui-over-mcp-recipe 与 a2ui-over-mcp-filesystem): 把 A2UI 消息作为 MCP 工具或 Embedded Resource 的返回内容, 由支持 A2UI 的客户端渲染。
+- MCP Apps in A2UI (samples/community/mcp/a2ui-in-mcpapps、mcp-apps-calculator 及 community 客户端的 mcp-apps-in-a2ui-sample): 反过来让 A2UI 客户端承载不受信的第三方 MCP App。仓库把这条路径做成一个可复用的双 iframe 隔离件 (samples/community/client/shared/mcp_apps_inner_iframe, 由 Lit 与 Angular 的 MCP Apps 示例共用): 同源、不加沙箱的外层代理 iframe 负责消息中继 (顺带消除 Angular DevTools 与浏览器扩展触发的 SecurityError), 内层 iframe 固定 `sandbox="allow-scripts allow-forms allow-popups allow-modals"`, 刻意不含 `allow-same-origin` (隔离存储与 cookie), 也不含 `allow-top-navigation` 与 `allow-top-navigation-by-user-activation` (防止内层脚本通过 `window.top.location` 或 `_top` 链接劫持顶层窗口), 防止"allow-scripts + allow-same-origin"组合导致的沙箱逃逸。示例里内层 App 再把收到的 A2UI JSON 渲染为 Surface, 验证了"MCP App 内嵌 A2UI 渲染"的组合。需要注意, A2UI 官方规范只声明了"A2UI 可经 MCP 传输"的绑定, 双 iframe 承载是实现选择而非协议规定。
 
 ```text
 A2UI 传输无关的分层 (以流式 Agent 为例)
@@ -477,7 +481,7 @@ A2UI 传输无关的分层 (以流式 Agent 为例)
 
 ## 生产集成形态: yukino-agent
 
-一个 AI OnCall 运维助手把 A2UI 落到了生产系统里, 它最有价值的经验是给出了"不依赖任何上层框架"的完整自建链路。渲染端与生成端能力全部内联在应用仓库内: 自定义 catalog、A2uiView 渲染器、四种推理格式的 prompt 生成器都可独立使用, 不引入外部 A2UI 组件包。
+一个 AI OnCall 运维助手把 A2UI 落到了生产系统里, 它最有价值的经验是给出了"不依赖任何上层框架"的完整自建链路: 渲染与消息处理直接消费官方 `@a2ui/web_core`、`@a2ui/react` 与 `@a2ui/markdown-it` 包, 其上不叠加任何框架层; 自定义 catalog、A2uiView 渲染入口、四种推理格式的 prompt 生成器、流式过滤器、纠错重试与动作管线全部内联在应用仓库内, 可独立使用。
 
 ```text
 生成侧 (服务端)                              消费侧 (客户端)

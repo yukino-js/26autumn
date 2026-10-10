@@ -99,7 +99,7 @@ local_path: "$HOME/github/yukino-chat"
 
 ### 手写 JWT
 
-平台不依赖现成 JWT 库, 而是用 HMAC-SHA256 手拼 `header.payload.signature`: header 是固定的原始 base64url 字节, 签名用 `createHmac("sha256")`, 验签用恒定时间比较以防时序攻击, 并校验主体非空与过期时间。claims 只有主体、签发时间、过期时间三项, 有效期默认 336 小时(14 天), 没有 refresh 机制, 客户端注释明确说明: token 不会刷新, 过期只能重新登录。
+平台不依赖现成 JWT 库, 而是用 HMAC-SHA256 手拼 `header.payload.signature`: header 是固定的原始 base64url 字节, 签名用 `createHmac("sha256")`, 验签用恒定时间比较以防时序攻击, 并校验主体非空与过期时间。claims 只有主体、签发时间、过期时间三项, 有效期默认 336 小时(14 天), 没有 refresh 机制——token 过期后只能重新登录。
 
 手写的收益是零依赖与完全可控的字节布局; 代价是任何自定义扩展(如密钥轮换、多种算法)都要自己实现, 且必须持续关注实现是否踩到规范边界。
 

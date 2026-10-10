@@ -128,7 +128,7 @@ CLI 使用标准库 `flag`，子命令为 `start`（缺省）、`status`、`shut
 1. 载入配置、选择 provider，并对上游做一次连通性预检。失败则零副作用退出，不碰客户端任何文件。
 2. 获取跨平台文件锁 `<state-dir>/manager.lock`，避免并发启动。
 3. 若已有状态文件，则按四元组判断幂等：agent 名、provider 指纹、监听地址、客户端目录全同则直接返回现状，不再备份；否则先停旧服务再启新服务。控制面不可达但进程仍存活时要求人工检查；进程已死则清理陈旧状态文件。
-4. 打开 `<state-dir>/proxy.log`（0600），以脱离会话的方式启动子进程 `_serve`，参数携带 agent、配置、目录、状态目录、监听地址与 provider 指纹。
+4. 打开 `<state-dir>/proxy.log`（0600），以脱离会话的方式启动子进程 `_serve`，参数携带 agent、配置、目录、状态目录、监听地址、provider 指纹与协议/名字过滤器（若有）。
 5. 以 50ms 轮询状态文件与控制端点，10 秒内未就绪即报可诊断错误；子进程提前退出同样报错。
 
 `_serve` 子进程的顺序是「先监听、后改配置」：若带 `--expected-provider`，重新选择 provider 并比对指纹，不一致则报「校验后 provider 已变化，请重新启动」。这一步消除了父进程预检与子进程真正监听之间的 TOCTOU 窗口。随后校验监听地址必须是回环 IP、完成监听、构造服务面、注入控制中间件、改写客户端配置、写入状态文件、释放启动锁。任何早期失败都不会修改用户配置。退出时先取消服务的基础上下文，掐断在途的上游流，再以 10 秒超时优雅排水，失败则强制关闭。清理状态文件只在「控制 token 仍是自己」时执行，避免误删新一代守护进程的状态。
@@ -276,7 +276,7 @@ Chat Completions 分支按模型名决定用 `max_completion_tokens` 还是 `max
 
 Codex 的工具形态比 Chat/Anthropic 更丰富（命名空间嵌套、自定义文本工具、工具搜索）。桥接层统一展平为函数：
 
-- 命名空间与名字拼接为 `ns__name`；超过 64 字符时截断为前缀加 sha256 前 8 字节的十六进制，保证在上游长度限制内且几乎不冲突；展平后冲突直接报错。
+- 命名空间与名字拼接为 `ns__name`；超过 64 字符时截断为前缀加 sha256 前 8 字节的十六进制，保证在上游长度限制内且几乎不冲突；展平后同名但定义不同的工具直接报错，完全相同的重复注册则去重。
 - 自定义工具包成函数，schema 为单个字符串入参，描述追加原始定义；工具搜索物化为查询函数；递归展开命名空间工具的 children；web_search 类工具被静默丢弃（配置层禁用与桥接层禁用双重保障）。
 - 上游回调经还原函数变回 Responses item：普通调用变 `function_call`，自定义调用变 `custom_tool_call`，工具搜索变带客户端执行的 `tool_search_call`，命名空间字段复原。
 
@@ -308,7 +308,7 @@ Responses 协议支持用 `previous_response_id` 续接，但转换后的上游�
 
 - base URL 规范化：anthropic 端点若以 `/v1` 或 `/messages` 结尾则剥成 messages 路径；OpenAI 仅主机名的 URL 补 `/v1`，完整端点路径则剥掉再重拼。
 - 只取官方 SDK（`anthropic-sdk-go` 与 `openai-go`）的传输能力：以低层 `Post` 发送原始 JSON 并拿回原始 `*http.Response`，不解码到 SDK 类型，因此未知识别字段不会丢失；anthropic 直连的非流式响应甚至原样透传字节。
-- 所有 SDK 一律关闭自动重试（重试语义由调用方负责）；Anthropic 客户端清空 auth token，确保只发 `x-api-key`；转发前删除下游的 Authorization 头并透传 `anthropic-version`、`anthropic-beta`；OpenAI 路径强制 `Accept-Encoding: identity`，防止 gzip 破坏 SSE 的逐包转发。
+- 所有 SDK 一律关闭自动重试（重试语义由调用方负责）；Anthropic 客户端清空 auth token，确保只发 `x-api-key`；转发前删除下游的 Authorization 头并透传 `anthropic-version`、`anthropic-beta`；两条路径都强制 `Accept-Encoding: identity`，防止 gzip 破坏 SSE 的逐包转发。
 
 连通性预检在两个 Agent 上各有取舍：
 
@@ -341,7 +341,7 @@ Responses 协议支持用 `previous_response_id` 续接，但转换后的上游�
 
 ## 构建与滚动发布
 
-构建脚本交叉编译六个目标：linux/darwin/win32 乘 x64/arm64。每个目标使用 `-trimpath -ldflags="-s -w"`、`CGO_ENABLED=0`、按需关闭 workspace 复用（依赖模块相对替换）、编译进程数受限；产物先写临时文件再原子改名，失败保留旧产物；并发度默认为可用并行数的较小值加封顶。全部目标成功后才更新指向当前平台产物的原生链接（相对符号链接，Windows 在无符号链接权限时退化为硬链接）。Windows 产物是无 `.exe` 后缀的 PE 文件，使用前需改名。Makefile 提供 build/build-all/install/test/race/vet/release 目标，其中 `release` 即调用仓库根的 `scripts/release.js`。
+构建脚本交叉编译六个目标：linux/darwin/win32 乘 x64/arm64。每个目标使用 `-trimpath -ldflags="-s -w"`、`CGO_ENABLED=0`、按需关闭 workspace 复用（依赖模块相对替换），每次 `go build` 默认限制为两个编译进程（GOMAXPROCS=2）；产物先写临时文件再原子改名，失败保留旧产物；构建并发度默认为 3 与可用并行数的较小值，可用 `BUILD_CONCURRENCY` 环境变量覆盖。全部目标成功后才更新指向当前平台产物的原生链接（相对符号链接，Windows 在无符号链接权限时退化为硬链接）。Windows 产物是无 `.exe` 后缀的 PE 文件，使用前需改名。Makefile 提供 build/build-all/install/test/race/vet/release 目标，其中 `release` 即调用仓库根的 `scripts/release.js`。
 
 发布采用「滚动发布」而非语义化版本：tag、release 标题与六个资产名全部固定为二进制名，不带版本号或时间戳。每次发布把同名 tag 指向当前提交、整组替换同名资产，下载者始终从固定 URL 取得最新构建。流程的健壮性约束包括：先把全部目标构建完并验证六个资产存在且非空，构建后再次确认提交未变，任何构建失败都使远端零改动；探测现有 release 与 tag 时只在收到明确的 404 时视为不存在，认证、网络或服务端错误一律中止；写操作通过强制更新 tag 引用与覆盖资产完成。
 

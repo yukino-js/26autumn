@@ -97,7 +97,7 @@ InsForge 是一个开源的 BaaS (Backend as a Service) 后端平台, 它把数�
 | packages/shared-schemas | 前后端与 MCP 三方共用的契约层                       |
 | packages/ui             | React 组件库、设计令牌与 Tailwind preset            |
 
-根脚本的 dev、build、test、lint、typecheck 全部委托 turbo, 另有并发起前后端调试模式的脚本。turbo 任务图把构建顺序固化为依赖序: shared-schemas 先编译, 再 ui, 再 dashboard, 最后后端与前端; 后端的构建产物写到仓库根的 dist, 前端产物写到 dist/frontend, 生产镜像同时打包两者并由 Express 托管静态前端。测试任务被显式标记为不缓存。
+根脚本的 dev、build、test、lint、typecheck 全部委托 turbo, 另有并发起前后端调试模式的脚本。turbo 的 build 任务以 `^build` 声明依赖序: 共享包按相互依赖先后编译, 后端构建等齐其声明的依赖; 前端构建任务显式声明不依赖其它任务。后端的构建产物写到仓库根的 `dist/server.js`, 前端产物写到 `dist/frontend`, 生产镜像同时打包两者并由 Express 托管静态前端。测试任务被显式标记为不缓存。
 
 分层纪律写在仓库自带的开发 skill 里, 可以概括为四条: 契约变更先进 shared-schemas; 后端行为按 route 到 service 到 provider/infra 分层; 共享 dashboard 行为进 packages/dashboard; 可复用 UI 原语进 packages/ui。后端 TypeScript 源码统一用 ESM 风格的 `.js` 后缀 import specifier。
 
@@ -149,7 +149,7 @@ JWKS 端点注册了两次: 根路径与 `/api` 前缀各一个, 返回同一套
 TokenManager 是单例, 承担签发与验证:
 
 - 签发用 RS256 密钥对, 公钥以 JWK Set 形式经 JWKS 端点导出。
-- 验证优先走 RS256 公钥路径 (header 带 kid 且算法匹配), 否则回退 HS256 加共享密钥, 兼容旧 token 与 PostgREST 场景; 两条路径都强制要求主体存在。
+- 验证优先走 RS256 公钥路径 (header 带 kid 且与本地 kid 匹配), 否则用 HS256 加共享密钥验证 —— RS256 私钥未加载时签发的 access token、以及转发 PostgREST 用的内部 token 都是 HS256; 两条路径都强制要求主体存在。
 - 另一个专供 PostgREST 的匿名 token 用 HS256 签发, payload 只有 anon 角色且永不过期。
 - 云 token 签发仅在云环境可用, 用项目密钥签一个主体为项目 ID 的十分钟短票; 项目 ID 未配置或为 `local` 时拒绝签发, 理由是“离开平台基础设施就不存在这种信任关系, 宁可拒绝也不签一个注定远程失败的 token”。
 - 云 token 验证用远端 JWKS 并校验项目 ID claim 与本项目 ID 一致, 多种 RSA 与 ECDSA 算法都接受。
@@ -218,7 +218,7 @@ PostgREST 连接池参数有耦合约束: 转发侧最大 socket 数应与 Postg
 
 元数据管理层提供列类型映射 (带过期时间的有界缓存, 支持按表失效与全量清理)、用户表清单、数据库体积与全表行数统计 (一次 UNION ALL 查询拿全部表计数)。这些能力对应 MCP 的 `get-backend-metadata` 与 `get-table-schema` 两个工具。
 
-系统迁移用 node-pg-migrate, 固定使用独立的迁移 schema 与迁移表; 启动时先跑 bootstrap 再执行 `migrate:up`。迁移编号有重复检测脚本防止同号冲突。迁移史本身就是产品演进史: 从基础表、鉴权表、实时 schema, 到定时任务、函数部署表、自定义 OAuth、S3 access key 与 S3 协议扩展, 再到 compute 服务与支付域、memory schema、数据库备份、advisor、OTP 登录与 OAuth 原生客户端 ID, 最后到 compute 多驱动、公有对象所有权回收与 http 扩展权限收紧 (当前编号至 065)。
+系统迁移用 node-pg-migrate, 固定使用独立的迁移 schema (`system`) 与迁移表; 启动时先跑 bootstrap 再执行 `migrate:up`。迁移编号有重复检测脚本防止同号冲突。当前迁移编号至 065, 覆盖基础表与辅助函数、鉴权表与 auth schema 函数、实时 schema、定时任务、函数部署表、自定义 OAuth、S3 access key 与 S3 协议扩展、compute 服务与支付域、memory schema、数据库备份、advisor、OTP 登录与 OAuth 原生客户端 ID、compute 多驱动与 scale-to-zero、公有对象所有权回收与 http 扩展权限收紧。
 
 ## 存储产品域
 
@@ -262,13 +262,13 @@ S3 access key 的签发与管理有独立端点与迁移。
 
 函数代码存 Postgres, 部署记录单独成表。每次函数增删改后异步触发部署: 取全部活跃函数与注入用 secrets, 交给 Deno Deploy provider 部署, 状态先记 pending 再轮询。服务启动时同步一次, 已有成功部署就跳过, 且不阻塞启动。
 
-Deno Deploy provider 走 Deno Deploy v2 API: 保证应用存在 (部署、查状态、查日志必须解析同一个应用 slug, 否则会部署到一个应用却去轮询另一个), 资产由一个生成的路由器加各函数的用户代码组成, slug 必须匹配字母数字连字符下划线白名单, 用户代码经变换后作为资产, 运行时配置为动态类型并在入口点读取。凭据从旧的环境变量名更名而来, 以便迁移期两套凭据在 `.env` 里共存。函数提交前有 `deno check` 预校验。
+Deno Deploy provider 走 Deno Deploy v2 API (`https://api.deno.com/v2`): 保证应用存在 (部署、查状态、查日志解析同一个应用 slug, 即 `APP_KEY`, 否则会部署到一个应用却去轮询另一个), 资产由一个生成的路由器 (`main.ts`) 加各函数的用户代码 (`functions/<slug>.ts`) 组成, 函数 slug 必须匹配字母数字连字符下划线白名单, 用户代码经变换后作为资产, 运行时配置为 `{ type: 'dynamic', entrypoint: 'main.ts' }`, secrets 以 `{key, value}` 数组形式注入为环境变量。凭据从 `DENO_DEPLOY_TOKEN` 与 `DENO_DEPLOY_ORG_ID` 读取。函数提交前有 `deno check` 预校验 (CI 等无 Deno 环境时跳过)。
 
 未配置 Deno Deploy 时函数由本地运行时执行: 后端把 `/functions/:slug` 代理到 Deno 服务。
 
 ### 本地运行时的 Worker 隔离
 
-本地运行时每请求新建一个 Web Worker, 执行一次即终止, worker 代码由固定模板加数据库里取出的函数源码拼接而成, 带可配置超时。
+本地运行时 (独立 Deno 服务, 默认端口 7133) 每请求新建一个 Web Worker, 执行一次即终止。Worker 仅由固定模板的 blob 创建, 以严格权限白名单启动 (仅允许 net, env/read/write/run/ffi/sys/import 全部禁用); 函数源码 (从 `functions.definitions` 表取 `status = 'active'` 的记录) 与请求数据、解密后的 secrets 一起经 postMessage 传入, 在 worker 内用 `new Function` 包裹执行。超时由 `WORKER_TIMEOUT_MS` 配置 (默认 60 秒), 超时即终止 worker 并返回 504。
 
 函数 secrets 以密文存表, 用 AES-GCM 解密, 密钥是环境密钥或 JWT 密钥的 SHA-256, 密文格式为 iv、authTag、ciphertext 三段 hex, 与 Node 端加密格式互通。
 
@@ -350,7 +350,7 @@ UI 包是 React 组件库加设计令牌与 Tailwind preset, 供宿主消费。�
 
 ## 面向 Coding Agent 的 MCP 工具面
 
-MCP Server 是独立仓库, 不在主 monorepo 内, 通过 HTTP 调用后端的 `/api/*`。两仓库的耦合点是: MCP 启动时拉健康检查取后端版本号做工具注册门控, 以及 MCP 依赖精确钉死版本的共享 schema 包。它的构建输出有三个入口: stdio (两个 bin 名) 与 HTTP server 各一; npm start 直接起 HTTP server 并显式绑 `0.0.0.0`, 开发时用 tsx watch。
+MCP Server 是独立仓库, 不在主 monorepo 内, 通过 HTTP 调用后端的 `/api/*`。两仓库的耦合点是: MCP 启动时拉健康检查取后端版本号做工具注册门控, 以及 MCP 依赖精确钉死版本的共享 schema 包。tsup 构建有两个入口 (stdio 与 HTTP server), 包元数据声明三个 bin 名: `mcp` 与 `insforge-mcp` 指向 stdio 入口, `insforge-mcp-server` 指向 HTTP server 入口; npm start 直接起 HTTP server 并显式绑 `0.0.0.0`, 开发时用 tsx watch。
 
 ### 工具注册内核
 
@@ -364,32 +364,32 @@ MCP Server 是独立仓库, 不在主 monorepo 内, 通过 HTTP 调用后端的 
 
 凭据语义上, `getApiKey` 在远程模式刻意忽略调用方传入的 per-call key: 远程会话的凭据在登录时绑定, 接受调用方替换会让会话凭据失去权威性; 本地 stdio 模式则允许 per-call key 覆盖全局 key。
 
-另有一个旧后端补偿: 后端版本低于阈值时自动拉取指令文档并把开发规则附加到每个工具响应尾部, 新版后端由 SDK 与 skills 承担这一职责。
+另有指令文档自动注入: 后端版本低于 1.1.7 时, 每个工具响应尾部自动附加从 `/api/docs/instructions` 拉取的开发规则文本。
 
 ### 18 个工具的面板
 
 工具按域分布在五个注册器 (文档、数据库、存储、函数、部署) 中。唯一工具名共 18 个; 本地 stdio 模式实际注册 17 个 (无 start-deployment), 远程模式注册 17 个 (无 bulk-upsert), 再受后端版本门控削减。
 
-| 工具                 | 域         | 模式               | 行为与后端落点                                                                                                                          |
-| -------------------- | ---------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| fetch-docs           | docs       | 双模               | 拉平台文档, 描述标注 instructions 为强制第一步; 打文档类型端点                                                                          |
-| fetch-sdk-docs       | docs       | 双模, 版本门控     | 按 feature 加 language 拉 SDK 文档                                                                                                      |
-| get-anon-key         | docs       | 双模               | 生成永不过期的匿名 JWT (需管理 key)                                                                                                     |
-| get-table-schema     | database   | 双模               | 单表 schema 含 RLS、索引与约束                                                                                                          |
-| get-backend-metadata | database   | 双模               | 全量后端元数据索引                                                                                                                      |
-| run-raw-sql          | database   | 双模               | 裸 SQL 执行, 描述自称需要管理员权限并提示谨慎使用                                                                                       |
-| download-template    | database   | 双模异构           | 本地模式取匿名 key 后在临时目录执行脚手架命令 (校验项目名防路径穿越与 shell 注入) 并返回拷贝指令; 远程模式只返回让 Agent 自行执行的命令 |
-| bulk-upsert          | database   | 仅本地             | 从本地 CSV 或 JSON 文件批量 upsert                                                                                                      |
-| create-bucket        | storage    | 双模               | 建桶                                                                                                                                    |
-| list-buckets         | storage    | 双模               | 列桶                                                                                                                                    |
-| delete-bucket        | storage    | 双模               | 删桶                                                                                                                                    |
-| create-function      | functions  | 双模异构           | 本地模式要求代码先写进本地文件再按路径读取 (便于版本控制); 远程模式直接收内联代码字符串                                                 |
-| get-function         | functions  | 双模               | 函数详情含代码                                                                                                                          |
-| update-function      | functions  | 双模异构           | 同 create 的文件路径与内联代码分叉                                                                                                      |
-| delete-function      | functions  | 双模               | 永久删除                                                                                                                                |
-| get-container-logs   | deployment | 双模               | 拉最近容器或服务日志, 定位为调试工具                                                                                                    |
-| create-deployment    | deployment | 双模异构, 版本门控 | 本地模式 zip 打包目录并并行直传 (旧后端回退打包流); 远程模式准备部署并返回上传指令, 支持直传的后端返回直传命令                          |
-| start-deployment     | deployment | 仅远程             | 上传完成后触发构建                                                                                                                      |
+| 工具                 | 域         | 模式               | 行为与后端落点                                                                                                                                                        |
+| -------------------- | ---------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| fetch-docs           | docs       | 双模               | 拉平台文档, 描述标注 instructions 为强制第一步; 打文档类型端点                                                                                                        |
+| fetch-sdk-docs       | docs       | 双模, 版本门控     | 按 feature 加 language 拉 SDK 文档                                                                                                                                    |
+| get-anon-key         | docs       | 双模               | 生成永不过期的匿名 JWT (需管理 key)                                                                                                                                   |
+| get-table-schema     | database   | 双模               | 单表 schema 含 RLS、索引与约束                                                                                                                                        |
+| get-backend-metadata | database   | 双模               | 全量后端元数据索引                                                                                                                                                    |
+| run-raw-sql          | database   | 双模               | 裸 SQL 执行, 描述自称需要管理员权限并提示谨慎使用                                                                                                                     |
+| download-template    | database   | 双模异构           | 本地模式取匿名 key 后在临时目录执行脚手架命令 (校验项目名防路径穿越与 shell 注入) 并返回拷贝指令; 远程模式只返回让 Agent 自行执行的命令                               |
+| bulk-upsert          | database   | 仅本地             | 从本地 CSV 或 JSON 文件批量 upsert                                                                                                                                    |
+| create-bucket        | storage    | 双模               | 建桶                                                                                                                                                                  |
+| list-buckets         | storage    | 双模               | 列桶                                                                                                                                                                  |
+| delete-bucket        | storage    | 双模               | 删桶                                                                                                                                                                  |
+| create-function      | functions  | 双模异构           | 本地模式要求代码先写进本地文件再按路径读取 (便于版本控制); 远程模式直接收内联代码字符串                                                                               |
+| get-function         | functions  | 双模               | 函数详情含代码                                                                                                                                                        |
+| update-function      | functions  | 双模异构           | 同 create 的文件路径与内联代码分叉                                                                                                                                    |
+| delete-function      | functions  | 双模               | 永久删除                                                                                                                                                              |
+| get-container-logs   | deployment | 双模               | 拉最近容器或服务日志, 定位为调试工具                                                                                                                                  |
+| create-deployment    | deployment | 双模异构, 版本门控 | 本地模式 zip 打包目录并并行直传 (直传能力按后端 2.0.6 门控, 低于该版本改走 zip 上传, 并发默认 8、上限 32); 远程模式准备部署并返回上传指令, 支持直传的后端返回直传命令 |
+| start-deployment     | deployment | 仅远程             | 上传完成后触发构建                                                                                                                                                    |
 
 请求统一用 `x-api-key` 头携带凭据, 响应经统一处理器包装成 MCP content 数组, 错误一律返回带 `isError: true` 的结构化对象。部署域是最大单文件, 内含直传会话、文件内容上传与启动部署逻辑。
 
@@ -397,18 +397,18 @@ MCP Server 是独立仓库, 不在主 monorepo 内, 通过 HTTP 调用后端的 
 
 所有工具的返回都走同一条响应管线: 解析 HTTP 响应、判断是否为错误形态、把成功结果格式化成文本 content 数组; 结构化错误统一带 `isError: true`。这样上层 Agent 不需要针对每个工具学一套错误格式, 只需要记住“content 数组加 isError 标志”这一种契约。
 
-安装侧提供两条路: 自动安装器支持 claude-code、cursor、windsurf、cline、roocode、codex、trae 七种客户端, 只需传入客户端名与环境变量即可写入配置 (开发版装 dev tag); 手动安装则把 command 为 `npx -y @insforge/mcp@latest` 的服务器条目写进客户端设置。远程形态的声明注册在包元数据里: 声明流式 HTTP 端点与 stdio 两种传输, 并把 API key 标为必需且敏感的环境变量。包只发布构建产物与几份清单文件, 构建用 tsup, 发布前有部署校验、平台路径校验与握手校验三个脚本兜底。
+安装侧提供两条路: 自动安装器支持 claude-code、cursor、windsurf、cline、roocode、codex、trae 七种客户端, 只需传入客户端名与环境变量即可写入配置 (加 `--dev` 开关安装开发版); 手动安装则把 command 为 `npx -y @insforge/mcp@latest` 的服务器条目写进客户端设置。远程形态的声明注册在包元数据里: 声明流式 HTTP 端点与 stdio 两种传输, 并把 API key 标为必需且敏感的环境变量。包只发布构建产物与几份清单文件, 构建用 tsup, 发布前有部署校验、平台路径校验与握手校验三个脚本兜底。
 
 ### 远程 MCP 的 OAuth 2.1 与无状态化设计
 
 远程传输基于 Express 5, 端点分四组:
 
-| 组     | 端点                                                           | 说明                                                        |
-| ------ | -------------------------------------------------------------- | ----------------------------------------------------------- |
-| MCP    | `/mcp`                                                         | StreamableHTTP 主端点: POST 消息、GET SSE 流、DELETE 关会话 |
-| 旧协议 | `/sse` 与 `/messages`                                          | 旧版 SSE 传输兼容                                           |
-| OAuth  | 授权服务器元数据、受保护资源元数据、动态客户端注册、授权与换票 | 标准 OAuth 2.1 授权码加 PKCE                                |
-| API    | 健康检查、列项目、把 token 绑定到项目                          | 会话建立与项目选择                                          |
+| 组    | 端点                                                           | 说明                                                        |
+| ----- | -------------------------------------------------------------- | ----------------------------------------------------------- |
+| MCP   | `/mcp`                                                         | StreamableHTTP 主端点: POST 消息、GET SSE 流、DELETE 关会话 |
+| SSE   | `/sse` 与 `/messages`                                          | SSE 流建立与消息发送分离的双端点 (协议版本 2024-11-05)      |
+| OAuth | 授权服务器元数据、受保护资源元数据、动态客户端注册、授权与换票 | 标准 OAuth 2.1 授权码加 PKCE                                |
+| API   | 健康检查、列项目、把 token 绑定到项目                          | 会话建立与项目选择                                          |
 
 未授权请求按 MCP 规范返回 401 与受保护资源元数据。
 
@@ -417,7 +417,7 @@ MCP Server 是独立仓库, 不在主 monorepo 内, 通过 HTTP 调用后端的 
 - 客户端注册不是存储, 是签名 client id;
 - 授权状态不是存储, 是密封 cookie, cookie 里带 handle 且与平台回传的 state 参数绑定校验 —— 没有这个绑定, 任何带着 cookie 的回调都能通过授权;
 - 授权码与 access token 都是密封信封; refresh token 有独立的捕获与校验逻辑;
-- 唯独 MCP 会话做不到无状态: 它持有一个 McpServer 实例与一条打开的 TCP 连接。文档注释的原话是“连接不能密封进 token, 因为要持久化的不是信息而是 socket”。仓库也复盘了曾有的 Redis 方案为何被移除——Redis 只是在连接旁边存了副本, 而能靠重建 session 恢复的客户端本来就能重新 initialize;
+- 唯独 MCP 会话做不到无状态: 它持有一个 McpServer 实例与一条打开的 TCP 连接。文档注释的原话是“socket 不能密封进 token, 也不能复制到另一台机器, 所以会话只存在于本进程”。代价是进程重启丢弃所有存活会话, 客户端的恢复路径是看到会话 ID 返回 404 后重新 initialize; 多实例部署的答案是粘性路由或共享传输层, 而不是在外部存储里放会话副本——副本无法让连接变得可移植;
 - 会话 ID 是 bearer 凭据, 日志只允许出现指纹 (SHA-256 前 8 位), 因为运行时日志会经 API 暴露, 裸 ID 落日志等于凭据落盘。
 
 OAuth 流程本身是两层: 对 MCP 客户端做标准授权码加 PKCE, 对 InsForge 平台再发起一层 OAuth (自生成 code verifier/challenge)。授权状态同时保存客户端原始请求参数与平台侧 PKCE verifier; 多项目用户会看到项目选择页, 选定后缓存项目 key 并签发 access token, 会话建立时以远程模式加项目 ID 与 access token 装配工具。凭据防护有专门的测试覆盖 (会话绑定、state 绑定、会话指纹、凭据不匹配拒绝等)。

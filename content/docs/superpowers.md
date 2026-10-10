@@ -18,7 +18,7 @@ Superpowers 是一套面向编码 Agent 的软件开发方法论, 其本体不�
 2. 工具映射: 把动作词表翻译成宿主真实工具名的参考文件, 位于 `skills/using-superpowers/references/<harness>-tools.md`, 或内联在宿主的 bootstrap 注入器里。
 3. bootstrap 注入器: 每个宿主一份, 在会话开始时把 `skills/using-superpowers/SKILL.md` 全文包进 `<EXTREMELY_IMPORTANT>` 标签注入上下文, 并附上工具映射。
 
-仓库里没有任何 Superpowers 自己的进程在运行。bash/JS/TS/Python 代码只承担"把 markdown 送进上下文"和少量可视化辅助两类职责。因此它的失效模式不是崩溃, 而是注入没发生——此时磁盘上的技能文件是死的, 模型不会主动去读一个它不知道存在的目录。
+仓库里没有任何 Superpowers 自己的进程在运行。bash/JS/TS/Python 代码只承担三类职责: "把 markdown 送进上下文"的注入器、可视化伴侣服务器, 以及计划执行的一批小助手脚本 (workspace 解析、任务简报提取、评审 diff 打包、任务启停)。因此它的失效模式不是崩溃, 而是注入没发生——此时磁盘上的技能文件是死的, 模型不会主动去读一个它不知道存在的目录。
 
 ### 1.2 四条哲学与对应的强制机制
 
@@ -136,8 +136,8 @@ shell-hook 形态的宿主共用 `hooks/session-start` 脚本, 逻辑链路是:
 进入会话后, 触发顺序由技能内的路由规则决定:
 
 - process skills 先行。诊断类、规划类技能先于实现类技能。
-- 硬门阻断。brainstorming 里定义 HARD-GATE: 任何实现动作 (写产品代码、脚手架、装依赖) 之前必须完成所选路径的前置审批。规则强调"对想法的批准不等于批准还不存在的 artifact", 且审批只允许推进到下一阶段。
-- 反合理化。每个技能都带 Common Rationalizations 或 Red Flags 表, 把"这太简单了不用走流程"这类借口逐条对应到现实。这类文本来自对真实失败会话的归纳, 并通过技能写作方法学的压力测试验证有效。
+- 硬门阻断。brainstorming 里定义 HARD-GATE: 人类伙伴批准完整描述 (小改动批准聊天里的描述, 项目批准设计文档) 之前, 任何构建动作都不许做——写产品代码、脚手架、装依赖、创建项目、调用实现技能; 读与探索不受限。Red Flags 表强调"对想法说好不等于批准了还没写出来的描述"; 项目文档批准后下一步只许进 writing-plans, 唯二例外是用户明确跳过提问 (技能结束、门随之撤掉) 与已确认的 spike (产物保持一次性标签, 保留它是重新过门的新请求)。
+- 反合理化。多数技能带 Common Rationalizations 或 Red Flags 表, 把"这太简单了不用走流程"这类借口逐条对应到现实。这类文本来自对真实失败会话的归纳, 并通过技能写作方法学的压力测试验证有效。
 
 ### 3.3 主干工作流七步
 
@@ -156,15 +156,7 @@ shell-hook 形态的宿主共用 `hooks/session-start` 脚本, 逻辑链路是:
 
 ### 3.4 协作类技能的设计要点
 
-brainstorming。核心目标是把想法经对话变成可被用户识别并纠正的设计, 成果定义为"一份你的伙伴能认出来并修正的理解"。它用三路径路由器在提问之前先给请求分类, 并大声说出分类以便用户否决:
-
-| 路径          | 判定                                 | 流程重量                                                   |
-| ------------- | ------------------------------------ | ---------------------------------------------------------- |
-| Spike         | 可行性问题, 允许快速粗糙             | 几句话呈现问题加探针, 点头即可; 无设计文档无 spec          |
-| Bounded       | 对仓库中已存在代码的良界变更         | 聊天内短设计加 STOP, 明确同意后才实现; 无 spec 文件        |
-| Architectural | 新项目、新子系统、改动他人依赖的接口 | 全流程: 提问、方案对比、分节设计、书面 spec、writing-plans |
-
-棘轮是单向的: 拿不准时取更重的路径, 任务中途发现隐藏复杂度就升级, 绝不降级; "bounded 意味着你要改的流程已经在代码里可读", 而 bounded 的批准与 architectural 的批准一样硬。过大项目先拆成子项目, 每个独立走 spec、plan、implementation。
+brainstorming。核心目标是在动手之前弄清用户真正想要什么、为什么: 第一条消息先给一句"想跳过提问直接开始也可以"的退出通道, 再用一个开放问题收尾; 此后每条消息只以一个问题结尾, 理解按 200-300 词分节回放, 每节结尾问"哪里不对或缺了", 用户说过的才算数, 猜的明确标成猜测。理解足够后做尺寸判定, 三档选择要大声说出来供用户否决: 快而清的任务直接做; 小改动在聊天内给出描述再按普通流程构建; 项目则写书面设计文档 (提交到 `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`) 再进 writing-plans。棘轮是单向的: 任务中途变大就停下来说明并升一档; 若实际是多个独立项目, 约定顺序逐个头脑风暴。书面设计交付前派一个新子代理按 builder-check-prompt.md 做"建造者视角"检查, 把它的问题分成三堆——对话已答 (写进文档)、次要 (自行定夺并在文档标注)、用户的 (按重要性一次性带回), 这是检查产生的唯一一轮提问。spike 作为可行性探针随时可提议: 一次性原型, 没有测试或只有极少测试, 跳过计划、实现与评审流程, 把学到的东西带回对话; 保留其产出是新请求, 须重新过 HARD-GATE。
 
 using-git-worktrees。原则是"先检测既有隔离, 再用宿主原生工具, 最后回退到 git, 绝不与宿主对抗"。原生 worktree 工具优先, 因为在无原生工具时用 `git worktree add` 会制造宿主看不见也管不了的幻影状态; 回退路径要求创建前用 `git check-ignore` 确认目录被忽略, 防止把 worktree 内容意外提交进仓库。
 
@@ -205,7 +197,7 @@ verification-before-completion。证据门: 声明完成、修复或通过之前
 - SKILL.md 结构骨架: Overview 核心原则、When to Use、Core Pattern、Quick Reference、Implementation、Common Mistakes、可选 Real-World Impact。
 - 技能发现优化: description 只写何时用; 覆盖错误消息、症状、同义词、工具名; 动词开头的描述性命名; 控制 token 长度, 细节移入参考文件; 用显式的 REQUIRED SUB-SKILL 标记交叉引用, 避免会立即强制加载文件的链接语法。
 - 文体要匹配失败类型: 压力下违规用禁令加合理化表; 输出形状不对用正面配方; 漏掉必备元素用结构化模板槽位; 行为按条件变化用可观察谓词绑定。
-- 措辞微测协议: 全压力场景测试慢且贵, 先做措辞级实验——每次一个新鲜上下文样本, 永远带无指导对照组, 每变体多次重复, 人工读每个命中, 用方差判断措辞是否真的绑定行为。仓库引用的一项实证表明, 说服技巧可以显著提高遵从率; 但同一批实验也显示, 禁令式措辞在某些场景下并不优于正面配方, 因此文体选择被当作经验问题而非教条。
+- 措辞微测协议: 全压力场景测试慢且贵, 先做措辞级实验——每次一个新鲜上下文样本, 永远带无指导对照组, 每变体多次重复, 人工读每个命中, 用方差判断措辞是否真的绑定行为。仓库引用的一项实证 (Meincke 等 2025 年对 2.8 万次 AI 对话的测试) 表明, 说服技巧可以显著提高遵从率; 仓库自己的对照措辞微测则显示, 禁令式措辞在塑形类场景下不优于正面配方, 甚至差于无指导对照组, 因此文体选择被当作经验问题而非教条。
 
 ## 四、多 harness 适配架构
 
@@ -232,20 +224,21 @@ verification-before-completion。证据门: 声明完成、修复或通过之前
 
 ### 4.3 宿主全景 (按机制)
 
-| 宿主                                           | 形态   | bootstrap 注入                                                                          | 技能注册方式                             |
-| ---------------------------------------------- | ------ | --------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Claude Code                                    | A      | SessionStart hook → 分发器 → session-start, 嵌套 `hookSpecificOutput.additionalContext` | 约定自动发现 `skills/`                   |
-| Cursor                                         | A      | Cursor 专属 hook 配置 → 同一脚本, 顶层 `additional_context`                             | manifest 指向 `skills/`                  |
-| Copilot CLI                                    | A      | 共享 Claude 插件路径, 脚本按环境变量走 SDK 标准顶层 `additionalContext`                 | 同 Claude                                |
-| Factory Droid / Qwen Code / Grok / Antigravity | A      | 直接消费 Claude Code 插件或复用同一 hook 路径                                           | 同 Claude                                |
-| Codex App / CLI                                | 原生   | 无 bootstrap 注入, 原生技能自触发; manifest 用字面量空 hooks 抑制自动发现回退           | manifest 指向 `skills/`                  |
-| Devin CLI                                      | 元数据 | 无 hook; 会话开始时宿主把每个已安装技能的 name 与 description 放进系统提示词            | 读 manifest 后自动发现同级 `skills/`     |
-| Gemini CLI                                     | C      | manifest 的 `contextFileName` 指向扩展自带的上下文文件, 文件里是两条引用                | 扩展打包的 `skills/` 自动发现            |
-| Kimi Code                                      | 声明式 | manifest 声明"会话开始加载指定技能"                                                     | manifest 指向 `skills/`                  |
-| OpenCode                                       | B      | V1 消息变换钩子 / V2 会话上下文钩子, 首条用户消息前插入 bootstrap                       | `config.skills.paths` 或 V2 技能注册接口 |
-| Pi                                             | B      | `context` 事件加会话启动、压缩、结束旗标                                                | `resources_discover` 返回技能目录        |
-| Hermes Agent                                   | B      | Python 的 `pre_llm_call` 钩子, 仅第一轮返回注入内容                                     | 逐技能注册进原生加载器                   |
-| Muse                                           | A      | 能力声明里的 SessionStart hook 调用同一脚本                                             | 能力声明显式枚举技能                     |
+| 宿主                             | 形态   | bootstrap 注入                                                                                              | 技能注册方式                                                                |
+| -------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Claude Code                      | A      | SessionStart hook → 分发器 → session-start, 嵌套 `hookSpecificOutput.additionalContext`                     | 约定自动发现 `skills/`                                                      |
+| Cursor                           | A      | Cursor 专属 hook 配置 → 同一脚本, 顶层 `additional_context`                                                 | manifest 指向 `skills/`                                                     |
+| Copilot CLI                      | A      | 共享 Claude 插件路径, 脚本按环境变量走 SDK 标准顶层 `additionalContext`                                     | 同 Claude                                                                   |
+| Factory Droid / Qwen Code / Grok | A      | 直接消费 Claude Code 插件或复用同一 hook 路径                                                               | 同 Claude                                                                   |
+| Antigravity                      | 元数据 | 无 session-start hook; 会话开始时宿主列出每个已装技能的 description, using-superpowers 的描述促使模型加载它 | manifest 只含市场元数据, 技能由宿主安装发现, 另配 antigravity-tools.md 映射 |
+| Codex App / CLI                  | 原生   | 无 bootstrap 注入, 原生技能自触发; manifest 用字面量空 hooks 抑制自动发现回退                               | manifest 指向 `skills/`                                                     |
+| Devin CLI                        | 元数据 | 无 hook; 会话开始时宿主把每个已安装技能的 name 与 description 放进系统提示词                                | 读 manifest 后自动发现同级 `skills/`                                        |
+| Gemini CLI                       | C      | manifest 的 `contextFileName` 指向扩展自带的上下文文件, 文件里是两条引用                                    | 扩展打包的 `skills/` 自动发现                                               |
+| Kimi Code                        | 声明式 | manifest 声明"会话开始加载指定技能"                                                                         | manifest 指向 `skills/`                                                     |
+| OpenCode                         | B      | V1 消息变换钩子 / V2 会话上下文钩子, 首条用户消息前插入 bootstrap                                           | `config.skills.paths` 或 V2 技能注册接口                                    |
+| Pi                               | B      | `context` 事件加会话启动、压缩、结束旗标                                                                    | `resources_discover` 返回技能目录                                           |
+| Hermes Agent                     | B      | Python 的 `pre_llm_call` 钩子, 仅第一轮返回注入内容                                                         | 逐技能注册进原生加载器                                                      |
+| Muse                             | A      | 能力声明里的 SessionStart hook 调用同一脚本                                                                 | 能力声明显式枚举技能                                                        |
 
 ### 4.4 Shape B 参考实现
 
@@ -380,7 +373,7 @@ brainstorming 附带一个可选的可视化伴侣: agent 把设计问题写成 
 
 - 它不是运行时。没有 CLI、没有守护进程, 全部效果取决于注入是否发生、模型是否遵从技能文本以及宿主能力是否够用; 子代理、todo、web 等能力缺失时相应技能降级。
 - 强制是软的。审批门、Iron Law、证据门都由提示文本驱动, 没有代码级拦截; 遵从率通过措辞实验与压力测试提升, 但不能保证。
-- 成本与纪律正相关。每任务新子代理加评审、终审用最强模型、显式声明模型分档都是成本工程, 但在小改动上这套流程明显过重, 三路径路由器与 spike/bounded 路径正是为此设的降级通道。
+- 成本与纪律正相关。每任务新子代理加评审、终审用最强模型、显式声明模型分档都是成本工程, 但在小改动上这套流程明显过重, brainstorming 的三档尺寸 (快任务直接做、小改动聊天内定) 与一次性 spike 正是为此设的降级通道。
 - 宿主差异是持续的维护负担。hook schema、JSON 字段、工具名、Windows shell 行为各不相同, 且宿主会变; 因此描述机制的不变量比描述具体实现更耐久。
 - 诊断能力只报告不裁决。它能产出带证据的会话分析, 但明确不判断方法论本身是否有缺陷, 也不提议修改。
 

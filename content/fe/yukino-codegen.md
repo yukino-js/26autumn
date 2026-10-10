@@ -106,7 +106,7 @@ Agent 的工具面就是引擎的默认工具集(文件读写、搜索、Bash、
 1. `mkdir` 工作目录;
 2. 并行读取启用的 MCP 服务器行与 Hook 行;
 3. 用 `buildProviderConfig(env, workspace.modelOverride)` 组装 Provider(端点/协议/密钥/token 上限来自服务器配置, 模型可被工作区覆盖);
-4. 调 `Remote.Server.createRemoteAgent({ askUser, enableCoordinatorMode: false, forkDisabled: false, hooks, mcpServers, provider, workDir })`;
+4. 调 `Remote.Server.createRemoteAgent({ askUser, cwd, enableCoordinatorMode: false, forkDisabled: false, hooks, mcpServers, provider })`;
 5. `rehydrate` 把 DB 里的历史灌回句柄的会话。
 
 ### 3.3 rehydrate: 让 restoreContext 成为唯一注入点
@@ -116,7 +116,7 @@ Agent 的工具面就是引擎的默认工具集(文件读写、搜索、Bash、
 历史恢复有两条路径, 优先用规范路径:
 
 - **规范路径**: 若 DB 会话存了 `context.messages`(逐字保存的 `Conversation.Message[]`, 含 thinking/tool-use/tool-result 块), 就 `appendMessages` 原样灌回;
-- **回放路径**: 否则从 transcript 取最近 200 条(`REPLAY_LIMIT`), 把 `user_message`/`assistant_message` 的文本逐条 `addUserMessage`/`addAssistantMessage`。
+- **回放路径**: 否则从 transcript 取最近 200 条(`REPLAY_LIMIT`), 把 `user_message`/`assistant_message` 的文本逐条 `addUserMessage`/`addAssistantFull` 灌回。
 
 两条路径都会**丢弃持久化的 `<system-reminder>` 包裹消息**: 这些是运行时可重新派生的(记忆注入每次重建、MCP 指令经 `syncMcpInstructions` 重新播报), 留着会每次重启累积一层。活跃技能也从会话的 `activeSkills` 恢复到句柄的技能表。
 
@@ -168,7 +168,7 @@ Agent 的工具面就是引擎的默认工具集(文件读写、搜索、Bash、
 
 ### 3.7 销毁: 显式排空长驻资源
 
-运行时是长驻的, 因此销毁路径必须显式处理在途轮次与后台任务。`disposeResources` 的顺序是: 中止当前轮 → 取消会话所有待决交互(失败关闭)→ **排空内部锁**(等当前轮结束; 销毁从不从锁内部调用, 否则会死锁)→ 停后台任务与团队成员 → 断开所有 MCP 连接 → 触发 `shutdown` Hook → 保存文件历史 → 以 1001 关闭所有 WebSocket 连接。每一步都吞掉异常, 保证一个资源清理失败不阻断其余。
+运行时是长驻的, 因此销毁路径必须显式处理在途轮次与后台任务。`disposeResources` 的顺序是: 中止当前轮 → 取消会话所有待决交互(失败关闭)→ **排空内部锁**(等当前轮结束; 销毁从不从锁内部调用, 否则会死锁)→ 等会话就绪后再取消一次交互 → 停后台任务与团队成员 → 断开所有 MCP 连接 → 触发 `shutdown` Hook → 以 1001 关闭所有 WebSocket 连接。文件快照(fileHistory)由引擎在每次变更时增量落盘, 销毁不做额外持久化。每一步都吞掉异常, 保证一个资源清理失败不阻断其余。
 
 ## 四、职责划分: 服务器与浏览器各负责什么
 
@@ -214,7 +214,7 @@ WebSocket 连接按访问权限分级: owner 与管理员是**可写**连接(能
 
 不是每次同步都要重装依赖。`dependencyFingerprintFromTree` 对一组依赖清单文件(`package.json`/`package-lock.json`/`npm-shrinkwrap.json`/`pnpm-lock.yaml`/`yarn.lock`)逐个计算 `path:length:hash` 并拼成一个指纹; 只有当"容器里没有 `node_modules`"或"指纹与上次安装时不同"才触发 `npm install`。这把"只改了源码"的常见情形降为"直接复用已装依赖 + 重启 dev server", 大幅缩短二次预览时间。
 
-安装本身有一个刻意的动作: **先删掉 `package-lock.json` 再装**。原因是 npm 的一个长期 bug(npm/cli#4828): 在别的 OS/libc 上解析出的 lockfile 会漏掉 WebContainer(musl)特有的可选依赖(如 `@rollup/rollup-linux-x64-musl`), 导致"安装成功但 Vite 起不来"。删掉 lockfile 让 npm 按当前平台重新解析二进制。
+安装本身有一个刻意的动作: **先删掉 `package-lock.json` 再执行 `npm install`**(`runInstall` 先 `removeIfPresent(container, "package-lock.json")` 再 `container.spawn("npm", ["install"])`)。这让 npm 按容器当前平台重新解析依赖与平台专有二进制: 别的平台解析出的 lockfile 可能漏掉当前平台的可选依赖(如 musl 平台的原生二进制包), 导致"安装成功但 Vite 起不来"。
 
 ### 5.4 WebContainer 在链路中的角色
 
@@ -322,7 +322,7 @@ MCP 服务器的 `headers` 与 `env` 以 AES-256-GCM 对称加密落库: 密钥�
 
 Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked` 解析后用 `DOMPurify.sanitize`(`USE_PROFILES: { html: true }`, `FORBID_TAGS: ["script", "style"]`)清洗, 再做代码高亮。前端安全在这里的重要性高于常规应用, 因为页面要渲染模型生成的任意文本。
 
-可视化编辑的跨源消息双向校验: 发给 iframe 的 `postMessage` 用预览 origin(而非 `*`); 收 iframe 回传的消息时, 同时校验 `event.source === iframe.contentWindow` 与 `event.origin === previewOrigin`, 再过 `visualEditorIncomingMessageSchema`。预览错误回传同样过 zod 判别。用户输入与模型输出在进入数据库与渲染路径前都有类型校验。
+可视化编辑的跨源消息双向校验: 发给 iframe 的 `postMessage` 优先用预览 origin(解析不到时回退 `*`); 收 iframe 回传的消息时, 校验 `event.source === iframe.contentWindow`, 预览 origin 可解析时还要求 `event.origin === previewOrigin`, 再过 `visualEditorIncomingMessageSchema`。预览错误回传同样过 zod 判别。用户输入与模型输出在进入数据库与渲染路径前都有类型校验。
 
 ## 八、可观测性与工程化
 
@@ -340,7 +340,7 @@ Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked` �
 
 ### 8.3 优雅关闭
 
-进程收到 `SIGINT`/`SIGTERM` 后: 先 `closeServer`(停止接受新请求), 再 `runtimeManager.disposeAll()`(逐个销毁运行时: 中止在途轮次、取消待决交互、停后台任务与团队成员、断开 MCP、触发 shutdown Hook、保存文件历史、关闭连接), 最后断开 Redis 与数据库。因为运行时是长驻的, 关闭路径必须显式处理在途轮次与后台任务, 否则会留下半写入的文件状态。`disposeAll` 会先等所有在途生命周期任务完成, 保证不销毁一个正在创建的运行时。
+进程收到 `SIGINT`/`SIGTERM` 后: 先 `closeServer`(停止接受新请求), 再 `runtimeManager.disposeAll()`(逐个销毁运行时: 中止在途轮次、取消待决交互、停后台任务与团队成员、断开 MCP、触发 shutdown Hook、关闭连接), 最后断开 Redis 与数据库。因为运行时是长驻的, 关闭路径必须显式处理在途轮次与后台任务, 否则会留下半写入的文件状态。`disposeAll` 会先等所有在途生命周期任务完成, 保证不销毁一个正在创建的运行时。
 
 ### 8.4 测试与类型纪律
 

@@ -163,7 +163,7 @@ searchKnowledge (server/src/core/retrieval.ts) 是全部检索的唯一入口, �
 
 默认 strategy 是 hybrid_rerank, topK 回落 rerankTopK (默认 10), 召回宽度 recallTopK (默认 50)。入口内置两个与语言和排版相关的处理:
 
-1. 子句拆分与归并: splitClauses 按 `[,，;；?？。]` 切分, 只保留长度不小于 4 的子句, 达到 2 条才生效; 每个子句各自检索后用 mergeRoundRobin 轮转归并 (按 id 去重, 同一 section_path 的后续命中压到尾部)。这里的检索是串行而非并行, 源码注释说明这是刻意的: 每次子句检索都是一串 embed + rerank 调用, 而 rerank 上游有每秒限流, 串行等待恰好起到天然节流作用。受 SUBQUERY_SPLIT 开关控制。
+1. 子句拆分与归并: splitClauses 按 `[,，;；?？。]` 切分, 只保留长度不小于 4 的子句, 达到 2 条才生效; 每个子句各自检索后用 mergeRoundRobin 轮转归并 (按 id 去重, 同一 section_path 的后续命中压到尾部)。这里的检索是串行而非并行: 每次子句检索都是一串 embed + rerank 调用, 而 rerank 上游带限流重试, 串行等待恰好起到天然节流作用。受 SUBQUERY_SPLIT 开关控制。
 2. 头尾排布: arrangeHeadTail 把排好序的列表重排为 `[第 1 名, 第 3 名..., 第 2 名]`, 利用上下文首尾注意力更强的特性, 让次优证据落在窗口尾部。
 
 ### 4.2 进程内检索实现
@@ -180,7 +180,7 @@ searchKnowledge (server/src/core/retrieval.ts) 是全部检索的唯一入口, �
 
 ### 4.3 查询理解与证据编排
 
-检索前有两级可选改写, 均以“失败退化为原查询”为前提 (server/src/core/query-understanding.ts 头注):
+检索前有两级可选改写, 失败时均在 catch 分支退化为原查询 (server/src/core/query-understanding.ts):
 
 - understand: 口语转标准问法 + 同义词扩展; 扩展词只拼进 BM25 文本 (bm25Text), 不污染向量查询——同义词对稀疏召回有用, 对稠密召回反而可能引入噪声。
 - expandQueries: 退款流 retrieve_policy 用, 生成恰好 3 条检索友好查询 (上限裁剪为 3, 为空则退回原查询)。

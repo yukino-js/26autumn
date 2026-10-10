@@ -138,7 +138,7 @@ export abstract class BaseChannel<ValueType, UpdateType, CheckpointType> {
 | DynamicBarrierValue            | 写入者集合动态确定的栅栏                                            |
 | DynamicBarrierValueAfterFinish | 动态栅栏加 finish 语义                                              |
 | UntrackedValueChannel          | 不参与追踪的内部通道                                                |
-| DeltaChannel                   | 实验性增量通道, 支持稀疏重放与批量 reducer                          |
+| DeltaChannel                   | Beta 增量通道, 支持稀疏重放与批量 reducer                           |
 
 START 在编译时挂一个 `EphemeralValue` 输入通道, END 不挂任何通道 (`attachEdge` 对 END 直接返回), 因此这类只在一个超步有意义的值不会残留。TASKS 通道由 `Topic` 实现, fan-in 边由 `NamedBarrierValue` 实现: 若节点 N 与 M 都写通道 C, C 在两者都完成前不更新, `consume` 在栅栏满足后重置 seen 以便下轮复用。
 
@@ -252,7 +252,7 @@ LangGraph 支持长期记忆, 载体是 `@langchain/langgraph-checkpoint` 包的
 
 **语义检索**: `IndexConfig` 指定 `dims`、`embeddings` (LangChain Embeddings) 与 `fields` (默认 `["$"]` 即整条文档)。`search` 带 `query` 时把查询 embed 后与条目向量算相似度; `InMemoryStore` 的 `score` 即余弦相似度 (utils.ts 的 `cosineSimilarity`), 结果按分数降序、按 `namespace:key` 去重。
 
-**内存实现**: `InMemoryStore` (store/memory.ts) 用 `Map<nsJoined, Map<key, Item>>` 存数据、`Map<ns, Map<key, Map<field, number[]>>>` 存向量 (命名空间以 `:` 连接); `listNamespaces` 支持 prefix/suffix 匹配且 `*` 作通配、`maxDepth` 截断、字典序排序后分页。命名空间按段边界匹配: 检索只包含精确命名空间及其后代, 不会误中共享字符前缀的兄弟命名空间; 标签不允许含 `:` (内部路径分隔符), 公开读写与直接 batch 操作都会拒绝。别名 `MemoryStore` 等价。
+**内存实现**: `InMemoryStore` (store/memory.ts) 用 `Map<nsJoined, Map<key, Item>>` 存数据、`Map<ns, Map<key, Map<field, number[]>>>` 存向量 (命名空间以 `:` 连接); `listNamespaces` 支持 prefix/suffix 匹配且 `*` 作通配、`maxDepth` 截断、字典序排序后分页。命名空间按段边界匹配: 检索只包含精确命名空间及其后代, 不会误中共享字符前缀的兄弟命名空间; 标签不允许含 `:` (内部路径分隔符), 公开读写与直接 batch 操作都会拒绝。
 
 **注入与读取**: `compile({ store })` 把 store 挂进 Pregel; 运行时 `PregelLoop.initialize` 用 `AsyncBatchedStore` 包一层 (把同超步的操作批量进底层 `batch`) 并 `start()` (pregel/loop.ts)。任务 config 里 `store: extra.store ?? config.store` (pregel/algo.ts), 所以节点用 `config.store` 或 `getStore()` 读取, 子图经 config 继承同一 store。functional API 的 `entrypoint({ store })` 同样透传 (func/index.ts)。
 
@@ -283,13 +283,18 @@ LangGraph 支持长期记忆, 载体是 `@langchain/langgraph-checkpoint` 包的
 while (await loop.tick({ inputKeys: this.inputChannels })) {
   if (emitLifecycleEvents) await emitLifecycleEvents(loop.lifecycleEvents);
   for (const { task } of await loop._matchCachedWrites()) {
-    loop._outputWrites(task.id, task.writes, true);
+    loop.putWrites(task.id, task.writes, true);
   }
-  await runner.tick({ timeout, retryPolicy, maxConcurrency, signal });
+  await runner.tick({
+    timeout: this.stepTimeout,
+    retryPolicy: this.retryPolicy,
+    maxConcurrency: config.maxConcurrency,
+    signal: config.signal,
+  });
 }
 ```
 
-`loop.tick` 返回 true 表示还有下一个超步, `runner.tick` 负责并发执行本超步任务; 命中缓存的任务写入直接回放。循环结束后若 status 为 draining 抛 `GraphDrained`, 为 out_of_steps 抛 `GraphRecursionError`。默认递归上限为 25, 可通过 recursionLimit 配置调大。
+(源码中循环体内还有 debug 模式的超步打印与 `runner.tick` 的 `onStepWrite` 回调, 此处省略。) `loop.tick` 返回 true 表示还有下一个超步, `runner.tick` 负责并发执行本超步任务; 命中缓存的任务写入经 `putWrites` 直接回放。循环结束后若 status 为 draining 抛 `GraphDrained`, 为 out_of_steps 抛 `GraphRecursionError`。默认递归上限为 25, 可通过 recursionLimit 配置调大。
 
 ### 5.3 超步推进: PregelLoop.tick
 
@@ -484,7 +489,7 @@ AbortController 语义: stream 内部建独立 abortController 并与调用方 s
 
 ### 11.1 createReactAgent 与 ToolNode
 
-prebuilt 目录导出 createAgentExecutor、createFunctionCallingExecutor、createReactAgent、createReactAgentAnnotation、ToolExecutor、ToolNode、toolsCondition、HumanInterrupt 系列类型与 withAgentName。其中 createReactAgent 标注为 deprecated, 指向 langchain 包的 `createAgent`。其参数面覆盖 llm (可为接收 state/runtime 返回模型的函数, 实现动态模型选择)、tools (ToolNode 实例或工具数组)、prompt (字符串/SystemMessage/函数/Runnable)、stateSchema 与 contextSchema、checkpointer、interruptBefore/After、store、responseFormat (zod/JSON Schema/含 prompt 的对象, 结束后额外一次结构化输出调用写入 structuredResponse)、preModelHook/postModelHook (调模型前后的护栏与人工审核节点)、version 与 includeAgentName 等。
+prebuilt 目录导出 createAgentExecutor、createFunctionCallingExecutor、createReactAgent、createReactAgentAnnotation、ToolExecutor、ToolNode、toolsCondition、HumanInterrupt 系列类型与 withAgentName。带中间件体系的更高层 agent 构建入口是 langchain 主包的 `createAgent` (见 [LangChain.js](langchain))。createReactAgent 的参数面覆盖 llm (可为接收 state/runtime 返回模型的函数, 实现动态模型选择)、tools (ToolNode 实例或工具数组)、prompt (字符串/SystemMessage/函数/Runnable)、stateSchema 与 contextSchema、checkpointer、interruptBefore/After、store、responseFormat (zod/JSON Schema/含 prompt 的对象, 结束后额外一次结构化输出调用写入 structuredResponse)、preModelHook/postModelHook (调模型前后的护栏与人工审核节点)、version 与 includeAgentName 等。
 
 默认状态由 `createReactAgentAnnotation` 定义: messages 用 messagesStateReducer 加空数组默认值, 外加 structuredResponse 键。图骨架是 agent 节点与 tools 节点之间用条件边循环, 直到无 tool_calls; 静态模型管线会被缓存, prompt Runnable 与模型 pipe 组合, returnDirect 的工具会进入集合参与路由判断。
 
@@ -529,7 +534,7 @@ prebuilt 目录导出 createAgentExecutor、createFunctionCallingExecutor、crea
 
 - 单次无状态调用: 引入 checkpointer 与图模型的收益有限;
 - 对延迟极敏感且无需持久化的流程: durability 设为 async 已尽量降低落盘阻塞, 但状态序列化仍有成本;
-- DeltaChannel 与稀疏重放相关 API 当前标注为实验/Beta, 行为可能变化;
-- prebuilt 的 createReactAgent 已指向 langchain 包的 createAgent, 新项目应优先使用后者。
+- DeltaChannel 与稀疏重放相关 API 标注为 Beta, 周边契约 (getDeltaChannelHistory、快照数据形状等) 可能变化;
+- prebuilt 的 createReactAgent 提供基础 ReAct 循环, agent 场景优先使用带中间件体系的 langchain 主包 createAgent。
 
 设计上的核心取舍是: 把"状态"提升为图的显式组成部分 (通道与 reducer), 用超步边界换取确定性与可恢复性。代价是必须显式声明 reducer、理解超步隔离与子图命名空间; 收益是任何一次运行都能被检查点化、列举、回放与人工干预。对 [LangChain.js](langchain) 的组件生态而言, LangGraph 是编排层, 而它自身又可以脱离 LangChain 的模型层单独使用。

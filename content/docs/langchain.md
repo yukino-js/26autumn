@@ -4,7 +4,7 @@ description: "拆解 LangChain.js 1.x 的 monorepo 包布局、langchain-core �
 local_path: "$HOME/Downloads/langchainjs"
 ---
 
-LangChain.js 是用于构建 LLM 应用的 TypeScript 框架, 1.x 起把抽象收敛到一套可组合的 Runnable 接口, 并在主包里引入基于 LangGraph 的 agent 运行时与中间件体系。本文面向要在 Node 或浏览器环境里搭建 LLM 应用与 Agent 的工程师, 按“核心抽象 → 消息与工具 → provider → agent 与中间件 → 工程设施”的顺序拆解其设计。阅读后应能判断哪些能力属于 core、哪些属于 provider 包、哪些属于主包, 以及 1.x 与 0.x 抽象的分工。
+LangChain.js 是用于构建 LLM 应用的 TypeScript 框架, 1.x 起把抽象收敛到一套可组合的 Runnable 接口, 并在主包里引入基于 LangGraph 的 agent 运行时与中间件体系。本文面向要在 Node 或浏览器环境里搭建 LLM 应用与 Agent 的工程师, 按“核心抽象 → 消息与工具 → provider → agent 与中间件 → 工程设施”的顺序拆解其设计。阅读后应能判断哪些能力属于 core、哪些属于 provider 包、哪些属于主包与 classic 包。
 
 ## 定位与生态位
 
@@ -19,7 +19,7 @@ LangChain.js 是用于构建 LLM 应用的 TypeScript 框架, 1.x 起把抽象�
 
 框架本身不负责编排拓扑: 它提供模型、工具、提示词、输出解析与回调这些组件, 以及一个内建的 ReAct 风格 agent; 需要更复杂的状态机、断点恢复或多 agent 拓扑时, 交给 LangGraph。
 
-1.x 最重要的一次结构性选择是 v1 与 v0 的物理隔离: 主包只保留“agent 时代”的构建块, 全部 0.x 旧抽象 (旧式 chains、旧式 agents、memory、retrievers 等) 整体迁入 `@langchain/classic`。因此新项目只需看主包, 而维护旧代码的项目有明确的迁移目标包。
+包布局上, 主包只保留“agent 时代”的构建块; 旧式 chains、旧式 agents、memory、retrievers 等抽象集中在 `@langchain/classic` (见下文「langchain-classic」小节)。
 
 ## Monorepo 结构与包清单
 
@@ -29,7 +29,7 @@ LangChain.js 是用于构建 LLM 应用的 TypeScript 框架, 1.x 起把抽象�
 | ------------------------------------------ | ------------------------------------------------------------------ |
 | libs/langchain-core                        | 核心抽象, 所有包的地基                                             |
 | libs/langchain                             | 主包, createAgent 与中间件所在                                     |
-| libs/langchain-classic                     | v0.x 遗留抽象的收容包                                              |
+| libs/langchain-classic                     | 旧式 chains、agents、memory 等抽象                                 |
 | libs/langchain-textsplitters               | 文本切分包                                                         |
 | libs/langchain-mcp-adapters                | MCP 适配器                                                         |
 | libs/create-langchain-integration          | 第三方集成项目的脚手架                                             |
@@ -44,7 +44,7 @@ LangChain.js 是用于构建 LLM 应用的 TypeScript 框架, 1.x 起把抽象�
 | ------------------------------ | ------------------------------------------------------------------ |
 | `@langchain/core`              | Runnable 与 LCEL、消息、工具、提示词、回调、输出解析等全部核心抽象 |
 | `langchain`                    | createAgent、initChatModel、middleware、Hub、storage               |
-| `@langchain/classic`           | v0.x 代码: 旧式 chains、agents、memory、retrievers 等              |
+| `@langchain/classic`           | 旧式 chains、agents、memory、retrievers 等                         |
 | `@langchain/mcp-adapters`      | 把 MCP 服务器工具适配为 LangChain 工具                             |
 | `@langchain/textsplitters`     | 文本切分                                                           |
 | `create-langchain-integration` | 脚手架包                                                           |
@@ -143,15 +143,13 @@ core 的依赖面极窄: 一个浏览器可用的 JSON Schema 校验实现、标
 | SystemMessage   | 系统提示                                                        |
 | ToolMessage     | 工具结果                                                        |
 | ChatMessage     | 任意自定义 role                                                 |
-| FunctionMessage | 旧 function calling                                             |
-
-一个迁移细节值得注意: `additional_kwargs` 里的 `function_call` 与 `tool_calls` 已标注废弃, 官方要求改用 AIMessage 的 `tool_calls` 字段; 若构造时检测到旧的 `additional_kwargs.tool_calls` 而顶层字段为空, 会打印升级提示并尝试用默认解析器兜底。
+| FunctionMessage | function calling 结果消息                                       |
 
 ### Chunk 与流式累加
 
 每个消息类都有对应的 Chunk 变体, 继承 `BaseMessageChunk`。Chunk 的唯一抽象方法是 `concat`, 用于流式累加: 合并内容、`additional_kwargs` 与 `response_metadata`。这是流式输出能被拼回完整消息的机制。
 
-`BaseMessage` 与 `BaseMessageChunk` 都覆写了 `Symbol.hasInstance`, 沿原型链做结构化判定而不是严格的类同一性。原因很直接: provider 包与 core 包可能各自持有一份类定义, 跨包 `instanceof` 必须仍然可靠。相关的自由函数守卫已废弃, 推荐路径是各类的静态 `isInstance`。
+`BaseMessage` 与 `BaseMessageChunk` 都覆写了 `Symbol.hasInstance`, 沿原型链做结构化判定而不是严格的类同一性。原因很直接: provider 包与 core 包可能各自持有一份类定义, 跨包 `instanceof` 必须仍然可靠。跨包判断统一使用各类的静态 `isInstance`。
 
 ### 内容块体系
 
@@ -228,7 +226,7 @@ const greet = tool(
 
 `BaseOutputParser` 增加 `parse` 与 `getFormatInstructions` 两个抽象方法。解析异常携带模型输出、观察值与“是否要把错误发回模型”的标志, 并打上统一错误码 —— `sendToLLM` 为 true 时要求提供观察值与输出, 便于 agent 把解析失败反馈给模型重试。
 
-最常用的字符串解析器对内容块的处理覆盖 text、text_delta、image_url (抛错, 无法转字符串) 与 reasoning 系列 (返回空串), 与 1.x 的内容块体系对齐。JSON 系解析器是累积式的, 通过比较增量来支持流式部分 JSON 的解析; 结构化解析器基于 zod schema 生成指令; 另有标记式、列表式、字节式解析器与 tool calls 解析器。`@langchain/classic` 里还保留旧式修复解析器与路由解析器。
+最常用的字符串解析器对内容块的处理覆盖 text、text_delta、image_url (抛错, 无法转字符串) 与 reasoning 系列 (返回空串), 与 1.x 的内容块体系对齐。JSON 系解析器是累积式的, 通过比较增量来支持流式部分 JSON 的解析; 结构化解析器基于 zod schema 生成指令; 另有标记式、列表式、字节式解析器与 tool calls 解析器。`@langchain/classic` 另提供修复解析器与路由解析器。
 
 ## Callbacks 与追踪
 
@@ -264,7 +262,7 @@ const greet = tool(
 ### 当前版本值得关注的两项能力
 
 - 模型能力画像新增可选 `fileMimeTypes` 字段, 声明模型接受的通用文件类型。OpenAI 集成把 Responses API 接受的输入文件类型清单写进每一份生成的静态画像, 再在实例的 profile getter 里用 `withoutFileMimeTypesUnlessSupported` 按需剥离: 只有走 Responses API 且画像声明 `pdfInputs` (PDF 与通用文件走同一 input_file 通道, 故以它作代表) 的实例保留清单, Chat Completions 类恒剥离, ChatOpenAI 入口类按本实例是否解析为 Responses API 判定。
-- 系统消息上的工具变更支持。OpenAI 侧, 系统消息里的额外工具块会被提升为 Responses API 的顶层输入项, 非标准包裹的配置更新与审批响应块同样提升; Chat Completions 路径不再静默丢弃, 而是直接抛错。Anthropic 侧, 系统消息可携带工具新增与移除块 (支持内联工具定义), 请求构造时按消息转换结果自动追加对应 beta 头; 系统内容会被收窄为 Anthropic 接受的闭集, 其余块被丢弃, 收窄后为空则整个字段置空。
+- 系统消息上的工具变更支持。OpenAI 侧, 非 assistant 消息 (含系统消息) 内容中的 `additional_tools`、`configuration_update`、`mcp_approval_response` 块会被从消息中提升为 Responses API 的顶层输入项, 插入在该消息之前 (经 core 非标准包裹的块先解包; assistant 消息是模型输出的回放, 恒不提升); Chat Completions 路径的系统/developer/assistant 消息只保留文本块, 其余块被过滤。Anthropic 侧, 系统消息可携带 `tool_addition`/`tool_removal` 块 (支持内联工具定义), 请求构造时按消息转换结果自动追加 `inline-tools` 或 `mid-conversation-tool-changes` beta 头; 系统内容被收窄为 Anthropic 接受的闭集 (text 块保留 cache_control 与 citations), 其余块被丢弃, 收窄后为空则整个字段置空。
 
 ### initChatModel 与 ConfigurableModel
 
@@ -440,17 +438,13 @@ createAgent 支持跨会话的长期记忆, 载体是 store 参数, 与只记录
 
 **与短期记忆的分工。** checkpointer 存“线程内”的消息历史 (同一 thread_id 的多轮对话), store 存“跨线程/跨会话”的长期事实。BaseStore 的内部实现与 InMemoryStore、持久化后端属于 LangGraph 范畴, 详见 [LangGraph](langgraph)。
 
-**classic 的旧 memory。** langchain-classic 仍保留 BufferMemory、BufferWindowMemory、EntityMemory 等 v0.x memory 抽象, 属遗留兼容, 新代码应使用 store 而非这些类 (见下文 langchain-classic 小节)。
-
 **适用场景。** 官方示例区分两类: 程序性记忆 (固定偏好/指令, 用 store.get 确定性取出后经 dynamicSystemPrompt 注入系统提示, 始终生效) 与语义记忆 (按相似度检索, 交给工具按需 search, 问到才查)。前者适合用户偏好、行为约定, 后者适合历史事实与过往交互。
 
-## langchain-classic: v0.x 遗留抽象的归宿
+## langchain-classic: 旧式 chains 与 agents
 
-classic 包的定位在 README 第一段写明: 这是 v1.0 发布时从主包迁出的 v0.x 功能, 用于向后兼容。适用场景是维护旧式 chains (如 LLMChain、会话检索问答链、检索问答链)、依赖 indexing API、依赖原从主包再导出的 community 功能; 新项目应使用主包的 createAgent。
+`@langchain/classic` 是主包之外的独立包, 汇集主包未涵盖的抽象: 旧式 agent 与执行器 (react、chat、conversation、xml、openai functions 等多种实现)、chains (LLMChain、检索问答链等)、memory (BufferMemory、BufferWindowMemory、EntityMemory 等)、retrievers、vectorstores、文档加载与转换、evaluation、experimental (autogpt、openai assistant、plan-and-execute 等)、smith、indexes、cache、输出解析器 (含修复解析器与路由解析器)、prompts、tools、hub、storage、stores、SQL 数据库与文本切分。
 
-它的源码是 0.x 时代的完整地图: 旧式 agent 与执行器 (react、chat、conversation、xml、openai functions 等多种实现)、chains、memory、retrievers、vectorstores、文档加载与转换、evaluation、experimental (autogpt、openai assistant、plan-and-execute 等)、smith、indexes、cache、output parsers、prompts、tools、hub、storage、stores、SQL 数据库与文本切分。
-
-它与 Runnable 的桥是 `AgentRunnableSequence`: 继承序列, 附加流式 Runnable 与单动作标志, 并提供静态守卫。这体现了 v0 与 v1 的兼容策略 —— 旧对象仍能作为 Runnable 参与组合, 但不进主包。
+它与 Runnable 体系的桥是 `AgentRunnableSequence`: 继承 `RunnableSequence`, 附加流式 Runnable 与单动作标志, 并提供静态守卫, 使旧式 agent 对象仍可作为 Runnable 参与 LCEL 组合。
 
 ## langchain-mcp-adapters: MCP 适配器
 
@@ -458,12 +452,12 @@ classic 包的定位在 README 第一段写明: 这是 v1.0 发布时从主包�
 
 公开能力面:
 
-- `MCPAdapter` 是主类, `MultiServerMCPClient` 作为同一实现的废弃别名保留; 配置类型也相应改名。
-- 工具发现双入口: `listTools()` 返回可执行的动态结构化工具扁平列表, `listToolsets()` 按服务器分组; 旧的 `getTools()` 与 `initializeConnections()` 保留为废弃别名。
+- `MCPAdapter` 是主类。
+- 工具发现双入口: `listTools()` 返回可执行的动态结构化工具扁平列表, `listToolsets()` 按服务器分组。
 - 工具名默认带服务器名前缀: 服务器上名为 search 的工具会暴露为 `docs_search` (服务器名与工具名之间是单下划线); 另有一个 `additionalToolNamePrefix` 选项, 它用双下划线拼接 (如 `mcp__docs_search`)。关闭服务器名前缀时, 两个服务器暴露同名工具或同一服务器重复列名都会抛错。独立辅助函数 `loadMcpTools` 默认不加前缀。
 - 配置经 zod 严格校验: 未知选项、与服务器模式或传输不匹配的选项、空服务器映射、同时设置两套配置键都会抛错。
 
-连接类型覆盖 stdio、流式 HTTP、旧版 SSE 与 HTTP; 旧版 SSE 保留为 legacy 传输, 拒绝在现代模式下使用。现代 MCP 的 elicitation 默认开启: 服务器请求用户输入时以 LangGraph 中断暂停运行, 恢复值按产生中断的任务 ID 组键、配合 Command 使用; 仅当工具真正请求输入时才需要检查点保存器, 恢复后工具从头重跑。
+连接类型覆盖 stdio、流式 HTTP 与 SSE; SSE 传输只走旧协议协商 (`versionNegotiation` 置为 legacy), modern 模式把协议版本钉在 `2026-07-28`, auto 模式先尝试协商。现代 MCP 的 elicitation 默认开启: 服务器请求用户输入时以 LangGraph 中断暂停运行, 恢复值按产生中断的任务 ID 组键、配合 Command 使用; 仅当工具真正请求输入时才需要检查点保存器, 恢复后工具从头重跑。
 
 工具结果与错误有统一映射: 服务器返回错误结果时, agent 场景得到状态为 error 的 ToolMessage, 直接调用仍抛异常; 图像与音频内容转成标准内容块, resource link 变成 file 块; 结构化内容与元数据保留在 artifact 的固定键下。包还转导出 OAuth 相关类型。
 
@@ -471,7 +465,7 @@ classic 包的定位在 README 第一段写明: 这是 v1.0 发布时从主包�
 
 ### 统一构建
 
-内部构建包为所有包提供预配置的 tsdown 构建。默认配置是: 双格式 (CommonJS 加 ESM)、目标 ES2022、Node 平台、固定扩展名策略 —— 注释解释了为什么刻意不让 ESM 产物输出 `.mjs`, 因为 `"type": "module"` 的包需要稳定的 `.js` ESM 产物。类型声明并行生成, 产物再经三个校验: 类型解析测试、包发布规范检查、未使用依赖检查。
+内部构建包为所有包提供预配置的 tsdown 构建。默认配置是: 双格式 (CommonJS 加 ESM)、目标 ES2022、Node 平台、固定扩展名策略 —— 注释解释了为什么刻意不让 ESM 产物输出 `.mjs`, 因为 `"type": "module"` 的包需要稳定的 `.js` ESM 产物。类型声明并行生成, 产物再经三个校验: 类型解析测试 (ATTW)、包发布规范检查 (publint) 与未使用导出检查。
 
 四个构建插件承载框架特有的生成逻辑:
 
@@ -517,7 +511,7 @@ classic 包的定位在 README 第一段写明: 这是 v1.0 发布时从主包�
 
 - 需要高度定制的多步状态机、断点恢复或人机协作拓扑: 直接用 LangGraph 更贴合, 主包的 agent 只是它的一个封装;
 - 只需要调用模型 API: 直接用厂商 SDK 的体积与依赖更小, 框架的抽象成本在这种情况下是净负担;
-- 依赖大量 0.x 旧式 chains: 可用 classic 包迁移, 但新代码不应继续使用;
+- 维护依赖旧式 chains 的代码: `@langchain/classic` 提供这些抽象, 新代码应使用主包的 `createAgent`;
 - 对类型推断极其敏感: 框架的中间件与状态合并大量使用条件类型与 const 泛型, 复杂组合下类型错误信息可能不易读, 需要拆分中间件与显式标注。
 
 与相邻方案的取舍可以这样看: 需要“组件库加开箱 agent”时用 LangChain.js; 需要“可控编排引擎”时用 LangGraph.js; 两者可以组合 —— LangChain 负责集成与组件, LangGraph 负责拓扑与持久化, 这也正是官方推荐的协作方式。
