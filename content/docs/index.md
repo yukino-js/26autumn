@@ -1,9 +1,9 @@
 ---
 title: "工作文档"
-description: "工作实践与开源项目调研: TikTok/IEG/Data 工作复盘、A2UI/MCP Apps/WebContainer 协议与方案调研、Coding Agent 调研, 以及 AI 框架与平台调研"
+description: "工作实践与开源项目调研: TikTok/IEG/Data 工作复盘、Docker/K8s 与 JSError 自动修复云沙箱实战、A2UI/MCP Apps/WebContainer 协议与方案调研、Coding Agent 调研, 以及 AI 框架与平台调研"
 ---
 
-本部分收录工作期间的技术复盘与开源项目调研, 按主题分为四个部分, 共 18 个页面 (含本落地页).
+本部分收录工作期间的技术复盘与开源项目调研, 按主题分为四个部分, 共 19 个页面 (含本落地页).
 
 ## 工作实践
 
@@ -12,6 +12,7 @@ description: "工作实践与开源项目调研: TikTok/IEG/Data 工作复盘、
 - [tiktok](tiktok): 移动端性能采集与数据链路. 设备端插桩与抓栈两种范式、JS 运行时采集、Kafka/Hive/ClickHouse/MySQL/Redis 的链路分工、RPC 与 BFF 分层, 以及不定高虚拟滚动的实现与取舍.
 - [ieg](ieg): NoSQL 管理端工程实践. 类组件迁移函数组件的语义映射与请求竞态、ffi 调用的内存模型与进程池隔离、TCP 连接池的四类异常处理、闭包引用导致的内存泄漏排查.
 - [data](data): 前端监控与数据请求工程实践. JSError 上报的数据模型、rrweb 滚动窗口的故障现场还原、componentStack 与 sourcemap 定位、资源加载竞态、FSP 首屏计算、视频切片聚类与手写 SWR 方案.
+- [docker-k8s-agent-sandbox](docker-k8s-agent-sandbox): Docker 与 Kubernetes 面试知识体系及 JSError 自动修复云沙箱实战. 容器原理 (namespace/cgroups/UnionFS)、镜像构建与运行时安全、K8s 声明式架构、Pod/控制器/Service/调度/探针/RBAC/排障全景, 以及基于 K8s Job + Docker Agent 沙箱的前端 JSError 自动定位、修复、复现验证与提 MR 的端到端方案.
 
 ## 协议与方案调研
 
