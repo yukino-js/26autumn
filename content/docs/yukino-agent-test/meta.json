@@ -1,0 +1,14 @@
+{
+  "title": "yukino-agent-test",
+  "pages": [
+    "yukino-agent-test",
+    "architecture",
+    "data-model",
+    "pipeline",
+    "analyzer",
+    "generation",
+    "execution",
+    "frontend",
+    "api"
+  ]
+}
