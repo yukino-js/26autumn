@@ -22,8 +22,8 @@
   "yukino-rpc",
   "yukino-orm",
   "yukino-cache",
+  "yukino-agent",
   "yukino-agent-proxy",
-  "yukino-components",
-  "yukino-go-agent",
-  "yukino-go-taskflow"
+  "yukino-go-components",
+  "yukino-task-flow"
 ]

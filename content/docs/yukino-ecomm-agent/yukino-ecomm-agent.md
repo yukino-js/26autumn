@@ -1,7 +1,7 @@
 ---
 title: "Yukino Agent2: 电商客服 Agent 的检索、编排、工具与持久化组织方式"
 description: "从 server 与 client 源码事实出发, 论述客服 Agent 如何把 Hono HTTP 层、LangGraph 会话图、四策略检索与两道置信度门禁、可选 Milvus 向量路径、MCP 工具执行、分层记忆与上下文预算组织成一次可中断、可审计的对话"
-local_path: "$HOME/github/yukino-agent2"
+local_path: "$HOME/github/yukino-ecomm-agent"
 ---
 
 Yukino Agent2 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScript 实现, 品牌为 Yukino Select, 客服人设名为 Yukino。它把意图分类、知识库检索、ReAct 工具调用、工单与退款流程、低置信数据飞轮和运营后台放进同一个 Hono + LangGraph 服务端, 配一个 Lit 单页控制台。本文讨论的不是逐文件走读, 而是这套系统为什么这样组织: 一次对话如何穿过 HTTP、图编排、检索、工具与持久化各层, 四策略检索与两道置信度门禁如何拦住无依据回答, Milvus 为什么是可选的第二条向量路径, 以及工具执行、分层记忆和上下文预算在什么场景下成立。适合正在设计客服 Agent、RAG 编排或带人工确认闭环的对话系统的工程师阅读; 结论均以 server 与 client 的源码为准, 关键处给出仓库相对路径与符号名。
