@@ -143,11 +143,11 @@ yukino-agent-test/
 
 ## 文档目录
 
-- [架构总览](/base/yukino-agent-test/architecture): 分层、请求数据流、异步任务、错误处理、LLM 档案
-- [数据模型](/base/yukino-agent-test/data-model): 20 张表、领域类型、状态码元数据
-- [七阶段流水线](/base/yukino-agent-test/pipeline): 编排逻辑、硬/软失败、恢复与报告
-- [静态代码分析](/base/yukino-agent-test/analyzer): scanner/spring/vue/状态机
-- [用例生成](/base/yukino-agent-test/generation): 测试点、rule/llm/auto、质量门、计数断言
-- [浏览器执行](/base/yukino-agent-test/execution): 五级回退、三层断言、视觉复核、结果分析
-- [前端架构](/base/yukino-agent-test/frontend): 路由、外壳、Tab、请求模式、主题
-- [API 与配置参考](/base/yukino-agent-test/api): tRPC 路由、环境变量、FAQ、术语表
+- [架构总览](architecture): 分层、请求数据流、异步任务、错误处理、LLM 档案
+- [数据模型](data-model): 20 张表、领域类型、状态码元数据
+- [七阶段流水线](pipeline): 编排逻辑、硬/软失败、恢复与报告
+- [静态代码分析](analyzer): scanner/spring/vue/状态机
+- [用例生成](generation): 测试点、rule/llm/auto、质量门、计数断言
+- [浏览器执行](execution): 五级回退、三层断言、视觉复核、结果分析
+- [前端架构](frontend): 路由、外壳、Tab、请求模式、主题
+- [API 与配置参考](api): tRPC 路由、环境变量、FAQ、术语表

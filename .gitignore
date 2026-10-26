@@ -178,3 +178,9 @@ target
 
 .source/
 **/.source/
+
+# rspress build output
+doc_build/
+
+# rspress temp
+.rspress/

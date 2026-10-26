@@ -1,5 +1,6 @@
 ---
 title: "工作文档"
+overview: true
 description: "工作实践与开源项目调研: TikTok/IEG/Data 工作复盘、Docker/K8s 与 JSError 自动修复云沙箱实战、A2UI/MCP Apps/WebContainer 协议与方案调研、Coding Agent 调研, 以及 AI 框架与平台调研"
 ---
 

@@ -4,11 +4,10 @@
 
 **A personal technical knowledge base — frontend, backend, and the Yukino family of projects.**
 
-Built with [Next.js](https://nextjs.org/) and [Fumadocs](https://fumadocs.dev/),
-deployed to GitHub Pages at <https://yukino-js.github.io/26autumn/>.
+Built with [Rspress](https://rspress.rs/), deployed to GitHub Pages at
+<https://yukino-js.github.io/26autumn/>.
 
-![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)
-![Fumadocs](https://img.shields.io/badge/Fumadocs-16-171717)
+![Rspress](https://img.shields.io/badge/Rspress-2-0095ff)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-workspace-F69220?logo=pnpm&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-f5a623.svg)
@@ -43,33 +42,33 @@ Prerequisites: **Node.js 20+** and **pnpm**.
 
 ```sh
 pnpm install
-pnpm dev       # start the dev server with HMR (http://localhost:3000/26autumn)
+pnpm dev       # start the dev server with HMR (http://localhost:3000/26autumn/)
 ```
 
-| Command          | Description                            |
-| ---------------- | -------------------------------------- |
-| `pnpm dev`       | Start the local dev server             |
-| `pnpm build`     | Statically export the site into `out/` |
-| `pnpm typecheck` | Type-check the site                    |
-| `pnpm lint`      | Lint and auto-fix with ESLint          |
-| `pnpm format`    | Format the repo with Prettier          |
+| Command          | Description                                 |
+| ---------------- | ------------------------------------------- |
+| `pnpm dev`       | Start the local dev server                  |
+| `pnpm build`     | Statically build the site into `doc_build/` |
+| `pnpm preview`   | Preview the built site locally              |
+| `pnpm typecheck` | Type-check theme and config                 |
+| `pnpm lint`      | Lint and auto-fix with ESLint               |
+| `pnpm format`    | Format the repo with Prettier               |
 
 ## Repository layout
 
 ```
 26autumn/
-├── app/           # routes: home, docs catch-all, search API,
-│                  #         llms.txt / llms-full.txt / llms.mdx,
-│                  #         sitemap, robots.txt
-├── components/    # provider, search dialog, MDX components
-├── content/       # Markdown content, served from the site root
-│   ├── fe/        # frontend / full-stack / agent notes
-│   ├── be/        # backend notes
-│   └── docs/      # work notes & open-source project research
-├── lib/           # source loader, shared config & layout options
-├── public/        # static assets
-└── install.js     # provisions the reference repositories under $HOME/Downloads
-                   # (clone or pull, install deps, index with CodeGraph)
+├── rspress.config.ts   # site config: base, nav, llms, sitemap, mermaid, markdown
+├── styles.css          # brand colors and font stacks (global styles)
+├── content/            # Markdown content, served from the site root
+│   ├── index.md        # home page (pageType: home, hero + features frontmatter)
+│   ├── _meta.json      # root sidebar order
+│   ├── fe/             # frontend / full-stack / agent notes
+│   ├── be/             # backend notes
+│   ├── docs/           # work notes & open-source project research
+│   └── public/         # static assets (favicon, robots.txt)
+└── install.js          # provisions the reference repositories under $HOME/Downloads
+                        # (clone or pull, install deps, index with CodeGraph)
 ```
 
 ## Content conventions
@@ -77,5 +76,47 @@ pnpm dev       # start the dev server with HMR (http://localhost:3000/26autumn)
 - Frontend/full-stack/agent notes live under `content/fe`.
 - Backend notes live under `content/be`.
 - Work notes and open-source research live under `content/docs`.
-- Each section has a `meta.json` that controls the sidebar order.
+- Each section has a `_meta.json` that controls the sidebar order;
+  `{"type": "section-header", "label": "..."}` inserts a group header.
+- Section index pages (`fe/index.md`, `be/index.md`, `docs/index.md`) set
+  `overview: true` to render child pages as cards.
 - Source-code analysis documents are always verified against the local workspace.
+
+## Authoring features
+
+- **Mermaid** — fenced ` ```mermaid ` blocks render as diagrams (dark-mode aware)
+  via `rspress-plugin-mermaid`.
+- **Code groups** — use the built-in `Tabs` / `Tab` components in `.mdx` files
+  (JSX is only parsed in `.mdx`, not `.md`); `PackageManagerTabs` is available
+  for package-manager command variants:
+
+  ````mdx
+  import { Tab, Tabs } from "@rspress/core/theme";
+
+  <Tabs>
+    <Tab label="pnpm">
+
+  ```bash
+  pnpm add @rspress/core
+  ```
+
+    </Tab>
+    <Tab label="npm">
+
+  ```bash
+  npm install @rspress/core
+  ```
+
+    </Tab>
+  </Tabs>
+  ````
+
+- **Callouts** — built-in `:::tip` / `:::note` / `:::warning` / `:::danger` /
+  `:::details` containers and GitHub-style `[!NOTE]` alerts.
+- **Line numbers** — enabled globally via `markdown.showLineNumbers`.
+- **LLM outputs** — `llms.txt`, `llms-full.txt`, and a Markdown version of every
+  page are generated at build time; each doc page exposes copy/view-as-markdown
+  actions through `themeConfig.llmsUI`.
+- **Search** — built-in local full-text search, no extra configuration.
+- **Sitemap & robots** — `sitemap.xml` via `@rspress/plugin-sitemap`,
+  `robots.txt` served from `content/public/`.

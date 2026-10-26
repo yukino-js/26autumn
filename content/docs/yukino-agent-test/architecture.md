@@ -78,7 +78,7 @@ useEffect(() => {
 }, [job.isTerminal, job.isFailed, job.error, jobId]);
 ```
 
-注意: 任务是进程内的, **服务重启会中断运行中的任务**; 流水线有专门的 `recoverInterruptedRuns()` 在启动时把中断的运行诚实标记为 `cancelled` (见[流水线](/base/yukino-agent-test/pipeline))。
+注意: 任务是进程内的, **服务重启会中断运行中的任务**; 流水线有专门的 `recoverInterruptedRuns()` 在启动时把中断的运行诚实标记为 `cancelled` (见[流水线](pipeline))。
 
 ## 错误处理: BizError → TRPCError
 

@@ -1,5 +1,6 @@
 ---
 title: "后端"
+overview: true
 description: "后端栏目: Go 语言与运行时、MySQL/Redis/ClickHouse/Kafka 与后端中间件、generic-pool 源码解析, 以及 Yukino Go 系列的 HTTP/RPC/ORM/缓存/网关、基础设施组件与 AI 应用"
 local_path: "$HOME/Downloads/node-pool"
 local_path2: "$HOME/github/yukino.go/libs/yukino_http"

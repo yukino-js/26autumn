@@ -7,14 +7,7 @@ import globals from "globals";
 
 export default defineConfig(
   {
-    ignores: [
-      "**/dist/**",
-      "**/node_modules/**",
-      ".next/**",
-      "out/**",
-      ".source/**",
-      "next-env.d.ts",
-    ],
+    ignores: ["**/dist/**", "**/node_modules/**", "doc_build/**"],
   },
   eslint.configs.recommended,
   tseslint.configs.strict,

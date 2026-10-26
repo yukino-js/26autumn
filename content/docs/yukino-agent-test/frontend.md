@@ -85,7 +85,7 @@ const job = useJobPoller(jobId);
 
 - **文件上传走 base64**: 前端 `FileReader` 读为 base64, tRPC 入参传 `{ filename, base64 }`, 服务端 `Buffer.from(base64, 'base64')` 还原 (PRD 上传仅接受 `.md`/`.txt`);
 - 格式化 (`lib/format.ts`) 与状态展示 (`lib/enums.ts` 的 `meta` + `StatusBadge`) 全局复用;
-- 任务完成副作用统一放在 `useEffect` 中并用 `finishedRef` 去重 (见[架构总览](/base/yukino-agent-test/architecture))。
+- 任务完成副作用统一放在 `useEffect` 中并用 `finishedRef` 去重 (见[架构总览](architecture))。
 
 ## 主题系统 (明/暗)
 

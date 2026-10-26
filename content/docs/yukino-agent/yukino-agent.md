@@ -7,7 +7,7 @@ title: "Yukino Agent"
 yukino-agent 是一个 AI 智能运维 (OnCall) 助手, 把两个产品面合并进单一 Next.js 16 + AI SDK 应用:
 
 - **OnCall** (`/`): 基于 RAG 的运维问答, LLM 生成 A2UI 交互界面, LangGraph Plan-Execute-Replan 运维 Agent 把 Prometheus 告警转成排查报告
-- **DevFlow** (`/devflow`): GitHub 工程副驾, 见 [DevFlow](/base/yukino-agent/devflow)
+- **DevFlow** (`/devflow`): GitHub 工程副驾, 见 [DevFlow](devflow)
 
 两个面都公开、无登录、单租户。它由两个 Python 老项目 (`agent_py` 的 OnCall 后端 + Vue, `DevFlow-AI` 的 FastAPI + Next) 迁移整合而来。代码仓库 `~/github/yukino-agent`。
 

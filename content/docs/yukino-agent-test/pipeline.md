@@ -82,15 +82,15 @@ flowchart LR
 
 ### ① 代码分析 (stageCodeAnalysis)
 
-调用 `server/services/analysis.ts` 的 `runAnalysis` 刷新代码事实 (详见[静态代码分析](/base/yukino-agent-test/analyzer))。可通过 `analyzeCode`/`reanalyzeCode` 配置跳过或强制重跑; 跳过时等待/复用最近一次分析 (`waitForAnalysisRow`)。
+调用 `server/services/analysis.ts` 的 `runAnalysis` 刷新代码事实 (详见[静态代码分析](analyzer))。可通过 `analyzeCode`/`reanalyzeCode` 配置跳过或强制重跑; 跳过时等待/复用最近一次分析 (`waitForAnalysisRow`)。
 
 ### ② 测试点抽取 (stageTestPoints)
 
-入口 `server/services/requirements.ts` 的 `startRequirementAnalysis`, 引擎在 `server/lib/generation/test-points.ts`。输入需求版本的 PRD 内容 (仅 `.md`/`.txt`), 输出 `test_points` 记录; 支持规则抽取与 LLM 抽取 (`source` 标记 `rule`/`llm`)。详见[用例生成](/base/yukino-agent-test/generation)。
+入口 `server/services/requirements.ts` 的 `startRequirementAnalysis`, 引擎在 `server/lib/generation/test-points.ts`。输入需求版本的 PRD 内容 (仅 `.md`/`.txt`), 输出 `test_points` 记录; 支持规则抽取与 LLM 抽取 (`source` 标记 `rule`/`llm`)。详见[用例生成](generation)。
 
 ### ③ 用例生成 (stageCaseGeneration)
 
-入口 `server/services/generation.ts` 的 `generateCases`。三种模式 `rule`/`llm`/`auto`; auto 模式 LLM 先行、规则兜底, LLM 不可用时整体降级为规则模式。详见[用例生成](/base/yukino-agent-test/generation)。
+入口 `server/services/generation.ts` 的 `generateCases`。三种模式 `rule`/`llm`/`auto`; auto 模式 LLM 先行、规则兜底, LLM 不可用时整体降级为规则模式。详见[用例生成](generation)。
 
 ### ④ 用例评审 (stageCaseReview)
 
@@ -106,7 +106,7 @@ flowchart LR
 
 ### ⑤ 执行 (stageExecution)
 
-对 reviewStatus 为 pass 且 automationStatus 可自动化的用例, 逐个调用 `runCaseExecution` (Playwright 引擎, 详见[浏览器执行](/base/yukino-agent-test/execution)), 执行记录与 `workflow_cases.executionId` 关联。
+对 reviewStatus 为 pass 且 automationStatus 可自动化的用例, 逐个调用 `runCaseExecution` (Playwright 引擎, 详见[浏览器执行](execution)), 执行记录与 `workflow_cases.executionId` 关联。
 
 ### ⑥ 结果分析 (stageResultAnalysis)
 

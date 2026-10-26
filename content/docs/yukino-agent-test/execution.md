@@ -84,7 +84,7 @@ title: "浏览器执行"
 
 ## 结果分析 (阶段⑥)
 
-证据驱动的失败分类 (只针对失败执行, 详见[流水线](/base/yukino-agent-test/pipeline) ⑥):
+证据驱动的失败分类 (只针对失败执行, 详见[流水线](pipeline) ⑥):
 
 - 汇总客观证据 (`buildEvidence`): 步骤记录、错误类别、断言明细、截图清单;
 - LLM 分类优先 (`resultAnalysisPrompt`), 不可用时规则分类 (`ruleAnalysis` + `buildRuleEvidence`);

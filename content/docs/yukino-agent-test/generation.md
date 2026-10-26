@@ -81,4 +81,4 @@ title: "用例生成"
 
 ## 用例评审 (阶段④, 由流水线驱动)
 
-评审逻辑在 `workflows.ts` (见[流水线](/base/yukino-agent-test/pipeline) ④): 确定性评审 → LLM 评审 → 合成 pass/revise/reject → 最多 `maxRevisions` 轮修复。质量门的函数 (`caseHasCompoundExpected`、`caseHasMultipleInputs`、`quotedAnchors`、`scoreCase`) 也被评审阶段复用, 保证生成与评审标准一致。
+评审逻辑在 `workflows.ts` (见[流水线](pipeline) ④): 确定性评审 → LLM 评审 → 合成 pass/revise/reject → 最多 `maxRevisions` 轮修复。质量门的函数 (`caseHasCompoundExpected`、`caseHasMultipleInputs`、`quotedAnchors`、`scoreCase`) 也被评审阶段复用, 保证生成与评审标准一致。

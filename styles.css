@@ -1,0 +1,27 @@
+:root {
+  --rp-c-brand: #8d72e0;
+  --rp-c-brand-light: #a48dea;
+  --rp-c-brand-lighter: #d6ccf7;
+  --rp-c-brand-dark: #7a5ed6;
+  --rp-c-brand-darker: #6749c4;
+  --rp-c-brand-tint: rgba(141, 114, 224, 0.16);
+  --rp-font-family-base:
+    "Yukino", "Maple Mono", Menlo, "Cascadia Code", "Sarasa Gothic SC",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  --rp-font-family-mono:
+    "Yukino", "Maple Mono", Menlo, "Cascadia Code", "Sarasa Gothic SC",
+    "PingFang SC", "Microsoft YaHei", monospace;
+}
+
+.dark {
+  --rp-c-brand: #bdacf1;
+  --rp-c-brand-light: #d6ccf7;
+  --rp-c-brand-lighter: #eae3fb;
+  --rp-c-brand-dark: #a48dea;
+  --rp-c-brand-darker: #8d72e0;
+  --rp-c-brand-tint: rgba(189, 172, 241, 0.16);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
