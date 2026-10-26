@@ -58,11 +58,11 @@ pnpm dev       # start the dev server with HMR (http://localhost:3000/26autumn/)
 
 ```
 26autumn/
-├── rspress.config.ts   # site config: base, nav, llms, sitemap, mermaid, markdown
+├── rspress.config.ts   # site config: base, llms, sitemap, mermaid, markdown
 ├── styles.css          # brand colors and font stacks (global styles)
 ├── content/            # Markdown content, served from the site root
 │   ├── index.md        # home page (pageType: home, hero + features frontmatter)
-│   ├── _meta.json      # root sidebar order
+│   ├── _nav.json       # top navbar items
 │   ├── fe/             # frontend / full-stack / agent notes
 │   ├── be/             # backend notes
 │   ├── docs/           # work notes & open-source project research
@@ -76,7 +76,9 @@ pnpm dev       # start the dev server with HMR (http://localhost:3000/26autumn/)
 - Frontend/full-stack/agent notes live under `content/fe`.
 - Backend notes live under `content/be`.
 - Work notes and open-source research live under `content/docs`.
-- Each section has a `_meta.json` that controls the sidebar order;
+- The top navbar comes from `content/_nav.json`; keep `themeConfig.nav`
+  unset so Rspress auto-generates nav and per-section sidebars.
+- Each section has a `_meta.json` that controls its sidebar order;
   `{"type": "section-header", "label": "..."}` inserts a group header.
 - Section index pages (`fe/index.md`, `be/index.md`, `docs/index.md`) set
   `overview: true` to render child pages as cards.

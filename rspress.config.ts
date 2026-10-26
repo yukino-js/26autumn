@@ -21,11 +21,6 @@ export default defineConfig({
   },
   llms: true,
   themeConfig: {
-    nav: [
-      { text: "前端", link: "/fe/", activeMatch: "/fe/" },
-      { text: "后端", link: "/be/", activeMatch: "/be/" },
-      { text: "工作文档", link: "/docs/", activeMatch: "/docs/" },
-    ],
     socialLinks: [
       {
         icon: "github",
