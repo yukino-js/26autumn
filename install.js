@@ -71,11 +71,6 @@ const repositories = [
     install: ["go", "mod", `tidy`],
   },
   {
-    name: "formily",
-    url: "git@github.com:alibaba/formily.git",
-    install: ["yarn", "install", `--registry=${REGISTRY}`],
-  },
-  {
     name: "node-pool",
     url: "git@github.com:coopernurse/node-pool.git",
     install: ["npm", "install", `--registry=${REGISTRY}`],

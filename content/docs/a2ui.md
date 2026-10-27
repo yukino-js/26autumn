@@ -96,7 +96,7 @@ v1.0 已有完整规范 (协议文档、JSON Schema、A2A 扩展、basic catalog
 
 **1. 双向函数 RPC。** agent 到 renderer 的消息从四类扩为六类: 增加 `callRendererFunction` 与 `agentFunctionResponse`; renderer 到 agent 增加 `callAgentFunction` 与 `rendererFunctionResponse`。函数调用有了显式的执行边界: catalog 为每个函数声明 `allowedCallers` (`rendererOnly` / `agentOnly` / `rendererOrAgent`, 缺省 `rendererOnly`), 渲染器在运行时按 catalog 配置强制校验——收到对 `rendererOnly`、需要用户激活 (`requiresUserActivation`) 却无用户手势、参数不合 schema 或未注册函数的远程调用时, 以 `INVALID_FUNCTION_CALL` 错误拒绝; `agentOnly` 函数不允许绑定到组件属性或由 UI 动作触发, 只能由 agent 经 `callRendererFunction` 执行。调用必须携带 `catalogId` (函数按 catalog 解析) 与 `functionCallId`, 可选携带 `surfaceId`——指定时 `args` 里的 `@path` 绑定在该 Surface 数据模型的根作用域求值, 省略时在空数据模型的 surface 无关根上下文执行; 渲染器无论返回类型是否为 void 都必须回 `rendererFunctionResponse` (携带同一个 `functionCallId` 与结果值) 或 `error` 消息; renderer 的 `error` 消息支持 `functionCallId`, 且与 `surfaceId` 互斥。`allowedCallers` 与 `returnType` 只存在于 catalog 函数定义, 不允许出现在 wire 层的 `FunctionCall` 载荷里——边界检查与返回类型校验完全交给运行时。basic catalog 的 `openUrl` 标注 `requiresUserActivation: true`, 即需要用户手势激活。
 
-**2. 单消息建 Surface 与 Surface 容器。** `createSurface` 可直接内嵌 `components` 与 `dataModel` (以及 `metadata.extensions`), 一条消息完成整块 UI 的组合; `catalogId` 变为可选, 仅作为该 Surface 的缺省 catalog。这正是 [A2UI Express](a2ui-express) 编译产物的目标形态。`createSurface` 会隐式实例化规范的 `Surface` 容器组件 (`common_types.json#/$defs/Surface`), 它恒定持有 `"child": "root"` 且不能被 `updateComponents` 修改; `surfaceId` 必须在渲染器整个生命周期内全局唯一, 编排器负责给子 Agent 的 surfaceId 加前缀或要求其用 UUID 以避免冲突。
+**2. 单消息建 Surface 与 Surface 容器。** `createSurface` 可直接内嵌 `components` 与 `dataModel` (以及 `metadata.extensions`), 一条消息完成整块 UI 的组合; `catalogId` 变为可选, 仅作为该 Surface 的缺省 catalog。这正是 A2UI Express 编译产物的目标形态。`createSurface` 会隐式实例化规范的 `Surface` 容器组件 (`common_types.json#/$defs/Surface`), 它恒定持有 `"child": "root"` 且不能被 `updateComponents` 修改; `surfaceId` 必须在渲染器整个生命周期内全局唯一, 编排器负责给子 Agent 的 surfaceId 加前缀或要求其用 UUID 以避免冲突。
 
 **3. 多 catalog 混用与解析顺序。** 组件与函数调用可各自携带 `catalogId`, 一个 Surface 内可混合多个 catalog 的组件与函数 (混用的 catalog 必须同属一个协议版本)。解析顺序是: 组件/调用自身的 `catalogId` → Surface 缺省 `catalogId` → 两者皆无则立即报错不渲染, 不回退到能力声明里的 catalog (即使渲染器只声明了一个 catalog)。catalog 之间还可以通过外部 `$ref` 互相复用定义 (peer catalog), 引用只能解析到 agent/渲染器已持有的 catalog, 禁止网络拉取。catalog 定义新增 `protocolVersion` 字段 (目标 1.0 及以上的 catalog 必须显式声明), 以及可选的 `instructions` 字段把设计指南直接嵌进 catalog (取代外置 rules.txt); catalog 组件定义还可声明 `allowedParents` / `allowedChildren` 组合约束 (以 `"Surface"` 为规范根组件类型, 该名字被协议保留), 违反时渲染器报 `UNALLOWED_PARENT` / `UNALLOWED_CHILD` 错误。
 
@@ -625,4 +625,4 @@ v0.9 是 prompt-first 设计: schema 嵌入 prompt, 生成后必须校验与修�
 - 界面结构固定、由开发者设计时产出——用 Schema-driven UI 或低代码更省成本。
 - 只需要一张静态图片或一段富文本——普通消息即可。
 
-落地时的最小闭环是: 一份明确的 catalog (作为客户端与服务端的共同契约)、一个把 catalog schema 编进 prompt 的生成器、一次校验加一次纠错、一条诚实降级路径, 以及一个支持增量应用与动作回传的渲染器。若还需要降低生成成本, 可以进一步用 [A2UI Express DSL](a2ui-express) 压缩模型输出。
+落地时的最小闭环是: 一份明确的 catalog (作为客户端与服务端的共同契约)、一个把 catalog schema 编进 prompt 的生成器、一次校验加一次纠错、一条诚实降级路径, 以及一个支持增量应用与动作回传的渲染器。若还需要降低生成成本, 可以进一步用 A2UI Express DSL 压缩模型输出。

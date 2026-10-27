@@ -4,7 +4,7 @@ description: "yukino_orm 是构建在 MongoDB 官方驱动之上的 Knex 风格�
 local_path: "$HOME/github/yukino.go/libs/yukino_orm"
 ---
 
-yukino_orm 是一个面向 MongoDB 的 Go ORM, 设计主旨是把 Knex.js 的链式 (chainable) 查询体验带到 Go: 用 `Where` 系列方法累积条件, 用 `OrderBy`/`Limit`/`Offset`/`Select` 累积排序与分页, 只在调用终结方法时才真正访问数据库。它在官方驱动 `go.mongodb.org/mongo-driver/v2` 之上做薄封装, 因此仍然保留驱动的全部能力, 同时补上集合名反射推导、`$set` 自动包装、聚合与分组、流式游标、事务会话绑定与自增序列等常用能力。本文面向已经熟悉 MongoDB 文档模型、希望在 Go 中用一个统一的链式 API 组织查询的工程师, 说明其抽象模型、查询构建规则、执行语义与适用边界。
+yukino_orm 是一个面向 MongoDB 的 Go ORM, 设计主旨是把 Knex.js 的链式 (chainable) 查询体验带到 Go: 用 `Where` 系列方法累积条件, 用 `OrderBy`/`Limit`/`Offset`/`Select` 累积排序、分页与投影, 只在调用终结方法时才真正访问数据库。它在官方驱动 `go.mongodb.org/mongo-driver/v2` 之上做薄封装, 因此保留驱动的全部能力, 同时补上集合名反射推导、`$set` 自动包装、聚合与分组、流式游标、事务会话绑定与自增序列等常用能力。本文面向已经熟悉 MongoDB 文档模型、希望在 Go 中用一套统一的链式 API 组织查询的工程师, 说明其抽象模型、查询构建规则、执行语义与适用边界。
 
 ## 定位与设计原则
 
@@ -15,9 +15,9 @@ yukino_orm 是一个面向 MongoDB 的 Go ORM, 设计主旨是把 Knex.js 的链
 | 不静默出错             | 非法的构建输入 (字段类型、操作符、参数个数) 被记录为错误, 在终结方法处以 error 返回, 而不是 panic 或发出错误查询 |
 | 不静默覆盖             | 同一字段上的多个条件总是 AND 合并, 无法合并时用顶层 `$and` 保留                                                  |
 | 贴近 Knex 的写语义     | 普通文档自动包 `$set`, `Update` 返回匹配数, `Insert` 接受切片, `Increment`/`Decrement` 直接可用                  |
-| 薄封装                 | 未识别的操作符以 `$` 前缀透传, 原始驱动错误原样返回                                                              |
+| 薄封装                 | 以 `$` 开头的未识别操作符原样透传, 原始驱动错误原样返回                                                          |
 
-该库是仓库 `libs/` 下的独立 Go 模块, 模块内为扁平结构, 没有子包。
+该库是仓库 `libs/` 下的独立 Go 模块 (`github.com/hangtiancheng/yukino.go/libs/yukino_orm`), 依赖 `go.mongodb.org/mongo-driver/v2 v2.9.1`。模块内为扁平结构, 没有子包: `engine.go` (连接、事务、序列)、`query.go` (链式构建)、`filter.go` (条件解析与过滤文档生成)、`query_exec.go` (增删改查执行)、`query_aggregate.go` (单值聚合、Distinct、Pluck)、`query_group.go` (分组聚合)、`query_stream.go` (游标)、`naming.go` (集合命名)、`log.go` (日志器)。
 
 ## 核心抽象
 
@@ -41,27 +41,27 @@ Engine
                        Sum/Avg/Distinct/Pluck/Aggregate/Cursor/Each/...
 ```
 
-`engine.Collection(name)` 在 name 为空或 engine 为 nil 时不会立即报错, 而是构造一个集合为 nil 的 Query, 真正的错误在终结方法的预检阶段以 `ErrCollectionRequired` 返回。
+`engine.Collection(name)` 在 name 为空白或 engine 为 nil 时不会立即报错, 而是构造一个集合为 nil 的 Query, 真正的错误在终结方法的预检阶段以 `ErrCollectionRequired` 返回。
 
 ## Engine 与连接管理
 
 `NewEngine(ctx, uri, database)` 在构造时做三件事: 校验 uri 与 database 去空白后非空 (否则分别返回 `mongo uri is required`、`mongo database is required`), 调用 `mongo.Connect`, 并对连接执行一次 `Ping`。Ping 失败时会立即关闭连接再返回错误, 避免留下悬空句柄。
 
-| 方法                      | 行为                                         |
-| ------------------------- | -------------------------------------------- |
-| `Client()`                | 返回底层 `*mongo.Client`, nil 接收者返回 nil |
-| `Database()`              | 返回底层 `*mongo.Database`                   |
-| `DatabaseName()`          | 返回数据库名                                 |
-| `Close(ctx)`              | 断开连接, nil 接收者或 nil client 时返回 nil |
-| `DropDatabase(ctx)`       | 删除整个数据库                               |
-| `Transaction(ctx, fn)`    | 开启会话并执行带自动提交/回滚的闭包          |
-| `NextSequence(ctx, name)` | 返回全局递增的 int64                         |
+| 方法                      | 行为                                                 |
+| ------------------------- | ---------------------------------------------------- |
+| `Client()`                | 返回底层 `*mongo.Client`, nil 接收者返回 nil         |
+| `Database()`              | 返回底层 `*mongo.Database`                           |
+| `DatabaseName()`          | 返回数据库名                                         |
+| `Close(ctx)`              | 断开连接, nil 接收者或 nil client 时返回 nil         |
+| `DropDatabase(ctx)`       | 删除整个数据库, nil 接收者或 nil database 时返回 nil |
+| `Transaction(ctx, fn)`    | 开启会话并执行带自动提交/回滚的闭包                  |
+| `NextSequence(ctx, name)` | 返回全局递增的 int64                                 |
 
 所有 getter 都做了 nil 接收者保护, 因此在 engine 尚未初始化时调用不会 panic, 而是返回零值, 这让"先构造 Query 后补 engine"的代码路径更安全。
 
 ## 集合命名策略
 
-`engine.Model(value)` 通过反射推导集合名, 规则为: 剥掉指针与切片/数组到达底层结构体, 把 CamelCase 转成 snake_case, 再按英文规则变复数。
+`engine.Model(value)` 通过导出的 `CollectionName(value)` 函数反射推导集合名, 规则为: 剥掉指针与切片/数组到达底层结构体, 把 CamelCase 转成 snake_case (每个非首位大写字母前插入 `_`), 再按英文规则变复数。
 
 | 结构体        | 集合名           |
 | ------------- | ---------------- |
@@ -71,7 +71,7 @@ Engine
 | `Category`    | `categories`     |
 | `Day`         | `days`           |
 
-复数规则覆盖常见情况: 辅音字母 + `y` 结尾改为 `-ies`; `s`/`x`/`sh`/`ch` 结尾加 `-es`; 其余加 `-s`。`Model` 也接受切片 (如 `[]*User`), 同样能得到 `users`。这套规则是纯机械的, 对不规则复数 (person/people) 与缩写 (HTTPServer 会得到 `h_t_t_p_server`) 不适用, 这类情况应直接用 `Collection("自定义名字")`。
+复数规则覆盖常见情况: 辅音字母 + `y` 结尾改为 `-ies`; `s`/`x`/`sh`/`ch` 结尾加 `-es`; 其余加 `-s`。`Model` 也接受切片 (如 `[]*User`), 同样能得到 `users`。这套规则是纯机械的, 对不规则复数 (person/people) 与连续大写缩写 (HTTPServer 会得到 `h_t_t_p_server`) 不适用, 这类情况应直接用 `Collection("自定义名字")`。
 
 若传入非结构体 (如字符串、数值), 推导结果为空串, 于是 `Collection("")` 产生一个 nil 集合的 Query, 在终结方法处返回 `ErrCollectionRequired`。
 
@@ -91,11 +91,11 @@ Engine
 | `WhereLike` / `WhereILike`                                                                                | SQL LIKE 模式转锚定正则, 后者加 `i` 选项          |
 | `OrWhere(...)` 及 `OrWhereNot`/`OrWhereIn`/`OrWhereNotIn`/`OrWhereNull`/`OrWhereNotNull`/`OrWhereBetween` | 追加一个 `$or` 分支                               |
 
-`Where` 只在参数个数为 1/2/3 时有效: 1 个参数必须是 `bson.M` 或 `map[string]any`, 2 个参数是字段与值, 3 个参数是字段、操作符、值。字段必须是去空白后非空的字符串, 操作符必须是字符串, 否则记录错误。
+`Where` 只在参数个数为 1/2/3 时有效: 1 个参数必须是 `bson.M` 或 `map[string]any`, 2 个参数是字段与值, 3 个参数是字段、操作符、值。字段必须是去空白后非空的字符串, 操作符必须是字符串, 否则记录错误。`OrWhere` 与 `Where` 共用同一套参数解析 (`parseWhere`), 传 map 时一个 map 的整体构成单个 `$or` 分支, 分支内部各键仍是 AND 关系。
 
 ### 操作符
 
-`Where` 的第二个参数在三个参数形式下按大小写不敏感的方式归一化:
+`Where` 三参数形式下的操作符按"去空白 + 小写"归一化后查别名表:
 
 | 写法                     | 归一化结果                               |
 | ------------------------ | ---------------------------------------- |
@@ -107,7 +107,7 @@ Engine
 | `between`, `not between` | 区间匹配                                 |
 | 其它以 `$` 开头的字符串  | 原样透传 (如 `$regex`、`$exists`、`$in`) |
 
-其它任何未识别操作符都会被拒绝: 构建器记录错误, 下一次执行方法返回该错误, 不会把残缺的查询发给 MongoDB, 也不会 panic。`between`/`notBetween` 要求 2 元素切片或数组, `like`/`ilike` 要求字符串, 否则同样记录错误。
+任何未识别且不带 `$` 前缀的操作符都会被拒绝: 构建器记录错误, 下一次执行方法返回该错误, 不会把残缺的查询发给 MongoDB, 也不会 panic。`between`/`notBetween` 要求 2 元素切片或数组, `like`/`ilike` 要求字符串, 否则同样记录错误。
 
 ### 过滤文档的构建规则
 
@@ -120,27 +120,30 @@ Where("age", 18).Where("age", 18)             -> { age: 18, $and: [ { age: 18 } 
 OrWhere("a", 1).OrWhere("b", 2)               -> { $or: [ { a: 1 }, { b: 2 } ] }
 ```
 
-规则是: 同一字段上的多个操作符如果能合进一个操作符 map 就合并; 等值与操作符混用、重复等值、重复操作符等无法无损合并的情况, 用顶层 `$and` 数组保留, 绝不覆盖。构建器内部用 `opFields` 区分"框架自己生成的操作符 map"与"用户传入的恰好是 map 的等值", 避免误合并。
+规则是: 同一字段上的多个操作符如果能合进一个操作符 map 就合并; 等值与操作符混用、重复等值、重复操作符等无法无损合并的情况, 用顶层 `$and` 数组保留, 绝不覆盖。构建器内部用 `opFields` 集合区分"框架自己生成的操作符 map"与"用户传入的恰好是 map 的等值", 避免把后者误当作可合并的操作符 map。一个细节: 框架生成的操作符 map 上再遇到等值条件时, 等值会以 `$eq` 键并入该 map (仅当 `$eq` 尚不存在), 而不是落入 `$and`。
 
-`OrWhere` 会追加一个 `$or` 分支; 若已有主条件链, 主链整体作为第一个分支。一个需要留意的语义: 在 `OrWhere` 之后新增的 `Where` 仍然并入主 AND 链, 因此 `Where(a).OrWhere(b).Where(c)` 等价于 `(a AND c) OR b`, 与 SQL 的操作符优先级不同, 建议把 `OrWhere` 写在最后。空对象的 `OrWhere(bson.M{})` 被当作空分支丢弃, 否则空分支会匹配全部文档。
+`OrWhere` 把条件追加为一个 `$or` 分支; 若已有主条件链, 主链整体作为第一个分支。若最终只有一个分支 (主链为空且只有一个 OrWhere 组), 直接返回该分支文档, 不套 `$or` 外壳。两个需要留意的语义:
 
-`WhereLike`/`WhereILike` 会把 SQL LIKE 模式翻译成锚定正则: 先对模式做正则元字符转义, 再把 `%` 替换为 `.*`、`_` 替换为 `.`, 最后加上 `^` 与 `$`。`WhereILike` 额外设置 `i` 选项实现大小写不敏感。
+- 在 `OrWhere` 之后新增的 `Where` 仍然并入主 AND 链, 因此 `Where(a).OrWhere(b).Where(c)` 等价于 `(a AND c) OR b`, 与 SQL 的操作符优先级不同, 建议把 `OrWhere` 写在最后。
+- 空对象的 `OrWhere(bson.M{})` 产生零条件分支, 被直接丢弃, 否则空分支会匹配全部文档。
+
+`WhereLike`/`WhereILike` 会把 SQL LIKE 模式翻译成锚定正则: 先用 `regexp.QuoteMeta` 对模式做元字符转义, 再把 `%` 替换为 `.*`、`_` 替换为 `.`, 最后加上 `^` 与 `$`。`WhereILike` 额外设置 `i` 选项实现大小写不敏感。
 
 ### 排序、分页与投影
 
-| 方法                     | 行为                                                 |
-| ------------------------ | ---------------------------------------------------- |
-| `OrderBy(field)`         | 升序 (默认)                                          |
-| `OrderBy(field, "desc")` | 降序; 方向大小写不敏感, 非 `desc` 一律升序           |
-| `Limit(n)`               | 仅在 `n > 0` 时生效                                  |
-| `Offset(n)`              | 仅在 `n > 0` 时生效                                  |
-| `Select(fields...)`      | 设置投影, 替换旧投影; 字段默认包含, `-` 前缀表示排除 |
+| 方法                     | 行为                                                   |
+| ------------------------ | ------------------------------------------------------ |
+| `OrderBy(field)`         | 升序 (默认)                                            |
+| `OrderBy(field, "desc")` | 降序; 方向去空白后大小写不敏感比较, 非 `desc` 一律升序 |
+| `Limit(n)`               | 记录 limit, 执行时仅在 `n > 0` 时下推给驱动            |
+| `Offset(n)`              | 记录 skip, 执行时仅在 `n > 0` 时下推给驱动             |
+| `Select(fields...)`      | 设置投影, 替换旧投影; 字段默认包含, `-` 前缀表示排除   |
 
-MongoDB 只允许"包含投影"与"仅排除 `_id`"混用, 其它混合方式会被服务端拒绝。`Pluck` 内部会临时使用投影但不修改 Query 自身的投影状态。
+MongoDB 只允许"包含投影"与"仅排除 `_id`"混用, 其它混合方式会被服务端拒绝。`Pluck` 内部会临时构造自己的投影, 不读取也不修改 Query 自身的投影状态。
 
 ### 克隆
 
-`Query` 是可变的。要从一个公共基础派生多个变体, 应使用 `Clone`, 它会深拷贝条件、`$or` 分组、排序、投影、分组键、Having 条件与聚合别名, 使克隆体与原体互不影响。
+`Query` 是可变的。要从一个公共基础派生多个变体, 应使用 `Clone`, 它会深拷贝条件、`$or` 分组、排序、投影、分组键、Having 条件、聚合别名与已记录的构建错误, 使克隆体与原体互不影响。nil 接收者的 `Clone` 返回 nil。
 
 ```go
 base := engine.Collection("users").Where("active", true)
@@ -150,7 +153,7 @@ minors := base.Clone().Where("age", "<", 18)
 
 ### 构建期错误模型
 
-构建器把所有输入问题记录在内部的 `err` 字段 (只保留第一个), 终结方法在执行前的预检阶段统一返回。这样链式调用本身不会中断, 调用方只需在终结方法处检查一次错误。预检还会拒绝"存在未消费的 GroupBy/Having/聚合别名状态却调用了非 `Aggregate` 的终结方法", 防止分组状态被静默忽略。
+构建器把所有输入问题记录在内部的 `err` 字段 (只保留第一个), 终结方法在执行前的预检阶段统一返回。这样链式调用本身不会中断, 调用方只需在终结方法处检查一次错误。预检分两层: 基础预检 (`preflightBase`) 依次检查 nil Query、已记录的构建错误、nil 集合; 普通预检在基础预检之上再拒绝"存在未消费的 GroupBy/Having/聚合别名状态却调用了非 `Aggregate` 的终结方法", 防止分组状态被静默忽略。`Aggregate` 只走基础预检, 因此它是唯一允许携带分组状态的终结方法。
 
 ## 执行方法
 
@@ -160,21 +163,21 @@ minors := base.Clone().Where("age", "<", 18)
 | `First(ctx, out)`            | `FindOne`                        | 无匹配时返回 `ErrNotFound` (即驱动 `mongo.ErrNoDocuments` 的别名)                |
 | `Find(ctx, out)`             | `Find` + `Cursor.All`            | 一次性加载全部匹配文档到 out                                                     |
 | `Update(ctx, update)`        | `UpdateMany`                     | 返回匹配文档数 (knex 风格 affected rows), 影响所有匹配文档                       |
-| `Upsert(ctx, update)`        | `UpdateMany` + `SetUpsert(true)` | 返回 `MatchedCount`/`ModifiedCount`/`UpsertedCount`/`UpsertedID`                 |
+| `Upsert(ctx, update)`        | `UpdateMany` + `SetUpsert(true)` | 返回 `UpsertResult{MatchedCount, ModifiedCount, UpsertedCount, UpsertedID}`      |
 | `Increment(ctx, field, n?)`  | `Update` 包 `$inc`               | n 默认为 1, 返回匹配数                                                           |
 | `Decrement(ctx, field, n?)`  | `Update` 包 `$inc` 负值          | n 默认为 1, 返回匹配数                                                           |
 | `Delete(ctx)`                | `DeleteMany`                     | 返回删除文档数                                                                   |
 | `Count(ctx)`                 | `CountDocuments`                 | 匹配数                                                                           |
 | `Exists(ctx)`                | 基于 `Count`                     | 匹配数是否大于 0                                                                 |
-| `EnsureIndexes(ctx, models)` | `Indexes().CreateMany`           | 返回创建的索引名; 空列表直接返回 nil                                             |
+| `EnsureIndexes(ctx, models)` | `Indexes().CreateMany`           | 返回创建的索引名 `[]string`; 空列表直接返回 nil                                  |
 | `DropCollection(ctx)`        | `Collection.Drop`                | 删除整个集合                                                                     |
 
 几个关键语义:
 
 - `Update` 与 `Delete` 使用 `Many` 系列, 会作用于全部匹配文档。没有任何 `Where` 条件时它们会命中整个集合, 因此调用方必须在应用层保证至少有一个条件。
-- `Insert` 的切片展开有白名单式的例外: `bson.D` (本身是切片但语义上是单个文档) 与字节切片不会被展开, 其余切片/数组会被摊平成多个文档。
-- `Update`/`Upsert` 的更新文档会经过 `$set` 归一化: `bson.M`、`map[string]any`、`bson.D` 与结构体 (含指向结构体的指针) 若不含 `$` 前缀的键, 会被包成 `{$set: doc}`; 含有任一 `$` 键则原样透传。结构体更新会把所有被序列化的字段 (包括零值, 遵守 `omitempty` 标签) 写进 `$set`, 因此部分更新更适合用 `bson.M`。
-- `First` 支持排序、偏移与投影; `Find` 与 `Cursor` 额外支持 limit。
+- `Insert` 的切片展开有白名单式的例外: `bson.D` (本身是切片但语义上是单个文档) 与字节切片不会被展开, 其余切片/数组会被摊平成多个文档; 展开只发生在"恰好一个可变参数"时。展开后仍为空列表则返回 `at least one document is required`。`InsertMany` 中途失败时, 会把已成功插入的 ID 连同错误一起返回, 便于补偿。
+- `Update`/`Upsert` 的更新文档会经过 `$set` 归一化 (`normalizeUpdate`): `bson.M`、`map[string]any`、`bson.D` 若不含 `$` 前缀的键, 会被包成 `{$set: doc}`, 含任一 `$` 键则原样透传; 结构体 (含指向结构体的指针, 逐层解引用, nil 指针原样透传) 一律包 `$set`。结构体更新会把所有被序列化的字段 (包括零值, 遵守 `omitempty` 标签) 写进 `$set`, 因此部分更新更适合用 `bson.M`。
+- `First` 应用排序、偏移与投影但不应用 limit (FindOne 语义); `Find`、`Cursor`、`Each` 与 `Pluck` 额外应用 limit。
 
 ## 聚合与分组
 
@@ -187,7 +190,7 @@ minors := base.Clone().Where("age", "<", 18)
   { $group: { _id: null, result: { $sum|$avg|$min|$max: "$field" } } } ]
 ```
 
-`Sum`/`Avg` 对缺失或非数值字段返回 0; `Min`/`Max` 对非数值字段 (字符串、日期) 会在解码阶段失败, 这类字段应改用 `Distinct` 或自定义聚合管线。无匹配文档时返回 0。
+`Sum`/`Avg` 对缺失或非数值字段返回 0; `Min`/`Max` 对非数值字段 (字符串、日期) 会在解码阶段失败, 这类字段应改用 `Distinct` 或自定义聚合管线。无匹配文档时管线不产出分组行, 四个方法都返回 0。
 
 | 方法                        | 说明                                                 |
 | --------------------------- | ---------------------------------------------------- |
@@ -195,14 +198,16 @@ minors := base.Clone().Where("age", "<", 18)
 | `CountDistinct(ctx, field)` | `Distinct` 结果的长度                                |
 | `Pluck(ctx, field, out)`    | 把单字段值收集进 `out` (必须是指向切片的非 nil 指针) |
 
-`Pluck` 支持点号路径, 内部用 `{field:1, _id:0}` 投影 (field 为 `_id` 时不排除 `_id`), 遵守排序/limit/offset, 不改动 Query 的投影状态; 缺失字段的文档会贡献该元素类型的零值。
+`Pluck` 支持点号路径: 字段先去空白校验非空, 然后内部用 `{field: 1, _id: 0}` 投影 (field 为 `_id` 时不排除 `_id`), 逐文档用 `bson.Raw.Lookup(path...)` 按路径取值。字段缺失的文档会贡献该元素类型的零值 (原始 BSON 类型为 0 时跳过解码)。`Pluck` 遵守排序/limit/offset, 不改动 Query 自身的投影状态。
 
 ### 分组聚合
 
 分组聚合由 `GroupBy` + 累加器别名 + `Aggregate` 组成, 生成一条完整管线:
 
 ```text
-$match(条件) -> $group(分组键 + 累加器) -> $project(平铺结果列)
+[$match(条件链, 为空时省略)]
+  -> $group(分组键 + 累加器)
+  -> $project(平铺结果列, _id: 0)
   -> $match(having) -> $sort -> $skip -> $limit
 ```
 
@@ -216,18 +221,19 @@ $match(条件) -> $group(分组键 + 累加器) -> $project(平铺结果列)
 | `MinAs(field, alias)` | `{ $min: "$field" }`       |
 | `MaxAs(field, alias)` | `{ $max: "$field" }`       |
 
-结果每行以顶层字段给出分组键与别名。单分组键时 `_id` 直接取该字段; 多分组键时 `_id` 是一个以平铺名称为键的子文档, `$project` 再把它展开。点号路径在结果中会平铺为下划线形式 (`addr.city` 变成 `addr_city`)。`Having` 接受与 `Where` 相同的参数形式, 但引用的是结果列名; `OrderBy` 同样只能引用结果列。
+结果每行以顶层字段给出分组键与别名。单分组键时 `_id` 直接取该字段; 多分组键时 `_id` 是一个以平铺名称为键的子文档, `$project` 再把它展开。点号路径在结果列中会平铺为下划线形式 (`addr.city` 变成 `addr_city`)。`Having` 接受与 `Where` 相同的参数形式, 但引用的是结果列名; `OrderBy` 同样只能引用结果列; `$skip`/`$limit` 来自 Query 的 `Offset`/`Limit` 状态。
 
-构建期会强制以下规则, 违反时返回错误而不是发出语义错误的管线:
+构建期与执行前会强制以下规则, 违反时返回错误而不是发出语义错误的管线:
 
 | 规则                                          | 说明                                     |
 | --------------------------------------------- | ---------------------------------------- |
 | 必须至少有一个 `GroupBy` 键                   | 否则 `Aggregate` 报错                    |
+| `GroupBy` 键与累加器 field 必须非空           | 构建期记录错误                           |
 | `Select` 不能与 `GroupBy` 组合                | 结果列固定为分组键与别名                 |
 | 点号分组键不能平铺后冲突                      | 例如 `addr.city` 与 `addr_city` 同时出现 |
 | 别名不能与分组键冲突、不能重复                | 否则结果列含义不明                       |
 | 别名不能是 `_id`、不能以 `$` 开头、不能含 `.` | 避免与 Mongo 内部字段冲突或产生非法列名  |
-| `Having`/`OrderBy` 只能引用结果列             | 未知列直接报错                           |
+| `Having`/`OrderBy` 只能引用结果列             | 未知列直接报错, 错误信息给出可用列范围   |
 | 非 `Aggregate` 的终结方法不得携带分组状态     | 防止状态被静默忽略                       |
 
 ## 流式查询
@@ -239,11 +245,11 @@ $match(条件) -> $group(分组键 + 累加器) -> $project(平铺结果列)
 | `Each(ctx, fn)` | 回调 | 自动打开与关闭游标, 回调返回错误时立即停止并返回该错误 |
 | `Cursor(ctx)`   | 手动 | 返回 `*Cursor`, 调用方负责 `Close`                     |
 
-`Cursor` 提供 `Next`、`Decode`、`Current` (原始 BSON)、`Err`、`Close`。两者都遵守 Query 的条件、排序、limit、offset 与投影, 并且在通过事务子 Engine 打开时会把后续的 `getMore`/`killCursors` 也绑定到事务会话上, 保证游标生命周期与事务一致。回调式 `Each` 是大多数场景下的首选, 因为它把"忘记关闭游标"这一常见缺陷从 API 层面消除。
+`Cursor` 是对 `*mongo.Cursor` 的薄包装, 提供 `Next`、`Decode`、`Current` (原始 BSON)、`Err`、`Close`。两者都遵守 Query 的条件、排序、limit、offset 与投影。包装的关键价值在于会话绑定: `Next` 与 `Close` 内部都会把当前 engine 的 session 绑到 context 上, 因此通过事务子 Engine 打开游标时, 后续的 `getMore`/`killCursors` 也留在事务会话内, 保证游标生命周期与事务一致。回调式 `Each` 是大多数场景下的首选, 因为它把"忘记关闭游标"这一常见缺陷从 API 层面消除; `Each` 结束时会返回 `cursor.Err()` 以暴露迭代中断错误。
 
 ## 事务
 
-`engine.Transaction(ctx, fn)` 基于 MongoDB 会话与 `WithTransaction` 实现: 回调返回 nil 触发自动提交, 返回错误触发自动回滚。
+`engine.Transaction(ctx, fn)` 基于 MongoDB 会话与 `session.WithTransaction` 实现: 回调返回 nil 触发自动提交, 返回错误触发自动回滚; engine 未初始化 (nil client) 时直接返回 `engine is not initialized`。
 
 ```go
 err := engine.Transaction(ctx, func(sc context.Context, tx *yukino_orm.Engine) error {
@@ -259,34 +265,37 @@ err := engine.Transaction(ctx, func(sc context.Context, tx *yukino_orm.Engine) e
 })
 ```
 
-事务子 Engine 持有 session, 每个查询在执行前会把 session 绑定到上下文: 若传入的 context 尚未携带 session, 框架用 `mongo.NewSessionContext` 补上, 否则原样使用。因此即使调用方传入普通 context 而不是回调提供的 `sc`, 查询仍会加入事务; 但推荐始终使用 `sc`, 因为它携带了正确的事务截止时间与取消语义。注意事项: 不要在回调外保留 `tx`, 它的会话在回调返回后即结束; 事务要求 MongoDB 副本集或分片集群部署, 单机实例上会失败。
+事务子 Engine 复用外层 Engine 的 client/database 但持有 session, 每个查询在执行前会通过 `execCtx` 把 session 绑定到上下文: 若传入的 context 尚未携带 session (`mongo.SessionFromContext` 为 nil), 框架用 `mongo.NewSessionContext` 补上, 否则原样使用。因此即使调用方传入普通 context 而不是回调提供的 `sc`, 查询仍会加入事务; 但推荐始终使用 `sc`, 因为它携带了正确的事务截止时间与取消语义。注意事项: 不要在回调外保留 `tx`, 它的会话在回调返回后即结束; 事务要求 MongoDB 副本集或分片集群部署, 单机实例上会失败。
 
 ## 自增序列
 
-`engine.NextSequence(ctx, name)` 实现经典的 counters 集合模式: 在 `counters` 集合中以 name 为 `_id`, 用 `FindOneAndUpdate` 配合 `$inc: {value: 1}` 与 upsert, 并返回更新后的文档, 因此每次调用得到全局递增的 `int64` (1, 2, 3, ...)。原子性由 MongoDB 的单文档更新保证, 每个序列名对应一个独立文档。它同样会绑定当前 engine 的会话, 因此在事务子 Engine 上调用时也参与事务。
+`engine.NextSequence(ctx, name)` 实现经典的 counters 集合模式: 在 `counters` 集合中以 name 为 `_id`, 用 `FindOneAndUpdate` 配合 `$inc: {value: 1}`、upsert 与 `ReturnDocument(After)`, 解码更新后文档的 `value` 字段, 因此每次调用得到全局递增的 `int64` (1, 2, 3, ...)。原子性由 MongoDB 的单文档更新保证, 每个序列名对应一个独立文档。参数校验: engine 未初始化返回 `engine is not initialized`, name 去空白后为空返回 `sequence name is required`。它同样走 `sessionContext` 绑定当前 engine 的会话, 因此在事务子 Engine 上调用时也参与事务。
 
 ## 日志
 
-库内置一个带颜色与级别的日志器:
+库内置一个带 ANSI 颜色与级别的日志器 (`log.go`), 基于标准库 `log.Logger`, 输出附带时间戳与调用点短文件名 (`log.LstdFlags | log.Lshortfile`):
 
 | 调用               | 输出目标                      |
 | ------------------ | ----------------------------- |
 | `Info` / `Infof`   | 标准输出, 蓝色 `[info ]` 前缀 |
 | `Error` / `Errorf` | 标准错误, 红色 `[error]` 前缀 |
 
-级别常量的数值顺序是 `InfoLevel (0) < ErrorLevel (1) < Disabled (2)`, 数值越大输出越少。`SetLevel(InfoLevel)` 打开全部日志; `SetLevel(ErrorLevel)` 只保留错误; `SetLevel(Disabled)` 全部静默。级别切换是全局的, 会影响该进程内所有使用该库的代码。
+级别常量的数值顺序是 `InfoLevel (0) < ErrorLevel (1) < Disabled (2)`, 数值越大输出越少。`SetLevel` 先把两个 logger 恢复到默认输出 (info 到 stdout, error 到 stderr), 再把低于阈值的 logger 重定向到 `io.Discard`: `SetLevel(InfoLevel)` 打开全部日志, `SetLevel(ErrorLevel)` 只保留错误, `SetLevel(Disabled)` 全部静默。级别切换由互斥锁保护且是全局的, 会影响该进程内所有使用该库的代码。
 
 ## 错误处理
 
-| 错误                         | 触发条件                                                                   |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `mongo uri is required`      | `NewEngine` 的 uri 去空白后为空                                            |
-| `mongo database is required` | `NewEngine` 的 database 去空白后为空                                       |
-| `ErrCollectionRequired`      | 终结方法执行时 Query 未绑定集合 (例如 `Collection("")` 或非结构体 `Model`) |
-| `ErrNotFound`                | `First` 无匹配文档, 是 `mongo.ErrNoDocuments` 的别名                       |
-| 构建期错误                   | 非法字段类型、未识别操作符、错误的参数个数/类型, 在终结方法处返回          |
-| 分组校验错误                 | `GroupBy`/`Having`/`Aggregate` 违反上文规则                                |
-| 驱动原生错误                 | 其余情况原样透传, 可用 `errors.Is` 等标准方式判断                          |
+| 错误                                | 触发条件                                                                            |
+| ----------------------------------- | ----------------------------------------------------------------------------------- |
+| `mongo uri is required`             | `NewEngine` 的 uri 去空白后为空                                                     |
+| `mongo database is required`        | `NewEngine` 的 database 去空白后为空                                                |
+| `engine is not initialized`         | nil engine/nil client 上调用 `Transaction`/`NextSequence`                           |
+| `sequence name is required`         | `NextSequence` 的 name 去空白后为空                                                 |
+| `ErrCollectionRequired`             | 终结方法执行时 Query 为 nil 或未绑定集合 (例如 `Collection("")` 或非结构体 `Model`) |
+| `ErrNotFound`                       | `First` 无匹配文档, 是 `mongo.ErrNoDocuments` 的别名                                |
+| `at least one document is required` | `Insert` 展开后文档列表为空                                                         |
+| 构建期错误                          | 非法字段类型、未识别操作符、错误的参数个数/类型, 在终结方法处返回                   |
+| 分组校验错误                        | `GroupBy`/`Having`/`Aggregate` 违反上文规则                                         |
+| 驱动原生错误                        | 其余情况原样透传, 可用 `errors.Is` 等标准方式判断                                   |
 
 对常见错误 (无匹配、唯一键冲突、上下文超时) 建议在应用层建一层统一的错误包装, 库本身只做透传。
 
@@ -296,6 +305,7 @@ err := engine.Transaction(ctx, func(sc context.Context, tx *yukino_orm.Engine) e
 - 无条件的 `Update`/`Delete` 会命中整个集合, 调用方必须在应用层保证条件存在。
 - 结构体更新会把零值一并写入 `$set` (除非标注 `omitempty`), 这可能覆盖数据库中的既有值; 需要局部更新时使用 `bson.M`。
 - 字段名、操作符、别名等外部输入在构建期被校验, 但仍不建议把未经清洗的用户输入直接拼成字段名。
+- 日志级别 (`SetLevel`) 是进程级全局状态, 并发调用有互斥锁保护, 但语义上应在初始化阶段一次性设置。
 
 ## 性能与资源约束
 
@@ -311,7 +321,7 @@ err := engine.Transaction(ctx, func(sc context.Context, tx *yukino_orm.Engine) e
 
 ## 可测试性
 
-测试套件为每个用例创建带时间戳隔离的临时数据库, 并在清理时删除, 因此用例之间不会互相污染。默认连接 `mongodb://localhost:27017`, 可通过环境变量 `MONGO_URI` 覆盖。若目标 MongoDB 需要认证而调用方未提供凭据, 集成测试会被跳过而不是失败, 便于在 CI 中运行。纯构建逻辑 (条件合并、操作符别名、LIKE 转换、`$set` 归一化、集合命名、投影、克隆独立性、分组校验) 都有不依赖数据库的单元测试, 而插入/查询/更新/删除/聚合/事务/游标等依赖真实实例的行为由集成测试覆盖。
+测试套件 (`yukino_orm_test.go`) 为每个用例创建以纳秒时间戳命名的临时数据库 (`yukino_orm_test_<UnixNano>`), 并在 `t.Cleanup` 中 `DropDatabase`, 因此用例之间不会互相污染。默认连接 `mongodb://localhost:27017/`, 可通过环境变量 `MONGO_URI` 覆盖。测试启动时先在临时库执行一次 `create` 命令做访问检查, 若目标 MongoDB 需要认证而调用方未提供凭据 (错误含 `Unauthorized`), 集成测试会被跳过而不是失败, 便于在 CI 中运行; 依赖副本集的事务测试在不支持事务的部署上同样跳过。纯构建逻辑 (条件合并、操作符别名、LIKE 转换、`$set` 归一化、集合命名、投影、克隆独立性、分组校验) 都有不依赖数据库的单元测试, 而插入/查询/更新/删除/聚合/事务/游标等依赖真实实例的行为由集成测试覆盖。
 
 ## 适用场景与选型建议
 
@@ -330,4 +340,4 @@ err := engine.Transaction(ctx, func(sc context.Context, tx *yukino_orm.Engine) e
 - 需要在单个 Query 上并发执行: `Query` 有可变状态, 并发场景应为每个 goroutine 使用独立 Query。
 - 需要不规则复数或缩写命名的集合: 应显式使用 `Collection`。
 
-相关主题: 集合名推导、`$set` 归一化与 `Pluck` 的元素构造都建立在反射之上, `bson` 标签则是驱动与本库共用的字段映射扩展点, 这些语言层机制见 [Go 语言核心](go); 把查询结果挡在数据库之前的缓存层设计见 [yukino_cache](yukino-cache)。
+相关主题: 集合名推导、`$set` 归一化与 `Pluck` 的元素构造都建立在反射之上, `bson` 标签则是驱动与本库共用的字段映射扩展点, 这些语言层机制见 [Go 语言核心](./go); 把查询结果挡在数据库之前的缓存层设计见 [yukino_cache_go](./yukino-cache-go)。

@@ -17,13 +17,10 @@
   "fetchpriority-swr",
   {
     "type": "section-header",
-    "label": "Yukino 前端系列"
+    "label": "Yukino 前端与 Agent 系列"
   },
-  "yukino-code",
   "yukino-codegen",
   "yukino-mcp",
-  "yukino-agent",
-  "yukino-agent2",
   "yukino-chatbot",
   "yukino-chat",
   "yukino-sentry"

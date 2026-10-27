@@ -184,3 +184,5 @@ doc_build/
 
 # rspress temp
 .rspress/
+
+.claude/

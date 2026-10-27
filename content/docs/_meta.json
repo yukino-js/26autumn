@@ -13,7 +13,6 @@
     "label": "协议与方案调研"
   },
   "a2ui",
-  "a2ui-express",
   "mcp-app",
   "webc",
   {
@@ -45,17 +44,17 @@
   },
   {
     "type": "dir",
-    "name": "yukino-agent",
-    "label": "yukino-agent"
+    "name": "yukino-dev-agent",
+    "label": "yukino-dev-agent"
   },
   {
     "type": "dir",
-    "name": "yukino-agent2",
-    "label": "yukino-agent2"
+    "name": "yukino-ecomm-agent",
+    "label": "yukino-ecomm-agent"
   },
   {
     "type": "dir",
-    "name": "yukino-agent-test",
-    "label": "yukino-agent-test"
+    "name": "yukino-test-agent",
+    "label": "yukino-test-agent"
   }
 ]

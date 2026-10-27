@@ -4,7 +4,7 @@ overview: true
 description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布局, React/Next.js/Vite/TanStack/Priority Hints 工程实践, 以及 Yukino 前端与 Agent 系列"
 ---
 
-前端方向的系统性技术笔记, 按主题分为三部分, 共 16 个页面 (含本落地页).
+前端方向的系统性技术笔记, 按主题分为三部分, 共 13 个页面 (含本落地页).
 
 ## 第一部分: 语言、运行时与 CSS
 
@@ -27,13 +27,13 @@ description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布
 
 以下文档均以对应仓库的真实源码为事实依据.
 
-| 页面                             | 内容概要                                                                                                                                                                                                                                                          |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [yukino-code](yukino-code)       | Yukino Code 终端 Coding Agent 内核的子系统机制: 主循环与事件流、Provider 适配与重试、工具与 MCP 延迟加载、上下文压缩与恢复、检查点与 fork、长期记忆、subagents 与团队、coordinator 与持久 goal、权限与沙箱、OTel/Sentry/Langfuse 三支柱遥测, 附三十一问设计问答篇 |
-| [yukino-codegen](yukino-codegen) | Yukino Codegen AI 全栈代码生成平台: 生成流水线与提示词契约、服务端与浏览器职责划分、产物挂载与预览、与编码 Agent 的生成/修复闭环、安全边界与可观测性                                                                                                              |
-| [yukino-mcp](yukino-mcp)         | Yukino 官方 MCP 服务器: 把本地 RAG 文档检索、MCP Apps 交互式 UI、gh CLI 与 PostgreSQL/MySQL/Redis/MongoDB/Prometheus 五类数据后端收敛成 9 个 MCP 工具, 以 stdio 与 HTTP 双传输暴露                                                                                |
-| [yukino-agent](yukino-agent)     | OnCall/DevFlow 双产品面应用: Next.js 16 + AI SDK、Milvus 混合检索 RAG、ReAct 与 LangGraph Plan-Execute-Replan 编排、A2UI 交互界面、MCP 工具与可观测性                                                                                                             |
-| [yukino-agent2](yukino-agent2)   | 电商客服 Agent: Hono HTTP 层、LangGraph 会话图、四策略检索与两道置信度门禁、可选 Milvus 向量路径、MCP 工具执行、分层记忆与 Lit 前端                                                                                                                               |
-| [yukino-chatbot](yukino-chatbot) | 全栈 LLM 聊天应用: Koa 后端的 JWT 会话、Provider 热切换、RAG 检索与 SSE 流式输出, React 前端以 Jotai 加 React Query 分层状态                                                                                                                                      |
-| [yukino-chat](yukino-chat)       | 自托管 IM 平台: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存降级, 以及进程内内嵌的 coding agent                                                                                                                               |
-| [yukino-sentry](yukino-sentry)   | @yukino.js/sentry 浏览器监控 SDK: 错误/HTTP/轨迹/性能/点击/曝光/白屏/录屏采集, 事件总线解耦、批量上报、离线缓存、服务端恢复与 React/Vue 接入                                                                                                                      |
+| 页面                                                                | 内容概要                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [yukino-code](../docs/yukino/yukino-code)                           | Yukino Code 终端 Coding Agent 源码解析: 主循环与事件流、Provider 适配与重试、工具与 MCP 延迟加载、上下文压缩与恢复、检查点与 fork、长期记忆、subagents 与团队、coordinator 与持久 goal、权限、Hooks 与沙箱、运行模式与遥测, 附三十一问设计问答篇  |
+| [yukino-codegen](yukino-codegen)                                    | Yukino Codegen AI 全栈代码生成平台: 服务端用 Yukino 编码 Agent 在真实磁盘上迭代产出 Vite 工程, 浏览器用 WebContainer 完成安装与预览, 以服务器权威文件 + WebSocket 事件溯源 + 三方合并闭合生成/运行/修复回路                                       |
+| [yukino-mcp](yukino-mcp)                                            | Yukino 官方 MCP 服务器: 把本地 RAG 文档检索、MCP Apps 交互式 UI、gh CLI 与 PostgreSQL/MySQL/ClickHouse/Redis/MongoDB/Prometheus/Grafana/MinIO/etcd/Milvus/Kafka 十一类数据后端收敛成 15 个 MCP 工具, 以 stdio 与无状态 Streamable HTTP 双传输暴露 |
+| [yukino-dev-agent](../docs/yukino-dev-agent/yukino-dev-agent)       | OnCall/DevFlow 双产品面应用: Next.js 16 + AI SDK、Milvus 混合检索 RAG、ReAct 与 SSE 流式 Plan-Execute-Replan 编排、A2UI 交互界面、多源告警聚合、MCP 工具体系、Langfuse 可观测性与 Prometheus 指标桥                                               |
+| [yukino-ecomm-agent](../docs/yukino-ecomm-agent/yukino-ecomm-agent) | 电商客服 Agent: Hono HTTP 层、LangGraph 会话图、四策略检索与两道置信度门禁、可选 Milvus 向量路径、MCP 工具执行、分层记忆与上下文预算, 组织成可中断、可审计的对话                                                                                  |
+| [yukino-chatbot](yukino-chatbot)                                    | pnpm 全栈 LLM 聊天应用: Koa 3 后端的 JWT 会话、Provider 热切换、即时构建的 RAG 检索与 SSE 流式输出, React 19 前端以 Jotai 加 React Query 分层状态, 流式渲染热路径移出 React                                                                       |
+| [yukino-chat](yukino-chat)                                          | 自托管 IM 平台: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级, 以及为每个用户进程内嵌入的只读 coding agent 与其 JSON-RPC 桥                                                                          |
+| [yukino-sentry](yukino-sentry)                                      | @yukino.js/sentry 浏览器监控 SDK: 错误/HTTP/页面轨迹/性能/声明式点击/曝光/白屏/错误前录屏采集, 发布订阅事件总线解耦、批量上报、离线缓存、服务端恢复、采样过滤与 React/Vue 接入                                                                    |

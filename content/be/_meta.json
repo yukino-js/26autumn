@@ -21,7 +21,7 @@
   "yukino-http",
   "yukino-rpc",
   "yukino-orm",
-  "yukino-cache",
+  "yukino-cache-go",
   "yukino-agent",
   "yukino-agent-proxy",
   "yukino-go-components",
