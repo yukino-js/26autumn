@@ -500,15 +500,15 @@ Action 的第三方依赖全部用提交 SHA 钉死并带版本注释, 有脚本
 
 面向 coding agent 的插件按平台各有一份清单, 统一要求 git 版本达标并先安装 ocr:
 
-| 平台             | 形态                                                                                                 |
-| ---------------- | ---------------------------------------------------------------------------------------------------- |
-| Claude Code      | marketplace 插件, 提供 review 与 delegate-review 两个 slash command, 见 [claude-code](./claude-code) |
-| [codex](./codex) | .codex-plugin 清单, 可调用评审 skills                                                                |
-| Cursor           | .cursor-plugin, 可移植 skills 手动安装到本地插件目录                                                 |
-| Kimi Code        | .kimi-plugin 清单, slash commands 加 skills                                                          |
-| OpenCode         | TypeScript 原生插件: 定义输入、spawn ocr、封装退出码与双通道输出, 临时目录清理带重试                 |
-| QCA Forward      | 宿主模型走委托模式, 带可发布模板(template.example.json 与 system-prompt.md)                          |
-| ACP 客户端       | 独立模块 acp/ 提供 Agent Client Protocol 适配器(见 13.4)                                             |
+| 平台        | 形态                                                                                                 |
+| ----------- | ---------------------------------------------------------------------------------------------------- |
+| Claude Code | marketplace 插件, 提供 review 与 delegate-review 两个 slash command, 见 [claude-code](./claude-code) |
+| Codex       | .codex-plugin 清单, 可调用评审 skills                                                                |
+| Cursor      | .cursor-plugin, 可移植 skills 手动安装到本地插件目录                                                 |
+| Kimi Code   | .kimi-plugin 清单, slash commands 加 skills                                                          |
+| OpenCode    | TypeScript 原生插件: 定义输入、spawn ocr、封装退出码与双通道输出, 临时目录清理带重试                 |
+| QCA Forward | 宿主模型走委托模式, 带可发布模板(template.example.json 与 system-prompt.md)                          |
+| ACP 客户端  | 独立模块 acp/ 提供 Agent Client Protocol 适配器(见 13.4)                                             |
 
 ### 13.3 可移植 skills
 

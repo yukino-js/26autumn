@@ -26,11 +26,6 @@ const repositories = [
     install: ["npm", "install", `--registry=${REGISTRY}`],
   },
   {
-    name: "codex",
-    url: "org-14957082@github.com:openai/codex.git",
-    install: null,
-  },
-  {
     name: "insforge",
     url: "git@github.com:insforge/insforge.git",
     install: ["npm", "install", `--registry=${REGISTRY}`],

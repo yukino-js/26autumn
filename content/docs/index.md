@@ -4,7 +4,7 @@ overview: true
 description: "工作实践与开源项目调研: TikTok/IEG/Data 工作复盘、Docker/K8s 与 JSError 自动修复云沙箱实战、A2UI/MCP Apps/WebContainer 协议与方案调研、Coding Agent 调研, 以及 AI 框架与平台调研"
 ---
 
-本部分收录工作期间的技术复盘与开源项目调研, 按主题分为四个部分, 共 18 个页面 (含本落地页).
+本部分收录工作期间的技术复盘与开源项目调研, 按主题分为四个部分, 共 17 个页面 (含本落地页).
 
 ## 工作实践
 
@@ -25,7 +25,6 @@ description: "工作实践与开源项目调研: TikTok/IEG/Data 工作复盘、
 
 - [codegraph](codegraph): 面向 AI 编码 Agent 的本地代码知识图谱. 把代码库预计算成一张本地 SQLite 知识图谱, 通过 MCP 查询面给编码 Agent 提供精确的结构化上下文, 替代 grep 加逐文件读取的探索循环.
 - [claude-code](claude-code): 一个终端 AI 编码助手的工程实现剖析. Bun 代码分割构建、流式 Agent 循环与工具并发调度、核心白名单加延迟发现的工具系统, 以及把异构模型协议收敛到 Anthropic 内部格式的流适配器模式.
-- [codex](codex): OpenAI Codex CLI 的协议化架构. Rust 单体内核与 TUI/exec/app-server/SDK/MCP 多形态产品面、SQ/EQ 事件协议与 app-server JSON-RPC 线、以子进程加 JSONL 暴露的 TypeScript SDK、Seatbelt/Landlock 沙箱与 execpolicy 规则引擎、MCP 双向集成、分层配置与 rollout 持久化.
 - [pi](pi): Pi Agent Harness. 极简内核与扩展机制的边界、entry 树会话模型、TypeScript SDK 的进程内嵌入、durable 运行时的持久化不变量与执行环境抽象、pi-env 的远程执行协议、chord 应用组合运行时与遥测落库、codemode 的沙箱化脚本执行、统一 provider 面与容器化、五种接口形态与 TUI 渲染工程.
 - [open-code-review](open-code-review): OpenCodeReview 的评审流水线. 确定性工程与 LLM Agent 的分工、Provider 抽象与端点解析、规则体系与 allowlist、评论定位的三级回退、token 预算与 grace round、GitHub Action/npm/IDE/Agent 插件分发, 以及成本与可靠性的取舍.
 

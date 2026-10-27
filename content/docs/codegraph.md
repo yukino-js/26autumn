@@ -8,7 +8,7 @@ local_path: "$HOME/Downloads/codegraph"
 
 ## 一、要解决的核心问题
 
-任何用过 [Claude Code](./claude-code)、Cursor Agent 模式或 [Codex](./codex) 的人都见过这一幕: 你问"用户认证流程是怎么走的", Agent 立刻派出探索子任务, 开始执行 ls、grep、逐段读文件的循环, 几十次工具调用之后才真正开始处理你的请求。
+任何用过 [Claude Code](./claude-code)、Cursor Agent 模式或 Codex 的人都见过这一幕: 你问"用户认证流程是怎么走的", Agent 立刻派出探索子任务, 开始执行 ls、grep、逐段读文件的循环, 几十次工具调用之后才真正开始处理你的请求。
 
 CodeGraph 的核心判断是: 这种探索本质上把静态结构信息交给大模型的工作记忆反复重算。文件之间的调用、导入、继承关系是确定性的、AST 可推导的, 没有理由每次会话都让模型用 grep 重新发现。提前算一次、放在本地数据库里、通过协议直接喂给 Agent, 就够了。
 
