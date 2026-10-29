@@ -80,7 +80,7 @@ apps/task_flow/
 `main.go` 的装配顺序就是一条依赖链, 读懂它等于读懂整个服务:
 
 1. `flag.String("config", "conf.yml")` 加载配置, `conf.Load` 对 YAML 标量做 `${VAR}` 展开 (`expandEnv`), 再由 `repair()` 补齐默认值、`Validate()` 校验。
-2. `telemetry.Setup` 初始化 OTel (stdout/file exporter), `obsx.Init` 初始化 Sentry (无 DSN 时为 noop)。
+2. `telemetry.Setup` 初始化 OTel (stdout/file exporter), `obsx.Setup` 初始化 Sentry (无 DSN 时为 noop)。
 3. 打开 MySQL: 库不存在则 `CREATE DATABASE`; 用 `GET_LOCK('task_flow:schema:migration', 30)` 包住 `po.AutoMigrate` (八张表), 保证多节点同时启动时 DDL 串行。
 4. `cdc.EnsureDatabaseCapture` 扫描当前 schema 的可捕获基表, 安装缺失的 INSERT/DELETE 触发器。
 5. `storage.OpenRedis` 按 standalone/sentinel/cluster 模式构造 UniversalClient 并 Ping。
@@ -111,7 +111,7 @@ apps/task_flow/
 | `risk_records`      | 演示业务表, 条件任务的示例数据源                                                                                                                                                                                           |
 | `mq_dead_letters`   | red_mq 死信信箱落库                                                                                                                                                                                                        |
 | `tcc_tx_records`    | TCC 事务记录: `status` (索引)、`component_try_statuses` (text JSON)                                                                                                                                                        |
-| `task_flow_changes` | CDC 事件: `event_key` (64, unique, 触发器内 `UUID()`)、`table_name` + `occurred_at` 复合索引、`operation`、`record_json` (JSON)、`processed_at`, 全部 `datetime(6)`                                                        |
+| `task_flow_changes` | CDC 事件: `event_key` (64, unique, 触发器内 `UUID()`)、`table_name` + `occurred_at` 复合索引、`operation`、`record_json` (JSON)、`processed_at` (索引), `occurred_at` 为 `datetime(6)`                                     |
 | `task_flow_outbox`  | 待发布意图: `event_key` (191, unique)、`payload` (mediumtext)、`published_at` (索引)                                                                                                                                       |
 
 `executions` 的关键列: `fire_key` (size 191, uniqueIndex, 幂等锚点)、`tx_id` (64, 索引, 指向 TCC 事务)、`status` (索引)、`task_type`/`task_id`/`task_name`、`fire_at` (索引)、`trigger_info`/`prompt_snapshot`/`report_body` (mediumtext)、`model_snapshot`、`report_path`、`report_excerpt` (text)、`error` (text)、`trace_id` (64, 索引)、`node_id`、`claimed_at`/`started_at`/`finished_at`、`tool_calls`、`tokens_prompt`/`tokens_output`。任务类型常量: `scheduled`、`condition`、`manual`; 事件类型常量: `mysql_insert`。
@@ -179,13 +179,13 @@ Migrator 是单例角色 (见后文集群协调), 每 `migrate_tick_seconds` (�
 
 ### 分布式时间轮: 分钟桶 ZSET
 
-`time_wheel.RTimeWheel` 按分钟切桶, 每分钟的 key 形如 `yukino_time_wheel_task_{2006-01-02-15:04}`, 另有删除集 `yukino_time_wheel_delete_set_{...}` (注意: 分钟键用 `time.Local` 格式化, 跨时区主机部署时要以代码实际生成的 key 为准)。后台 ticker 每秒醒一次, 用三段 Lua 完成到期扫描:
+`time_wheel.RTimeWheel` 按分钟切桶, 每分钟的 key 形如 `yukino_time_wheel_task_{2006-01-02-15:04}`, 另有删除集 `yukino_time_wheel_delete_set_{...}` (注意: 分钟键按传入时间的 Location 格式化, 到期扫描侧使用主机本地时间, 跨时区主机部署时要以代码实际生成的 key 为准)。后台 ticker 每秒醒一次, 用三段 Lua 完成到期扫描:
 
 - `LuaAddTasks`: 先 `SREM` 删除集里的标记, 再 `ZADD` (score = `executeAt.Unix()`, member = 任务 JSON)。
 - `LuaDeleteTask`: 向删除集 `SADD` 任务键, 首次加入时 `EXPIRE 120`。
 - `LuaZrangeTasks`: 取删除集成员, `ZRANGEBYSCORE [本分钟起点, 当前秒]` 拉出到期任务并 `ZREMRANGEBYSCORE` 删除后返回。
 
-到期任务由 16 个 worker 并发执行, 每个任务一个 30s 的 context; 执行方式就是按注册时的 method/URL/header/body 发出 HTTP 请求。注册前 `addTaskPreCheck` 校验 method 必须是 GET/POST 且 URL 是 http(s)。
+到期任务由 16 个 worker 并发执行, 一轮到期扫描共用一个 30s 的 context; 执行方式就是按注册时的 method/URL/header/body 发出 HTTP 请求。注册前 `addTaskPreCheck` 校验 method 必须是 GET/POST 且 URL 是 http(s)。
 
 ### 触发入口与当前定义校验
 
@@ -217,7 +217,7 @@ Migrator 是单例角色 (见后文集群协调), 每 `migrate_tick_seconds` (�
 
 `ConditionPipeline` 启动 `cfg.Executor.Workers` 个消费者 `{node}-cond-{i}`, 订阅 cond 主题。消息 `CondEvent` 按来源分两种处理:
 
-- **中继事件 (`execution_id != 0`)**: 校验执行行存在、fire_key 与 task_id 归属一致、状态仍为 pending, 然后 `Dispatch`。坏消息直接丢弃 (返回 nil, 不重试)。
+- **中继事件 (`execution_id != 0`)**: 校验执行行存在、fire_key 与 task_id 归属一致、状态仍为 pending, 然后 `Dispatch`。JSON 解析失败的消息直接丢弃 (返回 nil, 不重试); 执行行不存在或归属不一致时返回错误交给 MQ 重试; 状态已非 pending 则静默丢弃。
 - **直发事件 (`execution_id == 0`)**: 来自 `PublishRecordInserted` 辅助路径或外部投递。加载任务定义 (已删除 → warn 丢弃; 已禁用 → 丢弃), 回查 `risk_records` 原行 (已删 → 丢弃), 组装 `trigger_info`, `fireAt` 取记录 `created_at` (缺失时用 `occurred_at`), `InsertPending` 后对新的 pending 执行 `Dispatch`。直发路径的 fire key 是 `cond:{taskId}:{table}:{recordId}:{unix}`, 与中继路径的 change UUID key 不同 — 同一 INSERT 若同时走两条路径会得到两个逻辑执行, 所以主路径只保留 trigger → changes → relay → outbox。
 - `PublishRecordInserted` 自身也用 `ClaimEvent` (SETNX `task_flow:idem:evt:{eventKey}`) 防重, XADD 失败时 `ReleaseEvent`。
 
@@ -279,7 +279,7 @@ Executor 启动 `cfg.Executor.Workers` (默认 4, 夹紧到 1..64) 个消费者 
 
 **mysql_tool**: 入参 `{sql}`。约束: SQL 长度 ≤ 64KiB; 查询 context 30s; 经 `validateSQL` 策略检查后, 读语句 (`select/show/describe/desc/explain/with` 开头) 走 `Raw().Rows()`, 行数上限 `max_result_rows` (默认 100), 累计 JSON 预算 1MiB, 单个字符串截断到 64KiB 并转成合法 UTF-8, 结果 `{columns, rows, row_count, truncated, executed_sql}`; 写语句 (`insert/update/delete`) 仅当 `allow_sql_writes` 打开时执行, 返回 `affected_rows`。`sql_policy.go` 的词法器会拒绝: `;` 多语句、`#`/`/*`/`--` 注释、未闭合引号; 禁用词表覆盖 `drop/truncate/alter/create/grant/revoke/rename/lock/unlock/flush/reset/shutdown/kill/load/call/...` 与 `sleep/benchmark/get_lock/release_lock` 等; `set` 只允许出现在 UPDATE 语句内部; 读语句里嵌写词、写语句触碰 `task_flow_*` 前缀表或 `executions/scheduled_tasks/condition_tasks/tcc_tx_records/mq_dead_letters` 控制表都会被拒。
 
-**redis_tool**: 入参 `{op, key, field?, value?, ttl_seconds?, pattern?}`。允许操作: `get/set/del/exists/ttl/incr/decr/hget/hset/hgetall/keys`; 除 `keys` 外所有操作的 key 必须以 `redis_key_prefix` (默认 `task_flow:tools:`) 开头, `keys` 的 pattern 同样要求带前缀; value ≤ 64KiB、field ≤ 512 字节、key ≤ 512 字节、TTL 范围 0..2592000 (30 天); 操作 context 10s; `get` 用 `Exists` + `GetRange 0..65535` 防大 key, `hgetall` 用有界 `HSCAN` (≤100 次迭代、≤100 字段、值截断 1024), `keys` 用有界 `SCAN` (≤100 个); 统一 `jsonOK/jsonErr` 信封返回。
+**redis_tool**: 入参 `{operation, key, field?, value?, ttl_seconds?, pattern?}`。允许操作: `get/set/del/exists/ttl/incr/decr/hget/hset/hgetall/keys`; 除 `keys` 外所有操作的 key 必须以 `redis_key_prefix` (默认 `task_flow:tools:`) 开头, `keys` 的 pattern 同样要求带前缀; value ≤ 64KiB、field ≤ 512 字节、key ≤ 512 字节、TTL 范围 0..2592000 (30 天); 操作 context 10s; `get` 用 `Exists` + `GetRange 0..65535` 防大 key, `hgetall` 用有界 `HSCAN` (≤100 次迭代、≤100 字段、值截断 1024), `keys` 用有界 `SCAN` (≤100 个); 统一 `jsonOK/jsonErr` 信封返回。
 
 ## 报告产物与分布式缓存
 
@@ -291,7 +291,7 @@ Executor 启动 `cfg.Executor.Workers` (默认 4, 夹紧到 1..64) 个消费者 
 
 缓存读路径 `ReportStore.Load`: 先查 yukino_cache 分组 (`task-flow.reports`, key `exec:{id}`), miss 回落到 `executions.report_body`。`Warm` 在终态 CAS 成功后把报告写进分组。分组在 main 里注册: `yukino_cache.NewGroup(cfg.Cache.ReportGroup, report_cache_bytes_mib<<20, getter, WithExpiration(report_expire_seconds))`, getter 解析 `exec:%d` 从 SQL 读 `report_body`。配置了 `etcd_endpoints` + `cache_server_addr` 时, `OpenReportPeers` 启动 gRPC 缓存服务 (服务名 `task-flow.reports`) 并注册 ClientPicker, Set/Delete 会异步同步给 key 的 peer owner (见第二部分第 10 章)。
 
-任务定义缓存走 `consistent_cache`: 两个 `Service` 分别对应前缀 `task_flow:def:sched:` 与 `task_flow:def:cond:`, 选项 `WithCacheExpireSeconds(def_cache_expire_seconds, 默认 60)` + `WithCacheExpireRandomMode` (TTL 变 60..120s 抖动, 防同时失效) + `WithDisableExpireSeconds(1)`。写路径 (`UpdateScheduledTask` 等) 先 Disable (写禁回填标记) → Del 缓存 → SQL 更新 → 异步 Enable; 读路径 miss 时回填, 且回填受 Lua 门禁保护 (见第二部分第 9 章)。`SyncDrift` (monitor 每轮调用) 对比缓存 JSON 与 `obj.Write()` 的最新值, 不一致就 Disable + Del 并计数, 是对账兜底。
+任务定义缓存走 `consistent_cache`: 两个 `Service` 分别对应前缀 `task_flow:def:sched:` 与 `task_flow:def:cond:`, 选项 `WithCacheExpireSeconds(def_cache_expire_seconds, 默认 60)` + `WithCacheExpireRandomMode` (TTL 变 60..120s 抖动, 防同时失效) + `WithDisableExpireSeconds(1)`。写路径 (`UpdateScheduledTask` 等) 先 Disable (写 1 秒过期的禁回填标记) → Del 缓存 → SQL 更新, 标记靠 TTL 自然过期, 不做显式 Enable; 读路径 miss 时回填, 且回填受 Lua 门禁保护 (见第二部分第 9 章)。`SyncDrift` (monitor 每轮调用) 对比缓存 JSON 与 `obj.Write()` 的最新值, 不一致就 Disable + Del 并计数, 是对账兜底。
 
 ## 集群协调: 心跳、哈希环与单例角色
 
@@ -329,13 +329,13 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 
 **journal** (`journal.Store`, 基于 `lsm_tree`): 配置 `WithMaxLevel(4)`、`WithSSTSize(1MiB)`、`WithSSTNumPerLevel(4)`、`WithSSTDataBlockSize(16KiB)`, 目录取 `journal.dir` (空串则整个 store 为 nil 禁用)。key 为 `fk:{fireKey}`; `RecordDispatch` 在派发成功后写 `{fire_key, execution_id, task_type, task_name, dispatched_at...}`; `RecordOutcome` 在 finalize 时读改写补上终态; `Lookup` 供 `/monitor/journal?fire_key=...` 查询。所有读写有互斥锁, Close 幂等。
 
-**ledger** (`consensus.Ledger`, 基于 `components/raft`): 单成员 raft — `MemoryStorage`, `PreVote: true`, `ElectionTick: 10`, `HeartbeatTick: 1`, `StartNode` 只给一个 peer (自身), 100ms tick。ready loop 持久化 (`Append` + `SetHardState`, 必要时软/硬快照)、apply 已提交条目 (payload 是 `{k, v, t}` JSON, 写进内存 state map) 后 `Advance`。业务侧 `Propose` (2s 超时) 两类条目: `dispatch:{fireKey}` (值 = 执行 ID) 与 `finish:{id}` (值 = 终态)。内存里保留最近 64 条 entries 供 `Status()` 展示 (term、commit_index、raft_state、is_leader 等), 由 `/monitor/consensus` 暴露。每个节点各跑各的单成员集群, 节点间没有 raft 通信, 不构成多数派 — 它演示的是 raft 日志机的装配方式, 不承担跨节点一致性职责。
+**ledger** (`consensus.Ledger`, 基于 `components/raft`): 单成员 raft — `MemoryStorage`, `PreVote: true`, `ElectionTick: 10`, `HeartbeatTick: 1`, `StartNode` 只给一个 peer (自身), 100ms tick。ready loop 持久化 (`Append` + `SetHardState`, 按需进行) 并记录软/硬状态、apply 已提交条目 (payload 是 `{k, v, t}` JSON, 写进内存 state map) 后 `Advance`。业务侧 `Propose` (2s 超时) 两类条目: `dispatch:{fireKey}` (值 = 执行 ID) 与 `finish:{id}` (值 = 终态)。内存里保留最近 64 条 entries 供 `Status()` 展示 (term、commit_index、raft_state、is_leader 等), 由 `/monitor/consensus` 暴露。每个节点各跑各的单成员集群, 节点间没有 raft 通信, 不构成多数派 — 它演示的是 raft 日志机的装配方式, 不承担跨节点一致性职责。
 
 ## 可观测性
 
 - **OpenTelemetry** (`telemetry.Setup`): propagator 为 W3C TraceContext + Baggage; exporter 支持 stdout 与 file (追加 JSONL, `WithoutTimestamps`); resource 带 `service.name = "task-flow"` 与 `service.instance.id = {node id}`; sampler 为 `ParentBased(TraceIDRatioBased(sample_rate))` (默认 1.0)。`telemetry.Inject/Extract` 用 `MapCarrier` 把 trace 塞进/读出 MQ 消息的 `trace_carrier` 字段, 打通 HTTP → 派发 → 消费 → LLM 的链路。
 - **HTTP Trace 中间件**: 从请求头 extract carrier, 开 span, 响应头回写 `X-Trace-Id`。
-- **Sentry** (`obsx.Init`): DSN 取自 `sentry.dsn_env` (默认 `SENTRY_DSN`), 空则 noop; 事件带 Environment/Release、`ServerName = node id`、`EnableTracing: false`。`CaptureError` 生成 type "TaskFlowError" 的事件, tags 含 `component=server` 与自定义字段; trace_id 来自 obsx 自己的 context key (`WithTraceID`), 常规 OTel context 没有自动桥接 — 想让 Sentry 事件关联 trace, 需要显式传递。`CapturePanic` 以 Fatal 级别上报并被 SentryRecover 中间件用于 panic 恢复。
+- **Sentry** (`obsx.Setup`): DSN 取自 `sentry.dsn_env` (默认 `SENTRY_DSN`), 空则 noop; 事件带 Environment/Release、`ServerName = node id`、`EnableTracing: false`。`CaptureError` 生成 type "TaskFlowError" 的事件, tags 含 `component=server` 与自定义字段; trace_id 来自 obsx 自己的 context key (`WithTraceID`), 常规 OTel context 没有自动桥接 — 想让 Sentry 事件关联 trace, 需要显式传递。`CapturePanic` 以 Fatal 级别上报并被 SentryRecover 中间件用于 panic 恢复。
 - **客户端日志接入**: `POST /api/v1/telemetry/log` 接收 ≤1MiB 的合法 JSON, 加互斥锁追加到 `client_log_path` (默认 `logs/client-events.jsonl`), 每行 `{received_at, payload}`。
 
 ## HTTP API 能力面
@@ -383,7 +383,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 | sentry    | dsn_env SENTRY_DSN, environment, release                                                                                                                                                                                                                                                          |
 | telemetry | enabled, exporter stdout/file, file_path, client_log_path `logs/client-events.jsonl`, sample_rate 1                                                                                                                                                                                               |
 
-`Validate()` 强制的约束: cluster 模式必须用 DB 0; sentinel 必须同时给 `addresses` 与 `master_name`; `etcd_endpoints` 与 `cache_server_addr` 必须同时配置或同时为空; 超时时序 `0 < executor.timeout_seconds < executor.handle_timeout_seconds < scheduler.stuck_running_minutes*60` (执行超时必须小于消息处理超时, 后者必须小于 stuck running 判定); migrate tick/step、max_tool_rounds、max_result_rows 为正; database 名必须通过标识符检查。
+`Validate()` 强制的约束: cluster 模式必须用 DB 0; sentinel 必须同时给 `addresses` 与 `master_name`; `etcd_endpoints` 与 `cache_server_addr` 必须同时配置或同时为空; 超时时序 `0 < executor.timeout_seconds < executor.handle_timeout_seconds` 且 `executor.timeout_seconds < scheduler.stuck_running_minutes*60` (执行超时必须小于消息处理超时, 也必须小于 stuck running 判定); migrate tick/step、max_tool_rounds、max_result_rows 为正; database 名必须通过标识符检查。
 
 ### 部署形态
 
@@ -400,7 +400,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 - **投递**: red_mq 是 at-least-once (pending/claim/重试都可能重复投递); **执行**是 at-most-once claim (queued → running CAS 只成功一次)。业务含义: 同一条命令可能被多个消费者看到, 但模型至多跑一次; 代价是 running 崩溃后当前实现标记 failed, 需要人工分析或显式用新的 manual key 重跑。
 - **外部副作用**: exactly-once 只成立于平台内部状态。模型经工具写出的数据 (尤其打开 `allow_sql_writes` 后) 不受事务保护, 平台不提供通用 fencing。
 - **CDC 捕获**: 只有 INSERT/DELETE 触发器, 没有 UPDATE 捕获; 触发器安装前的历史变化没有 baseline; `enabled` 在 relay fanout 时判断, 不是事件发生时刻的订阅快照; TRUNCATE 不产生行级事件。
-- **时间轮**: 分钟桶 key 用 `time.Local` 格式化; 回调依赖节点间网络可达 (BaseURL 必须配置成集群内可达地址)。
+- **时间轮**: 分钟桶 key 按时间的 Location 格式化, 到期扫描侧使用主机本地时间; 回调依赖节点间网络可达 (BaseURL 必须配置成集群内可达地址)。
 - **本地存储**: journal 的 WAL 写入不带逐条 fsync, 且不支持多进程共写一个目录; 报告文件与 SQL 终态不是同一事务。
 - **诊断账本**: raft ledger 是单成员内存集群, 重启即失, 不作为持久事实。
 - **观测**: Sentry 事件与 OTel trace 的关联需要显式传递 trace id, 没有自动桥接。
@@ -410,7 +410,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 
 # 第二部分: 组件教程 — 十个本地 replace 组件
 
-这一部分假设读者刚接触分布式系统。每一章先讲问题域, 再读实现入口, 最后给开发坑与动手练习。非测试 Go 代码行数 (供评估阅读成本): red_mq 902、time_wheel 657、redis_lock 596、consistent_hash 1558、consistent_cache 704、yukino_cache 2301、tcc 1567、timer 1515、lsm_tree 1748、raft 1782。
+这一部分假设读者刚接触分布式系统。每一章先讲问题域, 再读实现入口, 最后给开发坑与动手练习。非测试 Go 代码行数 (供评估阅读成本): red_mq 902、time_wheel 657、redis_lock 596、consistent_hash 1558、consistent_cache 704、yukino_cache 2301 (不含生成的 protobuf 代码)、tcc 1567、timer 3920、lsm_tree 1748、raft 1782。
 
 ## 1. 分布式问题入门 [#chapter-1]
 
@@ -478,7 +478,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 
 **问题域**: 多消费者可靠投递 — 消息不能丢, 处理失败要重试, 反复失败要隔离, 消费者崩溃后未确认的消息要能被别人接管。Redis Streams 的 consumer group + PEL (Pending Entries List) 正好提供原语。
 
-**Producer**: `SendMsg(ctx, topic, key, val)` 就是 `XADD topic MAXLEN ~ {msg_queue_len} * {key: val}` (taskflow 把 MaxLen 设成 5000; 组件默认 500)。注意 `~` 近似裁剪与 MAXLEN 的语义: Redis 允许略微超限以换取性能。
+**Producer**: `SendMsg(ctx, topic, key, val)` 就是 `XADD topic MAXLEN {msg_queue_len} * {key: val}` (taskflow 把 MaxLen 设成 5000; 组件默认 500)。注意这是严格 MAXLEN 裁剪, 未启用 `~` 近似裁剪: 每次 XADD 都把流精确裁剪到上限。
 
 **Consumer 主循环** (`NewConsumer(client, topic, group, name, handler, opts...)`, 创建时 `XGROUP CREATE`):
 
@@ -522,13 +522,13 @@ loop:
 
 **问题域**: 海量延迟任务 ("N 秒后做某事") 如果每个都开一个 timer/协程, 内存与调度开销不可控; 时间轮用固定数量的槽位按时间组织它们, 插入与取消近似 O(1)。
 
-**本地轮 (`time_wheel.go`)**: `NewTimeWheel(slotNum, tick)`; `slots []*list.List` + `keyToETask map[string]*taskElement{task, pos, cycle, key, executeAt}`; 单个 run goroutine 三路 select (addTaskCh / removeTaskCh / ticker)。`getPosAndCircle` 把延迟换算成槽位与圈数: `pos = (当前槽 + delay/tick) % slotNum`, `cycle = delay/tick / slotNum`; 负延迟钳制到立即; 同 key 重复 Add 是**替换**。到期时 cycle 大于 0 就减一再等下一圈, 否则起新 goroutine 执行 (带 recover)。taskflow 的 Monitor 用它安排 30s 一轮的清扫。
+**本地轮 (`time_wheel.go`)**: `NewTimeWheel(slotNum, tick)`; `slots []*list.List` + `keyToETask map[string]*taskElement{task, pos, cycle, key, executeAt}`; 单个 run goroutine 多路 select (stopChan / addTaskCh / removeTaskCh / ticker)。`getPosAndCircle` 把延迟换算成槽位与圈数: `pos = (当前槽 + delay/tick) % slotNum`, `cycle = delay/tick / slotNum`; 负延迟钳制到立即; 同 key 重复 Add 是**替换**。到期时 cycle 大于 0 就减一再等下一圈, 否则起新 goroutine 执行 (带 recover)。taskflow 的 Monitor 用它安排 30s 一轮的清扫。
 
-**分布式轮 (`redis_time_wheel.go`)**: 没有中心进程, 靠 Redis 分片 + 多节点扫描。每分钟一个 ZSET 桶 (`yukino_time_wheel_task_{分钟}`) + 同分钟的删除集 (`yukino_time_wheel_delete_set_{分钟}`); 后台 1s ticker 用三段 Lua (见第一部分) 原子完成 "扣除删除集 → 范围查询 → 删除已取任务"。到期任务交给 16 个 worker、每个 30s context 执行 HTTP 回调; 注册前 pre-check method/URL。
+**分布式轮 (`redis_time_wheel.go`)**: 没有中心进程, 靠 Redis 分片 + 多节点扫描。每分钟一个 ZSET 桶 (`yukino_time_wheel_task_{分钟}`) + 同分钟的删除集 (`yukino_time_wheel_delete_set_{分钟}`); 后台 1s ticker 用三段 Lua (见第一部分) 原子完成 "扣除删除集 → 范围查询 → 删除已取任务"。到期任务交给 16 个 worker、每轮扫描共用一个 30s context 执行 HTTP 回调; 注册前 pre-check method/URL。
 
 **开发坑**:
 
-- 分钟桶 key 用 `time.Local` 格式化 — 不同主机时区不同会产生不同的 key 空间, 部署要对齐时区或以代码生成的 key 为准; 计划语义 (cron/物化) 用 IANA 时区 + UTC 持久化, 与桶 key 是两回事。
+- 分钟桶 key 按传入时间的 Location 格式化, 到期扫描侧使用主机本地时间 — 不同主机时区不同会产生不同的 key 空间, 部署要对齐时区或以代码生成的 key 为准; 计划语义 (cron/物化) 用 IANA 时区 + UTC 持久化, 与桶 key 是两回事。
 - 时间轮只决定 "何时尝试触发", 不知道逻辑事件是否已执行 — 去重必须另靠 SQL 唯一索引。
 - 回调地址必须可达: loopback 指向当前进程的网络命名空间, A 节点注册的 `127.0.0.1:端口` 在 A 宕机后无人监听, 与 B 是否存活无关。
 
@@ -541,7 +541,7 @@ loop:
 - key = `REDIS_LOCK_PREFIX_` + 业务 key; **token = 进程 PID + goroutine ID 字符串** (`utils.GetProcessAndGoroutineIDStr`)。
 - 加锁: `SET key token NX EX expire`; 阻塞模式每 50ms 重试直到成功或 context 结束。
 - 看门狗: **仅在未显式指定过期时间时启用** — 默认锁 30s, 每 `WatchDogWorkStepSeconds` (10s) 用 compare-and-expire Lua 续期; 显式给了 `WithExpireSeconds` 就纯租约, 不续期。taskflow 的所有调用都显式给租期。
-- 解锁: compare-and-delete Lua (token 匹配才 DEL); 解别人的锁返回 `ErrLockAcquiredByOthers` 语义的错误。
+- 解锁: compare-and-delete Lua (token 匹配才 DEL); token 不匹配返回 "can not unlock without ownership of lock" 错误 (`ErrLockAcquiredByOthers` 只用于加锁路径)。
 
 **taskflow 的用法**: `task_flow:lock:migrator` (租期 = 2 个 tick)、`task_flow:lock:monitor` (55s)、`task_flow:tcc:txstore:lock` (恢复循环持有)、哈希环的 `redis:consistent_hash:ring:lock:{key}` (租期默认 15s)。
 
@@ -609,7 +609,7 @@ miss → loader.Do(key, fn)          // singleflight: sync.Map + WaitGroup, pani
 
 `Set` 写本地后, 非 peer 请求会异步 (3s 超时) `syncToPeers` 把 set/delete 推给 key 的 owner 节点 — 这是 "owner 缓存" 模型: 每个 key 由一致性哈希选一个节点主缓存, 其他节点 miss 时去 owner 拿。peer 请求带内部 context 标记, 防止节点间互相转发成环。
 
-**存储 (`lru.go`)**: 16 个 bucket (不足则取 2 的幂), BKDR 哈希分桶, 每桶两档 LRU (L1 cap 512 / L2 cap 256); 字节预算 `MaxBytes` 平均分到每个 bucket (`maxBucketBytes`), 超预算从 L2 头部淘汰; 每分钟一轮清理过期条目。默认选项 `MaxBytes 8MiB`, taskflow 给报告分组 64MiB。
+**存储 (`lru.go`)**: 16 个 bucket (不足则取 2 的幂), BKDR 哈希分桶, 每桶两档 LRU (L1 cap 512 / L2 cap 256); 字节预算 `MaxBytes` 平均分到每个 bucket (`maxBucketBytes`), 超预算先淘汰 L1 最旧条目, 不足再淘汰 L2; 每分钟一轮清理过期条目。默认选项 `MaxBytes 8MiB`, taskflow 给报告分组 64MiB。
 
 **统计**: `Stats()` 输出 gets/loads/loads_deduped/local_hits/local_misses/peer_hits/peer_misses/loader_hits/loader_errors 与 hit_rate、avg_load_time_ms, 经 `/monitor/cache` 暴露。
 
@@ -665,9 +665,9 @@ timer 是 taskflow 的工具箱, 四个子包各解决一个小问题。
 
 **问题域**: 多个节点对 "操作的顺序" 达成一致。`components/raft` 实现了完整的日志机: leader/follower/candidate 状态文件、progress、Ready/Advance 驱动。
 
-**Node 循环 (`raft/node.go`)**: `StartNode(conf, peers)` 后, 单个 run goroutine 用 channel 多路处理: proc (本地提案)、recvChan (网络消息)、confChan (成员变更)、tickChan (逻辑时钟)、readyChan/advanceChan (Ready 交付与应用确认)。Ready 携带 SoftState/HardState/待持久化 Entries/Snapshot/Messages/CommittedEntries; 应用方持久化后 `Advance` 才产出下一个 Ready — 这是 etcd/raft 的经典背压设计。
+**Node 循环 (`raft/node.go`)**: `StartNode(conf, peers)` 后, 单个 run goroutine 用 channel 多路处理: proc (本地提案)、recvChan (网络消息)、confChan (成员变更)、tickChan (逻辑时钟)、readyChan/advanceChan (Ready 交付与应用确认)。Ready 携带 SoftState/HardState/待持久化 Entries/Messages/CommittedEntries (另有 ReadStates); 应用方持久化后 `Advance` 才产出下一个 Ready — 这是 etcd/raft 的经典背压设计。
 
-**taskflow 的 ledger (`consensus/ledger.go`)**: 单成员装配 — `MemoryStorage`、`Config{ID: consensus.id, PreVote: true, ElectionTick: 10, HeartbeatTick: 1}`、`StartNode` 只传自己一个 peer; 100ms tick; ready loop 做 `Append` + `SetHardState`、按需软/硬快照、apply 已提交条目 (payload 为 `{k,v,t}` JSON → 写内存 state map, 保留最近 64 条) 后 `Advance`; `Propose` 2s 超时。`Status()` 输出 enabled、term、commit_index、raft_state、leader_id、is_leader、recent_entries 等供诊断。
+**taskflow 的 ledger (`consensus/ledger.go`)**: 单成员装配 — `MemoryStorage`、`Config{ID: consensus.id, PreVote: true, ElectionTick: 10, HeartbeatTick: 1}`、`StartNode` 只传自己一个 peer; 100ms tick; ready loop 做 `Append` + `SetHardState` (按需)、记录软/硬状态、apply 已提交条目 (payload 为 `{k,v,t}` JSON → 写内存 state map, 保留最近 64 条) 后 `Advance`; `Propose` 2s 超时。`Status()` 输出 enabled、term、commit_index、raft_state、leader_id、is_leader、recent_entries 等供诊断。
 
 **开发坑 / 边界**: 三个节点各自跑单成员集群**不构成**多数派集群 — 没有共同 membership 与跨节点 transport, 它展示的是 raft 状态机的装配与 Ready 协议; MemoryStorage 不落盘, 重启归零, 所以 ledger 只是审计线索不是事实来源。要把它变成真集群, 需要给每个节点配置真实 peers、实现 transport、换成持久 Storage, 并重新评估 Propose 的失败语义。
 

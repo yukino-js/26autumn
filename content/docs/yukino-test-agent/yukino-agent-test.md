@@ -147,10 +147,10 @@ yukino-test-agent/
 │  ├─ integrations/
 │  │  ├─ trpc/            init.ts (BizError 映射) / router.ts (13 个子路由) / react.ts (客户端代理)
 │  │  └─ tanstack-query/  root-provider.tsx, devtools.tsx
-│  ├─ routes/             文件式路由: 12 个页面路由 + 3 个 API 路由
+│  ├─ routes/             文件式路由: 11 个页面路由 + 3 个 API 路由
 │  ├─ components/
 │  │  ├─ ui/              shadcn/ui 基础组件 (27 个)
-│  │  ├─ project/         项目详情 9 个 Tab 面板 + 用例编辑/评审对话框
+│  │  ├─ project/         项目详情 8 个 Tab 面板 + 用例编辑/评审对话框 (第 9 个 executions Tab 复用 executions/ExecutionsPanel)
 │  │  ├─ executions/      执行面板与截图查看器
 │  │  └─ *.tsx            AppSidebar/PageHeader/StatusBadge/EmptyState/ProjectPicker/
 │  │                      ProjectDialog/QuickStartDialog/ThemeToggle

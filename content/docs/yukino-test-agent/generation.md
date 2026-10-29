@@ -173,7 +173,7 @@ flowchart LR
 
 持久化前 `enrichCoverageRefs` 对每条用例调 `resolveCoverageRefs` (`lib/coverage.ts`) 补全 `coverageRefs`。显式引用永远优先 (人工/模型给出的精确事实胜过动作词推断), 推断只补接地于代码事实的高置信匹配:
 
-- `endpointIds` 按优先级: ① 测试点 endpoint ("METHOD /path") 精确匹配; ② 用例文本包含 endpoint 路径; ③ 动作词别名表 (`ACTION_ALIASES`: create/list/pay/ship/cancel/refund/update/delete/login) 恰好命中一个 endpoint 时采信, 一个动作命中多个则歧义跳过;
+- `endpointIds` 按优先级: ① 测试点 endpoint ("METHOD /path") 精确匹配; ② 用例文本包含 endpoint 路径; ③ 动作词别名表 (`ACTION_ALIASES`: create/list/pay/ship/complete/cancel/refund/update/delete/login) 恰好命中一个 endpoint 时采信, 一个动作命中多个则歧义跳过;
 - `ruleIds`: 规则 id 或 description 出现在用例文本、真实业务字段 (testData 键 ∪ 测试点 fields) 与规则文本共现、或状态动作词两侧匹配;
 - `transitionIds`: verified 迁移的 trigger 出现在用例文本中;
 - `testPointIds`: 直接取用例的 `testPointId`。

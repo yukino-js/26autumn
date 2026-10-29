@@ -77,17 +77,17 @@ dispatch = func(i int) {
 
 分组中间件的收集发生在一个循环里, 遍历顺序就是注册顺序: 根 Router 的中间件先入列, 之后创建的子 Router 依次追加, 父分组总是先于子分组创建, 因此嵌套分组的中间件天然层层叠加。前缀匹配使用 `matchRouterPath`, 因此 `/api` 分组的中间件只会作用于 `/api` 与 `/api/...`, 不会误伤 `/apikeys`。
 
-路由未命中时并不会绕过洋葱链: `handle` 构造一个内置的 notFound handler 作为 `final`, 它置 `Status = 404`、`statusSet = true` 并写入纯文本 body `"404 NOT FOUND: " + path`。这意味着全局中间件 (日志、鉴权、CORS) 对 404 响应同样生效。
+路由未命中时并不会绕过洋葱链: `handle` 构造一个内置的 notFound handler 作为 `final`, 它置 `Status = 404`、`statusSet = true` 并写入纯文本 body `"404 NOT FOUND: " + path + "\n"`。这意味着全局中间件 (日志、鉴权、CORS) 对 404 响应同样生效。
 
 ## 延迟响应机制
 
 中间件执行期间, `Context` 中的 `Status`、`Body`、`headers` 都只是待写出的状态; 只有 `respond()` 被调用时才真正触碰 `http.ResponseWriter`。这套语义由几个标志位协同实现:
 
-| 字段        | 作用                                                                                             |
-| ----------- | ------------------------------------------------------------------------------------------------ |
-| `statusSet` | 标记状态码是否被用户显式设置 (`SetStatus` / `Throw` / `Redirect` / `SSE` / `Upgrade` / notFound) |
-| `flushed`   | 标记响应是否已被接管 (`TakeOver`、SSE、WebSocket、静态文件), `respond()` 见到即直接返回          |
-| `headers`   | 延迟响应头缓冲, `Set` 以 `http.CanonicalHeaderKey` 规范化键名                                    |
+| 字段        | 作用                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `statusSet` | 标记状态码是否被显式设置 (`SetStatus` / `Throw` / `Redirect` / `SSE` / `Upgrade` / `Recovery` / notFound 与静态文件 404) |
+| `flushed`   | 标记响应是否已被接管 (`TakeOver`、SSE、WebSocket、静态文件), `respond()` 见到即直接返回                                  |
+| `headers`   | 延迟响应头缓冲, `Set` 以 `http.CanonicalHeaderKey` 规范化键名                                                            |
 
 状态码自动提升模拟了 Koa 的语义: `Context` 初始 Status 为 404, `promoteStatus` 只在"未显式设置状态码且 Status 仍为初始 404"时把它提升为 200。`JSON`、`String`、`Data`、`HTML` 都会调用 `promoteStatus`, 因此"设置了 body 就等于 200"对整个洋葱链可见, 而不是等到最后才决定; 反过来, 直接给 `ctx.Status` 赋一个非 404 的值 (如 500) 不会被覆盖, `respond()` 里的兜底判断也遵循同一条件 (`Body != nil && !statusSet && Status == 404`)。
 
@@ -127,7 +127,7 @@ dispatch = func(i int) {
 
 注册时会做模式规范化: `parsePattern` 按 `/` 分割并丢弃空段, 因此 `/users`、`/users/`、`//users` 会归并到同一个 key。这避免了"先注册 `/users/`、后注册 `/users`, 前者被静默遮蔽"的问题。`parsePattern` 还会在遇到以 `*` 开头的段时截断后续段, 因为通配段语义上已经吃掉剩余路径。handler 以 `method + "-" + pattern` 为 key 存入 map, 同一 pattern 重复注册会静默覆盖旧 handler。
 
-参数提取发生在命中叶节点之后: 用注册模式的段与实际请求的段逐位对齐, `:` 段取单段值, `*` 段把剩余段用 `/` 拼接后终止对齐。搜索遇到 `*` 前缀节点时直接返回该节点, 因此通配段可以匹配任意数量 (包括零个) 剩余段。
+参数提取发生在命中叶节点之后: 用注册模式的段与实际请求的段逐位对齐, `:` 段取单段值, `*` 段把剩余段用 `/` 拼接后终止对齐。搜索遇到 `*` 前缀节点时直接返回该节点, 因此通配段贪婪匹配剩余的所有段; 但通配节点只能经父节点的 `matchChildren` 被尝试, 请求段在父层恰好耗尽时 (如 `/assets` 之于 `/assets/*filepath`) 父节点会因 `pattern` 为空提前返回 nil, 所以通配段至少匹配一个段, 不会匹配零段。
 
 几个已知边界:
 
@@ -293,7 +293,7 @@ Close 帧 payload 按规范解析: 前 2 字节为大端序状态码, 不足 2 �
 | 心跳 (WS/SSE)        | `sync.Once` + `done` channel | 停止函数可重复调用, 且会等待 goroutine 退出                       |
 | `Application` 路由表 | 无锁                         | 注册必须在 `Listen`/`Serve` 之前完成, 之后只读                    |
 
-读循环里自动回写的 Pong 帧不经过 `writeMu`, 但由于每帧都是单次 `conn.Write` 原子写出, 不会与其它写方向产生半帧交错。`WSConn.handleError` 在连接已被本地或对端关闭时不会触发 `OnError`, 因为此时尾随的读错误 ("use of closed network connection") 不是应用层错误; 处理完后统一由 `sync.Once` 关闭 `closed` channel。`Close`/`CloseWithMessage` 先关闭 `closed` channel 再写 Close 帧、最后关闭 TCP 连接, 保证关闭广播与帧写出都不会重复。
+读循环里自动回写的 Pong 帧不经过 `writeMu`, 但由于每帧都是单次 `conn.Write` 原子写出, 不会与其它写方向产生半帧交错。`WSConn.handleError` 在连接已被本地或对端关闭时不会触发 `OnError`, 因为此时尾随的读错误 ("use of closed network connection") 不是应用层错误; 处理完后统一由 `sync.Once` 关闭 `closed` channel。`Close`/`CloseWithMessage` 先用 `sync.Once` 关闭 `closed` channel, 再持 `writeMu` 写出 Close 帧, 最后关闭 TCP 连接; 关闭广播只发生一次, 重复调用仍会再次尝试写帧, 但对已关闭连接的写失败会被静默忽略。
 
 ## 优雅关闭
 
@@ -322,7 +322,7 @@ _ = app.Shutdown(ctx)
 | `CheckOrigin`     | nil    | 来源校验回调, nil 表示跳过                       |
 | `Subprotocols`    | nil    | 服务端优先的子协议列表                           |
 
-模板渲染相关的配置是 `SetFuncMap` 与 `LoadHTMLGlob`。其它行为 (忽略 body 的 JSON 序列化、默认 404→200 提升、SSE 三个标准头) 都是内置约定, 没有开关。
+模板渲染相关的配置是 `SetFuncMap` 与 `LoadHTMLGlob`。其它行为 (204/205/304 强制清空 body、默认 404→200 提升、SSE 三个标准头) 都是内置约定, 没有开关。
 
 ## 可测试性与可观测性
 
@@ -373,4 +373,4 @@ SSE 侧则没有自动重连 ID 管理 (不读取 `Last-Event-ID`)、订阅广�
 - 需要框架层内置 TLS/HTTP2、请求体限额、permessage-deflate 压缩、写超时或 Close 握手超时的场景, 当前实现未覆盖, 需要在外层 `http.Server` 或业务代码中自行扩展。
 - 需要大量路由且对匹配延迟敏感的场景: 按段 Trie 的每层线性扫描会成为瓶颈。
 
-相关主题: 框架的内置能力已被同仓库多个模块直接复用 —— [yukino_cache](./yukino-cache-go) 的实时仪表盘就是一个挂载在本框架上的 WebSocket 端点, 用 `ctx.Upgrade` 完成握手、用 `WSConn` 的 30 秒心跳与 `WriteJSON` 推送缓存快照; [yukino_taskflow](./yukino-task-flow) 用本框架组装 API 路由与中间件链; [yukino_agent_proxy](./yukino-agent-proxy) 用 `New()` 加 `Recovery()` 搭建本地控制面, 借助 `ctx.TakeOver()` 挂载 MCP SDK 官方的 Streamable HTTP (`/mcp`) 与 HTTP+SSE (`/sse`) 传输端点, 并把 `Application` 作为 `http.Handler` 挂到自带超时配置的外部 `http.Server` 上。接口、方法集与并发原语等语言层基础见 [Go 语言核心](./go)。
+相关主题: 框架的内置能力已被同仓库多个模块直接复用 —— [yukino_cache](./yukino-cache-go) 的实时仪表盘就是一个挂载在本框架上的 WebSocket 端点, 用 `ctx.Upgrade` 完成握手、用 `WSConn` 的 30 秒心跳与 `WriteJSON` 推送缓存快照; [yukino_taskflow](./yukino-task-flow) 用本框架组装 API 路由与中间件链; [yukino_agent_proxy](./yukino-agent-proxy) 用 `New()` 加 `Recovery()` 搭建本地控制面, 借助 `ctx.TakeOver()` 按 transport 参数二选一挂载 MCP SDK 官方的 Streamable HTTP (`/mcp`) 或 HTTP+SSE (`/sse`) 传输端点, 并把 `Application` 作为 `http.Handler` 挂到自带超时配置的外部 `http.Server` 上。接口、方法集与并发原语等语言层基础见 [Go 语言核心](./go)。

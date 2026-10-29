@@ -71,7 +71,7 @@ Engine
 | `Category`    | `categories`     |
 | `Day`         | `days`           |
 
-复数规则覆盖常见情况: 辅音字母 + `y` 结尾改为 `-ies`; `s`/`x`/`sh`/`ch` 结尾加 `-es`; 其余加 `-s`。`Model` 也接受切片 (如 `[]*User`), 同样能得到 `users`。这套规则是纯机械的, 对不规则复数 (person/people) 与连续大写缩写 (HTTPServer 会得到 `h_t_t_p_server`) 不适用, 这类情况应直接用 `Collection("自定义名字")`。
+复数规则覆盖常见情况: 辅音字母 + `y` 结尾改为 `-ies`; `s`/`x`/`sh`/`ch` 结尾加 `-es`; 其余加 `-s`。`Model` 也接受切片 (如 `[]*User`), 同样能得到 `users`。这套规则是纯机械的, 对不规则复数 (person/people) 与连续大写缩写 (HTTPServer 会得到 `h_t_t_p_servers`) 不适用, 这类情况应直接用 `Collection("自定义名字")`。
 
 若传入非结构体 (如字符串、数值), 推导结果为空串, 于是 `Collection("")` 产生一个 nil 集合的 Query, 在终结方法处返回 `ErrCollectionRequired`。
 
@@ -175,7 +175,7 @@ minors := base.Clone().Where("age", "<", 18)
 几个关键语义:
 
 - `Update` 与 `Delete` 使用 `Many` 系列, 会作用于全部匹配文档。没有任何 `Where` 条件时它们会命中整个集合, 因此调用方必须在应用层保证至少有一个条件。
-- `Insert` 的切片展开有白名单式的例外: `bson.D` (本身是切片但语义上是单个文档) 与字节切片不会被展开, 其余切片/数组会被摊平成多个文档; 展开只发生在"恰好一个可变参数"时。展开后仍为空列表则返回 `at least one document is required`。`InsertMany` 中途失败时, 会把已成功插入的 ID 连同错误一起返回, 便于补偿。
+- `Insert` 的切片展开有白名单式的例外: `bson.D` (本身是切片但语义上是单个文档) 与字节切片/数组不会被展开, 其余切片/数组会被摊平成多个文档; 展开只发生在"恰好一个可变参数"时。展开后仍为空列表则返回 `at least one document is required`。`InsertMany` 中途失败时, 会把已成功插入的 ID 连同错误一起返回, 便于补偿。
 - `Update`/`Upsert` 的更新文档会经过 `$set` 归一化 (`normalizeUpdate`): `bson.M`、`map[string]any`、`bson.D` 若不含 `$` 前缀的键, 会被包成 `{$set: doc}`, 含任一 `$` 键则原样透传; 结构体 (含指向结构体的指针, 逐层解引用, nil 指针原样透传) 一律包 `$set`。结构体更新会把所有被序列化的字段 (包括零值, 遵守 `omitempty` 标签) 写进 `$set`, 因此部分更新更适合用 `bson.M`。
 - `First` 应用排序、偏移与投影但不应用 limit (FindOne 语义); `Find`、`Cursor`、`Each` 与 `Pluck` 额外应用 limit。
 
@@ -284,18 +284,18 @@ err := engine.Transaction(ctx, func(sc context.Context, tx *yukino_orm.Engine) e
 
 ## 错误处理
 
-| 错误                                | 触发条件                                                                            |
-| ----------------------------------- | ----------------------------------------------------------------------------------- |
-| `mongo uri is required`             | `NewEngine` 的 uri 去空白后为空                                                     |
-| `mongo database is required`        | `NewEngine` 的 database 去空白后为空                                                |
-| `engine is not initialized`         | nil engine/nil client 上调用 `Transaction`/`NextSequence`                           |
-| `sequence name is required`         | `NextSequence` 的 name 去空白后为空                                                 |
-| `ErrCollectionRequired`             | 终结方法执行时 Query 为 nil 或未绑定集合 (例如 `Collection("")` 或非结构体 `Model`) |
-| `ErrNotFound`                       | `First` 无匹配文档, 是 `mongo.ErrNoDocuments` 的别名                                |
-| `at least one document is required` | `Insert` 展开后文档列表为空                                                         |
-| 构建期错误                          | 非法字段类型、未识别操作符、错误的参数个数/类型, 在终结方法处返回                   |
-| 分组校验错误                        | `GroupBy`/`Having`/`Aggregate` 违反上文规则                                         |
-| 驱动原生错误                        | 其余情况原样透传, 可用 `errors.Is` 等标准方式判断                                   |
+| 错误                                | 触发条件                                                                                        |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `mongo uri is required`             | `NewEngine` 的 uri 去空白后为空                                                                 |
+| `mongo database is required`        | `NewEngine` 的 database 去空白后为空                                                            |
+| `engine is not initialized`         | nil engine 或 nil client 上调用 `Transaction`, nil engine 或 nil database 上调用 `NextSequence` |
+| `sequence name is required`         | `NextSequence` 的 name 去空白后为空                                                             |
+| `ErrCollectionRequired`             | 终结方法执行时 Query 为 nil 或未绑定集合 (例如 `Collection("")` 或非结构体 `Model`)             |
+| `ErrNotFound`                       | `First` 无匹配文档, 是 `mongo.ErrNoDocuments` 的别名                                            |
+| `at least one document is required` | `Insert` 展开后文档列表为空                                                                     |
+| 构建期错误                          | 非法字段类型、未识别操作符、错误的参数个数/类型, 在终结方法处返回                               |
+| 分组校验错误                        | `GroupBy`/`Having`/`Aggregate` 违反上文规则                                                     |
+| 驱动原生错误                        | 其余情况原样透传, 可用 `errors.Is` 等标准方式判断                                               |
 
 对常见错误 (无匹配、唯一键冲突、上下文超时) 建议在应用层建一层统一的错误包装, 库本身只做透传。
 

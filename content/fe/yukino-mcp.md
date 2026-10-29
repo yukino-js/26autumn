@@ -53,8 +53,8 @@ MCP(Model Context Protocol)让宿主(如 Yukino CLI)以统一协议发现并调�
         ├─ minio(S3 SigV4 签名)      ├─ etcd / milvus(HTTP JSON 网关)
         └─ kafka(@platformatic/kafka 原生协议)
                     │
-                    ▼  进程级单例(init/shutdown)
-        SQLite 向量索引 · 嵌入 Provider · gh 环境
+                    ▼  进程级单例(init/shutdown, 仅 docs 模块)
+        SQLite 向量索引 · 嵌入 Provider
 ```
 
 `main.ts` 是入口: 先选择传输(stdio 直接 `createServer()` + `StdioServerTransport`; HTTP 则 `startHttpServer(host, port)`), 连接/监听完成**之后**才 fire-and-forget 触发各模块的 `init()`。这个顺序是刻意的——传输先就绪, 工具立刻可被 `list`; 而真正的重活(打开索引、探测维度、后台同步文档)推迟到 init, 工具调用内部会 `await` 同一个 init Promise, 因此首个调用不会被大知识库拖到客户端超时。入口还在最前面依次 import `shared/quiet-sqlite-warning.js`(必须是第一个 import, 见下文)与 `dotenv/config`(加载 `.env`)。
@@ -129,7 +129,7 @@ HTTP 模式用 `h3` 只暴露一种远程传输——**无状态 Streamable HTTP
 
 `docs` 模块用一个进程级 `EngineState`(`ready` / `degraded`)单例, 初始化分两阶段:
 
-- **快阶段(await)**: 配置检查 → `openStore` 打开索引 → `ensureSchema` 维度探测 + schema 校验, 整体有 15 秒预算(`INIT_TIMEOUT_MS`, 客户端调用超时约 60 秒, 卡住的 Provider 必须提前降级)。完成后即可对既有数据查询。
+- **快阶段(await)**: 配置检查 → `openStore` 打开索引 → `ensureSchema` 维度探测 + schema 校验, 其中 `ensureSchema` 有 15 秒预算(`INIT_TIMEOUT_MS`, 客户端调用超时约 60 秒, 卡住的 Provider 必须提前降级)。完成后即可对既有数据查询。
 - **后台阶段(fire-and-forget)**: 增量文档同步, 大知识库永不阻塞首个工具调用。
 
 任何失败都**降级而非抛错**: 嵌入未配置、索引打不开、schema 初始化超时, 都返回带明确原因的 `degraded`, 工具调用据此回一句诚实的 `docs is unavailable: …`。降级状态有 30 秒重试窗口(`DEGRADED_RETRY_MS`)——Provider 可能在会话中途恢复, 无需重启 CLI。维度探测(`embedText("dimension probe")`)以模型实际输出为准, 从不取静态配置; 维度或 schema 不匹配就清库, 逼下次同步全量重嵌入。查询期若发现异常且数据库句柄已关闭(`db.isOpen` 为 false), 会把状态切到 `degraded`(vector index connection lost)并关闭句柄, 走同样的重试窗口恢复。对空索引的首次搜索若后台同步仍在进行, 会提示"调用 docs_sync 等待后重试"。`shutdown` 只在状态为 ready 时关闭数据库句柄, 从不等待在途的 init/sync。
@@ -174,7 +174,7 @@ HTTP 模式用 `h3` 只暴露一种远程传输——**无状态 Streamable HTTP
 - `unrestrictedAnnotations`: `readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true`——如实告诉宿主"这会改数据、不可假定幂等"。
 - `operationResult`: 统一序列化, `JSON.stringify` 的 replacer 把 `bigint` 转字符串、`Error` 转 `{name, message}`、`Map`/`Set` 转普通结构, 且 `structuredContent` 由同一份 JSON 反解析而来, 保证文本结果与结构化结果一致; 后端返回非 2xx/非零码时置 `isError: true` 但保留完整响应体。
 - `operationError`: 工具级异常统一翻译成 `<tool> failed: <message>` 错误结果。
-- 未配置的后端在**被调用时**才由 `requireConnection` 报错(并指明该设哪个环境变量), 从不影响启动; 每个工具都接受逐调用的连接覆盖参数(`connection_url`/`base_url`/`endpoint`/`brokers` 等)。
+- 未配置的后端在**被调用时**才报配置错误(`requireConnection` 或工具内同等的内联检查, 指明该设哪个环境变量; `kafka_tool` 例外, brokers 未配置时直接回落 `localhost:9092`), 从不影响启动; 每个工具都接受逐调用的连接覆盖参数(`connection_url`/`base_url`/`endpoint`/`brokers` 等)。
 
 ### SQL 层: postgres_tool / mysql_tool / clickhouse_tool
 
@@ -269,7 +269,7 @@ Milvus 的 RESTful API v2 与 gRPC 共用同一端口(默认 19530), 所以 `MIL
 | `GITHUB_TOKEN` / `GH_TOKEN` / `GH_HOST` / `GITHUB_BASE_URL`                                                                    | gh 鉴权与 Enterprise 主机(token 取 `GITHUB_TOKEN` 优先 `GH_TOKEN`; `GITHUB_BASE_URL` 在 `GH_HOST` 缺失时提供主机名)                                                                                                           | —                        |
 | `HOST` / `PORT`                                                                                                                | HTTP 传输绑定地址/端口(仅 `--http`)                                                                                                                                                                                           | `127.0.0.1` / `3300`     |
 
-除文档索引外, 每个数据工具都接受**逐调用的连接覆盖**, 因此同一进程可在多个后端间切换, 无需重启。`.env.example` 给出全部可选后端的注释模板, 端口与仓库内 docker-compose 对齐。
+除文档索引外, 每个数据工具都接受**逐调用的连接覆盖**, 因此同一进程可在多个后端间切换, 无需重启。`.env.example` 给出全部可选后端的注释模板, 提示取消注释并与自己的 docker-compose 端口对齐。
 
 ## 构建、打包与分发
 

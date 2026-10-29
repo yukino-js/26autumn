@@ -189,7 +189,7 @@ interface ThinkingLevelControl {
 }
 ```
 
-`createClient(config, systemPrompt)` 按 protocol 动态 import 对应的实现 (AnthropicClient / OpenAIClient / OpenAICompatClient, 后两者同在 openai.ts), 只有配置到的协议 SDK 会被加载; 构造前先用 `resolveAPIKey` 解析令牌, 缺失时抛 `AuthenticationError` 并提示全局配置文件路径与对应环境变量。创建出的客户端再经 `registerLlmClient` 登记模型与协议元数据, 供遥测上报使用 (见 [遥测](./telemetry))
+`createClient(config, systemPrompt)` 按 protocol 动态 import 对应的实现 (AnthropicClient / OpenAIClient / OpenAICompatClient, 后两者同在 openai.ts), 只有配置到的协议 SDK 会被加载; 各客户端构造函数内先用 `resolveAPIKey` 解析令牌, 缺失时抛 `AuthenticationError` 并提示全局配置文件路径与对应环境变量。创建出的客户端再经 `registerLlmClient` 登记模型与协议元数据, 供遥测上报使用 (见 [遥测](./telemetry))
 
 `createModelResolver(baseConfig, systemPrompt)` 返回一个按模型名建客户端的函数: 复用同一份 provider 配置只替换 model; 作为库导出供外部消费者使用 (/model 切换模型走的是 discoverModels + createClient)
 
@@ -213,10 +213,10 @@ interface ThinkingLevelControl {
 - adaptive: `thinking: { type: "adaptive" }` + `output_config: { effort }`, 按 effort 而不是 token 预算控制
 - 级别为 off 时发 `{ type: "disabled" }`; `reasoning: false` 时 thinking 字段整个省略, 保留 provider 默认
 
-OpenAI 协议没有原生的 xhigh/max, 请求时经映射折叠, 除非 `thinking_level_map` 显式指定:
+OpenAI 两种协议的 effort 原样透传 (不做 Anthropic adaptive 那样的折算), 只有 `thinking_level_map` 覆盖或 `reasoning: false` 会改变它:
 
-- Responses API: `reasoning: { effort, summary: "auto" }`, effort 为 `"none"` 时不带 summary 字段, 映射为 null (即 `reasoning: false`) 时整个 reasoning 字段省略
-- Chat Completions: `reasoning_effort` 字段, 同样的省略规则
+- Responses API: `reasoning: { effort, summary: "auto" }`, effort 为 `"none"` (即 off) 时不带 summary 字段, 映射为 null (即 `reasoning: false`) 时整个 reasoning 字段省略
+- Chat Completions: `reasoning_effort` 字段, 同样的省略规则; off 也显式发送 `none`, 防止服务端默认悄悄开启推理
 
 ## token 计费与 prompt cache
 
@@ -343,7 +343,7 @@ agent loop 的消费策略: ContextTooLongError 触发 forceCompact 压缩后重
 
 /model 命令的模型选择器靠模型发现 (src/llm/model-discovery.ts):
 
-- `modelListUrl` 归一化 base_url: 要求是合法 HTTP(S) URL 且不内嵌账号密码; 剥掉尾部的 `/chat/completions`、`/completions`、`/responses`、`/messages`、`/models` 路径; anthropic 协议要求路径以 `/v1` 结尾 (缺则补上); 最后拼上 `/models`, 并清空 query 与 hash
+- `modelListUrl` 归一化 base_url: 要求是合法 HTTP(S) URL 且不内嵌账号密码; 剥掉尾部的 `/chat/completions`、`/completions`、`/responses`、`/messages`、`/models` 路径; 路径为空时补上 `/v1`, anthropic 协议额外要求路径以 `/v1` 结尾 (缺则补上); 最后拼上 `/models`, 并清空 query 与 hash
 - `discoverModels` 发 GET 请求, 带 `Accept: application/json`; anthropic 协议加 `anthropic-version: 2023-06-01` 与 `x-api-key`, 其余协议用 `Authorization: Bearer`; 整体超时 `DISCOVERY_TIMEOUT_MS = 5_000` 毫秒
 - anthropic 端点支持 has_more/last_id 翻页 (游标参数为 `after_id`, 游标重复即报错), 最多 `MAX_MODEL_PAGES = 10` 页, 按 id 去重; 其他协议只取一页
 - 任何失败 (非 2xx、schema 校验失败、翻页异常) 统一报 "Model discovery failed", 超时或被中断报 AbortError, 选择器回退到错误态手动输入
@@ -365,4 +365,4 @@ ConversationManager (src/conversation/index.ts) 是这份历史的唯一持有�
 - replaceWithCompacted: 压缩后重建 (摘要 user 消息 + 原样保留的尾部消息), 见 [上下文压缩](./context-compaction)
 - recordUsageAnchor / clearUsageAnchor / usageAnchorState: token 估算锚点, 基线为 input + cache_read + cache_creation + output 四项之和
 
-考虑到流式接收, CLI 正在向 assistant 消息追加 SSE 增量, 同时 TUI 正在读消息列表以渲染, 两处同时操作同一份历史; Node.js 单线程异步模型天然避免了数据竞争 (Go 实现则需要加锁)。追加增量时定位正在接收的 assistant 消息, 更新 TUI 时读取一份快照
+考虑到流式接收, CLI 正在向 assistant 消息追加 SSE 增量, 同时 TUI 正在读消息列表以渲染, 两处同时操作同一份历史; Node.js 单线程异步模型天然避免了数据竞争。追加增量时定位正在接收的 assistant 消息, 更新 TUI 时读取一份快照

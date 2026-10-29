@@ -362,7 +362,7 @@ on t.id = tmp.id;
 - 全字段排序: 把满足条件的行连同所有 select 字段一起放入 `sort_buffer_size` (默认 256KB) 排序, 排好直接输出. 单次排序完成, 但排序单元大, buffer 装不下时落盘归并.
 - rowid 排序: 只把排序键与主键放入 sort buffer 排序, 排好后再按主键回表取其余字段. 排序单元小、buffer 内能放更多行, 但多一次回表随机 I/O.
 
-选择由 `max_length_for_sort_data` 控制: 单行参与排序的字段总长超过该值走 rowid 排序, 否则走全字段排序. 优化方向是让排序尽量走索引 (覆盖索引 + 最左前缀) 免掉 filesort; 必须 filesort 时, 用覆盖索引减少参与排序的列、调大 `sort_buffer_size` 避免落盘.
+两种策略的选择由优化器基于成本决定 (`max_length_for_sort_data` 自 MySQL 8.0.20 起已废弃, 不再参与该决策), 实际采用的方式可通过 optimizer trace 中 `filesort_summary` 的 `sort_mode` 确认. 优化方向是让排序尽量走索引 (覆盖索引 + 最左前缀) 免掉 filesort; 必须 filesort 时, 用覆盖索引减少参与排序的列、调大 `sort_buffer_size` 避免落盘.
 
 ### join 的算法与驱动表选择
 

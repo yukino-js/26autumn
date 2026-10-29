@@ -68,7 +68,7 @@ Superpowers 的设计动机可以还原为对真实会话的归纳:
 
 ### 2.2 技能是行为塑造代码, 不是文档
 
-仓库把 `SKILL.md` 当作需要测试的行为塑造代码来对待, 而不是给人看的说明。最直接的证据是 description 的写法: 技能 frontmatter 的 `description` 只写 "何时使用", 绝不概括 "做了什么"。这源于一次真实事故——某评审技能的 description 曾写了工作流摘要 ("任务之间的代码评审"), 结果模型只执行了摘要里提到的那一次评审, 而技能正文的流程图要求的是两次 (任务评审加终审)。结论被写进技能写作规范: 概括流程的 description 会成为模型跳过正文的捷径, 正文于是退化成没人读的文档。
+仓库把 `SKILL.md` 当作需要测试的行为塑造代码来对待, 而不是给人看的说明。最直接的证据是 description 的写法: 技能 frontmatter 的 `description` 只写 "何时使用", 绝不概括 "做了什么"。这源于一次真实事故——某评审技能的 description 曾写了工作流摘要 ("任务之间的代码评审"), 结果模型只执行了摘要里提到的那一次评审, 而技能正文的流程图要求的是两次 (spec 合规评审加代码质量评审)。结论被写进技能写作规范: 概括流程的 description 会成为模型跳过正文的捷径, 正文于是退化成没人读的文档。
 
 这条约束对任何给 Agent 编写工具或技能描述的场景都适用, 也是本文认为最值得迁移的一条经验。
 
@@ -101,7 +101,7 @@ shell-hook 形态的宿主共用 `hooks/session-start` 脚本 (无扩展名, bas
 | 设置了 `MUSE_PLUGIN_ROOT`                                                   | 同 Claude 式嵌套                                                            | Muse                   |
 | 其他 (Copilot CLI 或未知平台)                                               | SDK 标准顶层 `additionalContext`                                            | GitHub Copilot CLI 等  |
 
-互斥是硬约束: Claude Code 会同时读 `additional_context` 与 `hookSpecificOutput` 且不去重, 所以每个平台只能输出它消费的那一个字段, 否则要么不注入要么双重注入。`tests/hooks/test-session-start.sh` 对四种环境变量组合逐一断言 "恰好一个形状出现、其余字段不得出现"。脚本用 `printf` 而非 heredoc 输出, 以规避 bash 5.3+ 的 heredoc 挂起问题。
+互斥是硬约束: Claude Code 会同时读 `additional_context` 与 `hookSpecificOutput` 且不去重, 所以每个平台只能输出它消费的那一个字段, 否则要么不注入要么双重注入。`tests/hooks/test-session-start.sh` 对 Claude、Cursor、Copilot CLI 三种环境变量组合逐一断言 "恰好一个形状出现、其余字段不得出现"。脚本用 `printf` 而非 heredoc 输出, 以规避 bash 5.3+ 的 heredoc 挂起问题。
 
 注册配置因宿主而异, 两套 schema 并存:
 
@@ -127,7 +127,7 @@ shell-hook 形态的宿主共用 `hooks/session-start` 脚本 (无扩展名, bas
 | Collaboration | brainstorming、writing-plans、executing-plans、subagent-driven-development、dispatching-parallel-agents、requesting-code-review、receiving-code-review、using-git-worktrees、finishing-a-development-branch |
 | Meta          | using-superpowers、writing-skills                                                                                                                                                                           |
 
-其中多数技能带附属文件: 重型参考文档 (`references/`)、派发子代理时逐字使用的提示词模板 (`prompts/`)、以及可执行脚本——脚本一律通过解释器调用 (`bash scripts/tool.sh`、`node scripts/tool.js`), 因为部分宿主的打包器会剥掉可执行位。
+其中多数技能带附属文件: 重型参考文档 (`references/`)、派发子代理时逐字使用的提示词模板 (放在技能根目录或 `prompts/` 下, 如 SDD 的 `implementer-prompt.md`、diagnosing-superpowers 的 `prompts/` 目录)、以及可执行脚本——脚本多通过解释器调用 (`bash scripts/tool.sh`、`node scripts/tool.js`), 因为部分宿主的打包器会剥掉可执行位。
 
 ### 3.2 触发与路由机制
 
@@ -136,7 +136,7 @@ shell-hook 形态的宿主共用 `hooks/session-start` 脚本 (无扩展名, bas
 进入会话后, 触发顺序由技能内的路由规则决定:
 
 - process skills 先行。头脑风暴、系统化调试这类流程技能先于实现类技能。
-- 硬门阻断。brainstorming 里定义 HARD-GATE: 人类伙伴批准完整描述 (小改动批准聊天里的描述, 项目批准设计文档) 之前, 任何构建动作都不许做——写产品代码、脚手架、装依赖、创建项目、调用实现技能; 读与探索不受限。Red Flags 表强调 "对想法说好不等于批准了还没写出来的描述"; 项目文档批准后下一步只许进 writing-plans, 唯二例外是用户明确跳过提问 (技能结束、门随之撤掉) 与已批准的 spike (产物保持一次性标签, 想保留它属于重新过门的新请求)。
+- 硬门阻断。brainstorming 里定义 HARD-GATE: 人类伙伴批准设计文档 (小改动是短文档, 项目是完整文档) 之前, 任何构建动作都不许做——写产品代码、脚手架、装依赖、创建项目、调用实现技能; 读与探索不受限。Red Flags 表强调 "对想法说好不等于批准了还没写出来的描述"; 项目文档批准后下一步只许进 writing-plans, 唯二例外是用户明确跳过提问 (技能结束、门随之撤掉) 与已批准的 spike (产物保持一次性标签, 想保留它属于重新过门的新请求)。
 - 反合理化。多数技能带 Common Rationalizations 或 Red Flags 表, 把 "这太简单了不用走流程" 这类借口逐条对应到现实。这类文本来自对真实失败会话的归纳, 并通过技能写作方法学的压力测试验证有效。
 
 ### 3.3 主干工作流七步
@@ -156,7 +156,7 @@ shell-hook 形态的宿主共用 `hooks/session-start` 脚本 (无扩展名, bas
 
 ### 3.4 协作类技能的设计要点
 
-brainstorming。核心目标是在动手之前弄清用户真正想要什么、为什么。对话纪律: 第一条消息以一个开放问题收尾, 若用户并未主动要求跳过提问, 再在问题之后附一句 "也可以直接开始" 的退出通道; 此后每条消息只以一个问题结尾; 提问之前先自己看代码和文件 (Look Before You Ask), 能从仓库得到答案的不问用户; 理解按 200-300 词分节回放 (Play It Back), 每节结尾问 "哪里不对或缺了", 用户说过的才算数, 猜的明确标成猜测; 可视化伴侣的提供必须独占一条消息, 插在回放与提问之间。理解足够后有一个独立的强制步骤 "摆出方案" (Lay out the approaches): 用单独一条消息给出两到三个备选加明确推荐, 由用户选定, 然后才做尺寸判定——三档选择要大声说出来供用户否决: 快而清的任务直接做; 小改动在聊天内给出简短描述、批准即按普通流程构建, 不写设计文档; 项目则写正式设计文档 (提交到 `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`, 含 Approaches 一节记录备选与取舍) 再进 writing-plans。棘轮是单向的: 任务中途变大就停下来说明并升一档; 若实际是多个独立项目, 约定顺序逐个头脑风暴。项目档在设计文档交付前还要过一次 "建造者检查" (builder check): 派一个新鲜子代理按 `builder-check-prompt.md` 从实现者视角审文档, 把它的问题分成三堆——对话已答 (写进文档)、次要 (自行定夺并在文档标注)、必须问用户的 (按重要性一次性带回), 这是检查产生的唯一一轮提问; 宿主没有子代理能力时降级为自审。spike 作为可行性探针随时可提议: 一次性原型, 没有测试或只有极少测试, 跳过计划、实现与评审流程, 把学到的东西带回对话; 保留其产出是新请求, 须重新过 HARD-GATE。
+brainstorming。核心目标是在动手之前弄清用户真正想要什么、为什么。对话纪律: 第一条消息以一个问句收尾——用户已给出 spec 或详细请求时, 整条消息控制在约 200 词, 先复述请求的形状再提问, 否则就最大的未定点抛一个开放问题; 若用户的消息并非主动要求头脑风暴, 在问题之后附一句 "也可以直接开始" 的退出通道, 用户接受则技能结束、按普通流程构建; 此后每条消息只以一个问题结尾; 提问之前先自己看代码和文件 (Look Before You Ask), 能从仓库得到答案的不问用户; 理解按 200-300 词分节回放 (Play It Back), 每节结尾问 "哪里不对或缺了", 用户说过的才算数, 猜的明确标成猜测; 回放段若要描述用户会看的东西 (页面、屏幕、日程等) 且可视化伴侣还没提供过, 就先以独占一条消息发出提供, 该回放段顺延到下一条消息。理解足够后有一个独立的强制步骤 "摆出方案" (Lay out the approaches): 用单独一条消息给出两到三个备选加明确推荐, 由用户选定, 然后才做尺寸判定——尺寸结论要大声说出来供用户否决: 请求已含全部关键信息的快而清任务直接做、不进对话; 其余工作分两档, 小改动写短设计文档 (把已聊定的内容落成文字, 不做建造者检查), 项目写完整设计文档, 都提交到 `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`、都含 Approaches 一节记录备选与取舍, 批准后进 writing-plans。棘轮是单向的: 任务中途变大就停下来说明并升一档; 若实际是多个独立项目, 约定顺序逐个头脑风暴。项目档在设计文档交付前还要过一次 "建造者检查" (builder check): 派一个新鲜子代理按 `builder-check-prompt.md` 从实现者视角审文档, 把它的问题分成三堆——对话已答 (写进文档)、次要 (自行定夺并在文档标注)、必须问用户的 (按重要性一次性带回), 这是检查产生的唯一一轮提问; 宿主没有子代理能力时降级为自审。spike 作为可行性探针随时可提议: 一次性原型, 没有测试或只有极少测试, 跳过计划、实现与评审流程, 把学到的东西带回对话; 保留其产出是新请求, 须重新过 HARD-GATE。
 
 using-git-worktrees。原则是 "先检测既有隔离, 再用宿主原生工具, 最后回退到 git, 绝不与宿主对抗"。检测用 `git rev-parse` 比较 git-dir 与 common-dir, 并有子模块守卫 (`git rev-parse --show-superproject-working-tree` 有输出即视为普通仓库)。原生 worktree 工具优先, 因为在有原生工具时绕过它手工 `git worktree add` 会制造宿主看不见也管不了的幻影状态; 回退路径要求创建前用 `git check-ignore` 确认目录被忽略, 防止把 worktree 内容意外提交进仓库; 沙箱拒绝时告知用户并就地工作。
 
@@ -166,12 +166,12 @@ subagent-driven-development。全库最复杂的技能, 原则是 "每任务新�
 
 - 执行纪律: 叙述至多一行; 任务之间不向人类请示; 冲突与歧义由 controller 裁决并记账, 格式为 `Ruling: 决定 — 理由 — 判断错的代价`; 只有四种情况才停下——不可逆操作、安全敏感动作、约定需先问的副作用、计划糟糕到每条路都是猜测。
 - ledger: 每个计划一个 workspace (`.superpowers/sdd/<plan-basename>/`), 由 `bash scripts/sdd-workspace` 解析; ledger 文件 `progress.md` 首行是 `# SDD ledger — plan: <路径>`, 用来对抗 compaction——它是恢复地图, 记录任务完成、裁决与延期的次要问题, 首行指明所属计划以避免不同计划共享进度。
-- 任务循环: 用 `bash scripts/task-brief` 生成任务简报文件, 精确值只放进简报, 禁止把累积历史贴进派发提示; 实现者报告分四种状态 (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED), 各有处理程序; 再用 `bash scripts/review-package` 打包简报、报告与 diff, 派任务评审者同时给出 spec 合规与代码质量两个裁决。评审基线 BASE 用 `git rev-parse HEAD` 在派发前取, 绝不用 `HEAD~1` (实现者可能提交多次)。
-- fix loop: 有 Critical 或 Important 发现时进入修复循环, 每任务最多五轮——第 1-3 轮恢复原实现者 (它有上下文), 第 4-5 轮换更强模型上的新鲜子代理; 触顶时不再循环, controller 逐条裁决 (breaker adjudication)。
+- 任务循环: 用 `bash scripts/task-brief` 生成任务简报文件, 精确值只放进简报, 禁止把累积历史贴进派发提示; 实现者报告分四种状态 (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED), 各有处理程序; 再用 `bash scripts/review-package` 把提交列表、stat 摘要与完整 diff 打包成一个文件, 把简报、报告、评审包三个路径交给任务评审者, 同时给出 spec 合规与代码质量两个裁决。评审基线 BASE 用 `git rev-parse HEAD` 在派发前取, 绝不用 `HEAD~1` (实现者可能提交多次)。
+- fix loop: 评审报告 spec 不合规、有 Critical 或 Important 发现、或 ⚠️ 项被确认为真实缺口时进入修复循环, 每任务最多五轮——第 1-3 轮恢复原实现者 (它有上下文), 第 4-5 轮换更强模型上的新鲜子代理; 触顶时不再循环, controller 逐条裁决 (breaker adjudication)。
 - 成本工程: 每个角色用能胜任的最弱模型, 每次派发都显式声明模型 (缺省继承会话模型等于全用最贵); 注意回合数常常比 token 单价更贵; 工件以文件传递, 避免提示膨胀; 小的同形状编辑合并为一次派发。
 - 终审与收尾: 全分支一次宽评审, 用最强模型; 终审发现只允许一波修复加恰好一次范围限定的复审; 收尾前把所有裁决行按顺序收集进最终消息的 "Rulings I made" 清单——"一个随 workspace 一起消失的裁决, 是一个秘密做出的决定"。
 
-executing-plans。本会话内联执行的 Native 模式, 与 SDD 共享同一 workspace 与 ledger 格式, 因此一个计划可以在执行中途换执行器并从同一 ledger 续跑。它放弃每任务新上下文, 用别的手段补回: 简报即 spec, ledger 即记忆, TDD 是每任务的门, 终审是第二双眼睛; `bash scripts/task-start` 与 `bash scripts/task-done` 负责任务启停与 ledger 记账。它强调 "看着测试失败是一个步骤而不是形式"——实现存在之前就通过的测试是关于测试本身的发现。终审核后不再派发复审, 改为按效果给发现重新定级, 做一轮自修复, 每个修复自身走完整 RED→GREEN; 收尾要满足 completion contract 的四项证据 (全部任务完成、全部测试通过、ledger 更新、工作区干净)。宿主没有子代理工具时, 终审降级为对照计划与 diff 的自审。
+executing-plans。本会话内联执行的 Native 模式, 与 SDD 共享同一 workspace 与 ledger 格式, 因此一个计划可以在执行中途换执行器并从同一 ledger 续跑。它放弃每任务新上下文, 用别的手段补回: 简报即 spec, ledger 即记忆, TDD 是每任务的门, 终审是第二双眼睛; `scripts/task-start` 与 `scripts/task-done` 负责任务启停与 ledger 记账。它强调 "看着测试失败是一个步骤而不是形式"——实现存在之前就通过的测试是关于测试本身的发现。终审核后不再派发复审, 改为按效果给发现重新定级, 做一轮自修复, 每个修复自身走完整 RED→GREEN; 每个任务写入完成行之前要满足 completion contract 的四项证据 (简报点名的测试都在本任务跑过且读过输出、任务最终测试运行通过并由 `task-done` 把命令与结果写进 ledger、每条 `Expected:` 都与真实输出比对过、每处偏离简报都有 `Ruling:` 行)。宿主没有子代理工具时, 终审降级为对照计划与 diff 的自审。
 
 评审两端。requesting-code-review 规定何时评审、如何取基线、如何派评审子代理, 并明确两条反合理化: 协调者不要自己 inline 评审 diff (会烧上下文), 不要给评审者会话历史 (让它面对工作产品而非你的思考过程)。receiving-code-review 则管反馈的接收纪律: 先读、再理解、再对照代码库验证、再评估、再回应、最后逐项实现; 禁止社交表演式回应 (感谢、"你说得对" 之类), 任何一项反馈不清楚就停下问清全部再动手; 外部评审者的建议要实现前先验证是否适用本库, 与本项目架构冲突时用技术推理推回。
 
@@ -194,10 +194,10 @@ verification-before-completion。证据门: 声明完成、修复或通过之前
 技能写作规范的要点:
 
 - 技能是可复用的技术、模式或参考, 不是 "某次如何解决问题的叙事"。
-- 是否创建看三条: 技术不显然、跨项目会再引用、他人受益。用正则或校验就能强制的机械约束应当自动化, 文档只留给需要判断力的地方。
+- 是否创建看四条: 技术不显然、跨项目会再引用、模式有普适性 (非项目特有)、他人受益。用正则或校验就能强制的机械约束应当自动化, 文档只留给需要判断力的地方。
 - frontmatter 只含 `name` 与 `description`, 总长上限 1024 字符 (agentskills.io 规范); description 以 "Use when..." 开头、用第三人称、只写触发条件与症状。
 - 技能发现优化: 覆盖错误消息、症状、同义词、工具名等搜索词; 控制体积——getting-started 类流程每步 150 词内、高频加载技能 200 词内、其余 500 词内, 细节移入 `references/` 参考文件; 用显式的 REQUIRED SUB-SKILL 标记交叉引用, 避免会立即强制加载文件的链接语法。
-- 文体要匹配失败类型 (Match the Form to the Failure): 压力下明知故犯的纪律失效用禁令加合理化表加红旗清单; 输出形状不对用正面配方 (声明输出由哪些部分按什么顺序构成); 漏掉必备元素用模板里的结构化必填槽位; 行为需随条件变化用绑定可观察谓词的条件句。两条附加规则: 不写 "除非有需要" 式的 nuance 从句 (会重开谈判空间), 豁免条款必须自己带可观察条件。
+- 文体要匹配失败类型 (Match the Form to the Failure): 压力下明知故犯的纪律失效用禁令加合理化表加红旗清单; 输出形状不对用正面配方 (声明输出由哪些部分按什么顺序构成); 漏掉必备元素用模板里的结构化必填槽位; 行为需随条件变化用绑定可观察谓词的条件句。两条附加规则: 不写 "除非有需要" 式的 nuance 从句 (会重开谈判空间, 真正的例外要写成绑定可观察谓词的独立条件句), 豁免条款没有范围效力 ("此限制不适用于代码块" 仍会压制代码块), 要豁免部分输出就得重构结构让规则够不到它。
 - 措辞微测协议: 全压力场景测试慢且贵, 先做措辞级实验——每次一个新鲜上下文样本, 永远带无指导对照组 (对照组不出现该失败就不要写指导), 每变体至少 5 次重复 ("单样本会说谎"), 人工读每个命中 (模板回声会伪装成命中), 用方差判断措辞是否真的绑定行为 (五次重复收敛到同一形状才算生效)。
 - 仓库引用的一项实证 (Meincke 等 2025 年 "Call Me A Jerk", 对 2.8 万次 AI 对话的测试) 表明, 说服技巧可以把合规率从 33% 提到 72%; 仓库自己的对照措辞微测则显示, 在塑形类场景下禁令式措辞的产出明显差于正面配方、甚至劣于无指导对照组——因此文体选择被当作经验问题而非教条。
 
@@ -244,7 +244,7 @@ README 为其中 16 个宿主逐一给出安装命令; `.version-bump.json` 记�
 
 ### 4.4 Shape B 参考实现
 
-OpenCode (JS, `.opencode/plugins/superpowers.js`)。同一个模块以两种导出形态支持 OpenCode 的两代插件 API: 命名导出 `SuperpowersPlugin` 服务 V1 (config 钩子里把 `skills/` 写进 `config.skills.paths`, 再由 `experimental.chat.messages.transform` 变换消息数组); 默认导出 `{id, server, setup}` 服务 V2 (`setup` 里对每个技能调用 `ctx.skill.transform(draft.add)` 注册, 并用 `ctx.session.hook('context')` 注入上下文)。配套的 `index.js` 只有再导出一行, 供 V2 的目录形态插件注册使用。工程要点:
+OpenCode (JS, `.opencode/plugins/superpowers.js`)。同一个模块以两种导出形态支持 OpenCode 的两代插件 API: 命名导出 `SuperpowersPlugin` 服务 V1 (config 钩子里把 `skills/` 写进 `config.skills.paths`, 再由 `experimental.chat.messages.transform` 变换消息数组); 默认导出 `{id, server, setup}` 服务 V2 (`setup` 里调用一次 `ctx.skill.transform`、在其回调内逐技能 `draft.add` 注册, 并用 `ctx.session.hook('context')` 注入上下文)。配套的 `index.js` 只有再导出一行, 供 V2 的目录形态插件注册使用。工程要点:
 
 - 两套工具映射常量 `V1_MAPPING` 与 `V2_MAPPING` 按 API 代际取用 (V2 没有 todo 工具, 改用 markdown 计划文件, 子代理调用形态也不同); bootstrap 内容按映射做模块级缓存, 因为上下文钩子在每个 agent step 都会触发, 不能每步读盘解析。
 - 子会话检测。bootstrap 驱动的是 controller 工作流, 注入到子代理会话会让 worker 重启设计循环; 因为技能里的 `<SUBAGENT-STOP>` 只靠模型自觉, 插件改用结构化信号——会话记录带 parentID 即为子会话, 跳过注入 (技能注册保留)。判定结果缓存在有界 map 里 (上限 512 条, 满了丢最旧的四分之一); 查询失败时 fail-open 按顶层会话处理且不缓存。
@@ -258,7 +258,7 @@ Hermes (Python, `.hermes-plugin/__init__.py`)。插件在注册时逐技能调�
 ### 4.5 声明式与上下文文件宿主
 
 - Kimi: manifest 里三件事——指向现有技能目录、`sessionStart.skill` 声明式会话启动技能、内联一整段 `skillInstructions` 工具映射说明。无技能拷贝、无符号链接、无 hook。
-- Muse: 能力声明显式枚举全部 15 个技能 (name 加 description), hooks 用 `["sh", "hooks/session-start"]` 数组形式直接调用同一个 session-start 脚本; 脚本按 `MUSE_PLUGIN_ROOT` 输出嵌套形状。
+- Muse: 能力声明显式枚举全部 15 个技能 (id 加 path), hooks 用 `["sh", "hooks/session-start"]` 数组形式直接调用同一个 session-start 脚本; 脚本按 `MUSE_PLUGIN_ROOT` 输出嵌套形状。
 - Codex: manifest 指向技能目录, 并用字面量空对象 `"hooks": {}` 显式关闭 hooks——缺失字段或空数组都会触发宿主的自动发现回退, 把 Claude 的 SessionStart hook 连带注册回来, 造成双重注入。
 - Devin: manifest 是纯元数据, 没有任何能力字段; 宿主读 manifest 后自动发现同级技能目录, 并在会话开始时把技能元数据放进系统提示词。
 - Gemini: `gemini-extension.json` 声明 `"contextFileName": "GEMINI.md"`, 该文件内容是两条 `@` 引用, 宿主原样加载。
@@ -269,9 +269,9 @@ Hermes (Python, `.hermes-plugin/__init__.py`)。插件在注册时逐技能调�
 
 ### 4.7 分发与 Windows
 
-分发渠道按宿主而定: 原生市场、git URL 安装、包清单字段 (`package.json` 声明 `type: module`、main 指向 OpenCode 插件并带 `pi.extensions`/`pi.skills` 字段)、本地安装器。两条安装器怪癖值得记录: 安装器会静默丢弃未声明文件 (bootstrap 必须声明为可识别组件), 打包器会剥掉可执行位 (因此技能行文一律用解释器调用脚本)。
+分发渠道按宿主而定: 原生市场、git URL 安装、包清单字段 (`package.json` 声明 `type: module`、main 指向 OpenCode 插件并带 `pi.extensions`/`pi.skills` 字段)、本地安装器。两条安装器怪癖值得记录: 安装器会静默丢弃未声明文件 (bootstrap 必须声明为可识别组件), 打包器会剥掉可执行位 (因此技能行文多用解释器调用脚本)。
 
-Windows 适配分三层: hook 层用 `"shell": "bash"` 强制 Git Bash 路线并配 polyglot 分发器与无扩展名脚本; 可视化伴侣服务器在 Windows-like shell 或 `CODEX_CI` 环境下强制前台模式, 因为无法可靠验证进程存活性, 且浏览器启动经 `execFile` 参数传递而非 shell 字符串以避免命令注入; in-process 形态天然绕开 shell 脚本问题。
+Windows 适配分三层: hook 层用 `"shell": "bash"` 强制 Git Bash 路线并配 polyglot 分发器与无扩展名脚本; 可视化伴侣服务器在 Windows-like shell 或 `CODEX_CI` 环境下强制前台模式, 因为这些环境会回收 nohup 后台进程, 且浏览器启动经 `execFile` 参数传递而非 shell 字符串以避免命令注入; in-process 形态天然绕开 shell 脚本问题。
 
 ## 五、零依赖 visual companion 服务器
 
@@ -337,7 +337,7 @@ brainstorming 附带一个可选的可视化伴侣 (`skills/brainstorming/script
 
 ### 6.4 脱敏与导出
 
-脱敏策略定义了八类占位符 (邮箱、人名、组织、密钥、主机、home 路径、仓库名、专有名词), 保留会话 ID、工具名、技能名、相对安装根路径、模型 ID、宿主版本与行号, 因为 "没有它们这份 bundle 就没用"。两条原则值得单独指出: 某条记录涉密不代表命令或结果全部涉密; 如果脱敏移除了某个发现的支撑, 就记录受影响的发现与限制, 绝不为通过证据检查而保留敏感值。
+脱敏策略定义了八类占位符 (邮箱、人名、组织、密钥、主机、home 路径、仓库名、专有名词), 保留会话 ID、工具名、技能名、相对安装根路径、模型 ID、宿主版本与行号, 因为 "没有它们这份 bundle 就没用"。两条原则值得单独指出: 私有仓库名不代表其每条命令或结果都涉密; 如果脱敏移除了某个发现的支撑, 就记录受影响的发现与限制, 绝不为通过证据检查而保留敏感值。
 
 上下文安全应对 "一条记录可达兆字节" 的情况: 读任何文件先用 `wc` 测量, 绝不 `cat` 或 grep 出正文, 先取行号与计数再取小字段, 单条输出超过 500 字符就收紧。脱敏代理重写 bundle 内每个文件并记录占位符计数 (任何地方都不写明文映射表), 独立审计代理全文查找漏网内容, 只有无遗漏且无未决分类才返回 CLEAN——审计通过只证明隐私, 不证明结论正确。
 
@@ -352,7 +352,7 @@ brainstorming 附带一个可选的可视化伴侣 (`skills/brainstorming/script
 `tests/` 下的目录按被测对象划分, 常见的模式是 bash 自带的通过/失败计数器加 trap 清理临时 fixture, 用 python 逐字段断言 JSON manifest, 用 node:test 或手写 runner。覆盖面包括:
 
 - 可视化伴侣服务器: WebSocket 协议单元测试、浏览器端重连逻辑、token 认证、品牌与遥测开关、Windows 生命周期、浏览器启动器选择、启停脚本的 PID 所有权。
-- 各宿主注入器: session-start 在四种环境变量组合下的输出互斥、Claude hook 注册必须声明 `"shell": "bash"`、polyglot 分发器正确派发; OpenCode 的 bootstrap 缓存与子会话判定; Pi 扩展的处理器契约; Hermes 的注入路径与 bootstrap 大小上限 (`HERMES_CONTEXT_SPILL_LIMIT`)。
+- 各宿主注入器: session-start 在三种环境变量组合下的输出互斥、Claude hook 注册必须声明 `"shell": "bash"`、polyglot 分发器正确派发; OpenCode 的 bootstrap 缓存与子会话判定; Pi 扩展的处理器契约; Hermes 的注入路径与 bootstrap 大小上限 (`HERMES_CONTEXT_SPILL_LIMIT`)。
 - manifest 断言: 用 python 逐字段检查各宿主的插件清单, 包括确认 Codex 的 `hooks` 恰为空对象、Devin 清单不含能力字段、Kimi 的声明式启动与内联工具映射、Codex 打包产物完整、Antigravity 品牌资源就位。
 - 技能静态检查: 技能体积预算、frontmatter 合法性、被引用文件存在性、流程图渲染、诊断技能提示词不泄漏本地路径与个人信息; 行为验证全部在仓库外的场景 eval 里。
 - 版本与发布工程: `.version-bump.json` 的 12 个位点同步脚本在 fixture 仓上的行为、shell lint 的收集与过滤、find-polluter 等辅助脚本自身的测试。
@@ -374,7 +374,7 @@ brainstorming 附带一个可选的可视化伴侣 (`skills/brainstorming/script
 
 - 它不是运行时。没有 CLI、没有守护进程, 全部效果取决于注入是否发生、模型是否遵从技能文本以及宿主能力是否够用; 子代理、todo、web 等能力缺失时相应技能降级。个别宿主还有已知的注入盲区, 例如 Hermes 没有压缩后钩子, compaction 之后到会话结束之间不会重注入。
 - 强制是软的。审批门、Iron Law、证据门都由提示文本驱动, 没有代码级拦截; 遵从率通过措辞实验与压力测试提升, 但不能保证。
-- 成本与纪律正相关。每任务新子代理加评审、终审用最强模型、显式声明模型分档都是成本工程, 但在小改动上这套流程明显过重, brainstorming 的尺寸分档 (快任务直接做、小改动聊天内定、项目才写设计文档) 与一次性 spike 正是为此设的降级通道。
+- 成本与纪律正相关。每任务新子代理加评审、终审用最强模型、显式声明模型分档都是成本工程, 但在小改动上这套流程明显过重, brainstorming 的尺寸分档 (快而清的任务直接做、小改动写短设计文档、项目写完整设计文档) 与一次性 spike 正是为此设的降级通道。
 - 宿主差异是持续的维护负担。hook schema、JSON 字段、工具名、Windows shell 行为各不相同, 且宿主会变; 因此描述机制的不变量比描述具体实现更耐久。
 - 诊断能力只报告不裁决。它能产出带证据的会话分析, 但明确不判断方法论本身是否有缺陷, 也不提议修改。
 - 遥测默认开启但极小。唯一的外部请求是品牌 logo 的版本号查询, 三个环境变量任一即可关闭。

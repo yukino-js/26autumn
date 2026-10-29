@@ -129,7 +129,7 @@ Runnable 继承的 `Serializable` 基类定义了 `lc_serializable`、`lc_namesp
 
 ### 子路径导出
 
-core 的 package exports 提供 73 个子路径, 全部按功能域拆分, 例如 runnables、messages 及其 tool 子域、tools、prompts、output_parsers、callbacks 的 base/manager/dispatch、language_models 的 base/chat_models/structured_output/profile、retrievers、tracers、load 与 load/serializable、embeddings、caches、documents、errors、memory、chat_history、context、indexing、example_selectors。细粒度子路径是各包 tree-shaking 与按需加载的基础。
+core 的 package exports 共 73 个导出条目, 全部按功能域拆分, 例如 runnables、messages 及其 tool 子域、tools、prompts、output_parsers、callbacks 的 base/manager/dispatch、language_models 的 base/chat_models/structured_output/profile、retrievers、tracers、load 与 load/serializable、embeddings、caches、documents、errors、memory、chat_history、context、indexing、example_selectors。细粒度子路径是各包 tree-shaking 与按需加载的基础。
 
 core 的依赖面极窄, 只有七个: `@cfworker/json-schema` (浏览器可用的 JSON Schema 校验)、`@standard-schema/spec` (标准 schema 规范)、`js-tiktoken` (token 计数)、`langsmith`、`mustache`、`p-queue` 与 `zod` (`^3.25.76 || ^4` 双版本)。
 
@@ -184,7 +184,7 @@ core 的依赖面极窄, 只有七个: `@cfworker/json-schema` (浏览器可用�
 - `DynamicTool`: 由名称、描述与函数动态构造, 函数接收字符串。
 - `DynamicStructuredTool`: 带 schema 的动态工具, schema 可传 zod 或 JSON Schema。
 
-面向用户的推荐入口是 `tool()` 工厂, 它有 13 个重载, 覆盖 zod v3/v4 的字符串与对象 schema、JSON Schema, 以及带运行时上下文的变体。分派逻辑很直白: schema 缺省或退化为纯字符串时生成 DynamicTool, 否则生成 DynamicStructuredTool。两条路径都会把用户函数包进异步上下文配置, 并注册中断信号监听; core 保留的环境配置子集 (`pickRunnableConfigKeys`) 除 `configurable`、`recursionLimit`、`callbacks`、`tags`、`metadata`、`maxConcurrency`、`timeout`、`signal` 外还包含 `store` 与 `context`, 使工具内部调用的 LangGraph 助手 (`getConfig()`、`getStore()` 等) 依然能取到运行时字段。
+面向用户的推荐入口是 `tool()` 工厂, 它有 12 个重载, 覆盖 zod v3/v4 的字符串与对象 schema、JSON Schema, 以及带运行时上下文的变体。分派逻辑很直白: schema 缺省或退化为纯字符串时生成 DynamicTool, 否则生成 DynamicStructuredTool。两条路径都会把用户函数包进异步上下文配置, DynamicStructuredTool 路径还会注册中断信号监听; core 保留的环境配置子集 (`pickRunnableConfigKeys`) 除 `configurable`、`recursionLimit`、`callbacks`、`tags`、`metadata`、`maxConcurrency`、`timeout`、`signal` 外还包含 `store` 与 `context`, 使工具内部调用的 LangGraph 助手 (`getConfig()`、`getStore()` 等) 依然能取到运行时字段。
 
 一个典型用法如下, 工具函数的第二个参数由框架自动注入运行时上下文:
 
@@ -312,7 +312,7 @@ Google 一线的统一包是 `@langchain/google`: 它不依赖 Google 官方 SDK
 
 ### ReactAgent 与三节点模型
 
-`createAgent` 有 14 个重载, 覆盖结构化输出格式的各种组合, 实现体只有一句 `return new ReactAgent(params)`。ReactAgent 的类注释描述了 ReAct 三节点模型:
+`createAgent` 有 13 个重载, 覆盖结构化输出格式的各种组合, 实现体只有一句 `return new ReactAgent(params)`。ReactAgent 的类注释描述了 ReAct 三节点模型:
 
 ```text
 model_request ──▶ 模型调用
@@ -320,7 +320,7 @@ tools         ──▶ 工具调用 (每个工具调用可拆分为独立任务
 end           ──▶ 结束
 ```
 
-这三者是图中唯二可从其他节点跳转到的目标 (`JumpToTarget` 即 `"model_request" | "tools" | "end"`)。前后还有四个钩子节点: beforeAgent、beforeModel、afterModel、afterAgent, 它们就是中间件的挂载点; 图的边按“beforeAgent → beforeModel → model_request → afterModel → tools → …”连接, 入口节点与尾节点按各钩子是否存在动态确定。
+这三者是图中仅有的可从其他节点跳转到的目标 (用户侧 `JumpToTarget` 为 `"model" | "tools" | "end"`, 经 `parseJumpToTarget` 映射为图节点名, 其中 `"model"` 对应 `model_request`)。前后还有四个钩子节点: beforeAgent、beforeModel、afterModel、afterAgent, 它们就是中间件的挂载点; 图的边按“beforeAgent → beforeModel → model_request → afterModel → tools → …”连接, 入口节点与尾节点按各钩子是否存在动态确定。
 
 ReactAgent 用一个类型配置包承载全部类型信息 (响应、状态、上下文、中间件、工具、流转换器)。运行时底座是 LangGraph: 从 LangGraph 引入 StateGraph、START、END、Send、Command 与编译图; 从 checkpoint 包引入检查点保存器与 Store 基类。状态原语 (Annotation、MessagesValue 等) 也来自 LangGraph。
 
@@ -394,7 +394,7 @@ ReactAgent 用一个类型配置包承载全部类型信息 (响应、状态、�
 new Command({ resume: { [interrupt.id]: decision } });
 ```
 
-LangGraph 会先把每个应答按对应中断的 `responseSchema` 校验再保存: 非法应答抛出 `MiddlewareError` (cause 是 Zod 错误) 且什么都不落盘, 同一个中断可以重新应答; 这依赖 LangGraph “resume 值非法时不中止同超步其他任务”的运行语义 (见 [LangGraph](langgraph) 第八章)。per_call 的 edit 语义更严: `edited_action.name` 在 schema 层钉死为原工具, `args` 按工具的 zod v4 对象 schema 校验; `editNotice` 默认 `DEFAULT_EDIT_NOTICE` 会在被编辑调用的结果前追加一段提示文本, 告诉模型执行的是审阅者改过的版本, 传 `null` 关闭。respond 不执行工具, 把审阅者的 message 作为成功结果; reject 产出 error 状态的 ToolMessage。
+LangGraph 会先把每个应答按对应中断的 `responseSchema` 校验再保存: 非法应答抛出 `ZodError` 且不会被保存, 同一个中断可以重新应答; 若一起发送的多个应答中有一个非法, 其他应答对应的工具可能已经执行, 重新应答会导致重复执行, 因此应先按 `responseSchema` 校验再一起发送, 或逐个发送 (见 [LangGraph](langgraph) 第八章)。per_call 的 edit 语义更严: `edited_action.name` 在 schema 层钉死为原工具, `args` 按工具的 zod v4 对象 schema 校验; `editNotice` 默认 `DEFAULT_EDIT_NOTICE` 会在被编辑调用的结果前追加一段提示文本, 告诉模型执行的是审阅者改过的版本, 传 `null` 关闭。respond 不执行工具, 把审阅者的 message 作为成功结果; reject 产出 error 状态的 ToolMessage。
 
 约束: per_call 模式要求 `createAgent` 的 `version` 为 `"v2"` (默认值), `"v1"` 下所有工具调用跑在同一个任务里、中断会共享 ID, 因此构建期直接抛错; `when` 谓词在恢复时会重跑, 若此时返回 `false`, 工具直接执行、审阅应答被忽略; HITL 应排在重试/错误处理类中间件之前, 使它能包住这些中间件。
 
@@ -510,12 +510,12 @@ createAgent 支持跨会话的长期记忆, 载体是 store 参数, 与只记录
 
 四个构建插件承载框架特有的生成逻辑:
 
-| 插件                  | 产物                                          | 作用                                                                          |
-| --------------------- | --------------------------------------------- | ----------------------------------------------------------------------------- |
-| lcSecretsPlugin       | 密钥映射类型 (默认 `src/load/import_type.ts`) | 扫描所有 `lc_secrets` 声明, 收集环境变量名并校验命名规范                      |
-| importConstantsPlugin | 可选导入入口数组                              | 声明可选依赖入口点                                                            |
-| importMapPlugin       | 导入映射文件 (默认 `src/load/import_map.ts`)  | 为所有入口生成带命名空间别名的再导出, 别名用双下划线 (如 `tools__calculator`) |
-| cjsCompatPlugin       | 各入口的 cjs 与类型 barrel                    | 双格式包的模块解析兼容                                                        |
+| 插件                  | 产物                                          | 作用                                                                   |
+| --------------------- | --------------------------------------------- | ---------------------------------------------------------------------- |
+| lcSecretsPlugin       | 密钥映射类型 (默认 `src/load/import_type.ts`) | 扫描所有 `lc_secrets` 声明, 收集环境变量名并校验命名规范               |
+| importConstantsPlugin | 可选导入入口数组                              | 声明可选依赖入口点                                                     |
+| importMapPlugin       | 导入映射文件 (默认 `src/load/import_map.ts`)  | 为所有入口生成带命名空间别名的再导出, 别名用双下划线 (如 `tools__sql`) |
+| cjsCompatPlugin       | 各入口的 cjs 与类型 barrel                    | 双格式包的模块解析兼容                                                 |
 
 导入映射支持 `nodeOnly`、`importsOptionalDependencies`、`omitFromImportMap` 过滤与自定义额外条目, 别名由若干部分以 `__` 连接而成。
 

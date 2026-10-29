@@ -12,7 +12,7 @@ LangGraph.js 是一个用 TypeScript 编写的低层 agent 编排 runtime。仓�
 
 ### 1.1 工程基座
 
-仓库使用 pnpm workspaces + turbo 组织, `package.json` 声明 node 引擎 `^22.11 || ^24 || >=26`, packageManager 为 pnpm 10.27.0。核心库 `@langchain/langgraph` (目录 `libs/langgraph-core`) 把 `@langchain/core` (`^1.1.48`) 与 zod (`^3.25.32 || ^4.2.0`) 声明为 peerDependency, 使版本冲突暴露在安装期而非运行期; 直接依赖包括 workspace 内的 checkpoint 与 sdk 包、`@langchain/protocol` (协议事件类型) 与 `@standard-schema/spec` (Standard Schema 互操作)。子路径导出划分为: `"."` (Node 全量入口)、`"./web"` (浏览器安全入口, 不含依赖 `node:async_hooks` 的部分)、`"./channels"`、`"./pregel"`、`"./prebuilt"`、`"./remote"`、`"./stream"`、`"./zod"` 与 `"./zod/schema"`。另有 `libs/langgraph` 提供无 scope 的 `langgraph` 包名, 源码只有一行 re-export。
+仓库使用 pnpm workspaces + turbo 组织, `package.json` 声明 node 引擎 `^22.11 || ^24 || >=26`, packageManager 为 pnpm 10.27.0。核心库 `@langchain/langgraph` (目录 `libs/langgraph-core`) 把 `@langchain/core` (`^1.1.48`) 与 zod (`^3.25.32 || ^4.2.0`) 声明为 peerDependency, 使版本冲突暴露在安装期而非运行期; 直接依赖包括 workspace 内的 checkpoint 与 sdk 包、`@langchain/protocol` (协议事件类型) 与 `@standard-schema/spec` (Standard Schema 互操作)。子路径导出划分为: `"."` (Node 全量入口)、`"./web"` (浏览器安全入口, 不含依赖 `node:async_hooks` 的部分)、`"./channels"`、`"./pregel"`、`"./prebuilt"`、`"./remote"`、`"./stream"`、`"./zod"` 与 `"./zod/schema"`。另有 `libs/langgraph` 提供无 scope 的 `langgraph` 包名, 源码为逐子路径的一行 re-export (每个子路径对应一个文件, 各自 re-export `@langchain/langgraph` 的对应导出)。
 
 ### 1.2 核心执行与状态基座
 
@@ -54,7 +54,7 @@ LangGraph.js 是一个用 TypeScript 编写的低层 agent 编排 runtime。仓�
 
 状态 schema 有两种等价表达。第一种是 `Annotation`: `StateDefinition` 本质是"键 → 通道规格"的映射, `Annotation.Root(spec)` 返回 `AnnotationRoot` (以 `lc_graph_name` 提供 `isInstance` 跨包识别)。每个键不带 `reducer` 时创建 `LastValue` 通道, 只保留一步内的唯一写入; 带 `reducer` 时创建 `BinaryOperatorAggregate` 通道, `default` 提供初始值工厂。
 
-第二种是 zod / Standard Schema: `StateGraph` 直接接受 zod object schema, reducer 与 default 通过 meta 声明。核心库为此提供 `"./zod"` 子路径 (给 zod schema 挂 `.langgraph.reducer()` 等方法) 与预置的 messages 状态:
+第二种是 zod / Standard Schema: `StateGraph` 直接接受 zod object schema, reducer 与 default 通过 meta 声明。核心库为此提供 `"./zod"` 子路径: `SchemaMeta` 类型、`withLangGraph(schema, meta)` 包装函数与 meta 注册表 (含适配 zod v4 的 `registry`), 以及预置的 messages 状态:
 
 ```ts
 // graph/messages_annotation.ts (节选)
@@ -101,7 +101,7 @@ export const MessagesZodState = z.object({
 
 ### 2.4 节点返回值语义
 
-节点函数收到 `(state, config)`, 返回值经 `_getUpdates`/`_getRoot` 归一化: 返回假值 (undefined/null) 视为"无更新"; 返回对象时按键过滤到 schema 声明的通道, 出现未知键或非法形态抛 `InvalidUpdateError`; 返回 `Command` 则同时携带状态更新与路由; 返回 `Send` 数组即动态分发。节点内部也可以调用 `writer()` 拿到 custom 流写入器 (见第九章)。
+节点函数收到 `(state, config)`, 返回值经 `_getUpdates`/`_getRoot` 归一化: 返回假值 (undefined/null) 视为"无更新"; 返回对象时按键过滤到 schema 声明的通道, 未知键被静默丢弃; 返回既非对象、也非含 `Command` 的数组等非法形态才抛 `InvalidUpdateError` (`INVALID_GRAPH_NODE_RETURN_VALUE`); 返回 `Command` 则同时携带状态更新与路由; 返回 `Send` 数组即动态分发。节点内部也可以调用 `writer()` 拿到 custom 流写入器 (见第九章)。
 
 ### 2.5 compile: 编译为 Pregel
 
@@ -158,7 +158,7 @@ export const MessagesZodState = z.object({
 | `context`                      | compile 时声明 schema 的只读运行上下文 (`_validateContext` 校验) |
 | `store`                        | 跨线程长期记忆 Store                                             |
 | `writer`                       | custom 流写入器                                                  |
-| `interrupt`                    | 当前待处理的 interrupt 载荷                                      |
+| `interrupt`                    | interrupt 函数, 调用即暂停当前节点并等待 resume 值               |
 | `signal`                       | 中止信号                                                         |
 | `heartbeat`                    | 长任务心跳, 用于刷新 `idleTimeout`                               |
 | `executionInfo` / `serverInfo` | 执行与部署环境信息                                               |
@@ -292,7 +292,7 @@ Store 与 cache 分别以 `AsyncBatchedStore`/`AsyncBatchedCache` 包装后注�
 
 `configurable.thread_id` 标识一条会话线程; `checkpoint_id` 精确定位线程内某个检查点。编译后的图提供四个状态管理入口:
 
-- `getState(config)` → `StateSnapshot`: `{ values, next, config, metadata, created_at, parent_config, tasks }`, `next` 是待执行节点名列表, `tasks` 含每个待执行任务的 id、name、interrupts 等描述;
+- `getState(config)` → `StateSnapshot`: `{ values, next, config, metadata, createdAt, parentConfig, tasks }`, `next` 是待执行节点名列表, `tasks` 含每个待执行任务的 id、name、interrupts 等描述;
 - `getStateHistory(config)` → 沿 parent 链倒序的历史快照流;
 - `updateState(config, values, asNode?)` → 以指定节点名义写入一组值, 产生 `source: "update"` 的新检查点;
 - `bulkUpdateState(config, updates)` → 依序应用多组更新。
@@ -306,16 +306,16 @@ Store 与 cache 分别以 `AsyncBatchedStore`/`AsyncBatchedCache` 包装后注�
 `interrupt(payload)` (`src/interrupt.ts`) 只能在节点/任务执行中调用, 完整流程:
 
 1. 从 AsyncLocalStorage 取当前任务 config, 取不到说明不在图运行中, 直接报错; 没有 checkpointer 时抛 `GraphValueError` (`MISSING_CHECKPOINTER`)——中断必须可持久化才有意义;
-2. interrupt id 由 `checkpoint_ns` 的 XXH3 哈希加上任务内 `interruptCounter` 派生, 同一节点内多个 interrupt 依次编号, 且重放时 id 稳定;
-3. 检查 resume 映射 (`CONFIG_KEY_RESUME_MAP`, 以 interrupt id 为键): 已有值则直接返回该值 (节点重放时前面的 interrupt 就是这样"快进"的);
-4. 没有 resume 值: 把 interrupt 写入任务写入 (RESUME 切片按 `slice(0, idx + 1)` 持久化), 构造 `Interrupt` 载荷——若调用时传了 `responseSchema` (zod), 会经 `toJsonSchema` 转换挂在 `response_schema` 字段上——然后抛 `GraphInterrupt`;
+2. interrupt id 即任务 `checkpoint_ns` (含 `:${taskId}` 后缀) 的 XXH3 哈希, 重放时稳定; 同一任务内多个 interrupt 共享该 id, 靠任务内 `interruptCounter` 递增依次消费 resume 值;
+3. 检查 resume 映射 (`CONFIG_KEY_RESUME_MAP`, 以 interrupt id 为键, 在任务准备阶段并入 scratchpad 的 resume 序列): 已有值则直接返回该值 (节点重放时前面的 interrupt 就是这样"快进"的), 并把已消费前缀按 `slice(0, idx + 1)` 重新持久化为 RESUME 写入;
+4. 没有 resume 值: 构造 `Interrupt` 载荷——若调用时传了 `responseSchema` (zod), 会经 `toJsonSchema` 转换挂在 `response_schema` 字段上——然后抛 `GraphInterrupt`; runner 提交任务时把它转成 `[INTERRUPT, interrupt]` 写入落盘;
 5. `GraphInterrupt` 属于 `GraphBubbleUp` 错误家族 (同族还有 `NodeInterrupt`、`ParentCommand`、`GraphDrained`), 逐层冒泡到 loop, loop 把当前状态落成检查点后正常结束流, `StateSnapshot.next` 停在中断节点, `tasks[].interrupts` 携带载荷。
 
 恢复时用 `new Command({ resume: value })` 作为输入再次 invoke/stream: 值可以是单值, 也可以是以 interrupt id 为键的映射 (一次应答多个中断)。节点从头重新执行, 已应答的 `interrupt()` 调用直接返回恢复值, 执行推进到下一个未应答的中断或正常完成。`skipDoneTasks` 保证同超步里已完成的其他任务不重跑。
 
 ### 8.2 invalid resume
 
-对着没有待处理中断的运行发 `Command({ resume })` 会触发 `_markInvalidResume`: 错误打上 `INVALID_RESUME` 标记 (`Symbol.for("langgraph.invalid_resume")`), `isInvalidResume` 沿 cause 链识别。这类错误只终结目标任务, 不 abort 同超步兄弟任务 (见 5.5)。
+resume 值未通过 interrupt 声明的 `responseSchema` (zod) 校验时, `interrupt()` 会调用 `_markInvalidResume` 给解析错误打上 `INVALID_RESUME` 标记 (`Symbol.for("langgraph.invalid_resume")`), `isInvalidResume` 沿 cause 链 (限深 10 层) 识别。这类错误只终结目标任务, 不 abort 同超步兄弟任务 (见 5.5), 待同超步其余任务完成后才抛出, 该 interrupt 可以被再次应答。
 
 ### 8.3 静态断点
 
@@ -378,7 +378,7 @@ type HumanResponse = {
 
 ### 9.4 streamEvents v3 与协议事件流
 
-`streamEvents(input, { version: "v3", ... })` 走独立管线 `#streamEventsV3`: 以 `STREAM_EVENTS_V3_MODES` + `subgraphs: true` 采集底层流, 交给 `createGraphRunStream(source, transformers)` 生成 `GraphRunStream`——一个结构化的协议事件流 (`convertToProtocolEvent` 把内部块转成 `@langchain/protocol` 事件: messages/tools/updates/lifecycle/checkpoints 等)。compile 时的 `transformers` 选项与调用时传入的 transformers 合并生效, 可用于自定义投影 (如 UI 状态流)。`values` 事件可携带伴生检查点信封 (`StreamChunkMeta.checkpoint`), 让客户端不订阅完整 checkpoints 流也能构建分支/时间旅行 UI。`encoding: "text/event-stream"` 时经 `protocolEventsToEventStream` 转 SSE, 并把 abort 信号接到 `graphRun.abort` 上。`RemoteGraph` 复用同一套协议事件转换 (9.4 与 12.1 共享 `protocolEventsToEventStream` 的实现路径)。
+`streamEvents(input, { version: "v3", ... })` 走独立管线 `#streamEventsV3`: 以 `STREAM_EVENTS_V3_MODES` + `subgraphs: true` 采集底层流, 交给 `createGraphRunStream(source, transformers)` 生成 `GraphRunStream`——一个结构化的协议事件流 (`convertToProtocolEvent` 把内部块转成 `@langchain/protocol` 事件: messages/tools/updates/lifecycle/checkpoints 等)。compile 时的 `transformers` 选项与调用时传入的 transformers 合并生效, 可用于自定义投影 (如 UI 状态流)。`values` 事件可携带伴生检查点信封 (`StreamChunkMeta.checkpoint`), 让客户端不订阅完整 checkpoints 流也能构建分支/时间旅行 UI。`encoding: "text/event-stream"` 时经 `protocolEventsToEventStream` 转 SSE, 并把 abort 信号接到 `graphRun.abort` 上。`RemoteGraph` 同样输出协议事件流: `RemoteGraphRunStream` 把 SDK 远端 `ThreadStream` 适配成本地 `GraphRunStream` 形态, `encoding: "text/event-stream"` 时由模块内的 `protocolEventsToEventStream` 转成 SSE。
 
 ## 十、Functional API: entrypoint 与 task
 
@@ -420,8 +420,8 @@ await workflow.invoke([1, 2, 3]); // [2, 3, 4]
 
 ### 11.3 多 agent 套件
 
-- `@langchain/langgraph-supervisor`: `createSupervisor({ agents, model, ... })` 生成"主管分派"图, `OutputMode` 控制子 agent 结果回传方式 (`"full_history"` 全量 / `"last_message"` 只传最后一条);
-- `@langchain/langgraph-swarm`: `createSwarm` 生成平等协作图, `SwarmState` 在状态里记住 `active_agent`, `addActiveAgentRouter` 把控制权路由回活跃 agent, 交接由工具返回 `Command` 完成;
+- `@langchain/langgraph-supervisor`: `createSupervisor({ agents, llm, ... })` 生成"主管分派"图, `OutputMode` 控制子 agent 结果回传方式 (`"full_history"` 全量 / `"last_message"` 只传最后一条, 默认后者);
+- `@langchain/langgraph-swarm`: `createSwarm` 生成平等协作图, `SwarmState` 在状态里记住 `activeAgent`, `addActiveAgentRouter` 把控制权路由回活跃 agent, 交接由工具返回 `Command` 完成;
 - `@langchain/langgraph-cua`: computer use agent, 图由三个节点组成——`call-model` (模型决策)、`create-vm-instance` (通过 Scrapybara 创建虚拟桌面, 需 `SCRAPYBARA_API_KEY`)、`take-computer-action` (执行鼠标键盘动作)。
 
 ## 十二、SDK、前端与部署平台
@@ -432,7 +432,7 @@ await workflow.invoke([1, 2, 3]); // [2, 3, 4]
 
 ### 12.2 ThreadStream 与双传输
 
-面向 UI 的 `ThreadStream` + `StreamController` (`src/client/stream/`) 提供带中断应答能力的事件流: `hydrate()` 重连并回放既有运行的缓冲事件, `respond()`/`respondAll()` 在流上直接应答 interrupt。传输层两个适配器:
+面向 UI 的 `ThreadStream` (`src/client/stream/index.ts`) 与 `StreamController` (`src/stream/controller.ts`) 提供带中断应答能力的事件流: `hydrate()` 重连并回放既有运行的状态与事件, `respond()`/`respondAll()` 在流上直接应答 interrupt。传输层两个适配器:
 
 - SSE: HTTP 长连接单向流;
 - WebSocket: 连接 `/threads/:thread_id/stream/events`, 双向, 支持在流上发送命令 (如 `subscription.subscribe`)。断线后指数退避重连 (`maxReconnectAttempts` 上限, 超限抛 `MaxWebSocketReconnectAttemptsError`), 服务端在新连接上回放缓冲事件, SDK 按 `event_id` 去重, 重连成功后回调 `onReconnected` 重发订阅。

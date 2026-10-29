@@ -89,7 +89,7 @@ docker CLI → dockerd (REST API: 构建/网络/卷/镜像管理)
 # 构建与运行
 docker build -t app:v1 .                     # 构建镜像
 docker run -d -p 8080:80 --name web app:v1   # 后台运行 + 端口映射
-docker run -it --rm node:20 sh               # 前台交互, 退出即删
+docker run -it --rm node:24 sh               # 前台交互, 退出即删
 docker run -d --restart unless-stopped \
   -v data:/var/lib/mysql -e MYSQL_ROOT_PASSWORD=x mysql:8  # 重启策略 + 卷 + 环境变量
 
@@ -119,7 +119,7 @@ docker export web -o web-fs.tar / docker import web-fs.tar # 容器文件系统�
 
 ```dockerfile
 # 多阶段构建: 编译层与运行层分离, 最终镜像极小
-FROM golang:1.22 AS builder
+FROM golang:1.26 AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download          # 依赖单独一层, 利用缓存
@@ -939,14 +939,14 @@ Pod 是牲口: 重建/漂移后 IP 必变, 直接依赖 Pod IP 的调用方会�
 #### 8.2 沙箱镜像 (预装全套工具链, Dockerfile)
 
 ```dockerfile
-FROM node:20-bookworm-slim
+FROM node:24-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl jq ripgrep tini \
     && rm -rf /var/lib/apt/lists/*
 # 复现验证用: 预装 Playwright + Chromium (装浏览器依赖需要 root, 放在 USER 之前)
 RUN npx playwright@1.47 install --with-deps chromium
 # 自研 agent CLI: 封装 LLM 循环 / patch 应用 / 验证编排
-RUN npm i -g pnpm@9 @internal/fix-agent
+RUN npm i -g pnpm@12 @internal/fix-agent
 COPY sandbox-entry.sh /usr/local/bin/sandbox-entry.sh
 RUN useradd -u 1000 -m agent && chmod +x /usr/local/bin/sandbox-entry.sh
 USER agent            # 非 root 运行
@@ -954,7 +954,7 @@ WORKDIR /workspace
 ENTRYPOINT ["tini", "--", "/usr/local/bin/sandbox-entry.sh"]
 ```
 
-要点: 镜像版本化 (`jsfix-sandbox:node20-v3`) 并签名入仓; tini 做 PID 1 解决信号转发与僵尸回收 (见 Docker §6); **不在沙箱里做 docker build** (拒绝 DinD/privileged, 前端项目 `node build` 即可, 打镜像留给 CI)。
+要点: 镜像版本化 (`jsfix-sandbox:node24-v3`) 并签名入仓; tini 做 PID 1 解决信号转发与僵尸回收 (见 Docker §6); **不在沙箱里做 docker build** (拒绝 DinD/privileged, 前端项目 `node build` 即可, 打镜像留给 CI)。
 
 #### 8.3 Job 完整 YAML (可直接改参数落地)
 
@@ -987,7 +987,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: agent
-          image: registry.internal/jsfix-sandbox:node20-v3
+          image: registry.internal/jsfix-sandbox:node24-v3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true # 根文件系统只读

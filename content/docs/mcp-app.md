@@ -90,7 +90,7 @@ registerAppResource(
 );
 ```
 
-ui:// 的路径结构是任意的, 多个工具也可以共享同一个 UI 资源。SDK 同时保留了历史的直接元数据键形式(把资源 URI 直接放在工具的 _meta 上), 宿主侧需要同时识别新旧两种格式; 新代码应使用 registerAppTool 的嵌套 _meta.ui.resourceUri 形式。
+ui:// 的路径结构是任意的, 多个工具也可以共享同一个 UI 资源。
 
 ### 2.2 声明契约: 工具元数据与资源元数据
 
@@ -150,7 +150,7 @@ App 渲染数据; 用户交互时 App 反向发起 tools/call(宿主代理转发
 
 ### 3.2 通信协议: postMessage 上的 MCP 方言
 
-iframe 内外的传输是 window.postMessage, 消息格式是 JSON-RPC——一个 MCP 方言: 一部分方法直接复用核心 MCP 的线上格式——App→宿主方向有 tools/call(经宿主代理转发)、resources/read、resources/list、sampling/createMessage(需宿主声明 sampling 能力)、notifications/message 日志、ping, 宿主→App 方向有 tools/call 与 tools/list(枚举并调用 App 内注册的工具)——其余是 ui/ 前缀的新方法。扩展协议自身也有版本常量(SDK 1.7.x 内 LATEST_PROTOCOL_VERSION 为 "2026-01-26"), 在 ui/initialize 握手中协商。
+iframe 内外的传输是 window.postMessage, 消息格式是 JSON-RPC——一个 MCP 方言: 一部分方法直接复用核心 MCP 的线上格式——App→宿主方向有 tools/call(经宿主代理转发)、resources/read、resources/list、sampling/createMessage(需宿主声明 sampling 能力)、notifications/message 日志、ping, 宿主→App 方向有 tools/call 与 tools/list(枚举并调用 App 内注册的工具)——其余是 ui/ 前缀的新方法。扩展协议自身也有版本常量(SDK 2.0.x 内 LATEST_PROTOCOL_VERSION 为 "2026-01-26"), 在 ui/initialize 握手中协商。
 
 | 方法 / 通知                             | 方向                  | 作用                                                    |
 | --------------------------------------- | --------------------- | ------------------------------------------------------- |
@@ -212,11 +212,11 @@ await app.connect(new PostMessageTransport());
 
 宿主通过 styles.variables 下发一批 CSS 自定义属性, App 用 var(--x, fallback) 消费即可与宿主主题对齐。App 的宿主绑定方法(如 callServerTool、sendMessage)在握手完成前调用会告警, 严格模式下抛错。SDK 还带 autoResize 开关(监听文档尺寸并自动上报)与 allowUnsafeEval 开关(默认让校验库走无 JIT 路径, 以适配严格 CSP)。
 
-React 技术栈另提供 useApp、useHostStyleVariables、useHostFonts、useDocumentTheme、useAutoResize 等 hooks。需要注意: ./react 子路径的类型声明使用无扩展名的相对导入, 在 NodeNext 模块解析下 re-export 会静默失效; 已有工程因此改用主入口的 App 类自行接线。
+React 技术栈另提供 useApp、useHostStyleVariables、useHostFonts、useDocumentTheme、useAutoResize 等 hooks。
 
 ### 3.4 服务端 SDK 与官方示例
 
-SDK 的 server 入口除注册函数外, 还提供 App 侧工具注册的能力(允许 App 内的 UI 代码注册额外工具)。示例覆盖地图(CesiumJS)、3D(Three.js)、着色器、PDF 阅读器、乐谱、语音转写、系统监控仪表盘、预算分配器等, 并提供多种前端模板与 vanilla 用法。宿主侧有两种接入方式: 直接使用 mcp-ui 客户端的 React 组件, 或基于 SDK 的 AppBridge 模块(负责 iframe 渲染、消息转发、工具调用代理与安全策略执行)。
+SDK 的 server 入口提供 registerAppTool 与 registerAppResource 两个注册函数; 主入口的 App 类另提供 registerTool, 允许 App 内的 UI 代码注册额外工具, 宿主可经 tools/list 枚举并通过 tools/call 调用。示例覆盖地图(CesiumJS)、3D(Three.js)、着色器、PDF 阅读器、乐谱、语音转写、系统监控仪表盘、预算分配器等, 并提供多种前端模板与 vanilla 用法。宿主侧有两种接入方式: 直接使用 mcp-ui 客户端的 React 组件, 或基于 SDK 的 AppBridge 模块(负责 iframe 渲染、消息转发、工具调用代理与安全策略执行)。
 
 ## 四、安全模型
 
@@ -269,8 +269,10 @@ create_app 是一个完整可参照的实现: 模型传入一份自包含 HTML, 
 ```text
 create-app/
   tool.ts            # registerAppTool + registerAppResource(服务端)
+  resolve-app.ts     # 依次从结果 _meta、structuredContent、工具入参解析 html 与 title
   create-app.html    # UI 入口
   create-app.tsx     # React shell: App 生命周期 + 沙箱 iframe
+  frame-size.ts      # 高度上报: 向内层 HTML 注入测量脚本, 解析 iframe 高度
   global.css         # 样式入口
 ```
 
@@ -317,10 +319,9 @@ tsup(清空 dist, 产出 dist/main.js)
 
 ### 5.5 已踩过的坑
 
-1. React 子路径的类型声明在 NodeNext 解析下失效(无扩展名相对导入), 改用主入口的 App 类自行接线;
-2. 打包器把 CJS 依赖打进 ESM bundle 时, 动态 require 会抛错, 需要在 banner 里补 createRequire(import.meta.url);
-3. 打包器的清空行为会删掉构建目录, 前端构建必须后跑且不重复清空;
-4. 依赖 data-theme 的组件库需要手动镜像宿主主题。
+1. 打包器把 CJS 依赖打进 ESM bundle 时, 动态 require 会抛错, 需要在 banner 里补 createRequire(import.meta.url);
+2. 打包器的清空行为会删掉构建目录, 前端构建必须后跑且不重复清空;
+3. 依赖 data-theme 的组件库需要手动镜像宿主主题。
 
 ## 六、宿主与生态现状
 
@@ -329,7 +330,7 @@ MCP Apps 是核心 MCP 规范之外的扩展, 宿主支持可选。定位上最�
 - Claude Artifacts: 体验相似, 但 Artifacts 是宿主内建功能、无法由第三方 Server 提供; MCP Apps 把这个能力开放给了整个 MCP 生态;
 - OpenAI Apps SDK: 同为"工具返回 UI", MCP Apps 走开放规范路线, 社区已有从专有 API 迁移到 MCP Apps 的路径。
 
-生态件包括宿主侧渲染组件、SDK 内置的 AppBridge(自建宿主用, 与 App 类共享同一套协议实现), 以及一批官方示例与多语言模板; 官方还提供 create-mcp-app、migrate-oai-app、add-app-to-server、convert-web-app 四个 Agent Skill, 分别用于从零脚手架、从 OpenAI Apps SDK 迁移、给已有 MCP server 的工具补 UI、把存量 web 应用改造成混合形态。本地可核对的 SDK 版本为 @modelcontextprotocol/ext-apps 1.7.5(搭配 @modelcontextprotocol/sdk 1.32.1), 扩展协议版本为 2026-01-26; 该规范版本已标注为稳定, 另有 draft 版本并行演进。
+生态件包括宿主侧渲染组件、SDK 内置的 AppBridge(自建宿主用, 与 App 类共享同一套协议实现), 以及一批官方示例与多语言模板; 官方还提供 create-mcp-app、migrate-oai-app、add-app-to-server、convert-web-app 四个 Agent Skill, 分别用于从零脚手架、从 OpenAI Apps SDK 迁移、给已有 MCP server 的工具补 UI、把存量 web 应用改造成混合形态。本地可核对的 SDK 版本为 @modelcontextprotocol/ext-apps 2.0.3(搭配 @modelcontextprotocol/client 2.3.1 与 @modelcontextprotocol/server 2.3.1), 扩展协议版本为 2026-01-26; 该规范版本已标注为稳定, 另有 draft 版本并行演进。
 
 ## 七、与 A2UI 的对比
 

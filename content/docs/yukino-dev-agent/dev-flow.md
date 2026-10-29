@@ -4,7 +4,7 @@ title: "DevFlow"
 
 # DevFlow
 
-DevFlow 是 yukino-agent 的第二个产品面: 一个 GitHub 工程副驾, UI 在 `/dev-flow`, REST 在 `/api/dev-flow/*`。它连接 GitHub 仓库, 把 issues / pull requests / CI runs 同步进 PostgreSQL, 跑「确定性优先」的 AI 分析 Agent, 维护每仓 RAG 知识库, 并提供对话、记忆、代码工作区、代码图、知识图、多 Agent workflow 编排和多仓 workspace。
+DevFlow 是 yukino-dev-agent 的第二个产品面: 一个 GitHub 工程副驾, UI 在 `/dev-flow`, REST 在 `/api/dev-flow/*`。它连接 GitHub 仓库, 把 issues / pull requests / CI runs 同步进 PostgreSQL, 跑「确定性优先」的 AI 分析 Agent, 维护每仓 RAG 知识库, 并提供对话、记忆、代码工作区、代码图、知识图、多 Agent workflow 编排和多仓 workspace。
 
 核心安全原则: **Agent 从不直接写 GitHub**, 所有写操作只生成草稿, 需人工确认才执行。
 
@@ -95,7 +95,7 @@ POST /api/dev-flow/repos
 
 ## 对话 Agent
 
-`lib/dev-flow/agents/chat.ts`, 用 `streamText` + 仓库范围工具, `stopWhen` 为 `stepCountIs(12)`。`POST /api/dev-flow/chat` 流式 SSE (事件 `connected` / `message` / `tool` / `done` / `error`)。对话以会话为后端: 请求 `{ repoId, conversationId?, message }`, 服务端解析/创建会话并持久化消息。
+`lib/dev-flow/agents/chat.ts`, 用 `streamText` + 仓库范围工具, `stopWhen` 为 `isStepCount(12)`。`POST /api/dev-flow/chat` 流式 SSE (事件 `connected` / `message` / `tool` / `done` / `error`)。对话以会话为后端: 请求 `{ repoId, conversationId?, message }`, 服务端解析/创建会话并持久化消息。
 
 韧性设计:
 

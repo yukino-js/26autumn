@@ -322,7 +322,7 @@ A2UI 消息流 (JSON)
 - **属性绑定分类**: Core 的 `GenericBinder` 按组件 schema 把每个属性分类为 dynamic、action、structural 或 checkable, 产出渲染器消费的已绑定属性集, 包括双向 setter 与 action 闭包。这个分类是 schema 驱动的, 新增组件不需要改渲染器内核。
 - **细粒度更新**: 节点只在自身已解析属性变化时发出信号, 框架适配层把信号桥接到框架的调度模型 (React 渲染器用 `useSyncExternalStore` 订阅外部存储)。
 - **事件回传**: 触发动作闭包时先解析 context 中的数据绑定 (相对路径在当前列表项作用域内解析), 再把事件汇聚发出。本地 `functionCall` 型动作由闭包在本地执行, 不出网; `event` 型动作派发为发往 Agent 的消息。
-- **框架适配层契约**: 蓝图要求适配层实现统一的节点分发 (处理未知类型/占位/无实现分支)、`buildChild` 子节点构建、卸载时释放解析器与订阅 (`dispose`)、以及并发渲染下的惰性创建。Dart Core 的动态属性以可写绑定 (`WritableBinding`) 承载, 写入走绑定的 set, 输入组件在自身 widget 状态与绑定值之间同步。
+- **框架适配层契约**: 蓝图要求适配层实现统一的节点分发 (处理未知类型/占位/无实现分支)、`buildChild` 子节点构建、卸载时释放解析器与订阅 (`dispose`)。Dart Core 的动态属性以可写绑定 (`WritableBinding`) 承载, 写入走绑定的 set, 输入组件在自身 widget 状态与绑定值之间同步。
 
 协议本身没有 loading 语义——消息中没有 loading 状态字段。渐进渲染期间的占位完全是渲染器或宿主侧的实现问题: 协议提供的基础是未到达组件渲染占位、`root` 未到达前缓冲、绑定路径解析为 `undefined` 时按空串或 loading 优雅处理。区分 "数据未到" 与 "值确实为空" 需要渲染器自建 settled 信号 (一批消息处理完成、流结束事件, 或窗口内无新消息的超时)。骨架是渲染器本地行为, 不进 catalog, Agent 不能也不需要请求骨架。
 
@@ -356,7 +356,7 @@ Core SDK 提供协议的语言原生表示: 强类型的 Catalog 声明 (`Catalo
 
 落地程度各语言不一:
 
-- **Dart** 已实现蓝图全部 API。注册的 catalog 可跨版本, 每个 processor 与渲染器协商出双方共有 catalog 的最新协议版本; `resolveCatalogs` 支持无能力请求 (取 null 时激活全部注册 catalog)。v1.0 下 `createSurface` 内嵌组件与数据模型、绑定写作 `@path` / `@call`、组件与函数调用可各自点名 catalog; agent 侧会按 catalog 的 `allowedCallers` 与用户激活要求预检, 经 `a2ui_core` 的 `MessageProcessor.forAgent` (只校验不执行的专用构造) 检查, 渲染器会拒绝的调用在 `parseChunk` 阶段就不会发出。
+- **Dart** 已实现蓝图全部 API。注册的 catalog 可跨版本, 每个 processor 与渲染器协商出双方共有 catalog 的最新协议版本; `resolveCatalogs` 支持无能力请求 (取 null 时激活全部注册 catalog)。v1.0 下 `createSurface` 内嵌组件与数据模型、绑定写作 `@path` / `@call`、组件与函数调用可各自点名 catalog; agent 侧会按 catalog 的 `allowedCallers` 与用户激活要求预检, 经 `a2ui_core` 的 `MessageProcessor.forAgent` (只校验不执行的专用构造) 检查, 渲染器会拒绝的调用在响应解析与流式读取 (`openStream` / `feed`) 阶段就不会发出。
 - **TypeScript** `@a2ui/agent` 支持 v1.0 / v0.9 / v0.9.1 (v0.9.1 共享 v0.9 schema), 实现 Direct JSON 与 Express; `KNOWN_GAPS.md` 记录 v0.8 与 Elemental / Atom 格式不在范围、Express 不做流式。`parseResponse` 解析失败时抛 `A2uiError` 并以 `partialResults` 返回失败块之前的部分; `RendererState` 区分 chat (每轮独立 Surface) 与 canvas (跨轮更新同一批 Surface) 两种校验模式, `validatePayload` 可独立校验单个 payload (如工具调用参数)。
 - **Python** `a2ui_agent` 提供同款 facade (`A2uiGenerator` / `A2uiRequestProcessor`, 位于 `a2ui/processor/`), 缺省格式工厂是 `ExpressFormatFactory`; `create_processor` 要求渲染器能力 (缺能力时报 `A2uiCatalogError`), `resolve_catalogs` 按版本键读取能力对象 (v0.8 兼容裸形态), 内联 catalog 无论是否被接受都会被解析——格式非法即报错。
 
@@ -366,7 +366,7 @@ Core 侧的关键设计:
 - **渲染器版本入口不一**: `@a2ui/react` 只开放 `./v0_8` / `./v0_9` 入口; `@a2ui/lit` 开放 `./0.8` / `./ui` / `./v0_8` / `./v0_9`, basic catalog 组件复用 web_core 的 universal 实现; `@a2ui/angular` 自带 v1.0 basic catalog 的 universal 实现 (`src/basic-catalog.ts`, 基于 `@a2ui/web_core/catalogs/basic/v1`, 缺省 `useUniversalComponents: true`), README 另文档化 `@a2ui/angular/v0_9` 入口; `@a2ui/markdown-it` 提供 Text 组件的 Markdown 渲染支持。
 - **Python Core** 用版本适配器工厂消化协议差异 (见 "版本族" 一节), 同时是 wire schema 的生成源: `a2ui.core.schema` 的 Pydantic 模型重建 specification 目录下 v0.8 / v0.9 / v0.9.1 的 `server_to_client.json` 与 v1.0 的 `agent_to_renderer.json`, conformance 套件 (`core/agent_to_renderer.yaml`) 断言各版本重建结果与已发布 spec 文件完全一致。catalog 侧由 `core/catalog.yaml` 覆盖四个入口点: `from_json` (已发布 catalog 必须与 SDK 自带 basic catalog 实现等价)、`to_json` (与已发布文件整体比对)、round-trip (往返不变)、`validation_schema` (原 `catalogSchema` 的继任者, allOf 展平、组件补 id 信封、公共类型内联)。
 - **Swift Core** 分三个 SPM target: `A2UIJSON` (JSON Schema 2020-12 数据结构与 `$ref` 解析, 支持 v0.9.1 与 v1.0 schema)、`A2UICore` (`SurfaceGroupModel`、带自动创建的 `DataModel`、双向 RPC 的 `RPCHandler`、action 分发)、`BasicCatalog` (v0.9 / v0.9.1 / v1.0 三个版本的 schema API 与 `formatString`、`@index` 等函数实现)。
-- **一致性套件** (`conformance/`) 是语言无关的 YAML 用例, 分 core / agent / extensions 三类: core 覆盖 catalog 四入口、wire schema 重建、三个版本的 validator (重复 ID、缺 root、悬空引用、环、可达性、嵌套深度上限、非法路径、多 Surface、增量更新)、数据模型指针与删除语义、节点解析、表达式解析、函数求值、`@index`、RPC 函数、多 catalog、组合约束、无障碍、保留键等; agent 按格式分目录 (direct_json 与 express 各自拥有 prompt 生成、编译、反编译、响应解析断言, direct_json 另有流式解析与 scaling 套件——Express 解析器整块缓冲后解析)。模型与 spec 文件互相钉住, 不会单边漂移。
+- **一致性套件** (`conformance/`) 是语言无关的 YAML 用例, 分 core / agent / extensions 三类: core 覆盖 catalog 四入口、wire schema 重建、三个版本的 validator (重复 ID、缺 root、悬空引用、环、可达性、嵌套深度上限、非法路径、多 Surface、增量更新)、数据模型指针与删除语义、节点解析、表达式解析、函数求值、`@index`、RPC 函数、多 catalog、组合约束、无障碍、保留键等; agent 按格式分目录 (direct_json 与 express 各自拥有 prompt 生成、编译、反编译、响应解析断言与 scaling 套件, direct_json 另有流式解析套件——Express 解析器整块缓冲后解析, 不做流式)。模型与 spec 文件互相钉住, 不会单边漂移。
 
 ## 与 A2A 的集成
 

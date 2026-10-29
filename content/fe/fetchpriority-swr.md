@@ -251,7 +251,7 @@ onLCP((metric) => {
 
 ## 七、兼容性与降级
 
-`fetchpriority` 以 Safari 17.2 (2023-12) 为最晚落地引擎, 在 2024 年初进入 Baseline "newly available", 并按 30 个月规则于 2026 年中转为 "widely available"。各主流引擎的起始支持版本:
+`fetchpriority` 以 Firefox 132 (2024-10) 为最晚落地引擎, 在 2024 年 10 月进入 Baseline "newly available", 按 30 个月规则将于 2027 年 4 月转为 "widely available"。各主流引擎的起始支持版本:
 
 | 引擎                | 支持起始版本 |
 | ------------------- | ------------ |

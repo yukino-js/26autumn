@@ -66,12 +66,12 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 
 `runTurn` 把 `executeTurn` 包在每运行时的内部锁里(同一应用不会有两轮并发), 顺序如下:
 
-1. **`claimTurn` 数据库互斥**: 跨节点抢占本轮执行权(见 4.4), 失败则广播 `workspace_busy` 错误并返回;
-2. 落库 `user_message`(含可选的 `selectedElement`/`previewError`), 置会话状态 `RUNNING`, 广播 `runtime_status: running`;
-3. 建事件适配器与**每轮的** `Permissions.PermissionChecker`——权限模式、沙箱开关、计划文件路径每轮重新套用, 软设置变更无需重建句柄;
+1. 落库 `user_message`(含可选的 `selectedElement`/`previewError`);
+2. **`claimTurn` 数据库互斥**: 跨节点抢占本轮执行权并把会话状态原子置为 `RUNNING`(见 4.4), 失败则广播 `workspace_busy` 错误并返回;
+3. 广播 `runtime_status: running`, 建事件适配器与**每轮的** `Permissions.PermissionChecker`——权限模式、沙箱开关、计划文件路径每轮重新套用, 软设置变更无需重建句柄;
 4. `composePrompt` 在用户原文后按需追加 `<selected-element>` JSON 块与 `<preview-error>` 块, 再经 `Conversation.AtExpand.expandAtRefsWithImages` 展开 `@` 提及的文件与图片(transcript 存原文, 会话存展开结果), `addUserMessage` 进会话;
 5. `MCP.Instructions.syncMcpInstructions` 播报本会话尚未见过的 MCP 服务器指令(压缩/恢复抹掉后会重播);
-6. **构造 `Agent.Agent`**: 关键字段是 `sessionId: ""`——传空字符串禁用引擎自身的 JSONL 会话写入, 让 DB transcript 成为唯一权威; `instructions`/`memoryContent` 为函数形式(见 2.1); `maxIterations` 取 `AI_MAX_ITERATIONS`(默认 40); `toolFilter` 叠加 coordinator 过滤(平台固定关闭, 恒真)与句柄过滤; Hook 启用时挂 `hookEngine` 与 `onLoopComplete`(记忆维护); `notificationFn` 排空团队与后台任务通知;
+6. **构造 `Agent.Agent`**: 关键字段是 `sessionId: ""`——传空字符串禁用引擎自身的 JSONL 会话写入, 让 DB transcript 成为唯一权威; `instructions`/`memoryContent` 为函数形式(见 2.1); `maxIterations` 取 `AI_MAX_ITERATIONS`(默认 40); `toolFilter` 叠加 coordinator 过滤(平台固定关闭, 恒真)与句柄过滤; Hook 启用时挂 `hookEngine`, 记忆启用时挂 `onLoopComplete`(记忆维护); `notificationFn` 排空团队与后台任务通知;
 7. **`turnGate.acquire(abort.signal, actorUserId)`** 进程级准入(见 2.4);
 8. `for await (const event of agent.run())` 逐事件经适配器分发; 循环中追踪 `ExitPlanMode` 工具成功与否, `usage` 事件累加并广播(含 `contextTokens`/`contextWindow`);
 9. **计划审批门**: 权限模式为 `PLAN` 且 `ExitPlanMode` 成功时, 广播 `plan_approval_request`(见 2.5);
@@ -94,7 +94,7 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 
 - `/plan [args]` 或把权限模式切到 `PLAN` 都会进入计划模式: 记录进入前的权限模式(`prePlanPermissionMode`), 持久化 `PLAN`, 经 `PlanFile.getOrCreatePlanPath` 创建或复用计划文件并同步到权限检查器; 带着已有计划文件重入时会重播 re-entry reminder;
 - 计划模式的轮次结束后, 若 `ExitPlanMode` 成功, 服务器读取计划文件当前内容, 广播 `plan_approval_request { planPath, planContent }` 并置 `planApprovalPending`; **10 分钟**(`PLAN_APPROVAL_TIMEOUT_MS`)未应答即过期, 广播 `plan_approval_expired`;
-- 用户经 `plan_approval_response` 三选一: `yolo` → 权限模式切到 `BYPASS_PERMISSIONS` 并立即提交"Execute this plan"执行计划(忙时存为 `pendingPlanExecution`, 等槽位释放后自动执行); `manual` → 恢复进入计划模式前的权限模式; `feedback` → 把反馈意见作为新输入重新提交;
+- 用户经 `plan_approval_response` 三选一: `yolo` → 权限模式切到 `BYPASS_PERMISSIONS`; `manual` → 恢复进入计划模式前的权限模式; 两者随后都会读取计划内容并立即提交"Execute this plan"执行计划(忙时存为 `pendingPlanExecution`, 等槽位释放后自动执行), 区别只在 manual 模式下每次编辑仍需确认; `feedback` → 把反馈意见作为新输入重新提交, 继续计划;
 - 从 `PLAN` 切回其他模式时, 注入 `buildPlanModeExitReminder` 告知模型计划模式已结束。
 
 ### 2.6 权限模式与人工介入
@@ -103,7 +103,7 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 
 当模式不是 bypass 时, 引擎的每次工具授权请求会经 `onPermissionRequest` 回调进入平台的交互代理(interaction broker): 请求被持久化成一条 `AgentInteraction` 行, 同时通过 WebSocket 推 `permission_request` 给前端, 并把运行时状态置为 `waiting`。前端弹权限对话框, 用户允许/拒绝后回 `permission_response`(可带 `remember`, 允许并记住时以 `allowAlways` 落库), 代理解析 promise 并广播 `interaction_resolved`。提问(`AskUserQuestion` 工具)走同一条通道。
 
-交互代理是**失败关闭**的: 5 分钟超时、会话取消、连接断开或运行时销毁, 都会把待决的权限请求解析为 `deny`、把提问请求 reject, 而不是静默放行。这保证了"无人值守的生成"不会在需要人确认时偷偷继续。`ready` 消息会带上当前所有待决交互(`pendingInteractions`), 断线重连后用户仍能看到并处理未决的权限/提问。
+交互代理是**失败关闭**的: 5 分钟超时、会话取消(abort)或运行时销毁, 都会把待决的权限请求解析为 `deny`、把提问请求 reject, 而不是静默放行; 单纯的连接断开不会取消待决交互, 它们会保留到重连。这保证了"无人值守的生成"不会在需要人确认时偷偷继续。`ready` 消息会带上当前所有待决交互(`pendingInteractions`), 断线重连后用户仍能看到并处理未决的权限/提问。
 
 ### 2.7 斜杠命令: 服务端可执行子集
 
@@ -134,20 +134,20 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 
 1. `mkdir` 工作目录;
 2. 并行读取启用的 MCP 服务器行与 Hook 行;
-3. 用 `buildProviderConfig(env, workspace.modelOverride)` 组装 Provider(端点/协议/密钥/token 上限来自服务器配置, 模型可被工作区覆盖);
+3. 用 `buildProviderConfig(env, workspace.modelOverride, workspace.thinkingLevel)` 组装 Provider(端点/协议/密钥/token 上限来自服务器配置, 模型与思考强度可被工作区覆盖);
 4. 调 `Remote.Server.createRemoteAgent({ askUser, cwd, enableCoordinatorMode: false, enableModelPlanMode: true, forkDisabled: false, hooks, mcpServers, memoryEnabled, provider, sandboxConfig?, onSubagentEvent })`——`askUser` 把引擎提问接到交互代理, `onSubagentEvent` 把子代理生命周期接到活动面板(见 8.3);
 5. `rehydrate` 把 DB 里的历史灌回句柄的会话。
 
 ### 3.3 rehydrate: 让 restoreContext 成为唯一注入点
 
-`createRemoteAgent` 会无条件把项目指令与完整长期记忆注入会话。平台在 rehydrate 时**先 `handle.conv.reset()` 抹掉这次注入**, 理由是: 引擎的 `Agent.restoreContext()` 才是唯一的注入点——它在首轮重新注入指令、技能清单, 并按工作区的 `memoryEnabled` 门控记忆。不重置的话, 一个 `memoryEnabled=false` 的工作区在 transcript 回放后仍会携带记忆。
+`createRemoteAgent` 在建句柄时会向会话做一次性注入: 项目指令总是注入, 长期记忆按创建参数 `memoryEnabled` 门控(平台传入工作区当前设置), 并置下 `longTermMemoryInjected` 标志——引擎的 `injectLongTermMemory` 只生效一次。平台在 rehydrate 时**先 `handle.conv.reset()` 抹掉这次注入与标志**, 理由是: 引擎的 `Agent.restoreContext()` 才是唯一的注入点——它在首轮重新注入指令、技能清单, 并按工作区当前的 `memoryEnabled` 门控记忆。不重置的话, 创建期注入会占住一次性标志使 `restoreContext` 被跳过, 会话将一直携带创建时快照的旧指令与记忆, 运行期的记忆开关与指令文件编辑都不再生效。
 
 历史恢复有两条路径, 优先用规范路径:
 
 - **规范路径**: 若 DB 会话存了 `context.messages`(逐字保存的 `Conversation.Message[]`, 含 thinking/tool-use/tool-result 块), 就 `appendMessages` 原样灌回;
 - **回放路径**: 否则从 transcript 取最近 200 条(`REPLAY_LIMIT`), 把 `user_message`/`assistant_message` 的文本逐条灌回。
 
-两条路径都会**丢弃持久化的 `<system-reminder>` 包裹消息**: 这些是运行时可重新派生的(记忆注入每次重建、MCP 指令经 `syncMcpInstructions` 重新播报), 留着会每次重启累积一层。活跃技能也从会话的 `activeSkills` 恢复到句柄的技能表。
+规范路径还会**丢弃持久化的 `<system-reminder>` 包裹消息**: 这些是运行时可重新派生的(记忆注入每次重建、MCP 指令经 `syncMcpInstructions` 重新播报), 留着会每次重启累积一层; 回放路径只灌 transcript 里的用户/助手文本, 天然不含这类消息。活跃技能也从会话的 `activeSkills` 恢复到句柄的技能表。
 
 ### 3.4 事件溯源与序列号
 
@@ -191,12 +191,12 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 
 - `/rewind` 或 UI 触发 `rewind_list` 广播: 每个快照带 sha/消息/日期, 以及 `conversation` 布尔(该检查点是否也能回退对话);
 - 客户端回 `rewind_action { sha, action }`, `action` 三选一: `code_and_conversation`(对话与代码一起回退)、`conversation_only`(只回退对话)、`code_only`(只回退代码, `/rewind <sha>` 命令默认走这个);
-- 服务端按动作组合执行: 会话消息截断(`truncateTo`/`truncateAfter`)、transcript 截断并重置序列高水位(`truncateAfter` + `setSequence`)、`git rewindTo`(见 6.7), 然后向所有连接广播 `session_replaced { sessionId, highWatermark }`;
+- 服务端按动作组合执行: 会话消息截断(`conv.truncateTo` 到检查点消息数)、transcript 截断并重置序列高水位(`truncateAfter` + `setSequence`)、`git rewindTo`(见 6.7), 然后向所有连接广播 `session_replaced { sessionId, highWatermark }`;
 - 客户端收到 `session_replaced` 后把本地序列归零、递增 `resyncCounter`, 重新发 `hello` 从序列 0 拉全量, 本地 transcript 完整重建。
 
 ### 3.7 销毁: 显式排空长驻资源
 
-运行时是长驻的, 因此销毁路径必须显式处理在途轮次与后台任务。`disposeResources` 的顺序是: 中止当前轮 → 取消会话所有待决交互(失败关闭)→ **排空内部锁**(等当前轮结束; 销毁从不从锁内部调用, 否则会死锁)→ 等会话就绪后再取消一次交互 → 停后台任务与团队成员 → 断开所有 MCP 连接 → 触发 `shutdown` Hook → 以 1001 关闭所有 WebSocket 连接。文件快照(fileHistory)由引擎在每次变更时增量落盘, 销毁不做额外持久化。每一步都吞掉异常, 保证一个资源清理失败不阻断其余。
+运行时是长驻的, 因此销毁路径必须显式处理在途轮次与后台任务。`disposeResources` 的顺序是: 中止当前轮 → 取消会话所有待决交互(失败关闭)→ **排空内部锁**(等当前轮结束; 销毁从不从锁内部调用, 否则会死锁)→ 等会话就绪后再取消一次交互 → 触发 `shutdown` Hook → `handle.dispose()`(停后台任务与团队成员、断开所有 MCP 连接、销毁工具注册表)→ 结算在途记忆任务并释放沙箱 → 以 1001 关闭所有 WebSocket 连接。文件快照(fileHistory)由引擎在每次变更时增量落盘, 销毁不做额外持久化。每一步都吞掉异常, 保证一个资源清理失败不阻断其余。
 
 ## 四、连接层: WebSocket 协议与准入
 
@@ -235,20 +235,20 @@ Agent 实时协议走 `GET /app/:appId/agent/ws`(WebSocket 升级)。连接按�
 - **命令**: `command_result`(supported + result/error)、`candidates`(自动补全);
 - **状态**: `runtime_status`(idle/running/waiting/stopped/error)、`files_changed`、`permission_mode`、`usage`;
 - **选择器**: `plan_approval_request`、`model_list`、`thinking_form`、`rewind_list`;
-- **输入辅助**: `file_complete_response`(最多 50 个匹配)、`image_saved`/`image_error`、`history`(提示词历史);
+- **输入辅助**: `file_complete_response`(实际最多回 8 个匹配, 协议上限 50)、`image_saved`/`image_error`、`history`(提示词历史);
 - **活动面板**: `subagent`/`team`/`task` 帧(见 8.3);
 - **错误**: `error { code, message, recoverable }`, 典型 code 有 `read_only`、`bad_json`、`bad_message`、`workspace_busy`、`model_switch_failed`。
 
 ### 4.4 claimTurn: 跨节点轮次互斥
 
-多实例部署下, 同一个工作区的轮次不能并发执行。`claimTurn` 用一条原子 SQL 抢占: `updateMany` 把会话状态从 `IDLE` 置为 `RUNNING`, 条件是 `status = IDLE`, 或者 `status = RUNNING` 但 `lastActiveTime` 早于 `AGENT_TURN_CLAIM_STALE_MS`(默认 30 分钟)——后者是对崩溃节点留下"僵死 RUNNING"的回收。更新行数为 0 即抢占失败, 服务器给连接回 `workspace_busy`。追加事件的事务同时刷新 `lastActiveTime`, 使正常执行的轮次不会被误判为僵死。
+多实例部署下, 同一个工作区的轮次不能并发执行。`claimTurn` 用一条原子 SQL 抢占: `updateMany` 把会话状态从 `IDLE` 置为 `RUNNING`, 条件是 `status = IDLE`, 或者 `status = RUNNING` 但 `lastActiveTime` 早于 `AGENT_TURN_CLAIM_STALE_MS`(默认 30 分钟)——后者是对崩溃节点留下"僵死 RUNNING"的回收。更新行数为 0 即抢占失败, 服务器给连接回 `workspace_busy`。抢占本身与会话状态写入(`updateStatus`/`saveContext`/`setSequence`)都会刷新 `lastActiveTime`, 标记轮次的最近活动时间。
 
 ### 4.5 输入增强: @ 提及、图片、用户 shell、历史与恢复
 
-- **`@` 文件提及**: 输入框键入 `@` 触发 `file_complete_request`, 服务器在工作目录里匹配(30 秒文件缓存, `FILE_CACHE_TTL_MS`)并经 `file_complete_response` 回最多 50 个路径; 提交时 `AtExpand.expandAtRefsWithImages` 把提及的文件内容(与图片)内联进会话消息;
+- **`@` 文件提及**: 输入框键入 `@` 触发 `file_complete_request`, 服务器在工作目录里匹配(30 秒文件缓存, `FILE_CACHE_TTL_MS`)并经 `file_complete_response` 回最多 8 个路径(引擎默认匹配上限, 协议帧上限 50); 提交时 `AtExpand.expandAtRefsWithImages` 把提及的文件内容(与图片)内联进会话消息;
 - **图片上传**: `image_upload` 的 base64 解码后上限 32MB(`MAX_UPLOAD_IMAGE_BYTES`, 协议帧上限 64MiB), 按魔数嗅探只接受 png/jpeg/gif/webp, 以 0o600 权限写入该应用专属的 `{appId}.uploads` 目录, 成功回 `image_saved { clientId, path }`——路径随后可被 `@` 引用进对话;
 - **用户 shell**: `!` 与 `!!` 前缀经 `Conversation.UserBash.parseUserBashCommand` 解析, 复用工作区的 `Bash` 工具在工作目录执行, 输出经 `tool_output` 帧流式推送并落库 `tool_use`/`tool_result`; `!` 的执行结果(命令/耗时/状态/输出)会以 user message 形式进入模型上下文, `!!` 则执行但不进上下文, 均支持中止;
-- **提示词历史**: 前端请求后, 服务器从 transcript 取最近 200 条(`HISTORY_LIMIT`)用户消息, 以 `history` 帧下发(协议上限 500 条);
+- **提示词历史**: 连接建立后随 `ready` 一并下发, 服务器从 transcript 取最近 200 条(`HISTORY_LIMIT`)用户消息, 以 `history` 帧发送(协议上限 500 条);
 - **会话恢复**: REST 列出并可恢复历史会话, `resumeAndSetCurrent` 对 `RUNNING`/`WAITING` 状态的会话返回忙错误, 防止两个客户端同时接管一个活跃会话。
 
 ## 五、生成产物的挂载与预览
@@ -270,7 +270,7 @@ Agent 实时协议走 `GET /app/:appId/agent/ws`(WebSocket 升级)。连接按�
 
 ### 5.3 依赖指纹与增量重启
 
-不是每次同步都要重装依赖。客户端的 `dependencyFingerprintFromTree` 对一组依赖清单文件(`package.json`/`package-lock.json`/`npm-shrinkwrap.json`/`pnpm-lock.yaml`/`yarn.lock`)逐个计算 `path:length:hash` 并拼成一个指纹; 只有当"容器里没有 `node_modules`"或"指纹与上次安装时不同"才触发 `npm install`。这把"只改了源码"的常见情形降为"直接复用已装依赖 + 重启 dev server", 大幅缩短二次预览时间。服务器侧的变更检测(`workspace-tree` 的 `dependencyFilesChanged`)覆盖更宽的 7 个文件(额外包含 `bun.lock`/`bun.lockb`), 一旦依赖文件变化, 同步逻辑会整体重启预览(重新挂载 + 视情况重装)。
+不是每次同步都要重装依赖。客户端的 `dependencyFingerprintFromTree` 对一组依赖清单文件(`package.json`/`package-lock.json`/`npm-shrinkwrap.json`/`pnpm-lock.yaml`/`yarn.lock`)逐个计算 `path:length:hash` 并拼成一个指纹(hash 为 FNV-1a 32 位); 只有当"容器里没有 `node_modules`"或"指纹与上次安装时不同"才触发 `npm install`。这把"只改了源码"的常见情形降为"直接复用已装依赖 + 重启 dev server", 大幅缩短二次预览时间。对服务器快照的变更检测(`workspace-tree` 的 `dependencyFilesChanged`)覆盖更宽的 7 个文件(额外包含 `bun.lock`/`bun.lockb`), 一旦依赖文件变化, 同步逻辑会整体重启预览(重新挂载 + 视情况重装)。
 
 安装本身有一个刻意的动作: **先删掉 `package-lock.json` 再执行 `npm install`**(`runInstall` 先 `removeIfPresent(container, "package-lock.json")` 再 `container.spawn("npm", ["install"])`)。这让 npm 按容器当前平台重新解析依赖与平台专有二进制: 别的平台解析出的 lockfile 可能漏掉当前平台的可选依赖(如 musl 平台的原生二进制包), 导致"安装成功但 dev server 起不来"。
 
@@ -320,11 +320,11 @@ WebContainer 通过一个单例 `getWebContainer()` 引导: 先检查 `crossOrig
 
 ### 6.4 双向文件同步与三方合并
 
-文件有两个写入方: Agent(经服务器磁盘)与用户(经 IDE 的 Monaco 编辑器)。同步的核心是 `useWorkspaceController` 里的 `resyncAfterAgent`, 在 Agent 轮次结束或文件变更事件后触发(带 250ms 防抖 `SYNC_DEBOUNCE_MS`):
+文件有两个写入方: Agent(经服务器磁盘)与用户(经 IDE 的 Monaco 编辑器)。同步的核心是 `useWorkspaceController` 里的 `resyncAfterAgent`, 在收到 `files_changed` 帧或 Agent 轮次结束后触发; 反方向的容器 watcher 同步(终端/构建改动回传服务器)另经 250ms 防抖(`SYNC_DEBOUNCE_MS`)。`resyncAfterAgent` 的流程:
 
 1. 拉服务器文件树, 与上一次服务器快照对比;
 2. **依赖文件变化**(`dependencyFilesChanged`, 覆盖 `package.json`/lockfile/`bun.lock`/`bun.lockb`)→ 关闭现有 watcher, 重新 `startPreview`(重新挂载 + 视情况重装 + 重启 dev server);
-3. 否则逐文件处理: 二进制文件按 hash(客户端为 FNV-1a 32 位)变化覆盖; 文本文件若本地 buffer 是脏的, 就做**三方合并**(`threeWayMerge(base, local, server)`): 只有一侧偏离 base 就取那一侧, 两侧相同取其一, 否则判为冲突;
+3. 否则逐文件处理: 二进制文件按服务器 sha256 hash 变化覆盖; 文本文件若本地 buffer 是脏的, 就做**三方合并**(`threeWayMerge(base, local, server)`): 只有一侧偏离 base 就取那一侧, 两侧相同取其一, 否则判为冲突;
 4. 干净的合并直接写容器并更新 buffer; 冲突则把服务器版本写进容器、把 buffer 标记为冲突态(`{ base, local, server }`), 交给差异编辑器让用户裁决;
 5. 服务器删除的文件: 本地脏的转成"本地 vs 空"的冲突, 否则从容器移除。
 
@@ -334,7 +334,7 @@ WebContainer 通过一个单例 `getWebContainer()` 引导: 先检查 `crossOrig
 
 文件 API 挂在 `/app/files/:appId` 下: `GET /`(整棵树, 每文件带 sha256, 任何已认证观察者可读)、`PUT /file`、`POST /directory`、`POST /rename`、`DELETE /entry`。写操作仅 owner/管理员, 且都在 `runtime.runExclusive` 里执行——与 Agent 轮次共享同一把锁, 完成后 `notifyFilesChanged` 广播 `files_changed` 让其他连接刷新。
 
-每个路径都过 `validateRelativePath`: 拒绝空路径、反斜杠、绝对路径、`..`/`.`/空段, 以及受保护段(`.git`/`.yukino`/`.env`/`node_modules`/`dist`/`build`); 解析后做前缀校验防拼接逃逸。写入前还检查祖先目录不是符号链接(`assertNoSymlinkAncestors`), 防符号链接逃逸。写盘用临时文件 + `rename` 原子替换, 重命名与删除同样要求 `expectedHash`。单文件上限 5MB(`MAX_PROJECT_FILE_BYTES`), 整棵树上限 20MB(`MAX_TREE_BYTES`), 超限拒绝。
+每个路径都过 `validateRelativePath`: 拒绝空路径、反斜杠、绝对路径、`..`/`.`/空段, 以及受保护段(`.git`/`.yukino`/`.env`/`node_modules`/`dist`/`build`); 解析后做前缀校验防拼接逃逸。写入前还检查祖先目录不是符号链接(`assertNoSymlinkAncestors`), 防符号链接逃逸。写盘用临时文件 + `rename` 原子替换, 重命名与删除同样支持 `expectedHash` 乐观锁。单文件上限 5MB(`MAX_PROJECT_FILE_BYTES`), 整棵树上限 20MB(`MAX_TREE_BYTES`), 超限拒绝。
 
 ### 6.6 能力 REST: 设置、会话、技能、记忆、Hook、团队与 MCP
 
@@ -354,7 +354,7 @@ WebContainer 通过一个单例 `getWebContainer()` 引导: 先检查 `crossOrig
 
 `git-runtime` 在生成项目目录里维护一个尽力而为的 git 仓库: `ensureRepo` 首次 `git init`, 随后 `add -A` + `commit --allow-empty`(消息 `chore: initial project snapshot`)打下基线; `snapshot` 在 `end_turn` 时 `add -A`, 若 `status --porcelain` 无变更则跳过, 否则提交(消息 `agent: {turnId}`); `listSnapshots` 用 `git log -n 50 --pretty=format:%H%x1f%s%x1f%cI` 解析出 sha/消息/日期; `rewindTo` 用 `git checkout {sha} -- .` + `add -A` + 提交(`chore: rewind to {sha}`)实现回滚。所有 git 调用都带 16MB 的 `maxBuffer`, 并吞掉失败(缺 git、非仓库), 因为版本快照只是叠在引擎文件历史之上的便利层。提交者身份由 `GIT_SNAPSHOT_AUTHOR_NAME`(默认 "Yukino Agent")/`GIT_SNAPSHOT_AUTHOR_EMAIL`(默认 "agent@yukino.local")配置。
 
-在此之上, 平台还经引擎的 Worktree 能力提供 `listWorktrees`/`createWorktree`/`removeWorktree`(见引擎文档 [worktree](../docs/yukino/worktree)), `/worktree` 命令即列出当前工作区的全部 worktree。
+在此之上, 平台提供 `createWorktree`/`removeWorktree`(委托引擎的 `Worktree.createAgentWorktree`/`removeAgentWorktree`, 见引擎文档 [worktree](../docs/yukino/worktree))与 `listWorktrees`(原始 `git worktree list`), `/worktree` 命令即列出当前工作区的全部 worktree。
 
 ## 七、安全边界
 
@@ -376,7 +376,7 @@ MCP 服务器的 `headers` 与 `env` 以 AES-256-GCM 对称加密落库: 密钥�
 
 平台在启动时对环境变量做结构校验(zod)与语义校验(`superRefine`)。生产环境(`NODE_ENV=production`)下, 以下任一条件都会**拒绝启动**: CORS 含通配 `*`、`PASSWORD_SALT`/`SESSION_SECRET`/`MCP_SECRET_KEY` 仍是默认值、未配置 `REDIS_URL`、`STORAGE_DRIVER` 仍是 `local`、未配置 MinIO 的 access/secret key。把部署错误暴露在启动期而非运行期, 是这套校验的核心价值。
 
-传输层防护: WebSocket 消息有大小上限(`AGENT_WS_MAX_MESSAGE_BYTES`, 默认 512KB; 图片上传帧单独放宽到 64MiB), 解析失败与 schema 校验失败返回结构化错误(`bad_json`/`bad_message`), 未鉴权连接被关闭, 只读连接不能发起运行或应答交互, 单工作区连接数超上限以 1013 关闭; HTTP 层有请求体大小限制(`REQUEST_BODY_LIMIT_BYTES`, 默认 1MB; 文件写入的 `PUT` 单独放宽到可容纳 5MB base64 的尺寸)、CORS 白名单与签名会话。轮次执行权由 `claimTurn` 在数据库层互斥(见 4.4)。
+传输层防护: WebSocket 消息有大小上限(`AGENT_WS_MAX_MESSAGE_BYTES`, 默认 512KB; 图片上传帧单独放宽到 64MiB), 解析失败与 schema 校验失败返回结构化错误(`bad_json`/`bad_message`), 未鉴权连接被关闭, 只读连接不能发起运行或应答交互, 单工作区连接数超上限以 1013 关闭; HTTP 层有请求体大小限制(`REQUEST_BODY_LIMIT_BYTES`, 默认 1MB; 文件写入的 `PUT` 单独放宽到可容纳 5MB base64 的尺寸)、CORS 白名单与服务端会话(`httpOnly` cookie + 32 字节随机会话 id)。轮次执行权由 `claimTurn` 在数据库层互斥(见 4.4)。
 
 ### 7.5 前端 XSS 与跨源消息校验
 
@@ -408,7 +408,7 @@ Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked`(g
 
 ### 8.4 优雅关闭
 
-进程收到 `SIGINT`/`SIGTERM` 后: 先 `closeServer`(停止接受新请求), 再 `runtimeManager.disposeAll()`(逐个销毁运行时: 中止在途轮次、取消待决交互、停后台任务与团队成员、断开 MCP、触发 shutdown Hook、关闭连接), 最后断开 Redis 与数据库。因为运行时是长驻的, 关闭路径必须显式处理在途轮次与后台任务, 否则会留下半写入的文件状态。`disposeAll` 会先等所有在途生命周期任务完成, 保证不销毁一个正在创建的运行时。
+进程收到 `SIGINT`/`SIGTERM` 后: 先 `closeServer`(停止接受新请求), 再 `runtimeManager.disposeAll()`(逐个销毁运行时: 中止在途轮次、取消待决交互、触发 shutdown Hook、经 `handle.dispose()` 停后台任务与团队成员并断开 MCP、关闭连接), 最后断开 Redis 与数据库。因为运行时是长驻的, 关闭路径必须显式处理在途轮次与后台任务, 否则会留下半写入的文件状态。`disposeAll` 会先等所有在途生命周期任务完成, 保证不销毁一个正在创建的运行时。
 
 ### 8.5 测试与类型纪律
 

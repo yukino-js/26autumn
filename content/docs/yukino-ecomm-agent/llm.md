@@ -100,7 +100,7 @@ PostgreSQL + Prisma (`server/prisma/schema.prisma`, client 生成到 `server/gen
 | submit_refund | 发起退款 —— 只表示「该订单可退、提交入口已交给用户」, 真正提交要用户在前端表单确认                                |
 | create_ticket | 转人工工单 —— 唯一的写工具 (WRITE_TOOLS), 注入 conversation_id                                                    |
 
-订单/商品数据来自 `server/src/tools/business.ts` 的确定性伪随机 mock: FNV-1a 散列做种子 + xorshift 生成, 同样的订单号/商品名永远得到同样的快照; `listUserOrders` 给每个 userId 固定生成一批订单 (含演示单 1001/2002), `ownsOrder` 据此做归属校验。
+订单/商品数据来自 `server/src/tools/business.ts` 的确定性伪随机 mock: FNV-1a 散列做种子 + mulberry32 生成, 同样的订单号/商品名永远得到同样的快照; `listUserOrders` 给每个 userId 固定生成一批订单 (含演示单 1001/2002), `ownsOrder` 据此做归属校验。
 
 MCP 工具 (query_logistics、query_warranty、query_return_status) 由两个独立进程提供, 注册进同一个 registry, 见 [MCP 和 Skill](./mcp)。
 

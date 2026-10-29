@@ -251,7 +251,7 @@ yukino-openai-reasoning-v1:<base64(RawURL)(reasoning item JSON)>
 | `/models`、`/v1/models`                       | GET  | 静态单模型列表                                             |
 | `/health`                                     | GET  | 健康响应                                                   |
 
-管理路由与 Claude 侧相同，由 daemon 注入。请求体上限 32 MiB，支持 identity、gzip、zstd 三种内容编码（zstd 解码内存上限 64 MiB、并发 1），JSON 必须恰为一个对象且 `stream` 为布尔。流式编排同样遵循四象限：流式请求配上游 SSE 则增量转发；流式请求配上游 JSON 则整体转换后经规范事件序列重放；非流式配上游 JSON 直接转换返回；非流式配上游 SSE 则聚合为完整 JSON（收集器只认 `response.completed`/`response.incomplete` 终态，failed/error 即失败），缺少终态即报错。流转错误且客户端未取消时补发 `response.failed` 事件；转换协议成功后写入历史缓存。上游错误映射与 Claude 侧类似（无 529 一档），错误体带 type/code/message 三字段并做 key 脱敏。
+管理路由与 Claude 侧相同，由 daemon 注入。请求体上限 32 MiB，支持 identity、gzip、zstd 三种内容编码（zstd 解码内存上限 64 MiB、并发 1），JSON 必须恰为一个对象且 `stream` 为布尔。流式编排同样遵循四象限：流式请求配上游 SSE 则增量转发；流式请求配上游 JSON 则整体转换后经规范事件序列重放；非流式配上游 JSON 直接转换返回；非流式配上游 SSE 则聚合为完整 JSON（收集器只认 `response.completed`/`response.incomplete` 终态，failed/error 即失败），缺少终态即报错。流转错误且客户端未取消时补发 `response.failed` 事件；转换协议成功后写入历史缓存。上游错误映射与 Claude 侧类似（无 529 一档），错误体带 type、code、message 与恒为空的 param 字段并做 key 脱敏。
 
 ### 请求转换：Responses 到 Messages / Chat Completions
 
@@ -286,7 +286,7 @@ Responses 协议支持用 `previous_response_id` 续接，但转换后的上游�
 
 - 以响应 id 为键保存该轮的输入与输出；单条超过 32 MiB 不记录；FIFO 淘汰，上限 128 条或 64 MiB。
 - 请求带 `previous_response_id` 且命中时，用「缓存输入加缓存输出」前置展开并删除该字段；未命中报错要求重发完整历史。
-- Codex 有时只发工具结果而不带原调用。对每个输出 item，若其 call_id 不在当前输入且在历史中唯一命中，则把该次输出的签名思考与调用按原顺序插回该结果之前（已存在的思考密文与 call_id 去重）；非唯一命中不修复，宁可失败也不猜测。
+- Codex 有时只发工具结果而不带原调用。对输入中的每个工具结果 item，若其 call_id 对应的调用不在当前输入且在历史缓存中唯一命中，则把该次历史输出的签名思考与工具调用按原顺序插回该结果之前（已存在的思考密文与 call_id 去重）；非唯一命中不修复，宁可失败也不猜测。
 
 ### 三个自描述信封
 

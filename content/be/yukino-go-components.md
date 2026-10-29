@@ -57,7 +57,7 @@ Renew()  : Lua { if get(key) == token then expire(key, ttl) }   (DelayExpire)
 
 ### 2.4 RedLock 与它的代价
 
-单 Redis 实例不可靠, 因此提供跨多实例的 RedLock: 强制要求至少 3 个独立节点, 逐节点加锁, 只有多数派 (`len>>1+1`) 成功才算成功, 且单节点加锁耗时必须在超时预算内 (`WithSingleNodesTimeout`, 默认 50 毫秒), 超时即不计入成功数。构造时还会校验"节点数 x 单节点超时 x 10 不超过锁的过期时长", 保证最坏情况下的累计超时也远小于租约, 否则直接报错拒绝创建。未达多数派时, 已拿下的节点会在 `context.WithoutCancel` 的新 context 中释放, 避免上游取消导致残留锁一直等到 TTL; 显式 `Unlock` 则遍历所有节点逐一释放。每个节点上的锁以 RedLock 的过期时长 (`WithRedLockExpireDuration`) 为 TTL, 若过期时长为 0 则回落到单锁的看门狗模式。
+单 Redis 实例不可靠, 因此提供跨多实例的 RedLock: 强制要求至少 3 个独立节点, 逐节点加锁, 只有多数派 (`len>>1+1`) 成功才算成功, 且单节点加锁耗时必须在超时预算内 (`WithSingleNodesTimeout`, 默认 50 毫秒), 超时即不计入成功数。构造时若设置了过期时长, 还会校验"节点数 x 单节点超时 x 10 不超过锁的过期时长", 保证最坏情况下的累计超时也远小于租约, 否则直接报错拒绝创建。未达多数派时, 已拿下的节点会在 `context.WithoutCancel` 的新 context 中释放, 避免上游取消导致残留锁一直等到 TTL; 显式 `Unlock` 则遍历所有节点逐一释放。每个节点上的锁以 RedLock 的过期时长 (`WithRedLockExpireDuration`) 为 TTL, 若过期时长为 0 则回落到单锁的看门狗模式。
 
 一个容易被忽略的语义: 该锁不可重入。token 按 goroutine 隔离, 同一 goroutine 对同一 key 二次加锁会失败或阻塞。需要嵌套语义时, 应在锁之上再维护一层计数。
 
@@ -210,7 +210,7 @@ TCC (Try-Confirm-Cancel) 把一次分布式事务拆成三阶段: Try 预留并�
 
 - 加入任务时先 SREM 清除该 key 的删除标记, 再 ZADD 写入任务, 使重新调度同一 key 的任务自动撤销旧取消;
 - 取消任务时 SADD 写入删除标记, 并在标记集合大小首次变为 1 时设置 120 秒过期, 限制内存同时覆盖时钟偏差;
-- 弹出到期任务时, 在同一脚本内读取删除标记 (SMEMBERS)、按分数区间取出到期任务并从集合中移除 (ZRANGEBYSCORE + ZREMRANGEBYSCORE)。读取与移除原子完成, 这是它能在多实例下不重复触发的根本原因。
+- 弹出到期任务时, 在同一脚本内读取删除标记 (SMEMBERS)、按分数区间取出到期任务并从集合中移除 (ZRANGE BYSCORE + ZREMRANGEBYSCORE)。读取与移除原子完成, 这是它能在多实例下不重复触发的根本原因。
 
 运行循环每秒触发一次, 以"当前分钟起点到当前秒"为分数窗口取任务, 跳过已删除的, 交给 16 个 worker 并发发起 HTTP 回调, 单轮整体超时 30 秒。回调方法与地址在入队时就被校验 (只接受 GET、POST 两种方法和 http(s) 前缀), 执行前还会再校验一次。回调以 JSON 请求体发出, 响应状态码非 200 即判定该任务执行失败 (仅记日志, 不重试)。
 
@@ -239,7 +239,7 @@ timer 是一个多实例可水平扩展的定时任务服务, 完全自包含: �
 
 ### 8.2 预展开与分片加锁
 
-Migrator 每 MigrateStepMinutes (默认 60 分钟) tick 一次, 以当前小时为粒度抢锁 (锁键 `migrator_lock_{小时}`, 初始租约 20 分钟), 读取全部启用定时器, 对每个 cron 表达式展开下一个窗口 `[整点(now+步长), 整点(now+2x步长))` 内的触发时刻并批量写入任务行 (每个定时器之间 sleep 5 秒做节流), 最后把窗口内的任务写入 Redis 缓存。重新展开是幂等的 (任务行有 timer_id+run_timer 唯一键), 因而锁只是减少重复工作而非正确性前提; 成功后把锁续期为 120 分钟的持有租约。
+Migrator 每 MigrateStepMinutes (默认 60 分钟) tick 一次, 以当前小时为粒度抢锁 (锁键 `migrator_lock_{小时}`, 初始租约 20 分钟), 读取全部启用定时器, 对每个 cron 表达式展开下一个窗口 `(整点(now+步长), 整点(now+2x步长))` 内的触发时刻并批量写入任务行 (每个定时器之间 sleep 5 秒做节流), 最后把窗口内的任务写入 Redis 缓存。重新展开是幂等的 (任务行有 timer_id+run_timer 唯一键), 因而锁只是减少重复工作而非正确性前提; 成功后把锁续期为 120 分钟的持有租约。
 
 Scheduler 每 TryLockGapMilliSeconds (默认 100 毫秒) 遍历固定数量的分片 (BucketsNum, 默认 10), 对当前分钟与上一分钟分别提交调度任务。每个 (分钟, 分片) 只有一个实例能抢到锁 (锁键 `time_bucket_lock_{分钟}_{分片}`); 锁租约分为两段: 抢占窗口 70 秒 (刚好覆盖一分钟处理窗口), 分片成功扫完后由 Trigger 回调 ack 把锁续期为 130 秒的持有租约, 使同一 (分钟, 分片) 在持有窗口内不会被本实例的下一轮调度或其他实例重复处理; 若扫描中途失败则不 ack, 锁在 70 秒后自然过期, 交由其他实例接手。
 
@@ -251,7 +251,7 @@ Executor 执行前先查布隆过滤器 (按天分键 `task_bloom_{日期}`, TTL
 
 定时器定义本身由 Executor 内的本地缓存提供 (每 TimerDetailCacheMinutes, 默认 2 分钟刷新一次), 缓存未命中时回查数据库; 定时器状态不是启用时直接放弃执行。回调支持 GET、POST、PATCH、DELETE 四种方法。执行后异步上报指标 (执行计数 counter 与执行延迟 summary)、写入当天去重标记、回写任务状态与响应内容。Monitor 则每分钟抢一次分钟级锁 (`monitor_lock_{分钟}`, 租约 2 分钟), 上报上一分钟窗口内仍未执行的任务数与启用定时器总数两个 gauge。
 
-WebServer 基于 libs/yukino_http 实现, 默认端口 8092, 提供定时器定义的增删改查、按应用/名称列表、启用/停用, 以及任务执行记录查询 (只返回已执行过的记录, 即 Running/Succeed/Failed 三种状态); 创建/删除共用一把应用粒度的 3 秒锁限频 (`create_timer_lock_{app}`), 启用/停用共用另一把 (`enable_timer_lock_{app}`)。启用定时器时立即预展开未来两个迁移步长的 cron 触发时刻, 写好任务行与缓存后再切换状态, 避免等到下一轮 Migrator。Prometheus 指标经 WebServer 的 /metrics 端点暴露。
+WebServer 基于 libs/yukino_http 实现, 默认端口 8092, 提供定时器定义的创建、删除与查询 (更新端点已注册但当前为空实现)、按应用/名称列表、启用/停用, 以及任务执行记录查询 (只返回已执行过的记录, 即 Running/Succeed/Failed 三种状态); 创建/删除共用一把应用粒度的 3 秒锁限频 (`create_timer_lock_{app}`), 启用/停用共用另一把 (`enable_timer_lock_{app}`)。启用定时器时立即预展开未来两个迁移步长的 cron 触发时刻, 写好任务行与缓存后再切换状态, 避免等到下一轮 Migrator。Prometheus 指标经 WebServer 的 /metrics 端点暴露。
 
 配置上各角色都有内置默认值 (如分片数 10、调度工作池 100、触发工作池 10000), conf.yml 仅 MySQL DSN 与 Redis 地址/密码必填。分片数是固定配置, 需要按峰值负载人工估算。表结构 DDL 随仓库提供 (common/model/sql 下的 timer.sql、task.sql), 需要运维手工执行, 组件不负责建表与 schema 演进。
 

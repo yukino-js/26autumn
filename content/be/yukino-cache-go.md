@@ -255,7 +255,7 @@ watchServiceChanges:
 | peer 计数 | `peer_hits`、`peer_misses`、`server_requests`                                                                                              |
 | 缓存指标  | 以 `cache_` 为前缀, 来自 `Cache.Stats()`: `initialized`、`closed`、`hits`、`misses`, 初始化后另有 `size`、`hit_rate`、`bytes`、`evictions` |
 
-`Cache.Stats` 中的 `bytes` 与 `evictions` 直接来自 `lruStore` 的全桶聚合 (`Bytes()`/`Evictions()`), 可用于容量规划与淘汰速率监控; `size` 是跨桶去重后的存活条目数 (`Len()`)。
+`Cache.Stats` 中的 `bytes` 与 `evictions` 直接来自 `lruStore` 的全桶聚合 (`Bytes()`/`Evictions()`), 可用于容量规划与淘汰速率监控; `size` 是桶内 L1/L2 两层去重后的存活条目数 (`Len()`)。
 
 在 `CacheOptions.DashboardAddr` 非空时, `StartDashboard(addr)` 会启动一个独立的 yukino_http 应用, 在 `/dashboard/ws` 暴露 WebSocket 端点 (`dashboardOnce` 保证同一进程只启动一次)。连接建立后先立即推送一次 JSON 快照, 之后每 2 秒推送一次, 并每 30 秒发送心跳; 快照结构为 `{"type":"snapshot","groups":[...]}`, 内容为所有启用了仪表盘 (`DashboardAddr` 非空) 的 Group 的 `Stats()` 与当前存活条目 (key、size、expire_at、level, level 1 为 L2、0 为 L1)。客户端可以回传 JSON 命令, 目前支持 `{"action":"delete","group":"...","key":"..."}` 删除指定条目 (走 `Group.Delete`, 同样触发写传播)。`DashboardHandler()` 也可以作为中间件挂载到任意 [yukino-http](./yukino-http) 应用上, 复用同一处理器 —— 这正是 yukino_cache 对 yukino_http 的唯一依赖点, WebSocket 握手、帧编解码与心跳全部来自该框架。
 

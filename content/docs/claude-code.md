@@ -208,7 +208,7 @@ Gemini 一侧更严格: 能识别出家族、却既没有指定模型也没有�
 
 终端渲染基于一份分叉的 Ink 框架 (`packages/@ant/ink`), 而不是原版库, 内含 components、core (渲染器、reconciler、布局、帧调度)、hooks、keybindings 与 theme。组件目录 (150 余个) 里有根 provider (应用状态、统计、帧率指标)、消息与会话行渲染、输入处理 (PromptInput 目录)、权限审批界面 (permissions 目录), 以及一组设计系统复用件 (Dialog、Byline、KeyboardShortcutHint、ListItem、ThemedText)。
 
-状态管理方面, 中央状态与应用状态 store、默认状态工厂、轻量 store 工厂与选择器分离; 模块级单例保存跨组件的会话级信息。组件中大量出现 React Compiler 的记忆化样板 (`const $ = _c(N)`), 这是反编译产物的正常特征, 不影响设计判断。
+状态管理方面, 中央状态与应用状态 store、默认状态工厂、轻量 store 工厂与选择器分离; 模块级单例保存跨组件的会话级信息。源码组件本身是干净的 React/TSX, 用标准 hooks (useMemo/useCallback) 做记忆化; React Compiler 的记忆化样板 (`const $ = _c(N)`) 只出现在编译后的 dist/ 产物里, 不影响设计判断。
 
 一个值得单独记录的兼容性处理: ConPTY 之前的老版本 Windows 控制台 (build 号小于 17763) 上, conhost 的 VT 解析器处理增量更新会产生光标漂移, 残影会持续累积。实现 (`legacyConsole.ts`) 自动检测并启用兼容模式, 以约一秒 (默认 1000ms, `CLAUDE_CODE_LEGACY_CONSOLE_RESET_MS` 可调, 钳制在 100-10000ms) 的周期做一次全量重绘替代增量 diff 自愈; `CLAUDE_CODE_LEGACY_CONSOLE` 可强制关闭 (0)、强制周期重绘 (1) 或强制每帧全量重绘 (2, 牺牲闪烁换正确性)。更精细的一招是渲染宽度收缩: 老 conhost 在行写满最后一列时会立即折行 (现代终端延迟折行), 每条满宽行都会把真实光标顶偏一行, 于是兼容模式下每行少渲染一列, 让那条 buggy 代码路径根本不触发。
 
@@ -218,7 +218,7 @@ Gemini 一侧更严格: 能识别出家族、却既没有指定模型也没有�
 
 ### 8.1 ACP 接入
 
-实现了 Agent Client Protocol 的一端 (`src/services/acp/`, 入口快速路径 `--acp`), 使 Zed、Cursor 等 IDE 可以接入; 另有独立桥接包 (acp-link) 把 WebSocket 客户端桥接到该 Agent, 支持自定义端口、HTTPS、认证、会话管理与权限模式透传。权限管道统一为一条"是否允许使用某工具"的回调, 会话模式可动态同步; 计划可视化支持计划更新消息, 带进度条、状态图标与优先级标签。
+实现了 Agent Client Protocol 的一端 (`src/services/acp/`, 入口快速路径 `--acp`), 使 Zed、Cursor 等 IDE 可以接入; 另有独立桥接包 (acp-link) 把 WebSocket 客户端桥接到该 Agent, 支持自定义端口、HTTPS、认证、会话管理与权限模式透传。权限管道统一为一条"是否允许使用某工具"的回调, 会话模式可动态同步; 计划可视化把 TodoWrite 待办映射为计划更新消息 (sessionUpdate: 'plan'), 每条条目带状态 (pending/in_progress/completed) 与优先级。
 
 ### 8.2 守护进程与后台会话
 
@@ -256,7 +256,7 @@ Bun workspaces 按职责划分, 主 CLI 依赖其中一部分:
 | `weixin`                     | 微信消息通道集成, 内建插件形态注册, 提供收消息与回复的 MCP 服务             |
 | `*-napi`                     | 原生插件: 音频采集、图像处理、颜色差异计算、键盘修饰键检测、URL scheme 处理 |
 
-workflow-engine 值得单独一提: 编排脚本是普通 JS (由 Bun 转译器编译), 提供 `agent()`、`phase()`、`parallel()`、`pipeline()` 原语; 所有非确定性来源 (LLM、文件系统、时钟) 被隔离到端口后面, 同一份脚本每次重放产生相同的 journal — 编排本身因此是确定性、可重放、可测试的。
+workflow-engine 值得单独一提: 编排脚本是普通 JS 函数体 (以 `new AsyncFunction` 包装执行, 不经转译器, 连 TS 类型语法也会被拒绝), `agent()`、`phase()`、`parallel()`、`pipeline()` 等原语作为参数注入; 所有非确定性来源 (LLM、文件系统、时钟) 被隔离到端口后面, 同一份脚本每次重放产生相同的 journal — 编排本身因此是确定性、可重放、可测试的。
 
 ## 十、工程纪律
 

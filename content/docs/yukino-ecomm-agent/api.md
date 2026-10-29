@@ -139,7 +139,7 @@ SSE 事件流 (一帧一行 `data:`, 见 `chatRouter`):
 - `POST /api/jobs/:name`: 启动, 已在运行时 `409`;
 - `POST /api/jobs/:name/stop`: 停止, 未在运行时 `409`。
 
-job runner 在 `server/src/core/jobs.ts`, API 与 `main.js` 共用:
+job runner 在 `server/src/core/jobs.ts`, API 与管理页的 `Re-run` 按钮共用 (注册表中 `milvus-up` / `milvus-down` 两个 job 的 argv 回调 `node main.js`):
 
 - 只接受注册过的 13 个 job 名: `kb-preview` / `kb-build` / `kb-mine` / `kb-vectorize` / `kb-repatch` / `kb-reset` / `seed-conv` / `milvus-up` / `milvus-down` / `eval-rag` / `eval-flywheel` / `calibrate-confidence` / `cost-report`。每个 job 的 argv 是固定的 (`node scripts/<name>.ts` 或 `node main.js ...`), 永远不会执行任意 shell 片段;
 - job 以 detached 子进程运行 (cwd 为 server 目录), stdout / stderr 重定向到 `log/acceptance/<name>.log`, 日志文件起始写入 `$ <argv>` 和启动时间;

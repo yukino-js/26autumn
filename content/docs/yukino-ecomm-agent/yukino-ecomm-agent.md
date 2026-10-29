@@ -341,7 +341,7 @@ sliding = min(CONTEXT_BUDGET_TURNS * steady_per_turn, window - fixed - peak)    
 切分管线 server/src/kb/chunking.ts 解决三类问题:
 
 - `splitSections` 按 `#` 到 `####` 标题切节, 维护标题栈, 每节携带层级路径; 代码围栏 (反引号或波浪号) 内的 `#` 不当作标题; 首个标题前的内容独立成节。
-- `recursiveSplit` 使用 `RecursiveCharacterTextSplitter`, 分隔符序列依次是段落、换行、中文终止符、ASCII 终止符 (`!?;`)、中英文逗号、空格、字符。
+- `recursiveSplit` 使用 `RecursiveCharacterTextSplitter`, 分隔符序列依次是段落、换行、中文终止符、ASCII 终止符 (`!?;`)、中文逗号、空格、字符。
 - `applySentenceOverlap` 做句子级重叠, 从前一块尾部按整句回卷; 大表格按行分组 (`buildChunks` 默认 10 行), 每组重复表头, 前言只留在第一组。
 
 `buildChunks` (server/src/kb/documents.ts) 汇总这些步骤, 默认参数 chunkSize 400、overlap 60: 每块记录 category (父级标题路径)、questions (末级标题)、answer (正文)、sectionPath、contentType, 并用 `isKey` 标记关键条款 (标题加正文前 40 字符命中 `KEY_TERMS`)。
@@ -350,7 +350,7 @@ sliding = min(CONTEXT_BUDGET_TURNS * steady_per_turn, window - fixed - peak)    
 
 离线链路是 kb-build (切分入 `knowledge_chunks`, 幂等: 已存在的文件跳过, 部分存在则报错并指向 kb-repatch) -> kb-vectorize (embed 加写向量并标记 done, 幂等可重跑)。同一套 dualwrite 也被 POST /api/kb/ingest 在线复用。另有 kb-preview (只读预览)、kb-repatch (md 变更原地重嵌)、kb-reset (清空双表与向量)、kb-mine (会话挖掘)。
 
-这些任务同时注册进统一 job runner server/src/core/jobs.ts 的 `JOBS` 表 (共 13 项, 每项含 name / title / argv / needs / heavy), 命令行与 POST /api/jobs/:name 共享同一份注册表; 前端只能提交注册过的 job 名, 永远不可能注入 shell 片段。任务在独立进程里以 detached 方式启动, 日志写 `log/acceptance/<name>.log`, 支持 tail (默认 400 行) 与 stop (对进程组发 SIGTERM, 10 秒后 SIGKILL)。把“能跑什么”收敛为一张服务端注册表, 是让运营页可安全暴露给非工程用户的关键 (详见 [可观测性和数据飞轮](./observable))。
+这些任务同时注册进统一 job runner server/src/core/jobs.ts 的 `JOBS` 表 (共 13 项, 每项含 name / title / argv / needs / heavy), 管理页的 “Re-run” 按钮经 POST /api/jobs/:name 共享同一份注册表; 前端只能提交注册过的 job 名, 永远不可能注入 shell 片段。任务在独立进程里以 detached 方式启动, 日志写 `log/acceptance/<name>.log`, 支持 tail (默认 400 行) 与 stop (对进程组发 SIGTERM, 10 秒后 SIGKILL)。把“能跑什么”收敛为一张服务端注册表, 是让运营页可安全暴露给非工程用户的关键 (详见 [可观测性和数据飞轮](./observable))。
 
 ### 8.3 会话挖掘
 

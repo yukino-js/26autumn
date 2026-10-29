@@ -108,7 +108,7 @@ export function isSafeCommand(command: string): boolean {
 - 词中出现 `$`、反引号、`(`、`)`、`{`、`}`、`<`、`>`、NUL (变量展开、命令替换、子 shell、重定向)
 - 引号未闭合, 或行尾是悬空的转义符
 - 以 `|` / `&` 开头的管道/后台语法
-- 第一个词是变量赋值 (`KEY=value` 形式), 或可执行文件名 (小写、去 `.exe`、取 basename) 命中 `COMPLEX_COMMANDS`
+- 第一个词为空、含空白 / 通配符 (`*` `?`) / 方括号 / 波浪线, 是变量赋值 (`KEY=value` 或 `KEY+=value` 形式), 或可执行文件名 (小写、去 `.exe`、取 basename) 命中 `COMPLEX_COMMANDS`
 
 `COMPLEX_COMMANDS` 是一份控制流与提权可执行名单: if/then/else/elif/fi、for/while/until/do/done、case/esac、function、select、coproc、`!`、time、eval、exec、source、`.`、command、builtin、env、sudo、bash/sh/zsh/dash/ksh/fish、pwsh/powershell、xargs、find。
 

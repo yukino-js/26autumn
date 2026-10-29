@@ -88,7 +88,7 @@ flowchart LR
 
 流水线任务活在进程内存, 服务重启会丢失运行中的 job, 使数据库行卡在 `pending`/`running`。`server/bootstrap.ts` 的 `ensureRecovered()` 在**首个 tRPC 请求**到来时触发 `recoverInterruptedRuns()` (与执行、分析、增量分析的恢复并行), 诚实反映「被中断」而非伪造完成:
 
-- 默认 `staleSeconds = 7200` (2 小时): 只有「最近活动」早于 cutoff 的运行才被回收——由于没有心跳列, 活动标记取 run 与其所有 stage 的 `startedAt`/`finishedAt` 的最大值 (`lastActivityForRun`); 完全无时间戳的运行**不动**, 以免多 worker 同时启动时误杀他人正在跑的流水线;
+- 默认 `staleSeconds = 7200` (2 小时): 只有「最近活动」早于 cutoff 的运行才被回收——由于没有心跳列, 活动标记取 run 的 `startedAt`/`createdAt` 与其所有 stage 的 `startedAt`/`finishedAt` 的最大值 (`lastActivityForRun`); 完全无时间戳的运行**不动**, 以免多 worker 同时启动时误杀他人正在跑的流水线;
 - 被回收的运行置为 `failed`, errorMessage "Interrupted by server restart; re-run the pipeline", 记录 `finishedAt`; 其 `running` 阶段置 `failed`、`pending` 阶段置 `skipped`;
 - 另外做历史一致性清理: 父运行已结束、却仍卡在 `pending`/`running` 的孤立阶段, 按 `running`→`failed`、`pending`→`skipped` 纠正;
 - 返回回收的运行数, bootstrap 据此打印告警。恢复后重新发起即可。

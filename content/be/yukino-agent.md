@@ -94,7 +94,7 @@ ReAct Agent 由 `newReactAgentLambda` 构建, 使用 Quick 模型 (`models.NewQu
 
 Planner 与 Replanner 都不走工具调用, 而是走**基于 prompt 的结构化输出**。这是为兼容性做的妥协: 部分模型对 `tool_choice: forced` 支持不完整, 强行用工具调用做结构化输出会失败。于是 `structuredOutputModel` 包装了 `ToolCallingChatModel`, 在 `Generate` 返回后对内容跑一遍 `extractJSONObject`, 剥掉模型可能套上的 ` ```json ` 代码围栏或前置的推理文字, 保证下游 `plan.UnmarshalJSON` 永远看到一个干净的 JSON 对象。
 
-`extractJSONObject` 是这套容错的核心工具函数, 逻辑是: 先去掉单层 markdown 围栏, 再定位第一个 `{`, 然后用一个带"字符串字面量感知"和"转义字符感知"的扫描器找到配平的 `}`。它能正确处理字符串内部的花括号 (不计入嵌套深度) 与 `\"`、`\\` 转义, 但不支持 JSON 注释 (JSON 本就不允许)。找不到 `{` 或找不到配平对象时, 它返回裁剪后的尾部**连同错误**, 让调用方把原始模型输出一并暴露出来便于调试。
+`extractJSONObject` 是这套容错的核心工具函数, 逻辑是: 先去掉单层 markdown 围栏, 再定位第一个 `{`, 然后用一个带"字符串字面量感知"和"转义字符感知"的扫描器找到配平的 `}`。它能正确处理字符串内部的花括号 (不计入嵌套深度) 与 `\"`、`\\` 转义, 但不支持 JSON 注释 (JSON 本就不允许)。找不到 `{` 时返回原始内容、花括号不配平时返回从首个 `{` 起的尾部, 均**连同错误**, 让调用方把原始模型输出一并暴露出来便于调试。
 
 Replanner (`customReplanner.Run`) 自己实现了一个 `adk.Agent`: 它在一个 goroutine 里跑, 用 `defer recover()` 把 panic 转成带堆栈的 `AgentEvent{Err}` 再关闭迭代器, 避免单个步骤的崩溃掀翻整个 Runner。它从 ADK 会话里取出"已执行步骤结果" (`ExecutedStepSessionKey`)、"当前计划" (`PlanSessionKey`)、"历史步骤" (`ExecutedStepsSessionKey`) 与"原始用户输入" (`UserInputSessionKey`), 把刚执行的步骤并入历史后拼成复盘 prompt, 让模型判断目标是否达成: 达成则发出 `summary` 并触发 `NewBreakLoopAction` 跳出循环; 未达成则用 `remaining` 构造新计划写回会话, 进入下一轮。
 
@@ -239,7 +239,7 @@ collection 的 schema 由 `Fields(dim)` 定义, 四个字段与 `internal/consts
 
 - **本地**: `cp config.example.jsonc config.json` 后 `go run ./cmd/agent`, 或 `make dev` (air 热重载: 监听 `go`/`tpl`/`tmpl`/`html` 扩展名, 排除 `tmp`/`bin`/`data`/`node_modules` 目录与 `_test.go`, 构建产物落 `tmp/main`; 注意 config.json 只在启动时读一次, 改配置需手动重启)。
 - **基础设施**: `docker compose up -d` 拉起 Milvus standalone v2.5.10 (etcd v3.5.18 + minio + milvus + attu v2.6)、Prometheus v2.55.1、Grafana 11.4.0。Milvus 监听 19530, 后端首连时自动建库建表; Prometheus 经 `host.docker.internal:8123` 抓取宿主机上的 `/api/metrics` (compose 用 `host-gateway` 映射该域名)。
-- **容器**: Dockerfile 是多阶段构建 (golang:1.25-alpine 构建, alpine 运行; `go.mod` 声明 `go 1.26.0`, 构建依赖默认的 `GOTOOLCHAIN=auto` 在镜像内拉取匹配工具链)。因为 `go.mod` 用相对路径 `replace` 了同仓库的库, **构建上下文必须是仓库根** (`make docker-build` 即 `docker build -f Dockerfile ../../..`), 且构建时设 `GOWORK=off` 让本模块脱离 go.work 独立编译。镜像 `EXPOSE 8123`, 只内置 `config.example.jsonc` 作参考, 真实 `config.json` 需运行时挂载, 缺失则进程以清晰的加载错误退出。
+- **容器**: Dockerfile 是多阶段构建 (golang:1.25-alpine 构建, alpine 运行; `go.mod` 声明 `go 1.26.0`, 构建依赖默认的 `GOTOOLCHAIN=auto` 在镜像内拉取匹配工具链)。因为 `go.mod` 用相对路径 `replace` 了同仓库的库, **构建上下文必须是仓库根** (`make docker-build` 即 `docker build -f Dockerfile -t yukino-agent ../../..`), 且构建时设 `GOWORK=off` 让本模块脱离 go.work 独立编译。镜像 `EXPOSE 8123`, 只内置 `config.example.jsonc` 作参考, 真实 `config.json` 需运行时挂载, 缺失则进程以清晰的加载错误退出。
 - **Makefile** 统一了 build/run/dev/test/vet/tidy/fmt/clean 与 docker-up/down/build 入口; `make test` 即 `go test ./... -race -cover`。单元测试集中在纯函数与可离线验证的边界上: JSONC 剥离 (含 URL 保留)、默认值、上传文件名归一/路径限制/限长写盘、Milvus 转义/维度解析/schema、索引行转换与 rune 边界截断、检索器的空库容错与向量转换、MySQL DSN 归一与工具 schema、MCP 传输选择/降级/缓存切片独立性、请求上下文取消后 SSE 缓存会话仍存活、服务器重启后重连, 以及监控桥的指标族完整性、事件明细、标签收敛与畸形载荷存活。
 
 ## 适用场景与边界

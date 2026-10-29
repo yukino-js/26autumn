@@ -36,7 +36,7 @@ InsForge 是一个开源的 BaaS (Backend as a Service) 后端平台, 它把数�
 | Storage         | 双 provider (S3 与本地文件系统), bucket/object 元数据, 预签名与代理上传协商, 完整 S3 线协议网关                                                                                      |
 | Edge Functions  | Deno 运行时, 本地 Worker 沙箱与 Deno Deploy 双后端, secrets 注入, 定时任务                                                                                                           |
 | Model Gateway   | 统一 AI 网关, 当前 provider 为 OpenRouter, 覆盖 chat、image、embedding                                                                                                               |
-| Compute         | 容器化计算驱动 (Docker / Fly / 云代理), 支持端口与域名入口、scale-to-zero                                                                                                            |
+| Compute         | 容器化计算驱动 (Docker / Fly / 云代理), 入口模式 none/port/host, scale-to-zero 由 fly 与 cloud 驱动支持                                                                              |
 | Site Deployment | 静态站点部署到 Vercel provider, 直传文件与打包上传两种路径                                                                                                                           |
 | Memory          | 面向 Agent 的长期记忆存储与语义检索, 向量嵌入加相似度阈值                                                                                                                            |
 | Realtime        | 数据库变更的实时订阅, Socket.IO 推送加 webhook 回调                                                                                                                                  |
@@ -45,16 +45,16 @@ InsForge 是一个开源的 BaaS (Backend as a Service) 后端平台, 它把数�
 
 一次自托管运行会拉起四类进程, 它们在同一台机器上通过内网端口协作:
 
-| 进程             | 镜像 / 运行时                        | 端口 | 职责                                                               |
-| ---------------- | ------------------------------------ | ---- | ------------------------------------------------------------------ |
-| backend          | Node 20 (构建产物 `dist/server.js`)  | 7130 | 控制面: 鉴权、schema、存储、函数、部署、文档、遥测等所有产品域 API |
-| postgres         | `ghcr.io/insforge/postgres:v15.13.4` | 5432 | 主数据库, 预置 `app.encryption_key` 会话级 GUC 供加密函数使用      |
-| postgrest        | `postgrest/postgrest:v12.2.12`       | 内部 | 数据面: 把 Postgres 表映射成 REST 资源, 由 backend 反向代理        |
-| deno (functions) | `denoland/deno:alpine-2.0.6`         | 7133 | 边缘函数运行时, 每个请求起一个隔离 Worker                          |
+| 进程             | 镜像 / 运行时                        | 端口                         | 职责                                                               |
+| ---------------- | ------------------------------------ | ---------------------------- | ------------------------------------------------------------------ |
+| backend          | Node 20 (构建产物 `dist/server.js`)  | 7130                         | 控制面: 鉴权、schema、存储、函数、部署、文档、遥测等所有产品域 API |
+| postgres         | `ghcr.io/insforge/postgres:v15.13.4` | 5432                         | 主数据库, 预置 `app.encryption_key` 会话级 GUC 供加密函数使用      |
+| postgrest        | `postgrest/postgrest:v12.2.12`       | 3000 (宿主侧 127.0.0.1:5430) | 数据面: 把 Postgres 表映射成 REST 资源, 由 backend 反向代理        |
+| deno (functions) | `denoland/deno:alpine-2.0.6`         | 7133                         | 边缘函数运行时, 每个请求起一个隔离 Worker                          |
 
 backend 是唯一对外的入口, 它既是控制面, 又是数据面的反向代理。数据流上, 用户数据的 CRUD 请求经 backend 鉴权后转发给 PostgREST, 由 PostgREST 直连 Postgres; 而 schema 管理、迁移、备份等控制面操作则由 backend 自己的服务层直接连 Postgres 连接池处理。这样既复用了 PostgREST 成熟的 RLS 与过滤语义, 又把管理类特权操作留在可控的服务层里。
 
-docker-compose 只把 7130 端口暴露给公网, 前端开发服务器占用的 7131 端口被绑定到 `127.0.0.1`, PostgREST 与 Deno 运行时则完全不对外, 只在 compose 内网可达。
+生产 compose (docker-compose.prod.yml) 只把 7130 暴露给全部网卡: Postgres (5432)、PostgREST (5430)、前端开发服务器的 7131 与 Deno 运行时 (7133) 都绑定到 `127.0.0.1`, 公网不可达; 开发 compose (docker-compose.yml) 不做这层收敛, 各端口直接映射。
 
 ## Monorepo 结构
 
@@ -66,7 +66,9 @@ insforge/
 │   └── src/
 │       ├── api/        # routes (按产品域) + middlewares (auth/错误处理)
 │       ├── services/   # 业务服务层 (ai/auth/database/storage/functions/...)
-│       ├── infra/      # database (连接池/迁移) / security (token) / config
+│       ├── providers/  # 外部系统适配 (storage/AI/compute/deployments/oauth/...)
+│       ├── infra/      # database (连接池/迁移) / security (token) / realtime / socket / config
+│       ├── types/      # 后端类型与常量 (COLUMN_TYPES 等)
 │       ├── utils/      # sql-parser (WASM) 等工具
 │       └── server.ts   # 应用装配与启动序列
 ├── frontend/           # Vite + React 开发外壳, 挂载 packages/dashboard
@@ -79,7 +81,7 @@ insforge/
 └── .agents/            # Agent 指令与 skills (SKILL.md)
 ```
 
-`backend` 内部是清晰的三层: `api/routes` 负责 HTTP 装配与鉴权中间件绑定, `services` 负责业务逻辑, `infra` 负责数据库连接池、迁移与 token 等基础设施。构建由 tsup 完成, 目标是 ESM、Node 20, 并把 `@insforge/shared-schemas` 与 `lru-cache` 打进 bundle (`noExternal`, 后者服务于 S3 网关的 SigV4 热路径), 同时刻意把 `file-type` 保持为外部依赖以避免其 `require('tty')` 在 ESM 下失效。
+`backend` 内部分层清晰: `api/routes` 负责 HTTP 装配与鉴权中间件绑定, `services` 负责业务逻辑, `providers` 封装存储、AI、计算、部署、OAuth 等外部系统, `infra` 负责数据库连接池、迁移、realtime、socket 与 token 等基础设施, 请求按 route → service → provider/infra 流动。构建由 tsup 完成, 目标是 ESM、Node 20, 并把 `@insforge/shared-schemas` 与 `lru-cache` 打进 bundle (`noExternal`, 后者服务于 S3 网关的 SigV4 热路径), 同时刻意把 `file-type` 保持为外部依赖以避免其 `require('tty')` 在 ESM 下失效。
 
 ## 后端启动序列
 
@@ -95,7 +97,7 @@ insforge/
 6. S3 网关 (`/storage/v1/s3`): 同样排在 JSON 解析之前, 因为它要处理 `aws-chunked` 流式上传。
 7. `json` / `urlencoded` body 解析: JSON 上限 100mb, urlencoded 上限 10mb。
 8. `apiRouter`: 挂载所有产品域子路由。
-9. `/functions/:slug` 代理: 转发到 Deno 运行时。
+9. `/functions/:slug` 代理: 配置了 Deno Deploy (Subhosting) 时优先转发到部署实例, 否则回退到本地 Deno 运行时。
 10. 非云环境下根路径重定向, 之后是静态前端或 404。
 11. `errorMiddleware` 兜底, 最后 `seedBackend` 做初始数据播种。
 
@@ -124,10 +126,10 @@ JWKS 端点注册了两次 (根路径与 `/api` 前缀), 保证不同 base 的�
 | 令牌                       | 算法  | 有效期   | 用途                                       |
 | -------------------------- | ----- | -------- | ------------------------------------------ |
 | access token               | RS256 | 15 分钟  | 用户会话                                   |
-| refresh token              | RS256 | 7 天     | 刷新会话                                   |
+| refresh token              | HS256 | 7 天     | 刷新会话, 携带 CSRF nonce                  |
 | PostgREST user token       | HS256 | 5 分钟   | 以用户身份转发数据面请求                   |
 | PostgREST admin/anon token | HS256 | 永不过期 | 服务内部以管理员/匿名身份访问数据面        |
-| cloud token                | RS256 | 10 分钟  | 云控制面, `sub` 为 projectId, 本地拒绝签发 |
+| cloud token                | HS256 | 10 分钟  | 云控制面, `sub` 为 projectId, 本地拒绝签发 |
 
 `verifyCloudToken` 走远程 JWKS, 接受 RS256/384/512 与 ES256/384/512。`signCloudToken` 只在云环境可用, 本地或未配置时直接拒绝。
 
@@ -137,7 +139,7 @@ JWKS 端点注册了两次 (根路径与 `/api` 前缀), 保证不同 base 的�
 
 ### SQL 执行护栏
 
-Agent 提交 raw SQL 时, `checkSqlExecutionGuards` 先用 WASM 解析器 `parseSync` 做静态检查, 阻断四类语句: 数据库管理、角色管理、事务控制, 以及会话变量修改 (`RESET ALL`、`role`、`search_path`、`statement_timeout`)。这保证了即使 Agent 拿到执行 SQL 的能力, 也无法越权改动实例级配置。
+Agent 提交 raw SQL 时, `checkSqlExecutionGuards` 先用 WASM 解析器 `parseSync` 做静态检查, 阻断四类语句: 数据库管理、角色管理、事务控制, 以及会话变量修改 (`RESET ALL`、`role`、`session_authorization`、`search_path`、`statement_timeout`); 解析前还有一道原始文本检查, 直接拦截 `set_config`。解析失败的查询一律拒绝。这保证了即使 Agent 拿到执行 SQL 的能力, 也无法越权改动实例级配置。
 
 ## 数据库产品域
 
@@ -154,8 +156,8 @@ Agent 提交 raw SQL 时, `checkSqlExecutionGuards` 先用 WASM 解析器 `parse
 用户数据的 CRUD 经 `records.routes.ts` 转发到 `postgrest-proxy.service.ts`。代理链路的关键处理:
 
 - `validateTableName` 校验表名, 非法直接 400, 不进入转发。
-- `resolvePostgrestSchema`: 请求带 `?schema=` 时, 翻译成 PostgREST 的 `Accept` / `Content-Profile` 头, 实现多 schema 路由。
-- 对 TEXT 类数据类型的空字符串做过滤, 避免把空串误写。
+- `resolvePostgrestSchema`: 请求带 `?schema=` 时, 翻译成 PostgREST 的 `Accept-Profile` (读) / `Content-Profile` (写) 头, 实现多 schema 路由。
+- 对 POST/PATCH/PUT 请求体, 丢弃非 TEXT 类列上的空字符串值 (TEXT 类列的空串原样保留), 避免空串写入数值、日期等列引发类型错误。
 - 按调用者身份选择 `forwardAsAdmin` / `forwardAsUser` / `forwardAsAnon`。
 - 转发前剥离 `host`、`content-length`、`connection` 头。
 - 用 `agentkeepalive` 复用到 PostgREST 的长连接, 并针对复用了已被对端关闭的 socket 触发的 `ECONNRESET` (`isStaleSocketReset`) 做一次重试, 整体 `maxRetries` 为 3。
@@ -181,7 +183,7 @@ Agent 提交 raw SQL 时, `checkSqlExecutionGuards` 先用 WASM 解析器 `parse
 
 网关挂在 `/storage/v1/s3`, 直接实现 AWS S3 的 REST 语义: 校验 SigV4 签名, 用 LRU 缓存加速鉴权热路径, 支持 `aws-chunked` 流式上传。因为它是线协议兼容的, 标准 AWS SDK 与 `aws-cli` 可以直接把 InsForge 当作 S3 端点使用。这也是它在中间件顺序里必须排在 JSON 解析之前的原因——流式分块上传不能被 body parser 提前消费。
 
-对读取, 平台支持 CloudFront 签名 URL, 且做到“每日稳定”: 同一对象在同一天内生成一致的签名地址, 便于缓存。存储还支持分支模式 (通过 `parentAppKey` 关联父应用), 让 Agent 能在隔离分支里操作对象而不影响主环境。
+对读取, 平台支持 CloudFront 签名 URL, 且对带版本号 (`?v=` 缓存戳) 的公共对象做到“每日稳定”: 过期时间按 24 小时窗口取整, 同一对象在同一天内生成一致的签名地址, 便于缓存。存储还支持分支模式 (通过 `parentAppKey` 关联父应用), 让 Agent 能在隔离分支里操作对象而不影响主环境。
 
 ## 边缘函数与定时任务
 
@@ -213,9 +215,9 @@ Secrets 不以明文进数据库。`server.ts` 从 `system.secrets` 取密文, �
 
 - **Model Gateway (AI)**: 统一 AI 网关, 当前 provider 是 OpenRouter, 通过 OpenAI SDK 接入, 请求带 `HTTP-Referer` 与 `X-Title` 头做归因, 覆盖 chat、image、embedding 三类能力。
 - **Memory**: 面向 Agent 的长期记忆。嵌入模型是 `text-embedding-3-small` (1536 维), 生成模型是 `gpt-4o-mini`, 相似度阈值取 0.45 / 0.5, 记忆分 fact、decision、preference、reference 四种 kind。
-- **Compute**: 容器化计算, 提供 docker、fly、cloud 三种驱动。docker 驱动用“重命名-替换”做安全更新 (先起新容器再原子切换), 并支持 scale-to-zero 按需拉起。
+- **Compute**: 容器化计算, 提供 docker、fly、cloud 三种驱动。docker 驱动用“重命名-替换”做安全更新 (先起新容器, 旧容器重命名退役后再切换); scale-to-zero 由 fly 与 cloud 驱动支持, docker 驱动明确声明不支持。
 - **Site Deployment**: 静态站点部署到 Vercel provider, 支持直传文件与打包上传两种路径, 可部署区域从 `vercel.json` 读取, 单站点文件数上限 `maxDeploymentFiles` 为 5000。
-- **Realtime**: 用一个专用的 Postgres LISTEN 连接监听变更 (PostgREST 通过 `pgrst` NOTIFY 通道广播), 再经 Socket.IO 推给前端, 或经 webhook 回调外部; 断线最多重连 10 次。
+- **Realtime**: 消息写入 `realtime.messages` 表 (开发者触发器调用 `realtime.publish`) 后, 表上触发器以 `pg_notify('realtime_message', ...)` 广播 message_id, 专用 Postgres LISTEN 连接收取后按频道经 Socket.IO 推给前端, 或经 webhook 回调外部; 断线最多重连 10 次。
 - **Telemetry**: 基于 PostHog, 上报 `instance_started` 与 24 小时心跳, 并能识别 CI 环境以抑制噪声; 用户可通过运行时开关整体禁用。
 
 ## 契约层与文档即 API
@@ -265,17 +267,17 @@ MCP Server 本体位于独立仓库, 不在本代码库内; 本文只描述本�
 
 把散落各处的安全默认集中起来, 便于评估自托管暴露面:
 
-| 维度      | 默认值 / 行为                                                                  |
-| --------- | ------------------------------------------------------------------------------ |
-| 端口暴露  | 仅 7130 对外; 7131 绑 `127.0.0.1`; PostgREST 与 Deno (7133) 仅内网可达         |
-| 函数沙箱  | 每请求一 Worker, 用后即焚; 权限仅 `net: true`, `env`/`read`/`write`/`run` 全关 |
-| Secrets   | AES-GCM 密文入库, SHA-256 派生密钥, 运行时经消息显式注入, 不进环境变量         |
-| SQL       | WASM 静态护栏阻断 DB 管理、角色管理、事务控制与会话变量修改                    |
-| 凭证分派  | fail-closed, 按 `ik_` / `anon_` / JWT 前缀分派; 匿名与 API key 不携带用户 UUID |
-| CSRF      | HMAC-SHA256 + `timingSafeEqual`, 不匹配 403                                    |
-| JWT       | RS256 签发, HS256 回退, 强制 `sub`; cloud token 本地拒绝签发                   |
-| Body 上限 | JSON 100mb, urlencoded 10mb                                                    |
-| 备份      | pg_dump 16 client, 非云环境由调度器周期性备份                                  |
+| 维度      | 默认值 / 行为                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------ |
+| 端口暴露  | 生产 compose 仅 7130 对外; Postgres (5432)、PostgREST (5430)、7131、Deno (7133) 均绑 `127.0.0.1` |
+| 函数沙箱  | 每请求一 Worker, 用后即焚; 权限仅 `net: true`, `env`/`read`/`write`/`run` 全关                   |
+| Secrets   | AES-GCM 密文入库, SHA-256 派生密钥, 运行时经消息显式注入, 不进环境变量                           |
+| SQL       | WASM 静态护栏阻断 DB 管理、角色管理、事务控制与会话变量修改                                      |
+| 凭证分派  | fail-closed, 按 `ik_` / `anon_` / JWT 前缀分派; 匿名与 API key 不携带用户 UUID                   |
+| CSRF      | HMAC-SHA256 + `timingSafeEqual`, 不匹配 403                                                      |
+| JWT       | RS256 签发, HS256 回退, 强制 `sub`; cloud token 本地拒绝签发                                     |
+| Body 上限 | JSON 100mb, urlencoded 10mb                                                                      |
+| 备份      | pg_dump 16 client, 非云环境由调度器周期性备份                                                    |
 
 ## 适用场景
 

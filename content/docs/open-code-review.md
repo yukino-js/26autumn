@@ -91,7 +91,7 @@ review 的三种范围:
 输出分三种:
 
 - text: 人读格式, 按字符宽度折行; 建议代码用行级 diff(Myers 风格 LCS)渲染增删; 无发现时打印 "No comments generated. Looks good to me.";
-- json: 顶层含 status、llm、trace_id、summary、tool_calls(total、by_tool、failure、failure_by_tool、failure_details)、comments、groups、warnings、project_summary、resume、session_id、manifest、retry_report; summary 含 files_reviewed、comments、token 用量六项(总量/输入/输出/缓存读/缓存写)与 elapsed、budget_exceeded;
+- json: 顶层含 status、llm、trace_id、summary、tool_calls(total、by_tool、failure、failure_by_tool、failure_details)、comments、groups、warnings、project_summary、resume、session_id、manifest、retry_report; summary 含 files_reviewed、comments、token 用量五项(总量/输入/输出/缓存读/缓存写)与 elapsed、budget_exceeded;
 - sarif: 实现 SARIF v2.1.0 的一个子集, 工具名固定为 "OpenCodeReview", 结果指纹键固定为 "ocrFinding/v1", 便于接入代码扫描平台。
 
 输出契约上还有两条: --output 指向的路径延迟到首次写入才创建(失败的 run 不会截断已存在的文件), 但目标是目录或父目录缺失会提前失败; 非机读格式会剥掉 ANSI 控制序列。stdout 的保护分两档: --format 为机读格式时进度整体换道 stderr; --audience 为 agent 时进度直接丢弃——两种情况都保证 stdout 是一份可直接解析的文档。中断处理上, 第一次信号走优雅关闭, 第二次信号强制退出。
@@ -140,7 +140,7 @@ diff 来源分三种模式: workspace(staged + unstaged + untracked)、单 commi
 7. 删除文件保留在工作集里供 prompt 引用变更文件列表, 但从不派发评审;
 8. 体积闸门: diff 的 token 计数超过 prompt 上限(模板 MaxTokens 的 80%)的文件计入 TooLarge, 全部超限则整轮 skipped。
 
-选择完成后打印一行 `[ocr] N file(s) changed, reviewing M in <仓库>`。选中集为空时按原因记遥测事件(too_large / deleted / no_supported_files), 跳过原因也会出现在 delegate preview 的输出里。
+选择完成后打印一行 `[ocr] N file(s) changed, reviewing M in <仓库>`。选中集为空时按原因记遥测事件(too_large / deleted / no_supported_files), 逐文件的排除原因也会出现在 delegate preview 的输出里。
 
 ### 3.3 语义分组(Agent, 有兜底)
 
@@ -182,7 +182,7 @@ diff 来源分三种模式: workspace(staged + unstaged + untracked)、单 commi
 
 其余工具的确定性体现在: code_search 用 git grep 做全仓搜索并对文件模式做安全校验; file_read_diff 持有一份冻结的只读 diff 快照, 因此模型能读到被过滤文件的 diff——快照按"有效路径"键入, 被删除的文件以其原路径可查, 变更文件列表也把删除文件列在自己的路径下而不是 /dev/null; code_comment 在入收集器前做 schema 校验, 并有一层"工具参数以字符串形式到达且修复后无截断"的确定性修复; 工具参数解析失败时会用括号平衡法从文本里截取 JSON 重试。
 
-这个窄工具面可以被 MCP 扩展: 用户配置里的 mcp_servers 表在评审启动时逐个连接(本地 stdio 或远程 HTTP 两种形态, 初始化超时 5 分钟、请求超时 30 秒), 收集到的工具定义被追加进计划阶段与主循环的工具集, 与内置工具一起暴露给模型。远程服务器缺 URL 等配置错误只告警跳过, 不阻断评审。评审结束时统一关闭: 每个子进程有 800 毫秒终止宽限, 整体关闭上限 2800 毫秒。这让"评审时顺手查一下 issue 系统或内部知识库"成为配置项, 而不需要改动评审流水线本身。
+这个窄工具面可以被 MCP 扩展: 用户配置里的 mcp_servers 表在评审启动时逐个连接(本地 stdio 或远程 HTTP 两种形态; 本地服务器的 setup 命令超时 5 分钟, 初始化——连接加工具枚举——超时 30 秒), 收集到的工具定义被追加进计划阶段与主循环的工具集, 与内置工具一起暴露给模型。远程服务器缺 URL 等配置错误只告警跳过, 不阻断评审。评审结束时统一关闭: 每个子进程有 800 毫秒终止宽限, 整体关闭上限 2800 毫秒。这让"评审时顺手查一下 issue 系统或内部知识库"成为配置项, 而不需要改动评审流水线本身。
 
 ### 3.7 评论定位的三级回退(确定性优先, LLM 兜底)
 
@@ -243,7 +243,7 @@ token 阈值按 MaxTokens 的分数统一定义: 60% 触发异步后台压缩, 8
 
 ### 4.4 离线 token 计数
 
-token 计数不依赖网络: BPE 编码数据被内嵌进二进制, 并在包初始化时安装为 tiktoken 的加载器。需要注意内嵌范围——只有 cl100k_base 一份编码数据被嵌进二进制; 计数函数按模型名把 o1/o3/o4 系列映射到 o200k_base, 但该编码未内嵌, 加载器会报"未内嵌且离线不可获取"的错误, 此时退化为"字节数除以 4"的估算。内嵌方案让默认编码的计数在离线与测试环境都稳定, 避免成本核算因网络抖动而失真。
+token 计数不依赖网络: BPE 编码数据被内嵌进二进制, 并在包初始化时安装为 tiktoken 的加载器。需要注意内嵌范围——只有 cl100k_base 一份编码数据被嵌进二进制; 计数函数按模型名把 o1/o3/o4 系列映射到 o200k_base, 但该编码的数据文件未内嵌, 加载器会报"内嵌文件未找到"的错误, 此时退化为"字节数除以 4"的估算。内嵌方案让默认编码的计数在离线与测试环境都稳定, 避免成本核算因网络抖动而失真。
 
 ## 五、LLM 客户端与 Provider 抽象
 
@@ -260,7 +260,7 @@ token 计数不依赖网络: BPE 编码数据被内嵌进二进制, 并在包初
 
 几个实现层面的取舍:
 
-- OpenAI 客户端基于官方 SDK(openai-go v3), 构造时固定 5 次内部重试(WithMaxRetries), 流式请求默认补发 stream_options.include_usage——否则部分兼容服务器不返回用量、成本核算会静默丢失, 该默认值可被 extra_body 显式覆盖; HTTP 层的响应头超时按"任务超时 + 余量"设置, 与请求级超时解耦。
+- OpenAI 客户端基于官方 SDK(openai-go v3), 构造时固定 5 次内部重试(WithMaxRetries), 流式请求默认补发 stream_options.include_usage——否则部分兼容服务器不返回用量、成本核算会静默丢失, 该默认值可被 extra_body 显式覆盖; HTTP 层的响应头超时按"请求级超时 + 30 秒余量"设置, 让请求上下文的截止先于响应头超时触发。
 - Anthropic 客户端处理鉴权头的多种形态(x-api-key 与 authorization)并互删冲突头。
 - Bedrock 客户端基于 aws-sdk-go-v2 做 SigV4 签名, 不要求 api_key——凭证来自 AWS 环境链自身(注册表用 AmbientAuth 标记); 构造失败(如会话过期)延迟到首次请求报错, 而不是构造期 panic。
 - Responses 客户端以无状态方式工作, 把缓存亲和键作为 prompt_cache_key 发送; 是否发送采样参数(temperature 等)由端点能力标记(RejectsSamplingParams)决定。
@@ -352,7 +352,7 @@ Provider 注册表的变化会波及前端下拉与 IDE 插件: 修改注册表�
 
 ### 6.2 系统规则与路径映射
 
-系统规则由三部分构成: 一份默认规则(default.md)、一张路径 glob 到规则文件的映射表(path_rule_map), 以及按语言/文件类型编写的规则 Markdown(共 57 份)。映射覆盖面包括:
+系统规则由三部分构成: 一份默认规则(default.md)、一张路径 glob 到规则文件的映射表(path_rule_map), 以及按语言/文件类型编写的规则 Markdown(共 56 份, 与 default.md 合计 57 份)。映射覆盖面包括:
 
 - 主流语言(Go、Java、Rust、Python、TypeScript/JavaScript、Kotlin、C++ 等);
 - 构建与包管理文件(pom.xml、build.gradle、package.json、Cargo.toml、composer.json);
@@ -437,7 +437,7 @@ delegate 的定位是: OCR 只做确定性部分(文件选择、规则解析), �
 
 命令面有两个子命令:
 
-- `ocr delegate preview`: 输出评审模式、引用元数据、可评审文件列表(路径、状态、增删行数)与被排除文件及原因(too_large/deleted/no_supported_files);
+- `ocr delegate preview`: 输出评审模式、引用元数据、可评审文件列表(路径、状态、增删行数)与被排除文件及逐文件原因(binary、secret_exclude、user_exclude、unsupported_ext、default_path、provider_directory、deleted、too_large);
 - `ocr delegate rule <路径...>`: 按内容分组输出解析后的规则。
 
 规则分组按"来源 + 命中 pattern + 规则正文"三元组聚类: 正文相同但来源或模式不同的文件会分到不同组, 保证每组的元数据对成员都准确; 没有命中任何规则的文件归入 system/default 组。输出渲染成带 Applies to 文件列表的 Markdown 段落, 直接喂给宿主 agent。配套的 skill 教宿主 agent 用 preview 的结果构造 git 命令执行评审(见 13.3)。

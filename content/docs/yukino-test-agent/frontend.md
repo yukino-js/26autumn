@@ -23,7 +23,7 @@ description: "React 19 + TanStack Start 前端全景: 文件式路由、应用�
 
 ## 路由: 文件式生成 (routeTree)
 
-路由树不手写, 由 `tsr generate` 从 `src/routes/` 目录结构生成到 `src/routeTree.gen.ts` (文件头自述 "**You should NOT make any changes in this file**")。**勿手改**; 新增/改名路由文件后运行 `pnpm generate-routes` (即 `tsr generate`, `tsr-config.json` 仅 `{ "target": "react" }`)。
+路由树不手写, 由 `tsr generate` 从 `src/routes/` 目录结构生成到 `src/routeTree.gen.ts` (文件头自述 "**You should NOT make any changes in this file**")。**勿手改**; 新增/改名路由文件后运行 `pnpm generate-routes` (即 `tsr generate`, `tsr.config.json` 仅 `{ "target": "react" }`)。
 
 路由实例在 `src/router.tsx` 的 `getRouter()` 里创建: `createTanStackRouter({ routeTree, context, scrollRestoration: true, defaultPreload: "intent", defaultPreloadStaleTime: 0 })`, 并用 `Wrap` 注入 `TanstackQueryProvider`, 再调 `setupRouterSsrQueryIntegration` 让 SSR 阶段的查询数据能随 HTML 脱水/补水。`defaultPreload: "intent"` 表示鼠标悬停即预加载目标路由数据。
 

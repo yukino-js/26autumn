@@ -9,14 +9,14 @@ title: "Terminal UI"
 Yukino 使用终端的**主屏**, 不进 alternate screen, 启动时主动写 `\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l` 关闭鼠标上报 —— 不捕获鼠标、不翻译滚动事件。一屏分成两块 (src/ui/transcript.tsx、src/ui/terminal-layout.tsx):
 
 - **transcript (Ink Static)**: 完成的消息 (用户消息、assistant 段落、工具卡片、思考块、系统提示) 只打印一次, 追加进终端原生 scrollback; 选择、复制、滚轮/触控板历史滚动全部交给终端
-- **实时帧 (`TerminalLayout`)**: 固定在终端底部就地重绘, 自上而下四个区域: activity (运行中的流式文本、工具卡、用户 Bash 卡, 视口跟随尾部)、status (新版本提示、steering/follow-up 队列、Ctrl+C 提示、todo 进度、Agents 计数)、dock (输入框或当前打开的对话框)、footer (cwd/session id、token 统计与上下文百分比、provider/model、thinking 级别、权限模式); 各区域行数预算随终端高度伸缩: 高度不足 10 行隐藏 status, 不足 5 行压缩 footer
+- **实时帧 (`TerminalLayout`)**: 固定在终端底部就地重绘, 自上而下四个区域: activity (运行中的流式文本、工具卡、用户 Bash 卡, 视口跟随尾部)、status (新版本提示、steering/follow-up 队列、Ctrl+C 提示、todo 进度、Agents 计数)、dock (输入框或当前打开的对话框)、footer (cwd/session id、token 统计与上下文百分比、provider/model、thinking 级别、权限模式); 各区域行数预算随终端高度伸缩: 高度不足 10 行隐藏 status; footer 预算在高度不足 12 行时压缩到至多 2 行, 不足 5 行时归零隐藏
 
 主屏渲染的关键是 `installTerminalOutput()` (src/ui/terminal-output.ts), 它拦截 `stdout.write`, 把输出分成两类:
 
 - 静态输出由 `expectStaticTerminalOutput()` 预注册, 累积进 `staticOutput`, 不参与实时帧重绘
 - 实时帧用关闭 autowrap 的软换行组写入 (`renderLiveFrame`), 形状不变的帧走逐行差分 (`renderFrameChanges`): 只按格覆盖变化的行, 不擦行 —— 擦掉软换行行会破坏终端原生的 resize reflow 组, 也会打断鼠标选择
 
-写盘时机上, 检测支持 DEC 2026 synchronized output 的终端会在每次写外侧包裹 BSU/ESU (`\x1b[?2026h` / `\x1b[?2026l`), 避免半帧渲染。检测走环境变量而不是 DECRQM 查询: TERM_PROGRAM 属于 alacritty、contour、ghostty、iTerm.app、vscode、WarpTerminal、WezTerm, 或 TERM 含 kitty / ghostty / foot / alacritty, 或设置了 KITTY_WINDOW_ID / ZED_TERM / WT_SESSION, 或 VTE_VERSION ≥ 6800; tmux 下一律禁用
+写盘时机上, 检测支持 DEC 2026 synchronized output 的终端会在每次写外侧包裹 BSU/ESU (`\x1b[?2026h` / `\x1b[?2026l`), 避免半帧渲染。检测走环境变量而不是 DECRQM 查询: TERM_PROGRAM 属于 alacritty、contour、ghostty、iTerm.app、vscode、WarpTerminal、WezTerm, 或 TERM 含 kitty / alacritty、等于 xterm-ghostty、以 foot 开头, 或设置了 KITTY_WINDOW_ID / ZED_TERM / WT_SESSION, 或 VTE_VERSION ≥ 6800; tmux 下一律禁用
 
 由此派生的行为:
 

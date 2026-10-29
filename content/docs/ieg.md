@@ -415,13 +415,13 @@ const httpDuration = new client.Histogram({
 
 标签基数纪律是自定义指标的第一约束: 标签值必须是有限可枚举集合 (路由模板、状态码段、操作类型), 不要把 userId、原始 URL、traceId 放进标签 —— 标签组合数就是时间序列数, 基数失控会直接压垮存储与查询。
 
-OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。PrometheusExporter (继承 MetricReader) 以 `{port, endpoint}` 配置启动内置 HTTP server 暴露 /metrics, Prometheus 照常抓取。semantic-conventions (1.40.0) 定义的一组实验性进程与事件循环指标名: `nodejs.eventloop.delay.{min,max,mean,stddev}`、nodejs.eventloop.time、nodejs.eventloop.utilization、process.cpu.time、process.cpu.utilization、process.memory.usage、process.memory.virtual、process.context_switches、process.disk.io —— 语义与 prom-client 默认指标一一对应, 只是命名风格不同; 两条路线选一条, 不要重复采集。
+OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。PrometheusExporter (继承 MetricReader) 以 `{port, endpoint}` 配置启动内置 HTTP server 暴露 /metrics, Prometheus 照常抓取。semantic-conventions (1.43.0) 定义的一组实验性进程与事件循环指标名: `nodejs.eventloop.delay.{min,max,mean,stddev}`、nodejs.eventloop.time、nodejs.eventloop.utilization、process.cpu.time、process.cpu.utilization、process.memory.usage、process.memory.virtual、process.context_switches、process.disk.io —— 语义与 prom-client 默认指标一一对应, 只是命名风格不同; 两条路线选一条, 不要重复采集。
 
 两条路线都是拉取模型: Prometheus 按固定周期主动抓取每个实例的 /metrics, 服务端不推送、不维护上报状态, 只负责备好一份当前快照。
 
 ### OpenTelemetry: 自动插桩与手动 span
 
-本机核实的包版本: api 1.9.1、sdk-trace-base 2.7.0、sdk-metrics 2.7.0、sdk-node 0.222.0、exporter-prometheus 0.215.0、semantic-conventions 1.40.0。
+本机核实的包版本: api 1.9.1、sdk-trace-base 2.11.0、sdk-metrics 2.11.0、sdk-node 0.222.0、exporter-prometheus 0.222.0、semantic-conventions 1.43.0。
 
 装配入口是 NodeSDK, 关键选项:
 
@@ -455,7 +455,7 @@ OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。Pr
 
 ### Sentry Node: 错误、性能与持续 profiling
 
-@sentry/node (10.49.0) 整体构建在 OpenTelemetry 之上: 依赖 @opentelemetry/api、core、instrumentation, 并内置 http、express、koa、ioredis、mongodb、mysql2、knex、graphql、kafkajs 等 instrumentation 库 —— 性能数据的采集路径直接复用 OTel 自动插桩, Sentry 提供的是上报、聚合、检索与告警平台。
+@sentry/node (10.76.2) 整体构建在 OpenTelemetry 之上: 依赖 @opentelemetry/api、instrumentation、sdk-trace-base, 并内置 http、express、koa、ioredis、mongodb、mysql2、knex、graphql、kafkajs 等 instrumentation 库 —— 性能数据的采集路径直接复用 OTel 自动插桩, Sentry 提供的是上报、聚合、检索与告警平台。
 
 错误上报就是错误场景下的抓栈, 一条错误事件携带:
 

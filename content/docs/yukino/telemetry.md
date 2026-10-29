@@ -10,7 +10,7 @@ Yukino 的遥测默认关闭, 只通过环境变量配置, 不落配置文件 (�
 - Langfuse: LLM 可观测平台, 与 OpenTelemetry 共享同一棵 trace 树
 - Sentry: 进程级错误上报, 性能追踪仍由 OpenTelemetry 负责
 
-所有遥测 SDK (`@opentelemetry/*`、`@langfuse/*`、`@sentry/node`) 都声明在 optionalDependencies 里; 入口 `src/telemetry/index.ts` 不静态引用它们, `initializeTelemetry()` 判定需要开启后才动态 `import("./providers.js")` 装配运行时, 导入或装配失败则静默回退到 noop 运行时 — 没配置遥测的进程不会付出任何加载成本
+所有遥测 SDK (`@opentelemetry/*`、`@langfuse/*`、`@sentry/node`) 都声明在 optionalDependencies 里; `initializeTelemetry()` 判定需要开启后才动态 `import("./providers.js")` 装配运行时, 导入或装配失败则静默回退到 noop 运行时。providers.ts 静态引入 `@langfuse/*` 与 `@opentelemetry/*` 核心包, OTLP / Prometheus exporter 和 `@sentry/node` 在其内部按配置动态 import; 入口 `src/telemetry/index.ts` 还以 `Telemetry.Providers` 命名空间静态再导出 providers.js, 因此 provider 模块随入口一起进入模块图
 
 ```txt
 src/telemetry/

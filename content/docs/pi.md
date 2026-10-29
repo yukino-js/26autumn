@@ -41,7 +41,7 @@ Pi 是终端里的极简、可扩展编码 Agent harness。它的设计立场非
 - **生命周期事件**覆盖面很长: `input`、`before_agent_start`、`agent_start`、`turn_start`、`context`、`context_with_system`、`before_provider_headers`/`before_provider_request`、`after_provider_response`、`provider_stream_event`、`message_update`/`message_end` 等消息事件、`tool_execution_start`/`tool_execution_end`、`tool_call`、`tool_result`、`turn_end`、`agent_end`、`agent_before_settle`、`agent_settled`、`session_start`/`session_shutdown`、`session_before_switch`/`session_before_fork`、`project_trust`、`resources_discover`、`user_bash`、`cache_warming_decision`。
 - **工具暴露级别**分五档: `direct` (进上下文)、`model-only`、`codemode` (只对脚本可见)、`deferred` (不预载, 由 tool search 按需加载)、`hidden`。
 - **命名与元数据**: 工具可声明 namespace 与 annotations (MCP 风格的 hints), 扩展可用 `prepareLoadout` 参与工具装载, 用 `reachesTools` 声明自己是否会触达工具。
-- **嵌套工具调用**: 扩展经 `ctx.executeTool` 直接调工具并可嵌套, 嵌套调用的 id 形如 `<父调用 id>/<序号>`; 嵌套记录有界——单条调用 8 KiB、单条结果 32 KiB、总计 256 条。
+- **嵌套工具调用**: 扩展经 `ctx.executeTool` 直接调工具并可嵌套, 嵌套调用的 id 形如 `<父调用 id>/<序号>`; 嵌套记录有界——单条调用参数 8 KiB、单条结果记录的参数总量 32 KiB、至多 256 条。
 - **结构化输出**: 工具可声明 `outputSchema` 并以 `structuredContent` 返回, 供脚本与下游消费。
 - **可替换**: 注册时声明 `replaceable: true`, 当别的扩展注册同名工具、命令或旗标时自动让位而非冲突。
 
@@ -86,7 +86,7 @@ entry 是一组判别联合, 共享树结构: 会话头、message (含系统消�
 
 - **系统消息**携带 `content` 与 `sections` (有序命名补丁, 值为 null 表示移除段落), 以及 `toolsAdded`/`toolsRemoved` (先删后加), 是"在 transcript 里修改系统提示与工具面"的持久化手段。
 - **compaction** 存摘要, 必须带 `firstKeptEntryId` 指向它保留的第一条 entry, 还可带一个 `systemMessage` 检查点。
-- **context_edit** 是对单条 entry 的上下文级编辑覆盖: `{ target: entryId }` 加 `omit` (从上下文里略去) 或 `replace` (用给定消息替换)。
+- **context_edit** 是对单条 entry 的上下文级编辑覆盖: `targetId` 指向目标 entry, `replacement` 为 `null` 时把目标从模型上下文里略去, 非 null 时只替换其内容。
 
 关键的语义差别在于"从更早处继续": 它不会删除后续 entry, 只是把 leaf 指针移回更早的 entry, 之后追加的内容在同一文件里长出新分支; 只有 fork 与 clone 才把选中的历史拷进新的会话文件。实现上对应 `SessionManager.branch()`、`branchWithSummary()` 与 `createBranchedSession()` (packages/coding-agent/src/core/session-manager.ts), 上下文读取则由 `buildContextEntries`/`buildSessionProjection` 一类纯函数从树投影出来。
 
@@ -182,7 +182,7 @@ durable 是一个实验性的持久化 agent harness, 构建在 pi-ai (模型访
 | document     | 由 chord 操作与偶发完整基底表示的可变 JSON 状态                          |
 | turn / run   | 一个 assistant 响应及其工具调用 / 从受理输入到最终答案的轮次序列         |
 
-entry 记录 (`EntryRecord`) 把"面向模型的消息"与"面向应用的数据"分开存放: `kind` 与可选 `model` 标识消息, `data` 存应用数据, `head` 指向它选中的上下文首 entry (草稿阶段允许 `"self"`), `edits` 挂上下文编辑覆盖 (omit/replace), `byTaskId` 记贡献者。分叉在记录模型里是显式操作: conversation 记录指向父 conversation 与分叉点 entry (`{ conversationId, at }`), owner 字段表示任务归属而非访问控制; 根会话 ID 是常量 `ROOT_CONVERSATION_ID = 1`。提交请求 (`SubmissionRecord`) 对输入区分 queued/placed/done/unanswered, 未回答的输入带原因。ID 是编译期品牌类型, 运行期就是字符串。
+entry 记录 (`EntryRecord`) 把"面向模型的消息"与"面向应用的数据"分开存放: `kind` 与可选 `model` 标识消息, `data` 存应用数据, `head` 指向它选中的上下文首 entry (草稿阶段允许 `"self"`), `edits` 挂上下文编辑覆盖 (omit/replace), `byTaskId` 记贡献者。分叉在记录模型里是显式操作: conversation 记录指向父 conversation 与分叉点 entry (`{ conversationId, at }`), owner 字段表示任务归属而非访问控制; 根会话 ID 是常量 `ROOT_CONVERSATION_ID = 1`。提交请求 (`SubmissionRecord`) 对输入区分 queued/placed/done/unanswered, 未回答的输入带原因。ID 是编译期品牌类型, 运行期就是数字。
 
 ### 4.3 存储后端与并发
 
@@ -224,7 +224,7 @@ durable 的可见状态组织成五类内置文档: `pi.agent` (会话的 agent 
 
 应用文档用 `defineDoc` 定义: 历史语义选 `latest` (只跟最新值) 或 `rewindable` (可回退), 分叉行为选 `initial`、`current` 或 `asOf`, `checkpointWhen` 决定何时写完整检查点而非操作。
 
-task graph 视图把每个活任务挂成可观察状态或 watch, 状态机为 pending/running/waiting/completing, 含 owner 边、已提交状态、后台与中止标记、拥有的会话; 重启后 running 落回 pending 再被调度。子代理就是任务所有权的组合: 新 conversation 的 owner 记为 `{ kind: "task", taskId }`, 加 `background: true` 即后台跑。任务的上报 (`onReport`) 有固定类型集, 失败 run 之后由 `afterFailedRun` 决定 continue 还是 withdraw。生命周期一致性也有约束: 任务运行时的时间与上报接口在其调用结束后拒绝使用; 文档迁移后的第一次写总会写入当前版本的新基底, 即使 JSON 深相等。
+task graph 视图把每个活任务挂成可观察状态或 watch, 状态机为 pending/running/waiting/sleeping/completing, 含 owner 边、已提交状态、后台与中止标记、拥有的会话; 重启后 running 落回 pending 再被调度。子代理就是任务所有权的组合: 新 conversation 的 owner 记为 `{ kind: "task", taskId }`, 加 `background: true` 即后台跑。任务的上报 (`onReport`) 有固定类型集, 失败 run 之后由 `afterFailedRun` (keep/continue/withdraw, 默认 keep) 决定排队中的输入是留在队列、交给下一次 run 还是按未回答结算。生命周期一致性也有约束: 任务运行时的时间与上报接口在其调用结束后拒绝使用; 文档迁移后的第一次写总会写入当前版本的新基底, 即使 JSON 深相等。
 
 ### 4.9 provider 会话身份
 

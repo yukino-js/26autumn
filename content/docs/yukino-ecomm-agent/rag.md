@@ -196,7 +196,7 @@ Milvus SDK 的 `hybrid_search` 在一次请求里同时发出两路召回: 稀�
 
 精排使用更慢、质量更高的 cross-encoder 交叉编码 rerank 模型, 拼接 query 和文档块输入到 rerank 模型。本项目实现在 `server/src/core/rerank.ts`: RERANK_MODEL 默认 qwen3.7-text-rerank, RERANK_BASE_URL 默认与 embedding 同一个 compatible-mode 端点; RERANK_PROTOCOL 切换两种协议:
 
-- jina (默认): 请求 `{base}/v1/rerank`, body 为 `{ model, query, documents, top_n }`
+- jina (默认): base 缺版本段时才补 `/v1`, 请求 `{base}/rerank`, body 为 `{ model, query, documents, top_n }`
 - dashscope: base 先剥掉 /v1、/v2、/compatible-mode、/compatible-api 后缀再补 /api, 请求 `/api/v1/services/rerank/text-rerank/text-rerank`, body 为 `{ model, input: { query, documents }, parameters: { top_n, return_documents: false } }`
 
 响应用 zod 解析 (兼容 `results` 与 `output.results` 两种形态, relevance_score 支持数字字符串); 429/500/502/503/504 自动重试 3 次, 指数退避从 1.5s 起; 单次请求 60s 超时。精排分低于 RERANK_MIN_SCORE=0.3 视为证据不足。

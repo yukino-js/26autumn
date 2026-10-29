@@ -89,7 +89,7 @@ async function* agentLoop(
 
 1. **LLM 决定退出**: 响应中没有 tool_use。但退出前还要过持久目标这一关 — goal 活跃且预算未耗尽时, `goalManager.continuation()` 生成续跑 prompt 注入为 user 消息, 循环继续而不是退出 (见 [goal](./goal))
 2. **达到最大循环次数**: `maxIterations > 0` 时, 超过后 yield `error` 事件退出; 默认 0 不限制
-3. **用户中断 (abortSignal)**: TS 用 `AbortController`, Go 侧用 `context.Context`。循环顶部、压缩后、流事件内、工具结果入历史后都有检查点; 中断时先持久化已产出的部分内容, 再 `loop_complete(interrupted)`
+3. **用户中断 (abortSignal)**: 用 `AbortController` 表达。循环顶部、压缩后、流事件内、工具结果入历史后都有检查点; 中断时先持久化已产出的部分内容, 再 `loop_complete(interrupted)`
 4. **持久目标预算耗尽**: goal 的 tokenBudget 用尽时, 循环顶部检查直接 `loop_complete(budget_limited)`, 目标状态转为 `budget_limited`, 等待用户显式 replace 新预算
 5. **LLM 请求了不存在的工具**: 返回错误结果 `Error: unknown tool '<name>'` 反馈给 LLM 自纠, agent loop 继续运行; 被 `toolFilter` 过滤的工具同理, 以 `Tool '<name>' is not available to this agent.` 错误结果反馈
 6. **ExitPlanMode / EnterPlanMode 工具执行成功**: 规划类工具成功即暂停循环等待用户, `loop_complete(end_turn)`; ExitPlanMode 成功后 UI 弹出 plan 审批对话框
@@ -140,7 +140,7 @@ agent loop 期间发射的事件都来自 src/agent/events.ts 定义的 `AgentEv
 | `error`              | 发生错误                                                                                                     |
 | `permission_request` | 权限请求 (UI 弹对话框前的通知性事件)                                                                         |
 
-UI 层只需从 `AgentEvent` 事件流中消费事件、据此更新界面, agent 与 UI 完全解耦。Go 用 channel、TS 用 AsyncGenerator (`async function*` + `yield`) 表达同一条流。ACP、A2A、remote、print 模式各自把 `AgentEvent` 翻译成自己的协议事件 (见 [acp](./acp) / [a2a](./a2a) / [remote](./remote) / [print-mode](./print-mode))。
+UI 层只需从 `AgentEvent` 事件流中消费事件、据此更新界面, agent 与 UI 完全解耦。事件流用 AsyncGenerator (`async function*` + `yield`) 表达。ACP、A2A、remote、print 模式各自把 `AgentEvent` 翻译成自己的协议事件 (见 [acp](./acp) / [a2a](./a2a) / [remote](./remote) / [print-mode](./print-mode))。
 
 ## 状态机
 

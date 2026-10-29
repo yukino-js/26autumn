@@ -45,7 +45,7 @@ yukino_rpc 是一个自研的 Go RPC 框架, 对外 API 对齐 grpc-go 的使用
 
 ## 公开 API 能力面
 
-公开门面通过类型别名 (type alias) 而非类型定义暴露内部类型, 因此 `rpc.Future` 与 `transport.Future` 是同一个类型, 用户可以直接调用其全部导出方法 (`Wait`、`WaitWithContext`、`WaitWithTimeout`、`GetResult`、`GetResultWithContext`、`OnComplete`、`DoneChan`、`IsDone`)。
+公开门面通过类型别名 (type alias) 而非类型定义暴露内部类型, 因此 `rpc.Future` 与 `transport.Future` 是同一个类型, 用户可以直接调用其全部导出方法 (`Done`、`Wait`、`WaitWithContext`、`WaitWithTimeout`、`GetResult`、`GetResultWithContext`、`OnComplete`、`DoneChan`、`IsDone`)。
 
 | 类别     | 内容                                                                                                                  |
 | -------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -57,13 +57,13 @@ yukino_rpc 是一个自研的 Go RPC 框架, 对外 API 对齐 grpc-go 的使用
 
 `ServerStream` 只含 `Send(msg any) error` 与 `Context()`, `ClientStream` 只含 `Recv(msg any) error` 与 `Context()`。`NewServer` 在内部选项构造失败时直接 panic; 除此之外服务端与客户端可配置项都很少, 治理参数目前是硬编码的:
 
-| 选项                   | 适用对象 | 说明                                                    |
-| ---------------------- | -------- | ------------------------------------------------------- |
-| `WithCodec(t)`         | 服务端   | 默认 codec, 默认 JSON, 可切 Protobuf                    |
-| `WithTimeout(d)`       | Dial     | 每次调用的超时, 默认 5s                                 |
-| `WithDialCodec(t)`     | Dial     | 请求与响应使用的 codec, 每请求写入 Header               |
-| `WithRegistry(reg)`    | Dial     | 启用 etcd 发现模式, 此时 `target` 被忽略                |
-| `WithLoadBalancer(lb)` | Dial     | 注册模式下的负载均衡策略, 默认 `RoundRobin`, 不得为 nil |
+| 选项                   | 适用对象 | 说明                                                             |
+| ---------------------- | -------- | ---------------------------------------------------------------- |
+| `WithCodec(t)`         | 服务端   | 默认 codec, 默认 JSON, 可切 Protobuf                             |
+| `WithTimeout(d)`       | Dial     | 每次调用的超时, 默认 5s                                          |
+| `WithDialCodec(t)`     | Dial     | 请求与响应使用的 codec, 每请求写入 Header                        |
+| `WithRegistry(reg)`    | Dial     | 启用 etcd 发现模式, 此时 `target` 被忽略                         |
+| `WithLoadBalancer(lb)` | Dial     | 注册模式下的负载均衡策略, 传 nil 会被忽略, 回退默认 `RoundRobin` |
 
 ## 线协议
 
@@ -170,7 +170,7 @@ func (f *Future) Done(res []byte, err error) {
 | net/rpc 风格        | `Method(req *T, reply *R) error`                  | 两个输入、一个输出, 入参 0 为指针且出参实现 error, 入参 1 不实现 ServerStream      |
 | 服务端流            | `Method(req *T, stream ServerStream) error`       | 形状同上, 但入参 1 实现 ServerStream                                               |
 
-流签名匹配用 `Implements(serverStreamType)` 判断, 并通过 `reflect.Value.Convert` 把内部 `*serverStream` 转换到用户声明的接口类型, 因此业务侧可以定义自己的窄接口 (只要方法集是 `ServerStream` 的子集)。
+流签名匹配用 `Implements(serverStreamType)` 判断, 并通过 `reflect.Value.Convert` 把内部 `*serverStream` 转换到用户声明的接口类型。两个约束叠加, 业务侧自定义接口的方法集必须与 `ServerStream` 完全一致 (`Send` 与 `Context` 缺一不可): 更窄 (如只声明 `Send`) 通不过 `Implements` 判断, 最终返回 `unsupported method signature`; 更宽 (声明额外方法) 则 `Convert` 因 `*serverStream` 未实现额外方法而 panic, 且该处不在 `safeCall` 的覆盖范围内。
 
 调用时先用 `reflect.New` 分配请求对象, `len(body) > 0` 才反序列化 (空 body 跳过), 再用 `safeCall` 执行。`safeCall` 用 `defer` + `recover` 把业务 panic 转成 `handler panic: <value>` 错误, 通过 `Header.Error` 写回客户端, 连接处理 goroutine 继续服务后续请求, 因此单个请求的 panic 不会拖垮进程。
 

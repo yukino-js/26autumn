@@ -714,7 +714,7 @@ INP 覆盖页面整个生命周期的交互, 包含输入延迟、处理与呈�
 
 传输方面: CDN 就近分发与边缘缓存; 静态资源 hash 命名加一年强缓存与 immutable, HTML 用 no-cache 保证发版即时生效; HTTP/3 降低弱网下的握手与队头阻塞成本; 接口层做聚合、字段裁剪、分页与协商缓存。
 
-执行与架构方面: SSR/SSG/流式渲染缩短首屏可见时间, islands 与选择性 hydration 降低注水成本; 长任务拆分、重计算移入 Worker; 第三方脚本治理 (async/defer、facade 模式延迟加载); Service Worker 预缓存 App Shell; 建立性能预算并在 CI 中卡控。相关机制 (tree-shaking 的失效场景、SSR 与 hydration 的常见问题、微前端的隔离方案、HMR 原理) 细节较多, 见 [Vite 与构建](vite) 与 [React](react) 文档。
+执行与架构方面: SSR/SSG/流式渲染缩短首屏可见时间, islands 与选择性 hydration 降低注水成本; 长任务拆分、重计算移入 Worker; 第三方脚本治理 (async/defer、facade 模式延迟加载); Service Worker 预缓存 App Shell; 建立性能预算并在 CI 中卡控。相关机制 (tree-shaking 的失效场景、SSR 与 hydration 的常见问题、HMR 原理) 细节较多, 见 [Vite 与构建](vite) 与 [React](react) 文档。
 
 ## 前端弹性: 降级、限流与上报
 

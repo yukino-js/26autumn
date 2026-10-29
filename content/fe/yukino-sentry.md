@@ -24,11 +24,15 @@ Core             sdk-lifecycle / setup / bus / api / breadcrumb / options-schema
                  handle-error / handle-code-error / handle-http / handle-route / handle-events
                  framework-error / error-dedup / pv-lifecycle / white-screen / identity / plugin-registry
 Reporter         DataReporter / transports / offline-cache / server-recovery
-                 flush-scheduler / send-preflight / report-data / network-listener
+                 flush-scheduler / send-preflight / report-data / report-data-schema
+                 network-listener / timer / promise
 Plugins          PerformancePlugin / ScreenRecordPlugin / ExposurePlugin
 Framework 接入   React ErrorBoundary / Vue 3 插件
 构建期集成       Vite dev-server mock / webpack dev-server mock / Source Map 反解
 Utils            data-structures / session / uuid / throttle / click-data / dom2str / logger
+                 decorate-prop / event2breadcrumb / get-base-data / get-css-selectors
+                 is-excluded-api / is-ignored-error / is-type / metric2perf-data / noop
+                 sentry / server-timing / transform-http-data
 ```
 
 | 模块         | 职责                                                 |
