@@ -2,6 +2,7 @@
 title: "Pi Agent Harness: 极简内核、树形会话与 durable 运行时"
 description: "拆解 Pi 的设计与实现: 极简内核与扩展机制的边界、entry 树会话模型、TypeScript SDK 的进程内嵌入、durable 运行时的持久化不变量与执行环境抽象、pi-env 的远程执行协议、chord 应用组合运行时与遥测落库、codemode 的沙箱化脚本执行、统一 provider 面与容器化、五种接口形态与 TUI 渲染工程"
 local_path: "$HOME/Downloads/pi"
+local_commit: "6c384aa30f619d7b28963f2bab24d8dacbe73cb6"
 ---
 
 Pi 是终端里的极简、可扩展编码 Agent harness。它的设计立场非常明确: 内核只保留最小能力, 其余一切通过扩展、技能、提示模板、主题与自定义 provider 加入, 打包为 Pi package 分发。与 CLI 并行的还有三条实验性库线: durable 做"先提交存储再展示"的持久化运行时, chord 为 durable 提供复制状态与热重载的应用组合基座, pi-env 把工具执行经 SSH 部署的 Rust 守护程序落到远程机器。本文按机制而非目录来组织, 讲清这套极简内核如何支撑树形会话、如何被 TypeScript 进程直接嵌入、durable 的持久化不变量与执行环境抽象、pi-env 的帧协议、chord 的对象/引用/重载模型、codemode 如何把模型写的脚本关进沙箱, 以及 provider 与沙箱体系为何全部外置。读者应熟悉至少一个编码 Agent 的交互形态 (如 Codex CLI 或 [Claude Code](claude-code)), 并对 Node、TypeScript 与终端程序有基本认识。

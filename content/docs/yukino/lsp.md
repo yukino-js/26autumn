@@ -1,5 +1,8 @@
 ---
 title: "LSP"
+description: "LSP 集成: 只读 stdio JSON-RPC 客户端与 LSP 工具给 agent 11 种语义级查询 (定义, 引用, 调用层级, 诊断等); 覆盖 lsp_servers 配置与校验, 握手与超时, 文档同步与 LRU 缓存, pull/push 诊断模型, 1-based 输入 / 0-based 返回约定与只读保证"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 LSP (Language Server Protocol) 集成: 给 agent 语义级的代码导航能力

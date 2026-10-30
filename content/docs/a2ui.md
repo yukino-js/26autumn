@@ -2,6 +2,7 @@
 title: "A2UI 声明式 UI 协议"
 description: "A2UI 声明式 UI 协议的机制与工程实现: 消息信封与 Catalog 契约、数据绑定与事件回传语义、v0.9.1 生产版与 v1.0 候选版的差异、basic/MCP/VegaChart 三份官方 catalog、多语言 SDK 与渲染器能力面、A2A 集成, 以及仓库内示例链路。"
 local_path: "$HOME/Downloads/a2ui"
+local_commit: "dec736f237e3c00db33b9c7078c8042d175ecfff"
 ---
 
 本文讲 A2UI 协议本身: 它为什么存在、用什么样的消息与契约让模型生成 UI、渲染器如何消费并回传交互、跨语言 SDK 各自覆盖哪些能力、如何接入 A2A 与 MCP 等传输层。全部事实以仓库当前代码与规范为准 (规范目录 `specification/`、catalog 目录 `catalogs/`、各语言 SDK、`conformance/` 一致性套件与 `samples/` 示例)。读完之后应当能判断一个功能适合不适合用 A2UI 实现, 以及落地时需要补哪些工程环节。

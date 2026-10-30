@@ -2,6 +2,7 @@
 title: "OpenSpec: 面向 AI 编码助手的规格驱动开发协议层"
 description: "解析 OpenSpec 的协议层定位、CLI 命令体系与懒加载设计、schema 与校验规则、proposal/specs/design/tasks artifacts 工作流、归档语义以及与大模型编码工具的集成方式"
 local_path: "$HOME/Downloads/openspec"
+local_commit: "6d04a1b58dedc95729d34e4f223d9d483aae210a"
 ---
 
 OpenSpec 是一个轻量的规格驱动开发协议层: 它在"写代码"之前插入一个"人和 AI 先就计划达成一致"的步骤, 让人与助手审阅同一份结构化计划, 确认方向正确后再动手实现。本文说明它由哪些核心概念构成、CLI 命令体系如何组织、schema 如何定义工作流、校验器实际检查什么、proposal/specs/design/tasks 这套 artifacts 如何流转与归档, 以及它以何种方式适配众多 AI 编码工具。适合希望在 AI 辅助开发中引入可审阅、可回溯的变更包的工程师, 也适合正在评估规格驱动工具链、想知道其边界与取舍的读者。

@@ -1,5 +1,8 @@
 ---
 title: "A2A"
+description: "A2A (Agent2Agent) 互通协议: `--a2a` 模式下 Yukino 作为 A2A 服务器运行 (默认监听 127.0.0.1:18890), 基于 `@a2a-js/sdk` 以标准化服务暴露能力, 供其他 agent 或编排器发现、派发任务并消费流式状态更新"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 A2A (Agent2Agent) 是一个开放的 agent 互通协议: 一个 agent 以标准化服务的形式对外暴露能力, 其他 agent 或编排器可以发现它、给它派发任务、消费它的流式状态更新
@@ -29,7 +32,7 @@ yukino --a2a 0          # 端口 0 由 OS 分配, 实际地址启动后打印
 
 JSON-RPC 方法: `SendMessage`、`SendStreamingMessage`、`GetTask`、`CancelTask`、`SubscribeToTask`; REST 侧对应 `POST /v1/message:send`、`POST /v1/message:stream`、`GET /v1/tasks/:taskId`、`POST /v1/tasks/:taskId:cancel`、`GET|POST /v1/tasks/:taskId:subscribe`, 另有 `GET /v1/card` 返回 Agent Card
 
-- 请求必须带 `a2a-version: 1.0` 头: SDK 用 card 公布的协议版本做校验, 缺省时按 0.3 处理, 而本服务器只公布 1.0, 会被直接拒绝
+- 请求必须带 `A2A-Version: 1.0` 头: SDK 用 card 公布的协议版本做校验, 缺省时按 0.3 处理, 而本服务器只公布 1.0, 会被直接拒绝
 - 流式: `SendStreamingMessage` / `message:stream` 配合 `accept: text/event-stream`, 响应是 SSE 流, 依次推送 task 快照与 TaskStatusUpdateEvent
 - task 对象存在内存 (InMemoryTaskStore), 重启即清空; 对话内容经 session 文件持久化, context 映射也在磁盘上, 重启后同一 contextId 仍能恢复历史
 

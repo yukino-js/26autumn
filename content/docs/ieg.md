@@ -233,7 +233,7 @@ OS 侧不依赖 Node API 也能看: Linux 读 `/proc/<pid>/status` 的 VmRSS 或
 
 代价:
 
-- 编译与分发成本: ffi-napi 是纯 JS 层加 dlopen, 拿来即用; Addon 要走 node-gyp 构建, CI 需要维护编译工具链, 多平台多 Node 版本要产出对应的 prebuild 产物, 发布链路明显变重。
+- 编译与分发成本: ffi-napi 自带预编译的 native 产物 (libffi 封装), 安装即用; Addon 要走 node-gyp 构建, CI 需要维护编译工具链, 多平台多 Node 版本要产出对应的 prebuild 产物, 发布链路明显变重。
 - 迭代耦合: .so 更新只需替换二进制, JS 侧无感; Addon 的接口变更要同时改 C++ 与 JS 两侧并重新编译发布, 迭代节奏被绑在一起。
 - 崩溃隔离并未解决: 这是最容易误判的一点。Addon 运行在 Node 主进程地址空间内, C++ 侧崩溃依然会带走整个进程。因此迁移到 Addon 之后进程池的隔离层仍然保留, Addon 跑在池内的子进程里。Addon 解决性能与内存管理问题, 进程池解决故障隔离问题, 两者是叠加关系而不是替代关系。
 - 开发与调试门槛: 需要掌握 N-API 的引用计数、handle scope、ThreadSafeFunction 等概念, native 崩溃的排查依然要靠 valgrind 或 ASan 这套工具链。
@@ -465,7 +465,7 @@ OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。Pr
 
 性能监控由 tracesSampleRate / tracesSampler 控制 trace 采样率。
 
-持续 profiling 是 v10 的能力, 相关选项:
+持续 profiling 是 v9.8.0 引入的能力 (新 continuous profiling API spec, v10 移除了旧的 profilesSampleRate/profilesSampler), 相关选项:
 
 | 选项                       | 语义                                                             |
 | -------------------------- | ---------------------------------------------------------------- |

@@ -1,5 +1,8 @@
 ---
 title: "LLM"
+description: "LLM 接入层 (src/llm/): 把对话历史翻译成 Anthropic / OpenAI Responses / OpenAI Chat Completions 三种协议的 API 请求, 把 SSE 流统一映射成 StreamEvent; 覆盖思考强度映射, token 计费与 prompt cache 打点, 消息构建与配对修复, 错误分类重试, 模型发现与 ConversationManager"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 Yukino 的 LLM 层在 src/llm/: 把 ConversationManager 里的对话历史翻译成三种协议的 LLM API 请求, 把各家返回的 SSE 流统一映射成内部的 `StreamEvent` 事件流, 交给上层 [Agent Loop](./react-and-agent-loop) 消费; 同时负责思考强度、token 计费口径、prompt cache 打点、错误分类重试和模型发现

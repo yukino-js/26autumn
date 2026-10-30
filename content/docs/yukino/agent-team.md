@@ -1,5 +1,8 @@
 ---
 title: "Agent Team"
+description: "Agent Team 网状多代理协作: 多个 team 可并存, 协作工具经 team_name 选择目标 team; 每个 teammate 是有独立上下文窗口的 agent 实例, 协调建立在共享任务板 (tasks.json) 与文件邮箱 (inboxes/) 之上, 邮件以文件加轮询投递, 突破 subagent 星型拓扑不能互通的限制; 覆盖团队解析与隔离、SendMessage/TodoWrite/TaskStop、plan 审批与 Coordinator 模式"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 ## Why
@@ -68,22 +71,28 @@ config.json (TeamFile) 字段: `name`, `description?`, `createdAt` (unix 秒), `
 
 ## Agent Team 的顶层工具
 
-同一时刻最多存在一个 team: TeamCreate 先 deleteAll 清扫旧 team (停止成员、注销名字、删除 team 目录); 所有协作工具以 list()[0] 作为当前 team
+多个 team 可以同时存在: TeamCreate 只新增一个 team, 已有 team 及其成员继续运行; 协作工具 (Agent、SendMessage、TodoWrite、TaskStop、TeamDelete) 都带可选的 `team_name` 参数选择目标 team, 解析统一走 `TeamManager.resolveTeam(name?, memberName?)` (src/teams/index.ts):
 
-- TeamCreate 工具: 只有可选的 `description` 参数; 团队名自动生成 `team-<uuid>`, 创建 TeamFile、初始化空 tasks.json
-- Agent 工具: `kind` 默认就是 `"teammate"`, 向当前 team spawn 一个 teammate, team 不存在时自动创建, leader 不需要先调 TeamCreate; teammate 名字从 description 自动生成 (小写、空白转连字符、sanitize、截断 30 字符, 冲突追加 `-2` / `-3` 后缀)
-- TeamList 工具: 无参数, 输出 `<team名>: name1 (active), name2`; 没有 team 时返回 `No active team.`
-- TeamDelete 工具: 无参数, 注销成员名字、停止全部成员、删除当前 team 目录
+- 显式给出 team_name: 按名字查 team, 不存在直接报 `Team '<name>' not found.` (buildTeamNotFoundError); 带成员名解析时 (SendMessage / TaskStop 传 memberName), 该成员不在这个 team 里视为未命中
+- 省略 team_name: 按成员归属过滤 (teammate 只能命中自己所在的 team); 命中多个 team 报 `Multiple teams match. Specify team_name; use TeamList to see available teams.` (AMBIGUOUS_TEAM_ERROR); 一个都没有时, Agent 自动创建 team, 其余工具报 `No active team.`
+
+四个顶层工具:
+
+- TeamCreate 工具: 只有可选的 `description` 参数; 团队名自动生成 `team-<uuid>`, 创建 TeamFile、初始化空 tasks.json; 返回消息提示后续操作带上 team_name (`Team '<name>' created. Use Agent with kind="teammate" and team_name="<name>" to add teammates.`)
+- Agent 工具: `kind` 默认就是 `"teammate"`, 向选中的 team spawn 一个 teammate; 没有 team 时自动创建, 只有一个 team 时复用, 多 team 时必须传 team_name (否则报歧义错误); teammate 名字从 description 自动生成 (小写、空白转连字符、sanitize、截断 30 字符, 冲突追加 `-2` / `-3` 后缀)
+- TeamList 工具: 无参数, 列出所有 team, 每个 team 一行 `<team名>: name1 (active), name2`; 没有 team 时返回 `No active team.`
+- TeamDelete 工具: 可选 `team_name`, 停止并删除选中的 team (注销成员名字、停止全部成员、删除该 team 目录), 其他 team 不受影响; 省略时经 resolveTeam 选择, 多 team 命中同样报歧义错误
 
 ```js
-// 创建 team (名字自动生成)
+// 创建 team (名字自动生成, 已有 team 继续运行)
 TeamCreate.execute(ctx, {
   description: "迁移 react-router 到 @tanstack/router",
 });
 
-// Agent 工具 spawn 一个 teammate (team 不存在时自动创建)
+// Agent 工具 spawn 一个 teammate (无 team 时自动创建; 多 team 时传 team_name)
 Agent.execute(ctx, {
   kind: "teammate",
+  team_name: "team-9f9a1b2c-...",
   description: "迁移 swr 到 @tanstack/query",
   prompt: "迁移 swr 到 @tanstack/query",
 });
@@ -143,13 +152,15 @@ buildTeammatePrompt 把任务包在 `<assignment>` 标签里, 附带团队协议
 
 ```js
 SendMessage.execute(ctx, {
+  team_name: "team-9f9a1b2c-...", // 可选; 多 team 时选择目标 team, teammate 只能填自己的 team
   to: "john", // teammate 名称、'leader' 或 '*' 广播
   type: "text", // text | shutdown_request | shutdown_response | plan_approval_response (仅 coordinator 模式)
   content: "接口 YukinoConfig 的签名已变更, 新增 agentTeam 字段",
 });
 ```
 
-- 必填参数 to 和 content; to 是 teammate 名称 (依次按成员表、agentId、进程内 NameRegistry 解析)、`leader` (直写 leader 邮箱)、`*` 广播 (跳过发送者本人和不活跃成员, 逐个发送)
+- 必填参数 to 和 content; to 是 teammate 名称 (依次按成员表、agentId 解析, 都不命中时按字面名投递)、`leader` (直写 leader 邮箱)、`*` 广播 (在选中的 team 内跳过发送者本人和不活跃成员, 逐个发送)
+- 团队选择: leader 侧实例没有绑定 team, 用 `team_name` 参数经 resolveTeam 选择; teammate 侧实例构造时绑定自己的 team 名 (AgentTool 注入 `SendMessageTool(manager, memberName, teamName)`), team_name 指向别的 team 直接报 `Teammates can only access their own team.` (TEAM_SCOPE_ERROR)
 - 结构化消息协议化通信, 避免 teammate 间通过自然语言协调生命周期和审批的模糊性:
   - shutdown_request: 请求目标 teammate 优雅退出, content 是理由; 只有 leader 可以发送
   - shutdown_response: 必须带 approve; teammate 在空闲轮询里收到 shutdown_request 后回 approve: true ("acknowledged, shutting down") 再退出; 等待 plan 审批期间被停止则回 "Stopped while awaiting plan review"
@@ -167,14 +178,16 @@ TodoWrite   <- TeamTodoWriteTool, 底层换成团队共享任务板
 SendMessage <- 邮箱通信 (以 teammate 自己的名字为发送者)
 ```
 
-- TeamTodoWriteTool 继承 TodoWriteTool, 工具名和 schema 与私有版本完全相同, 注册进 teammate 的工具表时覆盖继承的版本 (见 [task-tracking](./task-tracking))
+- TeamTodoWriteTool 继承 TodoWriteTool, 工具名与私有版本相同, 注册进 teammate 的工具表时覆盖继承的版本 (见 [task-tracking](./task-tracking))
 - 权限层的 teammate 协调放行: SendMessage 和 TodoWrite 属于 TEAMMATE_COORDINATION_TOOLS, 权限检查器对 teammate 自动放行 (显式 deny/ask 规则优先), plan 模式的禁写检查也不拦这两个工具
 
 TeamTaskBoard (src/teams/task-tools.ts):
 
-- board() 优先取指定 teamName 的 team, 否则取 list()[0]; 没有 team 时回落到 fallback 私有任务板
+- board() 经 `resolveTeam(teamName)` 解析: 构造时绑定了 team 名 (teammate) 就取该 team; 没有绑定 (leader) 时, 单 team 直接命中, 多 team 且调用未传 team_name 报歧义错误; 没有 team 时回落到 fallback 私有任务板
+- TeamTodoWriteTool 在继承的 schema 上追加 `team_name` 参数, description 追加一句团队选择说明 (TEAM_TODO_WRITE_DESCRIPTION); 调用带 team_name 时临时构造一个指向该 team 任务板的 TodoWriteTool 执行, teammate 实例的 team_name 指向别的 team 同样报 TEAM_SCOPE_ERROR
 - boardId 前缀 `team:`; leader 私有板前缀 `private:`
-- leader 侧同样被替换: createToolRegistry 传入 teamManager 时注册 TeamTodoWriteTool(manager, undefined, undefined, taskList) —— 存在 team 时操作共享任务板, 没有 team 时回落到 leader 的私有任务板, leader 不需要切换工具; subscribeLeaderTasks 以 500ms 周期 + 代数 (generation) 监听 board 切换, 保证 UI 始终显示正确的板
+- leader 侧同样被替换: createToolRegistry 传入 teamManager 时注册 TeamTodoWriteTool(manager, undefined, undefined, taskList) —— 存在 team 时操作共享任务板, 没有 team 时回落到 leader 的私有任务板, leader 不需要切换工具
+- subscribeLeaderTasks 以 500ms 周期 + 代数 (generation) 同时订阅所有 team 的任务 store, UI 合并展示全部 team 的任务: 单 team 时任务原样展示; 多 team 时任务 subject 加 `[<team名>]` 前缀, 任务 id 与依赖 id 编码为 JSON 二元组 `[<team名>, <id>]` 防止跨 team 撞号, boardId 为 `team:<team名数组 JSON>:<generation>`; 没有 team 时回落私有板 `private:<generation>`
 
 SharedTaskStore (src/teams/shared-task.ts):
 
@@ -203,7 +216,7 @@ SharedTaskStore (src/teams/shared-task.ts):
 
 ## 停止 teammate
 
-- TaskStop 工具 (leader 侧): teammate 和 task_id 必须且只能传一个; 传 teammate 按名停止 (team.stopMember), 找不到时把所有已知成员名列进错误信息; 传 task_id 停后台任务 (见 [subagent](./subagent))
+- TaskStop 工具 (leader 侧): teammate 和 task_id 必须且只能传一个, 另有可选 team_name; 传 teammate 时经 `resolveTeam(team_name, teammate)` 找到拥有该成员的 team 再按名停止 (team.stopMember), 找不到时把所有 team 的已知成员名列进错误信息; 传 task_id 停后台任务 (见 [subagent](./subagent))
 - stopMemberRuntime: 标记 active = false、NameRegistry 注销名字、AbortController 中断 loop 并等待退出、释放其任务、修剪终止成员
 - 优雅退出: leader 用 SendMessage 发 shutdown_request, teammate 在空闲轮询里读到后回 shutdown_response (approve: true) 再退出, 同批的其他消息 requeue 留待下次投递
 
@@ -251,13 +264,15 @@ const COORDINATOR_ALLOWED_TOOLS = new Set([
   "SendMessage", // 向 teammate 发送邮件
   "TaskStop", // 停止 teammate 或后台任务
   "SyntheticOutput", // 交付结构化结果
-  "TeamDelete", // 删除 team
+  "TeamCreate", // 新增 team (已有 team 继续运行)
+  "TeamDelete", // 删除选中的 team
+  "TeamList", // 列出所有 team 及成员
   "TodoWrite", // 共享任务板调度
 ]);
 // MCP 工具同样被排除 (不在白名单内)
 ```
 
-分界不是读/写, 而是「是否会把大量内容灌进 leader 的上下文」: ReadFile / Glob / Grep / Bash 的输出会占用 leader 的上下文窗口, 探索和执行都应该委派给 teammate, leader 消化结论、写下一步规格; 共享任务板是调度元数据, 属于编排而不是探索, 所以 TodoWrite 保留; TeamDelete 保留用于收尾; TeamCreate 不需要 —— Agent 的 `kind: "teammate"` 路径会自动建 team。只保留让 leader 能调度、通信、停止、交付结果的最小工具集
+分界不是读/写, 而是「是否会把大量内容灌进 leader 的上下文」: ReadFile / Glob / Grep / Bash 的输出会占用 leader 的上下文窗口, 探索和执行都应该委派给 teammate, leader 消化结论、写下一步规格; 共享任务板是调度元数据, 属于编排而不是探索, 所以 TodoWrite 保留; 多 team 模型下团队生命周期管理也属于编排: TeamCreate 新增 team、TeamList 列出所有 team 供 team_name 选择、TeamDelete 收尾。只保留让 leader 能调度、通信、停止、交付结果的最小工具集
 
 ### Coordinator 提醒
 

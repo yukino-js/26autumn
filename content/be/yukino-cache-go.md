@@ -2,6 +2,7 @@
 title: "yukino_cache 分布式缓存技术笔记"
 description: "yukino_cache Go 分布式缓存: groupcache 风格 read-through Group、字节预算双层 LRU、singleflight 去重、一致性哈希分片、gRPC peer 通信与 etcd 服务发现"
 local_path: "$HOME/github/yukino.go/libs/yukino_cache"
+local_commit: "c71a35a07a47607d136b1d97c294bc64b785bf24"
 ---
 
 yukino_cache 是一个用 Go 实现的分布式缓存库, API 风格对齐 Google groupcache: 用命名 Group 组织缓存命名空间, 用 Getter 描述回源逻辑, 用一致性哈希把 key 映射到归属节点, 用 singleflight 抑制缓存击穿 (cache stampede)。在 groupcache 只读模型的基础上, 它扩展了 Set/Delete 写操作与异步写传播、etcd 服务发现、按字节预算淘汰的分桶双层 LRU 本地存储, 以及一个推送实时快照的 WebSocket 仪表盘。本文面向需要在无中心节点架构下做缓存分片与对等访问的 Go 工程师, 说明其分层结构、读写数据流、存储引擎、并发模型、容错语义与适用边界。

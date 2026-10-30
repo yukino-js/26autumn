@@ -3,9 +3,10 @@ title: "Yukino 测试 Agent"
 overview: true
 description: "Yukino QA (yukino-test-agent) AI 测试平台源码解析: 静态代码分析接地、测试点抽取、规则/LLM 用例生成与质量门评审、Playwright 真实浏览器执行、视觉复核与证据驱动的失败分类、覆盖率矩阵与自包含报告"
 local_path: "$HOME/github/yukino-test-agent"
+local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 ---
 
-本栏目基于 `~/github/yukino-test-agent` 的真实源码, 系统拆解 AI 测试平台 **Yukino QA**: 输入一份代码库与一份产品需求文档 (PRD), 自动产出结构化测试用例, 在真实浏览器中执行, 并用确定性校验与可选视觉模型复核证据。全平台的最高准则是**绝不伪造绿色结果**——无法验证的步骤诚实标记 skipped, 确定性结论永远压过 AI 意见, 结果分析只分类不覆写执行状态。
+本栏目基于 `~/github/yukino-test-agent` 的真实源码, 系统拆解 AI 测试平台 **Yukino QA**: 输入一份代码库与一份产品需求文档 (PRD), 自动产出结构化测试用例, 在真实浏览器中执行, 并用确定性校验与可选视觉模型复核证据. 全平台的最高准则是**绝不伪造绿色结果**——无法验证的步骤诚实标记 skipped, 确定性结论永远压过 AI 意见, 结果分析只分类不覆写执行状态.
 
 全部 10 个页面 (含本落地页), 按阅读顺序:
 

@@ -1,10 +1,11 @@
 ---
 title: "API 与配置参考"
+description: "API 与配置参考: tRPC 13 个子路由共 79 个过程清单、Job 模型、非 tRPC 端点、环境变量、错误约定、启动恢复与排障速查"
+local_path: "$HOME/github/yukino-test-agent"
+local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 ---
 
-# API 与配置参考
-
-本页是平台对外接口的完整参考: tRPC 过程清单、后台任务模型、非 tRPC HTTP 端点、环境变量与错误约定, 以及排障速查与术语表。
+本页是平台对外接口的完整参考: tRPC 过程清单、后台任务模型、非 tRPC HTTP 端点、环境变量与错误约定, 以及排障速查与术语表.
 
 ## tRPC API 总览
 
@@ -13,9 +14,9 @@ title: "API 与配置参考"
 - **HTTP 挂载**: `src/routes/api.trpc.$.tsx` 用 `fetchRequestHandler` 处理 GET/POST, endpoint 为 `/api/trpc`; 每个请求先触发 `ensureRecovered()` (启动恢复, 见下文);
 - **序列化**: superjson (`src/integrations/trpc/init.ts` 中 `initTRPC.create({ transformer: superjson })`);
 - **错误中间件**: 所有过程都经 `publicProcedure`, 服务层抛出的 `BizError` 被映射为 tRPC 错误——`Math.floor(code / 100) === 404` 时取 `NOT_FOUND`, 否则 `BAD_REQUEST`, message 原样透传;
-- **入参校验**: 全部用 Zod 描述; 查询为 query, 写操作与后台任务触发为 mutation。
+- **入参校验**: 全部用 Zod 描述; 查询为 query, 写操作与后台任务触发为 mutation.
 
-客户端通过 `src/integrations/trpc/react.ts` 的 `createTRPCContext<TRPCRouter>()` 获得端到端类型 (`TRPCProvider` / `useTRPC`)。
+客户端通过 `src/integrations/trpc/react.ts` 的 `createTRPCContext<TRPCRouter>()` 获得端到端类型 (`TRPCProvider` / `useTRPC`).
 
 ### projects (9 个过程)
 
@@ -29,7 +30,7 @@ title: "API 与配置参考"
 | `uploadPrd`                    | mutation | `{ pid, filename, base64 }` 上传解析                                                                  |
 | `generationContext`            | query    | 生成上下文: 后端/前端代码事实 + 状态机                                                                |
 
-`uploadPrd` 由 `parsePrdText` 解析, 支持 `.md`/`.markdown`/`.txt`/`.pdf` (unpdf)/`.docx` (mammoth), 上限 20 MB (`MAX_PRD_BYTES`); 不支持的类型或空文档分别报 `BizError` 40009/40008。
+`uploadPrd` 由 `parsePrdText` 解析, 支持 `.md`/`.markdown`/`.txt`/`.pdf` (unpdf)/`.docx` (mammoth), 上限 20 MB (`MAX_PRD_BYTES`); 不支持的类型或空文档分别报 `BizError` 40009/40008.
 
 ### analysis (3 个过程)
 
@@ -39,7 +40,7 @@ title: "API 与配置参考"
 | `latest`        | query    | 最近一次分析结果                               |
 | `stateMachines` | query    | 状态机列表                                     |
 
-分析器本身见[静态代码分析](./analyzer)。
+分析器本身见[静态代码分析](./analyzer).
 
 ### requirements (8 个过程)
 
@@ -71,7 +72,7 @@ title: "API 与配置参考"
 | `aiFix`                                                     | mutation         | 按问题清单修补用例 (`{ pid, cid, issues? }`), 返回 `{ summary, testCase }`, 修补写回前需通过源事实校验并记新版本                               |
 | `rerunGate`                                                 | mutation         | 重跑质量门 (`{ pid, cid }` → `{ qualityScore, lintIssues }`)                                                                                   |
 
-质量门与评审逻辑详见[用例生成](./generation)。
+质量门与评审逻辑详见[用例生成](./generation).
 
 ### generation (5 个过程)
 
@@ -98,7 +99,7 @@ title: "API 与配置参考"
 | `llmReview`      | mutation | 视觉复核单个执行 (`{ eid }`)                                                                                                        |
 | `batchLlmReview` | mutation | 批量视觉复核 (`{ eids }` → `{ jobId }`)                                                                                             |
 
-执行与复核语义详见[浏览器执行](./execution)。
+执行与复核语义详见[浏览器执行](./execution).
 
 ### settings (7 个过程)
 
@@ -110,7 +111,7 @@ title: "API 与配置参考"
 | `setDefaultProfile`                                 | mutation | 设为该 kind 的默认档案                                                                                       |
 | `testLlm`                                           | mutation | 连通性测试 (`{ profileId?, kind 默认 "text" }`); vision 测试会真实发送一张 1×1 PNG, 防止纯文本 ping 伪装成功 |
 
-档案约定: 每个 kind 有且仅有一个默认; 删除时每种 kind 至少保留一个 (否则 40032, 建议 disable); 更新时把掩码串 (`xxxx***yyyy`) 原样传回表示保留已存 key。
+档案约定: 每个 kind 有且仅有一个默认; 删除时每种 kind 至少保留一个 (否则 40032, 建议 disable); 更新时把掩码串 (`xxxx***yyyy`) 原样传回表示保留已存 key.
 
 ### workflows (3 个过程)
 
@@ -120,7 +121,7 @@ title: "API 与配置参考"
 | `list`   | query    | 某项目的运行列表 (`{ pid, limit? }`, 默认 20)              |
 | `detail` | query    | 运行详情 (`{ runId }`): 七阶段时间线 + 逐用例评审/结果分析 |
 
-`create` 入参 (除 `pid`/`requirementId` 必填外均有默认值): `mode` (auto/rule/llm, 默认 auto)、`autoExecute` (默认 true)、`maxRevisions` (0-2, 默认 2)、`maxCases` (1-100, 默认 20)、`reuseExistingCases` (默认 true)、`reanalyzePoints` (默认 false)、`targetUrl`、`testPointLlmProfileId` / `caseLlmProfileId`、`analyzeCode` (默认 true)、`reanalyzeCode` (默认 false)、`reviewEnabled` (默认 true)、`analyzeEnabled` (默认 true)。七阶段语义见[流水线](./pipeline)。
+`create` 入参 (除 `pid`/`requirementId` 必填外均有默认值): `mode` (auto/rule/llm, 默认 auto)、`autoExecute` (默认 true)、`maxRevisions` (0-2, 默认 2)、`maxCases` (1-100, 默认 20)、`reuseExistingCases` (默认 true)、`reanalyzePoints` (默认 false)、`targetUrl`、`testPointLlmProfileId` / `caseLlmProfileId`、`analyzeCode` (默认 true)、`reanalyzeCode` (默认 false)、`reviewEnabled` (默认 true)、`analyzeEnabled` (默认 true). 七阶段语义见[流水线](./pipeline).
 
 ### stats / coverage / mindmap / jobs (6 个过程)
 
@@ -135,7 +136,7 @@ title: "API 与配置参考"
 
 ### incremental (10 个过程)
 
-需求增量分析子系统: 把某需求版本的代码事实冻结为不可变快照, 与基线版本对比出端点级变更, 只对变更部分增量生成用例, 并给出回归建议。持久结果在独立的 snapshot/change-run/change/case-change 表中 (见[数据模型](./data-model))。
+需求增量分析子系统: 把某需求版本的代码事实冻结为不可变快照, 与基线版本对比出端点级变更, 只对变更部分增量生成用例, 并给出回归建议. 持久结果在独立的 snapshot/change-run/change/case-change 表中 (见[数据模型](./data-model)).
 
 | 过程                      | 类型     | 说明                                                                                                                   |
 | ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -156,7 +157,7 @@ title: "API 与配置参考"
 - `JobState` 字段: `id`/`kind`/`status`/`message`/`current`/`total`/`result?`/`error?`/`createdAt`/`updatedAt`; status 为 `pending` → `running`, 终态 `completed` 或 `failed`;
 - 八种 kind: `analysis`、`requirement-analysis`、`generation`、`workflow`、`execution`、`batch-execution`、`llm-review`、`incremental-generation`;
 - 容量上限 `MAX_JOBS = 500`, 超限时淘汰最早完成的一半 finished 任务; 任务异常被捕获写入 `error`, 绝不向调用方抛出;
-- 注册表只存在于进程内存: 服务重启后旧 jobId 全部失效 (查询报 40408), 需要改从对应数据表读取结果。
+- 注册表只存在于进程内存: 服务重启后旧 jobId 全部失效 (查询报 40408), 需要改从对应数据表读取结果.
 
 ## 非 tRPC HTTP 端点
 
@@ -165,11 +166,11 @@ title: "API 与配置参考"
 | `/api/files/$`  | GET  | 按相对路径回读 `OUTPUT_DIR` 下的证据文件 (截图/录像/报告); `resolveOutputPath` 拒绝任何越出 OUTPUT_DIR 的路径; 命中时带 `Cache-Control: public, max-age=3600`, 否则 404              |
 | `/api/report/$` | GET  | 自包含 HTML 报告: `/api/report/project/:pid` (可选查询参数 `requirementId`/`workflowRunId`, `buildProjectReport`) 与 `/api/report/execution/:eid` (`buildExecutionReport`), 其余 404 |
 
-数据库中的证据存绝对路径, 由 `toFileUrl` (`src/server/lib/files.ts`) 换算成 `/api/files/...` URL 后再下发给浏览器。
+数据库中的证据存绝对路径, 由 `toFileUrl` (`src/server/lib/files.ts`) 换算成 `/api/files/...` URL 后再下发给浏览器.
 
 ## 环境变量
 
-配置写入 `.env.local` (`pnpm dev` 经 dotenv-cli 加载; drizzle-kit 也读 `.env.local`/`.env`), 模板见仓库根目录 `.env.example`。
+配置写入 `.env.local` (`pnpm dev` 经 dotenv-cli 加载; drizzle-kit 也读 `.env.local`/`.env`), 模板见仓库根目录 `.env.example`.
 
 | 变量                                                                                | 说明                                                                                                                                          |
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -182,30 +183,30 @@ title: "API 与配置参考"
 | `VITE_SENTRY_DSN` / `VITE_SENTRY_ORG` / `VITE_SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | Sentry (可选); `instrument.server.mjs` 仅消费 `VITE_SENTRY_DSN`——缺失时告警并跳过初始化, 配置时 `tracesSampleRate: 0.1`                       |
 | `DEMO_PORT` / `DEMO_HOST`                                                           | 演示站点端口/主机 (`scripts/demo-site/server.mjs`), 默认 8200 / 127.0.0.1                                                                     |
 
-另有 `SERVER_URL` (服务端可选) 与 `VITE_APP_TITLE` (客户端可选) 经 `src/env.ts` 的 `@t3-oss/env-core` 校验, 客户端变量强制 `VITE_` 前缀。
+另有 `SERVER_URL` (服务端可选) 与 `VITE_APP_TITLE` (客户端可选) 经 `src/env.ts` 的 `@t3-oss/env-core` 校验, 客户端变量强制 `VITE_` 前缀.
 
 ### LLM 客户端默认值与档案优先级
 
-`src/server/lib/llm.ts` 的 `LlmClient` 默认 base `https://api.openai.com/v1`、模型 `gpt-4o-mini` (`DEFAULT_BASE_URL`/`DEFAULT_MODEL`); `available()` 只看是否配置了 apiKey。客户端自带一层韧性: 回复解析容忍 markdown 围栏/散文夹杂/尾逗号/截断, `finish_reason=length` 时把 `max_tokens` 翻倍重试一次 (上限 32768), json_mode 被拒 (400/422) 时降级 plain 模式再试, GLM-5.2/5.3 自动补 `reasoning_effort=low`。
+`src/server/lib/llm.ts` 的 `LlmClient` 默认 base `https://api.openai.com/v1`、模型 `gpt-4o-mini` (`DEFAULT_BASE_URL`/`DEFAULT_MODEL`); `available()` 只看是否配置了 apiKey. 客户端自带一层韧性: 回复解析容忍 markdown 围栏/散文夹杂/尾逗号/截断, `finish_reason=length` 时把 `max_tokens` 翻倍重试一次 (上限 32768), json_mode 被拒 (400/422) 时降级 plain 模式再试, GLM-5.2/5.3 自动补 `reasoning_effort=low`.
 
 模型选择优先级 (`src/server/services/settings.ts`):
 
 - **文本**: 显式 `profileId` → 默认 text 档案 → env (`LLM_*`); 指定档案不存在/被禁用报 40033;
 - **视觉**: 默认 vision 档案 (须同时有 model 与 apiKey) → 默认 text 档案 → env (`LLM_VISION_*`, 逐字段回退 `LLM_*`);
-- `ensureSeedProfiles` 在首次读取设置时把 env 单套配置迁移为默认档案, 并在每种 kind 无默认时把最早创建的档案设为默认。运行时在 Settings 页创建并设为默认的档案因此优先于环境变量。
+- `ensureSeedProfiles` 在首次读取设置时把 env 单套配置迁移为默认档案, 并在每种 kind 无默认时把最早创建的档案设为默认. 运行时在 Settings 页创建并设为默认的档案因此优先于环境变量.
 
 ## 错误约定
 
-服务层统一抛 `BizError(code, message)` (`src/server/services/settings.ts` 定义)。code 为五位数字, 前三位承载类 HTTP 语义: `404xx` 由 tRPC 中间件映射为 `NOT_FOUND`, 其余映射为 `BAD_REQUEST`。常见例子: 40008 空文档、40009 不支持的文档类型、40025 评审未选用例、40030 缺档案名/API key、40031 连通性失败、40032 缺模型名/档案数不足、40033 档案不存在或被禁用、40402 用例不属于该项目、40404 档案不存在、40408 job 不存在、40410 分析记录不存在。
+服务层统一抛 `BizError(code, message)` (`src/server/services/settings.ts` 定义). code 为五位数字, 前三位承载类 HTTP 语义: `404xx` 由 tRPC 中间件映射为 `NOT_FOUND`, 其余映射为 `BAD_REQUEST`. 常见例子: 40008 空文档、40009 不支持的文档类型、40025 评审未选用例、40030 缺档案名/API key、40031 连通性失败、40032 缺模型名/档案数不足、40033 档案不存在或被禁用、40402 用例不属于该项目、40404 档案不存在、40408 job 不存在、40410 分析记录不存在.
 
 ## 启动恢复
 
-后台工作只活在进程内存中, 服务重启会把数据库行卡在 `pending`/`running`。首个服务端请求触发 `ensureRecovered()` (`src/server/bootstrap.ts`), 并行执行四路恢复:
+后台工作只活在进程内存中, 服务重启会把数据库行卡在 `pending`/`running`. 首个服务端请求触发 `ensureRecovered()` (`src/server/bootstrap.ts`), 并行执行四路恢复:
 
-- `recoverInterruptedRuns`: 中断的流水线运行标记 `failed` (错误信息 "Interrupted by server restart; re-run the pipeline")。只回收**最新活动时间超过 `staleSeconds = 7200` (2 小时)** 的运行——多 worker 同时启动时不会误杀他人正在跑的流水线;
+- `recoverInterruptedRuns`: 中断的流水线运行标记 `failed` (错误信息 "Interrupted by server restart; re-run the pipeline"). 只回收**最新活动时间超过 `staleSeconds = 7200` (2 小时)** 的运行——多 worker 同时启动时不会误杀他人正在跑的流水线;
 - `recoverInterruptedExecutions`: `running` 执行记录标记 `failed` (errorCategory `ENV_ERROR`), 并把用例的 executionStatus 从 running 写回 failed;
 - `recoverInterruptedAnalyses`: 中断的代码分析行标记 failed;
-- `recoverInterruptedIncrementalRuns`: 卡在 `generating`/`analyzing` 的增量运行标记 failed。
+- `recoverInterruptedIncrementalRuns`: 卡在 `generating`/`analyzing` 的增量运行标记 failed.
 
 ## 常见问题排查
 

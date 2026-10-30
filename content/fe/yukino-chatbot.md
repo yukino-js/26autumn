@@ -2,6 +2,7 @@
 title: "Yukino-Chatbot: pnpm 全栈 LLM 聊天应用"
 description: "一个 pnpm workspace 组织的全栈 LLM 聊天应用: Koa 3 后端负责 JWT 会话、AI Provider 热切换、即时构建的 RAG 检索与 SSE 流式输出, React 19 前端以 Jotai 加 React Query 分层状态, 并把流式渲染的热路径移出 React。"
 local_path: "$HOME/github/yukino-chatbot"
+local_commit: "30e9e025220039c716b37dfc8182f932f81a4481"
 ---
 
 本文拆解一个 pnpm workspace 组织的全栈 LLM 聊天应用: 前端 React 单页应用, 后端 Koa 服务, 具备 JWT 会话、模型热切换、RAG 检索增强与 SSE 流式输出。内容以功能能力、实现思路与取舍为主线, 覆盖前后端分层、认证、AI 能力抽象、检索链路、流式渲染性能、数据与缓存, 以及水平扩展时的改造方向。适合正在做 LLM 聊天类产品、关心流式渲染与上下文管理的工程师阅读。

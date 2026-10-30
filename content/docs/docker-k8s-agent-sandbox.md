@@ -4,7 +4,7 @@ description: "Docker 容器原理 (namespace/cgroups/UnionFS)、镜像构建、�
 ---
 
 > 定位: 第一至四部分是 Docker 与 Kubernetes 的完整面试知识体系, 每个知识点 = 一句话回答 (先背这个) + 追问展开 (应对深挖); 第五部分是把两者串起来的实战方案——前端 JSError 自动修复云沙箱, 上游衔接 [data](data) 的监控采集与 [codegraph](codegraph) 的代码图谱上下文。
-> 环境现状: 本机已装 Docker 29.8.2 与 kubectl v1.33.9 (daemon 未启动, 无集群 context), 如需实操可启动 Docker Desktop 并开启其内置 Kubernetes。
+> 环境现状: 本机已装 Docker 29.8.2 与 kubectl v1.33.9, 无集群 context, 如需实操可启动 Docker Desktop 并开启其内置 Kubernetes。
 
 ---
 
@@ -162,7 +162,7 @@ ENTRYPOINT ["/app"]
 
 后果: shell 形式下 `docker stop` 发 SIGTERM 无人响应, 等宽限期 (默认 10s) 后 SIGKILL 硬杀——优雅退出失效, 在途请求被掐断。三种解法: 用 exec 形式; shell 脚本入口里用 `exec app` 替换进程映像; 引入 `tini`/`dumb-init` 做 PID 1。
 
-**PID 1 的两个特殊性**: 内核只把信号显式发给 PID 1, 且 PID 1 承担孤儿进程回收职责——应用进程若不做 reap, 子进程退出后的僵尸无人收走会累积。tini/dumb-init (`ENTRYPOINT ["tini","--"]`) 一次解决信号转发与僵尸回收两件事; K8s 场景下 pause 容器不承担 reap, 业务容器仍需自己处理。
+**PID 1 的两个特殊性**: 信号语义——内核不对 PID 1 执行默认信号动作, 未注册处理器的信号直接被丢弃 (SIGKILL/SIGSTOP 除外), 所以 shell 形式下 `docker stop` 的 SIGTERM 被 sh 吞掉, 应用进程收不到; 回收职责——PID 1 承担孤儿进程回收, 应用进程若不做 reap, 子进程退出后的僵尸无人收走会累积。tini/dumb-init (`ENTRYPOINT ["tini","--"]`) 一次解决信号转发与僵尸回收两件事; K8s 场景下 pause 容器不承担 reap, 业务容器仍需自己处理。
 
 ### 7. 容器网络
 
@@ -659,7 +659,7 @@ kubectl label ns prod pod-security.kubernetes.io/enforce=restricted # PSA 标签
 
 ### 22. 集群运维与升级
 
-- **kubeadm 升级路径**: 逐小版本升 (1.32→1.33, 不可跳版); 顺序: 控制面先升 (kubeadm upgrade apply → 逐台 join 节点的控制面) → 工作节点后升 (cordon + drain → 升 kubelet → uncordon); apiserver 对旧版本组件有 ±1~2 的 skew 容忍, 所以滚动期间集群仍可用。
+- **kubeadm 升级路径**: 逐小版本升 (1.32→1.33, 不可跳版); 顺序: 控制面先升 (kubeadm upgrade apply → 其余控制面节点逐台 kubeadm upgrade node) → 工作节点后升 (cordon + drain → 升 kubelet → uncordon); 版本 skew 策略保证滚动期间集群可用: kubelet/kube-proxy 最多比 apiserver 低 3 个小版本, controller-manager/scheduler 等控制面组件最多低 1 个小版本, kubectl 在 ±1 个小版本内。
 - **证书**: kubeadm 签发的组件证书有效期 1 年, `kubeadm certs renew all` + 重启控制面; 证书过期是自建集群最高频的生产事故之一, 要进监控 (`kubeadm certs check-expiration`)。
 - **节点运维**: cordon (新 Pod 不调入) → drain (驱逐存量, 尊重 PDB 与 DaemonSet) → 维护 → uncordon; 批量操作要控制并发, 避免容量真空。
 - **备份体系**: etcd 快照 (集群状态) + GitOps 仓库 (期望态声明) + PV 数据快照 (业务数据), 三层各自独立恢复演练。

@@ -1,5 +1,8 @@
 ---
 title: "Slash Command"
+description: "Slash Command: / 输入在进入 agent loop 前被拦截, 解析, 匹配注册表并按类型 (local / local_ui / prompt / skill_fork) 分派; 覆盖注册顺序与优先级, 内置命令清单, 用户自定义命令与参数替换, 命名 workflow, skill 命令, 输入补全与使用频率追踪, 各前端宿主差异"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 Slash Command: 以 `/` 开头的输入在进入 agent loop 之前被命令系统拦截, 先解析、匹配注册表, 再按命令类型分派 —— 要么就地执行本地 UI 动作, 要么构造 prompt 发给 LLM。命令的定义、解析、注册集中在 `src/commands/`, 分派逻辑由各前端宿主 (终端 UI、remote WebSocket server 等) 各自实现

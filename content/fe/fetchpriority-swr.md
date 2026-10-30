@@ -354,9 +354,9 @@ Cache-Control: max-age=600, stale-if-error=1200
 | Varnish           | 4.0 起识别两条指令                                      | 同左           |
 | Squid             | 支持 stale-while-revalidate                             | 不识别         |
 | Nginx (开源版)    | 不识别响应指令, 用 `proxy_cache_use_stale` 配置等价行为 | 同左           |
-| 浏览器            | Chrome 曾短暂实现后移除; Firefox、Safari 未实现         | 均未实现       |
+| 浏览器            | Chrome 75、Firefox 68、Safari 14 起在 HTTP 缓存中支持   | 均未实现       |
 
-浏览器侧现状意味着: 指令带来的收益基本由 CDN 兑现; 浏览器按 RFC 9111 的要求忽略不认识的指令, 无兼容风险, 但也享受不到浏览器私有缓存的 SWR 行为。这也是前端 SWR 模式 (见十三节) 在应用层重新实现同一取舍的动机之一。
+浏览器侧现状意味着: `stale-while-revalidate` 在三大引擎的私有 HTTP 缓存中均已生效, 带该指令的可缓存响应在浏览器侧也能先回旧数据、后台再验证; 但 `stale-if-error` 没有任何浏览器实现, 出错兜底只能由 CDN/代理兑现。浏览器按 RFC 9111 忽略不认识的指令, 两条指令都无兼容风险。前端 SWR 模式 (见十二节) 仍有独立价值: 它管理的是应用自己的内存数据缓存, 与组件生命周期和 UI 状态联动, 这一层不受 HTTP 缓存指令控制。
 
 ### 11.5 典型 Cache-Control 组合
 

@@ -1,16 +1,17 @@
 ---
 title: "会话上下文"
+description: "会话上下文管理: 三层记忆结构 (层 1 原文 / 层 2 规则压缩 / 摘要层)、token 估算、上下文预算分账与启动自检、层降级与异步摘要的轮末结算, 以及模型上下文注入方式和 LangGraph state 字段清单"
+local_path: "$HOME/github/yukino-ecomm-agent"
+local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 ---
 
-# 会话上下文
-
-LLM API 是无状态的, 每个请求都要发送完整的对话历史, token 消耗随轮次线性增长, 不管控迟早撑爆模型的上下文窗口。常见的上下文管理策略有三类:
+LLM API 是无状态的, 每个请求都要发送完整的对话历史, token 消耗随轮次线性增长, 不管控迟早撑爆模型的上下文窗口. 常见的上下文管理策略有三类:
 
 1. 滑动窗口: 只保留最近 N 轮消息
 2. 语义检索: 从历史中召回最相关的 topK 轮候选消息
 3. 保留关键消息: 先判断某条消息是否为关键消息, 是则标记为关键消息, 整个会话都携带
 
-本项目采用「滑动窗口 + 分层压缩 + 异步摘要」: 最近的消息原样保留, 较旧的消息降级压缩, 最旧的消息异步压缩成滚动摘要。分层坐标持久化在数据库的会话记录上, 进程重启后依然成立。
+本项目采用「滑动窗口 + 分层压缩 + 异步摘要」: 最近的消息原样保留, 较旧的消息降级压缩, 最旧的消息异步压缩成滚动摘要. 分层坐标持久化在数据库的会话记录上, 进程重启后依然成立.
 
 ## 三层记忆结构
 
@@ -28,19 +29,19 @@ LLM API 是无状态的, 每个请求都要发送完整的对话历史, token �
    - 工具结果 ≤ 200 tokens (`LAYER2_TOOL_KEEP_TOKENS`) 的保留原文, 更大的结果替换为占位符 `(Called <工具名>; result omitted)`
 3. 摘要层, 最旧的消息 (`ID <= S`): 已被压缩进 `Conversation.summary`, 不再进入窗口
 
-对应代码: `server/src/core/memory.ts` 的 `buildWindow` / `toLayer2` / `compressReply` / `compressToolResult`。
+对应代码: `server/src/core/memory.ts` 的 `buildWindow` / `toLayer2` / `compressReply` / `compressToolResult`.
 
 `buildWindow(messages, summaryUptoMsgId, layer1FromMsgId, maxTokens?)` 的处理顺序:
 
-1. `indexAfter` 按坐标截取消息。两个坐标都锚定在带 `db-<消息ID>` 前缀 ID 的用户消息上 (运行时写入图的用户消息 ID 就是 `db-${msgId}`), 找到第一条 ID 大于坐标的用户消息作为切点
-2. 对 `L` 之前的消息段调用 `toLayer2` 做压缩。压缩时 AI 消息的 `tool_calls` 原样保留, 保证与后续 `ToolMessage` 的配对不断
-3. `trimHistory` 兜底: 从最旧的消息开始逐条丢弃直到不超预算, 再保证留下的第一条是用户消息, 否则模型会看到孤立的回复。若裁剪后为空则退回裁剪前的窗口
+1. `indexAfter` 按坐标截取消息. 两个坐标都锚定在带 `db-<消息ID>` 前缀 ID 的用户消息上 (运行时写入图的用户消息 ID 就是 `db-${msgId}`), 找到第一条 ID 大于坐标的用户消息作为切点
+2. 对 `L` 之前的消息段调用 `toLayer2` 做压缩. 压缩时 AI 消息的 `tool_calls` 原样保留, 保证与后续 `ToolMessage` 的配对不断
+3. `trimHistory` 兜底: 从最旧的消息开始逐条丢弃直到不超预算, 再保证留下的第一条是用户消息, 否则模型会看到孤立的回复. 若裁剪后为空则退回裁剪前的窗口
 
-预算取 `windowBudget()`: `CONTEXT_WINDOW_MAX_TOKENS` 大于 0 时直接使用它, 否则用 `budget.compute().sliding`。
+预算取 `windowBudget()`: `CONTEXT_WINDOW_MAX_TOKENS` 大于 0 时直接使用它, 否则用 `budget.compute().sliding`.
 
 ### 早期消息, 截断 or 压缩?
 
-截断丢事实, 压缩要花一次 LLM 调用。本项目的答案是分层: 层 1 不动, 层 2 用便宜的规则压缩 (保留用户消息全文, 截断 Agent 回复, 大工具结果换占位符), 只有滑出层 2 的部分才异步调用 LLM 压缩成摘要。
+截断丢事实, 压缩要花一次 LLM 调用. 本项目的答案是分层: 层 1 不动, 层 2 用便宜的规则压缩 (保留用户消息全文, 截断 Agent 回复, 大工具结果换占位符), 只有滑出层 2 的部分才异步调用 LLM 压缩成摘要.
 
 ## Token 估算
 
@@ -68,11 +69,11 @@ sliding = min(CONTEXT_BUDGET_TURNS(20) * 稳态每轮, window - fixed - peak)
 turns   = floor(sliding / 稳态每轮)
 ```
 
-窗口解析: `MODEL_CONTEXT_WINDOW` 未显式配置时, `lookupWindow` 把 `CHAT_MODEL` 转小写、取最后一个 `/` 之后的段, 对内置的 `KNOWN_WINDOWS` 前缀表做最长前缀匹配 (覆盖 minimax / deepseek / qwen / glm / kimi / moonshot / gpt / `claude-` 等常见型号), 未命中则回落到 32768。
+窗口解析: `MODEL_CONTEXT_WINDOW` 未显式配置时, `lookupWindow` 把 `CHAT_MODEL` 转小写、取最后一个 `/` 之后的段, 对内置的 `KNOWN_WINDOWS` 前缀表做最长前缀匹配 (覆盖 minimax / deepseek / qwen / glm / kimi / moonshot / gpt / `claude-` 等常见型号), 未命中则回落到 32768.
 
-健康判定: `window - fixed - peak <= 0`, 或者切出来的 `sliding` 装不满一轮稳态消耗 (`turns < 1`) 时 `healthy = false`。`limited_by` 记录滑动窗口是被轮数 (`turns`) 还是窗口 (`window`) 卡住的。
+健康判定: `window - fixed - peak <= 0`, 或者切出来的 `sliding` 装不满一轮稳态消耗 (`turns < 1`) 时 `healthy = false`. `limited_by` 记录滑动窗口是被轮数 (`turns`) 还是窗口 (`window`) 卡住的.
 
-服务启动时 `server.ts` 的 `checkContextBudget()` 输出一条预算报告, 格式为 `window=… fixed=… turn_peak=… sliding=… turns=… (steady_per_turn=…) limited_by=… healthy=yes/no`; 健康时记 info (`context budget ok`), 否则记 error 并提示调大 `MODEL_CONTEXT_WINDOW` 或调小 `MAX_AGENT_STEPS` / `TOOL_RESULT_MAX_TOKENS` / `MAX_OUTPUT_TOKENS` / `RERANK_TOP_K`。
+服务启动时 `server.ts` 的 `checkContextBudget()` 输出一条预算报告, 格式为 `window=… fixed=… turn_peak=… sliding=… turns=… (steady_per_turn=…) limited_by=… healthy=yes/no`; 健康时记 info (`context budget ok`), 否则记 error 并提示调大 `MODEL_CONTEXT_WINDOW` 或调小 `MAX_AGENT_STEPS` / `TOOL_RESULT_MAX_TOKENS` / `MAX_OUTPUT_TOKENS` / `RERANK_TOP_K`.
 
 以上数字都可用环境变量调整 (`server/src/config.ts`):
 
@@ -105,7 +106,7 @@ turns   = floor(sliding / 稳态每轮)
 3. 超预算时 `memory.nextLayer1From` 从最新消息往前逐条累加 token, 找到超出预算的边界, 再从边界向更旧的方向定位第一条带 `db-` ID 的消息, 其 ID 就是新的 `layer1FromMsgId`
 4. 新坐标比旧坐标更大时才持久化 (`repository.updateLayer1From`), 并记一条 `layer 1 degraded` 日志
 
-滑出层 1 的消息下次构建窗口时自动按层 2 压缩。整个结算被 try/catch 包住, 失败只记 `layer settlement failed (reply unaffected)`, 不影响已经发出的回复。
+滑出层 1 的消息下次构建窗口时自动按层 2 压缩. 整个结算被 try/catch 包住, 失败只记 `layer settlement failed (reply unaffected)`, 不影响已经发出的回复.
 
 ## 异步摘要 (层 2 -> 摘要)
 
@@ -122,7 +123,7 @@ turns   = floor(sliding / 稳态每轮)
 4. `repository.appendSummarySegment` 在一个事务里写入一条 `ConversationSummary` 分段 (`seq` = 上一段 + 1, 记录 `fromMsgId` / `uptoMsgId`), 并把最近 `SUMMARY_INJECT_SEGMENTS` (默认 3) 段按时间顺序用换行拼接成投影, 更新 `Conversation.summary`, `summaryUptoMsgId` 推进到 `L`
 5. 任务失败只记 `summary failed` 日志, 不影响主流程
 
-推进后 `S = L`, 层 2 清空; 下一轮窗口只保留新 `S` 之后的消息, 已被压缩的历史摘要不会被二次压缩。历史摘要不需要全量携带: 一条摘要对应多轮对话, 窗口预算上只按 `SUMMARY_INJECT_SEGMENTS` 段计。
+推进后 `S = L`, 层 2 清空; 下一轮窗口只保留新 `S` 之后的消息, 已被压缩的历史摘要不会被二次压缩. 历史摘要不需要全量携带: 一条摘要对应多轮对话, 窗口预算上只按 `SUMMARY_INJECT_SEGMENTS` 段计.
 
 ## 注入模型上下文
 
@@ -150,19 +151,19 @@ turns   = floor(sliding / 稳态每轮)
 ];
 ```
 
-本轮材料 (`turnContext`) 按需拼装, 非空时由 `withTurnContext` 插入: 从窗口尾部向前找到最后一条用户消息, 把 turn-ctx 消息插在它后面。材料放在窗口尾部而不是头部, 前缀 (system + 历史) 保持稳定, 有利于命中前缀缓存。`turnContext` 的组成:
+本轮材料 (`turnContext`) 按需拼装, 非空时由 `withTurnContext` 插入: 从窗口尾部向前找到最后一条用户消息, 把 turn-ctx 消息插在它后面. 材料放在窗口尾部而不是头部, 前缀 (system + 历史) 保持稳定, 有利于命中前缀缓存. `turnContext` 的组成:
 
 - 历史摘要: `summarySystem` 生成 `## Summary of earlier conversation (earlier turns are compressed; the facts in it are trustworthy)` 开头的段落
 - 知识证据: `KNOWLEDGE_EVIDENCE_HINT` 声明引用编号规则 (关键结论后标注 `[1]` 这类来源编号)、证据已给出时不再调 `query_faq`, 并强调型号必须照抄证据、证据外的型号不许写、条件性结论要带条件
 - 退款场景: `route` 为 `refund_flow` 时追加 `REFUND_JUDGE_HINT`, 附上 `orderData` 的 JSON 和判断要求 (可退则调 `submit_refund` 并一句话说明依据, 不可退则解释原因并提示可转人工)
 
-`mainAgent` 调用模型前后, `logModelContext` 会以 `model_ctx` 日志打出本轮窗口概况 (每条消息的类型和前 40 字符、turn-ctx 的字符数、总 token 数), 便于核对实际注入内容。
+`mainAgent` 调用模型前后, `logModelContext` 会以 `model_ctx` 日志打出本轮窗口概况 (每条消息的类型和前 40 字符、turn-ctx 的字符数、总 token 数), 便于核对实际注入内容.
 
-指代消解 (`resolveReference`) 和意图识别 (`classifyIntent`) 节点用的是另一份更轻的历史 (`historyText`): 一行摘要 (`summaryLine`, 形如 `(Summary of earlier conversation: …)`) + 窗口中除当前消息外最近 6 条消息的文本, 逐行拼成 `User: …` / `Agent: …`。
+指代消解 (`resolveReference`) 和意图识别 (`classifyIntent`) 节点用的是另一份更轻的历史 (`historyText`): 一行摘要 (`summaryLine`, 形如 `(Summary of earlier conversation: …)`) + 窗口中除当前消息外最近 6 条消息的文本, 逐行拼成 `User: …` / `Agent: …`.
 
 ## langgraph state
 
-langgraph 的 state 是节点间共享的数据结构, 每个节点都可以读写 state。消息历史不需要每轮重新拼装: `graphInput` 只把当前用户消息 (ID 为 `db-<消息ID>`) 交给图, 更早的消息由 Postgres checkpointer (`CHECKPOINTER_DB_URL`, `thread_id` 就是会话 ID) 恢复。本项目的 `ConversationState` (`server/src/graph/state.ts`) 字段:
+langgraph 的 state 是节点间共享的数据结构, 每个节点都可以读写 state. 消息历史不需要每轮重新拼装: `graphInput` 只把当前用户消息 (ID 为 `db-<消息ID>`) 交给图, 更早的消息由 Postgres checkpointer (`CHECKPOINTER_DB_URL`, `thread_id` 就是会话 ID) 恢复. 本项目的 `ConversationState` (`server/src/graph/state.ts`) 字段:
 
 - `messages`: 消息历史, 用 `messagesStateReducer` 追加合并
 - `summary` / `summaryUptoMsgId` / `layer1FromMsgId`: 记忆分层坐标
@@ -174,4 +175,4 @@ langgraph 的 state 是节点间共享的数据结构, 每个节点都可以读�
 - `suggestedActions`: 交给前端确认的动作卡片 (选订单 / 工单预览 / 退款表单 / 转人工)
 - `trace`: 各节点的诊断信息 (`mergeDict` reducer 浅合并)
 
-图的构建与执行流程见 [workflow](./workflow), 摘要等辅助调用走的模型槽位见 [llm](./llm)。
+图的构建与执行流程见 [workflow](./workflow), 摘要等辅助调用走的模型槽位见 [llm](./llm).

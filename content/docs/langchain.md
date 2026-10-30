@@ -2,6 +2,7 @@
 title: "LangChain.js 1.x: Monorepo、Runnable 内核与 createAgent 中间件体系"
 description: "拆解 LangChain.js 1.x 的 monorepo 包布局、langchain-core 的 Runnable 与消息/工具抽象、provider 集成模式、langchain 主包的 createAgent 与中间件体系, 以及构建、测试与发布设施。"
 local_path: "$HOME/Downloads/langchainjs"
+local_commit: "50343ba94c2388b3d3a7d4d6cd0977fa60a90294"
 ---
 
 LangChain.js 是用于构建 LLM 应用的 TypeScript 框架, 1.x 起把抽象收敛到一套可组合的 Runnable 接口, 并在主包里引入基于 LangGraph 的 agent 运行时与中间件体系。本文面向要在 Node 或浏览器环境里搭建 LLM 应用与 Agent 的工程师, 按“核心抽象 → 消息与工具 → provider → agent 与中间件 → 工程设施”的顺序拆解其设计。阅读后应能判断哪些能力属于 core、哪些属于 provider 包、哪些属于主包与 classic 包。

@@ -2,6 +2,7 @@
 title: "Yukino Codegen: 从自然语言需求到可运行 Web 应用"
 description: "AI 全栈代码生成平台的技术解析: 服务端用 Yukino 编码 Agent 在真实磁盘上迭代产出 Vite 工程, 浏览器用 WebContainer 完成安装与预览, 二者以服务器权威文件 + WebSocket 事件溯源 + 三方合并同步闭合生成/运行/修复回路"
 local_path: "$HOME/github/yukino-codegen"
+local_commit: "d6eab0d01167401662344e688c54e2603423fb75"
 ---
 
 Yukino Codegen 是一个 AI 全栈代码生成平台: 用户用一句自然语言描述想要的应用, 平台在服务器上驱动一个真实的编码 Agent 在文件系统上迭代产出前端工程, 再把这份工程同步进浏览器的 WebContainer 里完成依赖安装与 dev server 启动, 最终在预览 iframe 中呈现一个真实可运行的 Web 应用。生成过程本身是实时可交互的: 用户可以中途 steering 纠偏、审批计划、回退对话与代码、切换模型与思考强度、上传图片与 @ 提及文件。本文讲的是这条主链路如何被工程化: 一轮生成如何被编排与准入, 服务器与浏览器各自承担什么职责, 生成产物如何挂载与预览, 生成/运行/修复循环如何闭合, 以及沙箱、密钥、文件路径等安全边界如何划定。

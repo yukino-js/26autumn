@@ -2,6 +2,7 @@
 title: "yukino_agent: 基于 Eino 的 RAG 运维 Agent 后端"
 description: "yukino_agent Go 后端: 以 CloudWeGo Eino 编排 RAG 对话、Plan-Execute-Replan 告警分析与文档索引三条流水线, 打通 Milvus 向量知识库、MCP/Prometheus/MySQL 工具集, 并把浏览器 SDK 上报转换为 Prometheus 指标形成告警闭环"
 local_path: "$HOME/github/yukino.go/apps/agent"
+local_commit: "c71a35a07a47607d136b1d97c294bc64b785bf24"
 ---
 
 yukino_agent 是一个用 Go 编写的 AI 运维助手后端。它把"检索增强对话 (RAG)"、"自主告警分析 (Plan-Execute-Replan)"与"文档向量化索引"三条能力, 统一构建在 CloudWeGo Eino 编排框架之上, 对外通过 yukino_http 暴露一组 HTTP/SSE 接口, 对内以 Milvus 作为向量知识库、以 MCP/Prometheus/MySQL/时间/文档检索作为工具集。除对话与运维分析外, 它还承担一个监控桥的角色: 把浏览器 SDK (`@yukino.js/sentry`) 上报的前端可观测性事件转换成 Prometheus 指标, 供告警规则消费, 从而让"前端异常"能反过来触发"Agent 分析"。本文面向需要在 Go 中落地 LLM Agent、RAG 知识库或 AIOps 流水线的工程师, 依次讲解定位、分层架构、三条流水线的实现思路、模型与工具适配、向量库引导、HTTP 契约、监控桥、并发与容错设计, 以及适用边界。

@@ -1,5 +1,8 @@
 ---
 title: "Workflow"
+description: "Workflow 子系统: 用确定性 JavaScript 脚本编排多个 subagent, 覆盖脚本模型与注入原语、并发上限、journal 持久化与重放、生命周期回流与 /workflows 监控"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 Workflow (src/workflow/) 用一段确定性的 JavaScript 脚本编排多个 subagent, 在后台并发跑完一整套「拆解 → 执行 → 验证」流程, 最终结果经任务通知回流主 agent

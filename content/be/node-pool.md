@@ -2,6 +2,7 @@
 title: "generic-pool：Promise 化通用资源池的源码级解析"
 description: "从资源池要解决的竞态出发，逐层拆解 generic-pool 的借还生命周期、工厂契约、超时排队、双向链表与优先级队列、空闲驱逐、配置默认值与停机语义，并给出连接池场景的实践建议"
 local_path: "$HOME/Downloads/node-pool"
+local_commit: "ee5db9ddb54ce3a142fde3500116b393d4f2f755"
 ---
 
 本文以 generic-pool 3.9.0 的源码为准，面向需要在 Node.js 中复用数据库连接、HTTP 客户端、浏览器实例等昂贵资源，并希望真正理解池内部行为的工程师。全文从“资源池要解决什么竞态”讲起，逐层展开借出、归还、销毁、排队、超时、驱逐与停机机制，并指出若干容易被文档表述或直觉误导的边界。读者只需要熟悉 Promise 与 Node 事件循环，不需要预先了解该库的内部实现。

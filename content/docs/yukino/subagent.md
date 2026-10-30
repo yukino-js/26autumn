@@ -1,5 +1,8 @@
 ---
 title: "Subagent"
+description: "Yukino 的委派子系统: Agent 工具把有界子任务交给独立的 agent loop 执行, 覆盖参数与校验、角色定义、fork 上下文继承、五层工具过滤、后台异步任务, 以及 teammate 的多团队选择语义"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 一个大的重构任务中, 想插入一个小的「更新 README.md」任务: 直接在主对话里执行, 会把大量无关的工具调用和中间输出混进主 Agent 的上下文 (上下文污染)。Subagent 把这类有界子任务委派给独立的 agent loop 执行: 独立的上下文窗口、独立的工具集和权限边界, 只把一份简洁结果交回主 agent
@@ -39,7 +42,8 @@ export interface Tool {
 {
   "description": "", // 必填, 一句话说明这个 agent 做什么
   "prompt": "", // 必填, 任务指令 (fork=false 时应自包含: 目标、相关文件、约束、是否允许编辑、期望结果)
-  "kind": "teammate", // 可选, "teammate" (默认, 当前团队的持久成员, 没有团队则自动创建) | "subagent" (一次性, 只返回工具结果)
+  "kind": "teammate", // 可选, "teammate" (默认, 所选团队的持久成员, 没有团队则自动创建) | "subagent" (一次性, 只返回工具结果)
+  "team_name": "", // 可选, 仅对 kind="teammate" 有意义: 要加入的团队名 (TeamCreate/TeamList 的返回值); 只有一个团队时可省略, 多团队时必填
   "subagent_type": "general-purpose", // 可选, 枚举值来自已加载的 agent 定义, 缺省 general-purpose
   "fork": true, // 可选, true 复制父对话快照作为初始上下文 / false 全新对话; 缺省取会话配置 enable_fork (未显式 false 时为 true)
   "model": "", // 可选, 覆盖本次运行的模型
@@ -57,7 +61,7 @@ export interface Tool {
 
 三个维度正交, 独立选择:
 
-- `kind` 决定生命周期: `subagent` 一次性 (ConversationManager 只存活在单次运行内, 结果内联返回或经 task-notification 送达, 终止后不能接收消息、不能恢复); `teammate` 是团队持久成员 (成员名从 description 自动生成 —— kebab-case 化、截断到 30 字符、重名追加 `-2`/`-3` 后缀、避开保留名 `leader`, 完成一轮任务后进入邮箱轮询等待追加任务, 见 [agent-team](./agent-team))
+- `kind` 决定生命周期: `subagent` 一次性 (ConversationManager 只存活在单次运行内, 结果内联返回或经 task-notification 送达, 终止后不能接收消息、不能恢复); `teammate` 是团队持久成员 (成员名从 description 自动生成 —— kebab-case 化、截断到 30 字符、重名追加 `-2`/`-3` 后缀、避开保留名 `leader`, 完成一轮任务后进入邮箱轮询等待追加任务, 见 [agent-team](./agent-team))。加入哪个团队由 `TeamManager.resolveTeam(team_name)` 解析: 传了 `team_name` 时该团队必须已存在 (否则报 `Team '<name>' not found.`); 未传时复用唯一存在的团队, 多个团队并存则报歧义错误 (`Multiple teams match. Specify team_name; use TeamList to see available teams.`), 一个团队都没有时以 leader 身份自动创建 (`team-<uuid>`)
 - `subagent_type` 决定角色: 工具白/黑名单、权限模式、模型、轮数上限
 - `fork` 决定初始上下文: 继承父对话快照, 还是全新对话
 
@@ -229,7 +233,7 @@ subagent loop 和主 agent loop 是同一个 Agent 类, 区别在装配:
 
 通过过滤的工具还会做作用域重绑定 (`registerScopedTool`): TodoWrite 绑定一份全新的独立 TaskList (subagent 的任务板不污染主 agent); ToolSearch/McpCall 重绑到过滤后的 registry; LoadSkill 换成 `forDelegatedAgent()` 变体; TaskStop 换成 `forSubagent()` 变体 —— 只剩 `task_id` 参数 (teammate 参数是 leader 专属), 且只查 subagent 自己的 TaskManager, 只能停自己启动的后台任务, 不会越权停父任务
 
-teammate 走 `cloneRegistryForTeammate`: 剥离 SUBAGENT_DISALLOWED_TOOLS (同样有 ExitPlanMode 的 plan 豁免) 和 TaskStop, 然后由 AgentTool 注入团队级任务板工具、以自己名字署名的 SendMessage、以及提交计划用的 ExitPlanMode (`team.submitPlan`)
+teammate 走 `cloneRegistryForTeammate`: 剥离 SUBAGENT_DISALLOWED_TOOLS (同样有 ExitPlanMode 的 plan 豁免) 和 TaskStop, 然后由 AgentTool 注入团队级任务板工具 (`TeamTodoWriteTool`, 绑定所在团队名)、以自己名字署名且绑定团队名的 SendMessage (teammate 只能向本团队发消息)、以及提交计划用的 ExitPlanMode (`team.submitPlan`)
 
 结论: Agent 工具对所有委派 agent 剥离, fork 出来的 subagent 无法再 spawn, 调用树在 subagent 层终止; fork 继承的只是父对话快照, 不改变工具边界
 

@@ -1,5 +1,8 @@
 ---
 title: "Terminal UI"
+description: "交互式 TUI: 主屏原生滚动加实时帧的渲染模型、stdin 过滤、输入框 (粘贴折叠、剪贴板图片、补全菜单)、快捷键、用户 Bash、Agents 列表、prompt 历史与退出摘要"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 交互式 TUI: React 19 + Ink 7 渲染的单窗格终端界面 (src/ui/)。入口是 `runUiMode()` (src/main.tsx): 装好终端输出层和 stdin 过滤层后, 用 Ink 的 `render()` 挂载 App 组件 (src/ui/app.tsx, `exitOnCtrlC: false`, 键盘语义全部自管)。流式回复、工具卡片、权限对话框、用户 Bash、slash 命令、Agents 列表都发生在这一屏里

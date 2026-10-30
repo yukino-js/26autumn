@@ -1,5 +1,8 @@
 ---
 title: "System Prompt"
+description: "system prompt 的构成: 8 个模块与环境探测、system/tools/messages 三字段的分工与 prompt cache 取舍, 以及 <system-reminder> 动态指令注入与周期性提醒机制"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 system prompt 是每次 LLM 请求里 system 字段携带的稳定前缀。本页讲它由哪些模块拼成、环境上下文如何探测, 以及整个 prompt 的 3 个来源字段 (system / tools / messages) 如何分工, 特别是会话过程中动态注入的 `<system-reminder>` 消息。

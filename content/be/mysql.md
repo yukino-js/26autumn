@@ -1,9 +1,9 @@
 ---
 title: "MySQL 与 InnoDB 技术手册"
-description: "覆盖连接与 SQL 执行流程、InnoDB 物理结构与索引体系、事务 MVCC 与锁、redo/undo/binlog 与崩溃恢复、主从复制、分库分表与在线 DDL、读写分离下的缓存一致性以及慢查询调优方法论"
+description: "以 MySQL 8.4 LTS 为基准, 覆盖连接与 SQL 执行流程、InnoDB 物理结构与索引体系、事务 MVCC 与锁、redo/undo/binlog 与崩溃恢复、主从复制、分库分表与在线 DDL、读写分离下的缓存一致性以及慢查询调优方法论"
 ---
 
-这份文档面向后端工程师与 DBA, 从服务端执行流程讲到 InnoDB 的磁盘与内存结构, 再延伸到事务、锁、日志、复制与分布式数据管理, 目标是建立一套可用于排查故障与做架构决策的心智模型. 内容按"机制、现象、取舍"组织: 每一节先说明一条机制如何运作, 再说明它会产生什么可观测现象, 最后给出工程上的选择. 读者可以按章节独立查阅, 也可以顺序阅读. Redis 侧的缓存与锁细节见 [Redis 技术手册](redis), 面向数仓的消息与列存链路见 [ClickHouse 与 Kafka 技术手册](clickhouse-kafka).
+这份文档面向后端工程师与 DBA, 从服务端执行流程讲到 InnoDB 的磁盘与内存结构, 再延伸到事务、锁、日志、复制与分布式数据管理, 目标是建立一套可用于排查故障与做架构决策的心智模型. 内容按"机制、现象、取舍"组织: 每一节先说明一条机制如何运作, 再说明它会产生什么可观测现象, 最后给出工程上的选择. 读者可以按章节独立查阅, 也可以顺序阅读. 文中行为与默认值以 MySQL 8.4 LTS 为准. Redis 侧的缓存与锁细节见 [Redis 技术手册](./redis), 面向数仓的消息与列存链路见 [ClickHouse 与 Kafka 技术手册](./clickhouse-kafka).
 
 ## 一、连接与 SQL 执行流程
 
@@ -201,7 +201,7 @@ B+ 树与 B 树的区别:
 3. 后台线程定期刷: page cleaner 线程按 `innodb_io_capacity` 与 `innodb_io_capacity_max` 设定的 I/O 能力, 持续把脏页比例压回 `innodb_max_dirty_pages_pct` (默认 90) 以下.
 4. MySQL 正常关闭时, 把所有脏页刷盘保证干净退出.
 
-刷脏速度由 `innodb_io_capacity` (默认 10000, 机械盘应调低) 决定上限, 脏页比例逼近阈值时按 `innodb_max_dirty_pages_pct_lwm` 提前降速. 调优的核心是让刷脏速率跟上脏页产生速率, 避免 redo 写满触发的强制刷脏把前台写入拖慢.
+刷脏速度由 `innodb_io_capacity` 决定上限 (MySQL 8.4 起默认 10000, 8.0 默认 200, 机械盘应调低), 突发刷脏可达 `innodb_io_capacity_max` (默认为前者的 2 倍); 脏页比例逼近阈值时按 `innodb_max_dirty_pages_pct_lwm` 提前降速. 调优的核心是让刷脏速率跟上脏页产生速率, 避免 redo 写满触发的强制刷脏把前台写入拖慢.
 
 ### Change Buffer
 
@@ -325,7 +325,7 @@ id  select_type  table  type   possible_keys  key      key_len  rows    Extra
 
 它说明: 使用联合索引 `idx_a_b` 的范围扫描, 走了索引下推, 预估扫描约 12000 行. 判断一个执行计划是否健康, 主要看 type 是否退化为 `index` 或 `ALL`、key 是否为 null、rows 是否异常放大、Extra 是否出现 filesort 或 temporary.
 
-`explain analyze` 会真实执行 SELECT 并输出各算子的实际耗时与行数, 用于验证优化器的估算是否偏离实际; 慢 SELECT 依然会消耗相应资源, 生产环境慎用. 对 INSERT 与多表 UPDATE/DELETE 只输出执行计划与读侧实际统计, 写入不会生效; 单表 UPDATE/DELETE 不由迭代器执行器处理, 直接返回不可执行.
+`explain analyze` 会真实执行语句并以 TREE 格式输出每个迭代器的估算成本/行数与实际耗时/行数, 用于验证优化器的估算是否偏离实际; 它只支持 SELECT、多表 UPDATE/DELETE 与 TABLE 语句, 其中多表 UPDATE/DELETE 的写入真实生效, 慢语句依然会消耗相应资源, 生产环境慎用; INSERT 与单表 UPDATE/DELETE 不支持, 直接报错.
 
 ### count 的语义与优化
 
@@ -345,7 +345,7 @@ InnoDB 不像 MyISAM 那样直接维护行数, 是因为 MVCC 下"表里有多�
 
 1. 游标续传式分页, 要求 id 可比较且连续: 记录上一页最大 id, 查询 `where id > #{lastId} order by id limit 10`, 直接索引定位.
 2. 子查询延迟关联: 先用覆盖索引取主键, 再回表取 10 行.
-3. 业务层限制最大页码, 深度检索改用搜索引擎。
+3. 业务层限制最大页码, 深度检索改用搜索引擎.
 
 延迟关联的写法:
 
@@ -416,7 +416,7 @@ select @@transaction_isolation;
 set session transaction isolation level repeatable read;
 ```
 
-一些互联网业务会把隔离级别改为读已提交: 该级别下不加间隙锁, 只有记录锁, 锁冲突与死锁概率更低, 并发写入吞吐更高; 代价是必须使用 row 格式 binlog 才能保证主从不一致问题被完整记录.
+一些互联网业务会把隔离级别改为读已提交: 该级别下不加间隙锁 (外键与重复键检查除外), 只有记录锁, 锁冲突与死锁概率更低, 并发写入吞吐更高; 代价是必须搭配 row 格式 binlog, statement 格式在读已提交下存在不安全语句, 会被拒绝或导致主从不一致.
 
 ### MVCC 与 Read View 的可见性判断
 
@@ -609,7 +609,7 @@ insert into t values (7);
 
 undo log 的细节: insert 回滚记录主键 (回滚即删除); delete 回滚记录整行 (回滚即重插, 且 delete 只是打删除标记, 由 purge 线程最终清理); update 非主键列记录旧值, update 主键列会拆为 delete 加 insert. 每条 undo log 带事务 ID 与回滚指针, 串成版本链支撑 MVCC. undo 页本身的修改也写 redo log, 因此 undo log 同样是持久的.
 
-undo 数据存放在 2 个独立的 undo 表空间中, 与用户表空间分离, 数量不可调整. 不再被任何 Read View 需要的历史版本由 purge 线程清理; 当某个 undo 表空间超过 `innodb_max_undo_log_size` (默认 1GB) 且其中历史版本均可回收时, 通过 truncate 回收磁盘 (`innodb_undo_log_truncate`, 默认开启). 长事务会让 purge 无法推进, undo 表空间持续膨胀, 这是长事务除了锁之外的另一大危害.
+undo 数据存放在 2 个独立的 undo 表空间中, 与用户表空间分离 (`innodb_undo_tablespaces` 在 8.4 已废弃, 设置不再生效, 数量固定为 2). 不再被任何 Read View 需要的历史版本由 purge 线程清理; 当某个 undo 表空间超过 `innodb_max_undo_log_size` (默认 1GB) 且其中历史版本均可回收时, 通过 truncate 回收磁盘 (`innodb_undo_log_truncate`, 默认开启). 长事务会让 purge 无法推进, undo 表空间持续膨胀, 这是长事务除了锁之外的另一大危害.
 
 ### redo log 与 WAL
 
@@ -750,7 +750,7 @@ redo log 是固定容量循环写, 边写边擦除, 只保证未刷盘的脏页�
 4. 等待 GTID: 写请求返回主库 GTID, 读请求在从库执行 `wait_for_executed_gtid_set(gtid, timeout)`, 等从库回放到该事务再读, 超时则退回主库. 精确但实现复杂.
 5. 缓存兜底: 写完同步写 Redis, 读先查缓存.
 
-GTID 是形如 `server_uuid:transaction_id` 的全局事务标识, 随事务写入 binlog. 相比传统位点复制, GTID 复制的优势是: 从库自动声明已执行的 GTID 集合, 新主库自动发送缺失事务, 主从切换无需人工找 binlog 文件名与偏移量; 已执行过的 GTID 会被跳过, 天然幂等; 还便于校验一致性与变更级联拓扑. 当前版本 GTID 默认开启 (`gtid_mode` 与 `enforce_gtid_consistency` 均为 ON), 搭建复制时只需再声明 `source_auto_position = 1` 启用自动定位.
+GTID 是形如 `server_uuid:transaction_id` 的全局事务标识, 随事务写入 binlog. 相比传统位点复制, GTID 复制的优势是: 从库自动声明已执行的 GTID 集合, 新主库自动发送缺失事务, 主从切换无需人工找 binlog 文件名与偏移量; 已执行过的 GTID 会被跳过, 天然幂等; 还便于校验一致性与变更级联拓扑. GTID 默认关闭: `gtid_mode` 与 `enforce_gtid_consistency` 默认均为 OFF, 启用时须先把 `enforce_gtid_consistency` 置为 ON, 再把 `gtid_mode` 沿 OFF → OFF_PERMISSIVE → ON_PERMISSIVE → ON 逐级切换 (每次只能跨一级); 搭建复制时再声明 `source_auto_position = 1` 启用自动定位.
 
 ## 七、分库分表与在线 DDL
 
@@ -910,13 +910,13 @@ Canal 的原理是把自己伪装成 MySQL 从库, 向主库发送 dump 请求 (
 
 ### 选型与兜底
 
-| 场景                     | 方案                     | 说明                                    |
-| ------------------------ | ------------------------ | --------------------------------------- |
-| 读多写少, 容忍秒级不一致 | Cache Aside 加 TTL       | 行业默认, 覆盖绝大多数场景              |
-| 并发读写激烈, 怕脏值窗口 | Cache Aside 加延迟双删   | 收窄窗口                                |
-| 写入路径多, 代码难保删除 | 叠加 binlog 订阅兜底     | 中大型系统常见                          |
-| 强一致要求 (资金/库存)   | 不用缓存, 或在读路径加锁 | 接受性能代价                            |
-| 写多读少                 | 不缓存, 或用写回聚合写库 | 见 [Redis 技术手册](redis) 的写策略部分 |
+| 场景                     | 方案                     | 说明                                      |
+| ------------------------ | ------------------------ | ----------------------------------------- |
+| 读多写少, 容忍秒级不一致 | Cache Aside 加 TTL       | 行业默认, 覆盖绝大多数场景                |
+| 并发读写激烈, 怕脏值窗口 | Cache Aside 加延迟双删   | 收窄窗口                                  |
+| 写入路径多, 代码难保删除 | 叠加 binlog 订阅兜底     | 中大型系统常见                            |
+| 强一致要求 (资金/库存)   | 不用缓存, 或在读路径加锁 | 接受性能代价                              |
+| 写多读少                 | 不缓存, 或用写回聚合写库 | 见 [Redis 技术手册](./redis) 的写策略部分 |
 
 任何方案都必须有的三道兜底:
 

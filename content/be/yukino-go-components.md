@@ -2,6 +2,7 @@
 title: "Yukino Go 分布式基础设施组件: 九个组件的设计原理、适用场景与边界"
 description: "面向 Go 后端与分布式系统读者的组件解析: 逐一讲清 redis_lock、consistent_hash、consistent_cache、red_mq、tcc、time_wheel、timer、lsm_tree、raft 九个组件解决的问题、关键数据结构与算法、设计取舍, 以及在什么场景下不该使用它们"
 local_path: "$HOME/github/yukino.go/components"
+local_commit: "c71a35a07a47607d136b1d97c294bc64b785bf24"
 ---
 
 本文讨论的是一组用 Go 实现的分布式基础设施组件, 覆盖互斥、路由、缓存一致性、消息投递、分布式事务、延迟调度与共识等主题。九个组件都注册在仓库根部的 go.work 工作区中, 每个组件是独立的 Go module (各自的 go.mod, Go 1.26), 可单独引用; 其中 timer 与 raft 另含可执行示例 (cmd/timer、cmd/raftkv)。

@@ -122,7 +122,7 @@ Vite 8 的构建管线由一套 Rust 工具接管, 从依赖预构建到生产�
 
 配置入口: 生产打包配置入口是 `build.rolldownOptions`, 依赖预构建是 `optimizeDeps.rolldownOptions`, worker 构建对应 `worker.rolldownOptions`.
 
-`build` 与 `build.minify` 的默认值可以直接从类型定义读出: `build.target` 默认 `'baseline-widely-available'`, 对应 2026-01-01 纳入 Baseline Widely Available 的浏览器版本范围; `build.minify` 在客户端构建默认 `'oxc'`, 在 SSR 构建默认 `false`, 可选 `'oxc' | 'terser' | 'esbuild'`, 选后两者需要自行安装依赖; `build.cssMinify` 默认 `'lightningcss'`.
+`build` 与 `build.minify` 的默认值可以直接从类型定义读出: `build.target` 默认 `'baseline-widely-available'`, 对应 2026-01-01 纳入 Baseline Widely Available 的浏览器版本范围 (Chrome/Edge 111、Firefox 114、Safari/iOS 16.4); `build.minify` 在客户端构建默认 `'oxc'`, 在 SSR 构建默认 `false`, 可选 `'oxc' | 'terser' | 'esbuild'`, 选后两者需要自行安装依赖, 且 `'esbuild'` 已标记废弃; `build.cssMinify` 默认 `'lightningcss'`.
 
 还有两处需要留意:
 

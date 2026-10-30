@@ -1,5 +1,8 @@
 ---
 title: "Remote"
+description: "Remote 模式: Express + 同端口 WebSocket 桥把 Yukino 变成本地 Web 服务, 浏览器 React 前端对齐终端 UI 功能; 覆盖 127.0.0.1:18888 默认地址, token + 同源 WS 接入控制, 18 种入站 / 44 种出站消息协议, 请求生命周期与心跳, 前端组件与离线队列, 优雅关闭"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 Remote 模式把 Yukino 变成一个本地 Web 服务: Express HTTP 服务器 + 同端口的 WebSocket 桥, 浏览器打开一个 React 前端, 得到与终端 UI 功能对齐的聊天界面 —— 流式回复、工具执行卡片、权限对话框、plan 审批、slash 命令、模型/provider 切换都在这里发生
@@ -51,7 +54,7 @@ RemoteAgentHandle (封装全部 agent 状态)
 - agent 装配有懒创建兜底: `run()` 启动时先尝试 `createRemoteAgent`, 失败 (例如 provider 未配置) 只记一条警告, 推迟到第一条消息经 `ensureAgent()` 重试, 初始化去重靠共享的 init Promise, 失败会给所有客户端广播 `error`
 - 与 [terminal-ui](./terminal-ui) 共享同一套 Agent 循环和会话文件: remote 会话写入同样的 session JSONL, 既能被 CLI `--resume` 恢复, 也能在浏览器里用 `/resume` 选择器恢复 (最多列 50 条)
 - 记忆的后台整理 (consolidation) 在 remote 和交互式 UI 都会运行, 同一套 `MemoryConsolidator` 门槛: 距上次整理 ≥ 24h、会话数 ≥ 5、文件锁互斥
-- 工具装配: `createToolRegistry` 以交互模式给出 19 个基础工具 (见 [function-calling](./function-calling)), remote 再注册 LoadSkill、AskUserQuestion、TeamCreate、SendMessage、TeamDelete、TaskStop、SyntheticOutput、Agent、Workflow (`attachWorkflow`) 和 MCP 工具包装; 与终端 UI 的差异是 remote 不注册 InstallSkill / TeamList
+- 工具装配: `createToolRegistry` 以交互模式给出 19 个基础工具 (见 [function-calling](./function-calling)), remote 再注册 LoadSkill、AskUserQuestion、TeamCreate、SendMessage、TeamDelete、TeamList、TaskStop、SyntheticOutput、Agent、Workflow (`attachWorkflow`) 和 MCP 工具包装; 与终端 UI 的差异是 remote 不注册 InstallSkill
 - skills 同时被接成 slash 命令: inline 模式注册为 `prompt` 类型, fork 模式注册为 `skill_fork` 类型 (隔离 subagent 里执行)
 
 ## WebSocket 协议

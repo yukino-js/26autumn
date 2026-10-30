@@ -2,6 +2,7 @@
 title: "Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent"
 description: "自托管即时通讯平台的技术拆解: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级, 以及为每个用户进程内嵌入的只读 Yukino coding agent 与它的 JSON-RPC 桥。"
 local_path: "$HOME/github/yukino-chat"
+local_commit: "f8556823820fb0a62d406ec625fefafce44815e8"
 ---
 
 本文拆解一个自托管即时通讯平台: 单聊与群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个完整的 AI coding agent 作为一等聊天参与者。内容覆盖数据模型、WebSocket 聊天枢纽、消息投递语义、通话信令、文件传输协议、缓存降级、Agent 的进程内只读运行时与 RPC 桥, 以及客户端的工程化组织。适合要做自托管 IM、或在既有产品中嵌入 Agent 的工程师阅读, 也适合作为"实时系统与长生命周期 Agent 如何共处一个进程"的参考。

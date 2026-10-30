@@ -2,6 +2,7 @@
 title: "Yukino 源码解析: 终端 Coding Agent 的子系统机制"
 description: "按 Agent 主循环与事件流、Provider 适配与重试、工具系统与 MCP 延迟加载、上下文压缩与恢复、检查点与 fork、长期记忆、subagents 与团队、coordinator 与持久 goal、权限、Hooks 与沙箱、运行模式与遥测等子系统, 深入论述 Yukino Code 内置核的实现思路与设计取舍, 并以三十一问的设计问答篇补充边界与取舍"
 local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 Yukino Code 是一个运行在终端里的 Coding Agent, 用 React + Ink 渲染 TUI, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环。本文以它的内置核为对象, 按子系统逐一深潜: Agent 主循环如何把一轮推理拆成可中断、可恢复、可观测的事件流, 多种协议如何在同一接口下收敛, 工具与 MCP 如何在不破坏 prompt cache 的前提下进入上下文, 上下文满了如何压缩并在恢复时找回细节, 会话如何回退与派生, 记忆如何跨会话沉淀, 多代理又如何被组织成团队和长期目标。它不是接口手册, 也不逐文件走读, 而是解释每个机制为什么这样设计、代价是什么、在什么场景下成立。适合正在构建或维护 Agent 基础设施的工程师阅读, 也适合把它当作「把 Agent 做成产品级终端应用」的工程权衡参考。本文前半按子系统论述实现思路, 后半 (设计问答篇) 以问答形式补充取舍与边界。它的官方 MCP 工具集见 [yukino-mcp](../../fe/yukino-mcp), 把它作为库复用的全栈代码生成平台见 [yukino-codegen](../../fe/yukino-codegen)。
@@ -236,7 +237,7 @@ fork 禁止嵌套: fork 出的子代理 (与所有子代理一样) 被全局 SUB
 
 内置角色有四个: general-purpose (研究与多步任务, 无限制)、plan (只读架构师: 调研并给实现计划, 禁 EditFile/WriteFile/ExitPlanMode, 权限模式 plan 且 readOnly)、explore (只读探索者: 找代码、追调用路径、给 file:line 证据, 限制与 plan 相同)、review (代码审查: 只禁 EditFile/WriteFile/ExitPlanMode, 不声明 readOnly 与权限模式——审查需要跑测试与命令, 只是不许改文件)。自定义角色从 ~/.yukino/agents 目录的 Markdown 文件加载并可覆盖同名内置角色, frontmatter 支持工具白名单与黑名单、系统提示词覆盖、最大轮数 max_turns、模型、后台默认、worktree 隔离等; 未写 description 时取正文前 200 字符兜底; 角色级权限模式 permission_mode 接受四种取值 (default、acceptEdits、plan、bypassPermissions), 派生时传入子代理的检查器。
 
-派生入口是 Agent 工具, 必填 description 与 prompt, 其余参数: kind (subagent 或 teammate, 默认 teammate)、subagent_type (默认 general-purpose)、fork (是否复制父对话, 默认取会话的 enable_fork 设置, 未设置时为 true)、model 覆盖、run_in_background (默认 false)、worktree 隔离。kind 的语义写在参数描述里: teammate 是当前团队里的持久成员 (没有团队时自动创建), 适合需要通信与后续派活的场景; subagent 是一次性任务, 结果作为工具结果返回, 不可消息、不可续用。Agent 工具的并发安全判定恒为真: 多个前台委派可在同一批里并发执行, 因为子代理各自有独立会话与注册表; 但提示词要求避免并发写同一批文件, 隔离 worktree 也不自动合并。
+派生入口是 Agent 工具, 必填 description 与 prompt, 其余参数: kind (subagent 或 teammate, 默认 teammate)、team_name (要加入的团队, 多团队并存时必填)、subagent_type (默认 general-purpose)、fork (是否复制父对话, 默认取会话的 enable_fork 设置, 未设置时为 true)、model 覆盖、run_in_background (默认 false)、worktree 隔离。kind 的语义写在参数描述里: teammate 是所选团队里的持久成员 (没有团队时自动创建), 适合需要通信与后续派活的场景; subagent 是一次性任务, 结果作为工具结果返回, 不可消息、不可续用。Agent 工具的并发安全判定恒为真: 多个前台委派可在同一批里并发执行, 因为子代理各自有独立会话与注册表; 但提示词要求避免并发写同一批文件, 隔离 worktree 也不自动合并。
 
 ### 7.2 前台与后台
 
@@ -257,13 +258,13 @@ fork 禁止嵌套: fork 出的子代理 (与所有子代理一样) 被全局 SUB
 
 ### 7.4 团队模型与进程内 teammate
 
-团队同时最多一个: 显式的 TeamCreate 先调用 deleteAll() 清掉所有其他团队 (内存对象加磁盘残留目录) 再创建; create 本身在已有团队时直接返回现有团队。生成 teammate 的路径是 Agent 工具的 kind=teammate (默认值): 取团队列表的第一个, 一个都没有就以 leader 身份自动创建 (名字形如 `team-<uuid>`)。成员名总是由 description 派生: 空白折叠成连字符、转小写、清洗非法字符、截到 MAX_TEAMMATE_NAME_CHARS=30, 与 leader 名或现有成员重名时追加 `-2`、`-3` 后缀; 已完全回收的终态成员名字可复用。
+团队可以多个并存: TeamCreate 只新增一个团队, 既有团队及其成员继续运行; create 本身在已有同名团队时直接返回现有团队; TeamList 列出全部团队及其成员。生成 teammate 的路径是 Agent 工具的 kind=teammate (默认值), 加入哪个团队由 `resolveTeam(team_name)` 解析: 传了 team_name 时该团队必须已存在 (否则报 `Team '<name>' not found.`); 未传时复用唯一存在的团队, 多个团队并存则报歧义错误要求显式指定, 一个团队都没有时以 leader 身份自动创建 (名字形如 `team-<uuid>`)。成员名总是由 description 派生: 空白折叠成连字符、转小写、清洗非法字符、截到 MAX_TEAMMATE_NAME_CHARS=30, 与 leader 名或现有成员重名时追加 `-2`、`-3` 后缀; 已完全回收的终态成员名字可复用。
 
 teammate **一律进程内运行**: `Team.spawnTeammate` 接收一个 `runAgent` 回调 (由 `teamRunAgentFactory` 用 teammate 作用域的注册表与权限检查器构造), 在同一进程的事件循环里跑子代理主循环, 派生成功的回执明确标注 `(in-process)`。没有 tmux/iTerm/独立子进程那套外部 backend。进程内 teammate 共享事件循环, 因此进度 UI 能实时更新; 中止经 AbortController 直接传到成员的主循环, `stopMember` 会等成员当前循环真正停下。
 
 派生时有一条容易被忽略的角色替换: 内置 plan 角色作为 teammate 派生时, 定义被换成 PLAN_TEAMMATE_AGENT——只保留 permissionMode plan, 去掉 readOnly 与工具黑名单。原因是 plan teammate 的使命是「先出计划、批准后执行」, 需要保留 ExitPlanMode (重绑为向团队提交计划) 与批准后的完整工具面; 而一次性 plan 子代理是纯只读调研, 从头到尾不该写。判定条件是角色名为 plan (自定义同名角色同样触发), teammatePermissionMode 相应固定为 plan。检查器随后打三个标记: teammate=true、readOnly 取角色声明、requiresLeaderPlanApproval 取团队配置。
 
-成员之间仍用**文件邮箱**通信 (见 7.5), 团队状态也持久化到磁盘的团队文件: 这既让 `SendMessage` 能按名字解析投递 (成员名注册进一个进程级全局名字注册表), 也让团队在崩溃恢复后仍有据可查。需要 worktree 隔离的成员会拿到自己的 worktree 目录作为 `memberCwd` (worktree 路径记进成员元数据, 变更不自动合并, 由 leader 或用户手动合), 但仍在进程内运行。派生失败的每条路径都会 removeMember 加 dispose 掉刚建的注册表, 不留半截成员。
+成员之间仍用**文件邮箱**通信 (见 7.5), 团队状态也持久化到磁盘的团队文件: 这既让 `SendMessage` 能在团队内解析收件人 (先按成员名、再按 agentId 匹配; teammate 的 SendMessage 绑定自己的团队名, 只能向本团队发送), 也让团队在崩溃恢复后仍有据可查。需要 worktree 隔离的成员会拿到自己的 worktree 目录作为 `memberCwd` (worktree 路径记进成员元数据, 变更不自动合并, 由 leader 或用户手动合), 但仍在进程内运行。派生失败的每条路径都会 removeMember 加 dispose 掉刚建的注册表, 不留半截成员。
 
 ### 7.5 文件邮箱与共享任务板
 
@@ -271,7 +272,7 @@ teammate **一律进程内运行**: `Team.spawnTeammate` 接收一个 `runAgent`
 
 邮箱消费有一个易错点被显式处理: 等待「某一条特定消息」时 (空闲轮询间隔 500ms), 期间到达的其他消息不能丢, 而是重新入队为未读。leader 排空邮箱时把未读格式化成带团队标签的通知文本; 成员状态与任务的回收发生在 teammate 自己的收尾 finally 里 (未完成任务重置为待办并清空负责人、注销名字注册表), 随后才发出终态 idle 通知。终态成员记录按 MAX_RETAINED_TERMINATED_MEMBERS=200 保留供查询。
 
-共享任务板是每团队一个 JSON 文件, 任务是包含 id、主题、状态、负责人、依赖、优先级、元数据的统一模型。所有变更都在跨进程锁内 reload、克隆、操作、校验依赖、保存, 任一步失败整体回滚且不落盘。teammate 的认领在同一把锁内完成: 已有他人负责人直接拒绝, teammate 不能把任务指派给别人 (只有 leader 能), 置为进行中会自动把负责人写成自己, 已完成或已取消的任务不能直接重开, 未解决依赖被拒 (只有完成算解决), 且一个成员不能同时有两个进行中任务。成员退出或失联时, 其未完成任务被批量重置为待办并清空负责人 (releaseOwner), 保证任务不悬空。
+共享任务板是每团队一个 JSON 文件, 任务是包含 id、主题、状态、负责人、依赖、优先级、元数据的统一模型。所有变更都在跨进程锁内 reload、克隆、操作、校验依赖、保存, 任一步失败整体回滚且不落盘。teammate 的认领在同一把锁内完成: 已有他人负责人直接拒绝, teammate 不能把任务指派给别人 (只有 leader 能), 置为进行中会自动把负责人写成自己, 已完成或已取消的任务不能直接重开, 未解决依赖被拒 (只有完成算解决), 且一个成员不能同时有两个进行中任务。成员退出或失联时, 其未完成任务被批量重置为待办并清空负责人 (releaseOwner), 保证任务不悬空。板的工具入口是 TeamTodoWriteTool: teammate 的实例绑定本团队名, 传其它团队名被拒 (`Teammates can only access their own team.`); leader 的实例经 team_name 参数选择目标团队的板, 多团队并存而未传时报歧义错误; leader 侧的板订阅在多团队时聚合全部团队板 (任务 id 做团队命名空间、subject 加团队名前缀)。
 
 ### 7.6 plan-mode teammate 的审批流
 
@@ -283,7 +284,7 @@ teammate **一律进程内运行**: `Team.spawnTeammate` 接收一个 `runAgent`
 
 ### 8.1 按上下文成本切工具的 coordinator
 
-Coordinator 模式把 leader 的工具面收窄为纯编排白名单: Workflow、Goal、Agent、SendMessage、TaskStop、SyntheticOutput、TeamDelete、TodoWrite。分界线不是读与写, 而是「会不会往 leader 上下文灌大量内容」。leader 的上下文要装任务分解、成员状态与消息历史; 一旦它能读文件或跑命令, 模型就会自己去查代码, 几千行涌进来后编排空间就没了。因此文件读取、搜索与命令类被排除, 要看代码就委派 teammate 带回结论; MCP 也被排除, 抓网页与查数据库同样会瞬间灌满上下文。TeamCreate 有意不在白名单里: teammate 派生路径会自动建团队 (见 7.4), leader 不需要显式建团的权力。
+Coordinator 模式把 leader 的工具面收窄为纯编排白名单: Workflow、Goal、Agent、SendMessage、TaskStop、SyntheticOutput、TeamCreate、TeamList、TeamDelete、TodoWrite。分界线不是读与写, 而是「会不会往 leader 上下文灌大量内容」。leader 的上下文要装任务分解、成员状态与消息历史; 一旦它能读文件或跑命令, 模型就会自己去查代码, 几千行涌进来后编排空间就没了。因此文件读取、搜索与命令类被排除, 要看代码就委派 teammate 带回结论; MCP 也被排除, 抓网页与查数据库同样会瞬间灌满上下文。团队管理工具都在白名单内: 多个团队可以并存, TeamCreate 新增团队而不影响既有团队, TeamList 负责枚举; 多团队时 Agent、SendMessage、TodoWrite、TaskStop、TeamDelete 都要经 team_name 消歧。
 
 启用与否只看配置, 不看当前是否有团队: 中途切换会在历史里留下无法撤回的旧编排指令, 模型的约束认知会混乱。指引经 reminder 注入 (完整版在第 1、6、11… 轮, 其余轮给精简版), 同样是为了不动系统提示词的缓存前缀。
 

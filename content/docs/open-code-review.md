@@ -2,6 +2,7 @@
 title: "OpenCodeReview: 确定性工程与 Agent 混合的 AI 代码评审 CLI"
 description: "拆解 OpenCodeReview 的评审流水线: 确定性工程与 LLM Agent 的分工、Provider 抽象与端点解析、规则体系与 allowlist、评论定位的三级回退、token 预算与 grace round、GitHub Action/npm/IDE/Agent 插件分发, 以及成本与可靠性的取舍"
 local_path: "$HOME/Downloads/open-code-review"
+local_commit: "375f64cd6f67a48a135da83cfcf59c52669a09cb"
 ---
 
 OpenCodeReview (命令名 ocr) 是一个用 Go 编写的 AI 代码评审命令行工具: 它读取本地 git diff 或整份文件, 调用大模型找出代码问题, 把评论精确定位到行, 并以 text、json 或 sarif 输出, 供人阅读或供宿主 Agent 消费。本文讲它的评审流水线是怎么搭起来的——哪些环节由确定性工程代码保证, 哪些交给 LLM Agent 决策, 两者如何拼接, 以及分发到 CI、npm、IDE 与各类 coding agent 的形态。适合需要在研发流程里落地自动化代码评审、或对 agent 工程化(把不确定的模型能力装进确定的流程)感兴趣的后端与工具链开发者阅读。

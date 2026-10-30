@@ -1,5 +1,8 @@
 ---
 title: "Telemetry"
+description: "遥测子系统: OpenTelemetry/Langfuse/Sentry 三后端的启用条件与装配、agent/LLM/tool 三层观测点与指标、隐私洗消规则, 以及生命周期与环境变量参考"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 遥测回答的问题: 每个 agent 会话消耗了多少 token? 哪些工具调用最慢? 首 token 延迟是多少? 哪些请求失败了、为什么失败?

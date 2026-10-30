@@ -1,5 +1,8 @@
 ---
 title: "What is an Agent"
+description: "agent 的概念拆解与 Yukino 的形态: provider 配置与三协议客户端、核心循环、五层架构、六种运行模式、内置工具分组与 agent 驱动开发的一等公民制品"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 agent 是 LLM 在循环中根据环境反馈自主使用工具的系统。拆开这句话:

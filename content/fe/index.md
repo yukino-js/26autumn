@@ -21,7 +21,7 @@ description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布
 | [next](next)                           | Next.js 16 App Router: 组件边界与数据获取、缓存与重验证模型、流式渲染、路由与 Metadata、Server Actions、静态导出与 Next 16 基线要点                      |
 | [vite](vite)                           | Vite 8 与现代构建: dev server、依赖预构建、HMR 原理、Rolldown/Oxc/Lightning CSS 工具链、生产构建与代码分割、插件体系, 以及与 Webpack 的原理对比          |
 | [tanstack](tanstack)                   | TanStack Query v5: 缓存模型、queryKey 设计、失效与乐观更新、分页与预取水合, 以及与客户端状态、表单、虚拟列表的职责边界                                   |
-| [fetchpriority-swr](fetchpriority-swr) | Priority Hints 与 fetchpriority: 属性语义与取值、浏览器内置资源优先级模型、预加载与首屏优化中的正确用法、可度量收益与风险, 以及手写 SWR 数据请求方案     |
+| [fetchpriority-swr](fetchpriority-swr) | Priority Hints 与 fetchpriority: 属性语义与取值、浏览器资源优先级模型、预加载与首屏优化用法与度量; SWR 的两层含义: RFC 5861 缓存指令与前端数据获取模式   |
 
 ## 第三部分: Yukino 前端与 Agent 系列
 

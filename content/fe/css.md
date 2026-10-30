@@ -124,7 +124,7 @@ margin 合并指垂直方向上两个 margin 相遇时不叠加而合并为较�
 
 `position` 的取值与行为: `static` 是默认值, 处于正常流且 `top`/`left`/`z-index` 无效; `relative` 仍占位, 相对自身原位置偏移, 常用于给绝对定位后代提供定位基准, 同时提升层叠优先级; `absolute` 脱离文档流, 相对最近的已定位祖先的 padding box (其包含块) 定位, 若没有则以初始包含块定位 —— 初始包含块尺寸与视口相同但锚定在文档顶部, 因此会随页面滚动而不是固定在可视区; `fixed` 脱离文档流, 相对视口定位, 滚动不移动; `sticky` 是 relative 与 fixed 的混合体。
 
-`sticky` 在阈值内表现为 relative 随正常流滚动, 一旦滚到设定阈值就粘住, 直到父容器滚出视口; 它始终被限制在最近的滚动祖先与父容器范围内。常见失效原因: 某个祖先设置了 `overflow: hidden`/`scroll`/`auto` 且它并不是实际滚动容器, 改变了粘性参照的滚动盒; 父元素高度与子元素一样高 (如父级 `height: 100%` 或 flex 拉伸) 没有可粘滞的空间; 没有设置任何阈值属性。`fixed` 最常见的坑是包含块被改变: 当祖先存在 `transform`、`filter`、`perspective`、`backdrop-filter`、`will-change` 相关值、`contain: paint` 或非 normal 的 `container-type` 时, 该祖先成为 fixed/absolute 后代的包含块, fixed 不再相对视口, 弹窗与悬浮按钮"跑飞"多半是这个原因。
+`sticky` 在阈值内表现为 relative 随正常流滚动, 一旦滚到设定阈值就粘住, 直到父容器滚出视口; 它始终被限制在最近的滚动祖先与父容器范围内。常见失效原因: 某个祖先设置了 `overflow: hidden`/`scroll`/`auto` 且它并不是实际滚动容器, 改变了粘性参照的滚动盒; 父元素高度与子元素一样高 (如父级 `height: 100%` 或 flex 拉伸) 没有可粘滞的空间; 没有设置任何阈值属性。`fixed` 最常见的坑是包含块被改变: 当祖先存在 `transform`、`filter`、`perspective`、`backdrop-filter`、`will-change` 相关值、`contain: layout`/`paint` 或非 normal 的 `container-type` 时, 该祖先成为 fixed/absolute 后代的包含块, fixed 不再相对视口, 弹窗与悬浮按钮"跑飞"多半是这个原因。
 
 层叠上下文是三维渲染分组的抽象: 同一上下文内按规则决定谁盖谁; 不同上下文之间只比较两个上下文根元素的层级, 内部元素无法"越狱"。常见创建条件包括: 根元素; `position` 为 absolute/relative 且 `z-index` 非 auto; `position: fixed`/`sticky`; flex/grid 容器的子项且 `z-index` 非 auto; `opacity` 小于 1; `transform`/`filter`/`perspective`/`backdrop-filter` 非 none; `mix-blend-mode` 非 normal; `isolation: isolate`; `will-change` 指向上述属性; `contain: layout`/`paint`/`content`/`strict`。同一上下文内的绘制顺序从下到上为: 根元素的背景与边框, 负 `z-index` 的定位元素, 普通流中的块级盒子, 浮动元素, 普通流中的行内盒子, `z-index` 为 0/auto 的定位元素, 正 `z-index` 的定位元素。
 
@@ -134,7 +134,7 @@ margin 合并指垂直方向上两个 margin 相遇时不叠加而合并为较�
 
 ### Flexbox: 一维弹性布局
 
-flex 容器一次只处理一个方向 (主轴) 上的排列。容器属性包括: `flex-direction` (主轴方向, 默认 `row`)、`flex-wrap` (默认 `nowrap`)、`justify-content` (主轴对齐)、`align-items` (单行交叉轴对齐, 默认 `stretch`)、`align-content` (多行在交叉轴的分布)、`gap`。现行规范让 `align-content` 同样作用于单行 flex 容器 (单行时 `center` 整体居中, `space-between` 靠起点, 默认 `stretch` 把单行拉伸占满), 主流引擎已随块布局 `align-content` 的统一实现这一行为。
+flex 容器一次只处理一个方向 (主轴) 上的排列。容器属性包括: `flex-direction` (主轴方向, 默认 `row`)、`flex-wrap` (默认 `nowrap`)、`justify-content` (主轴对齐)、`align-items` (单行交叉轴对齐, 默认 `stretch`)、`align-content` (多行在交叉轴的分布)、`gap`。`align-content` 只对多行容器 (`flex-wrap: wrap`) 生效, 对单行容器没有效果, 单行时交叉轴对齐完全由 `align-items` 决定。
 
 项目属性需要理解其计算过程: `flex-grow` 是放大比例 (默认 0), `flex-shrink` 是缩小比例 (默认 1), `flex-basis` 是主轴上的初始基准尺寸 (默认 `auto`, 取 `width`/`height`), `flex` 缩写默认值是 `0 1 auto`, 而 `flex: 1` 等价于 `flex: 1 1 0%`, 因此常用于均分剩余空间。收缩时实际收缩量按 `flex-shrink × flex-basis` 加权分配, 基准大的缩得多。`align-self` 覆盖单个项目的交叉轴对齐, `order` 改变视觉顺序但不改变 DOM 顺序 (规范明确它不影响 Tab 导航与读屏遍历顺序, 视觉序与键盘序错位本身就是无障碍风险, 不应用于逻辑重排)。
 

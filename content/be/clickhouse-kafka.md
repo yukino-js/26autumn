@@ -1,9 +1,9 @@
 ---
 title: "ClickHouse 与 Kafka 技术手册"
-description: "ClickHouse 列式存储、MergeTree 家族、分布式架构与查询优化, Kafka 存储模型、消息语义、高可用与调优"
+description: "ClickHouse 列式存储、MergeTree 家族、分布式架构与查询优化, Kafka 存储模型、消息语义、高可用与调优, 以及两者的联合实时数仓架构与综合方案设计, 行为以 ClickHouse 25.x 与 Kafka 4.x 为基准"
 ---
 
-这份文档面向使用 ClickHouse 做分析存储、使用 Kafka 做消息与流处理管道的后端工程师, 按存储引擎、查询优化、Kafka 架构与存储、Kafka 高级特性、联合架构、综合方案设计的顺序展开. ClickHouse 部分从列式存储的物理布局出发, 依次说明 MergeTree 的存储结构与合并流程、稀疏索引、MergeTree 家族引擎的合并策略、分区与分片、副本同步、向量化执行、物化视图与 TTL, 再进入 ORDER BY 键设计、JOIN 实现、Mutation 代价与 OLAP 性能对比; Kafka 部分从整体架构与消息存储出发, 覆盖 ISR 与 Leader 选举、Producer 发送流程与幂等/事务、Consumer Group Rebalance、端到端不丢失与 exactly-once, 并延伸到消息顺序性、零拷贝、KRaft 元数据管理、Offset 管理与日志清理; 最后一部分讨论 ClickHouse 与 Kafka 联合的实时数仓分层、Kafka Engine 消费、写入与分布式查询优化, 以及实时用户行为分析系统、消费积压排查、集群扩容三类综合方案. 缓存与分布式锁主题见 [Redis 技术手册](redis), 关系型存储的对照见 [MySQL 与 InnoDB 技术手册](mysql).
+这份文档面向使用 ClickHouse 做分析存储、使用 Kafka 做消息与流处理管道的后端工程师, 按存储引擎、查询优化、Kafka 架构与存储、Kafka 高级特性、联合架构、综合方案设计的顺序展开. ClickHouse 部分从列式存储的物理布局出发, 依次说明 MergeTree 的存储结构与合并流程、稀疏索引、MergeTree 家族引擎的合并策略、分区与分片、副本同步、向量化执行、物化视图与 TTL, 再进入 ORDER BY 键设计、JOIN 实现、Mutation 代价与 OLAP 性能对比; Kafka 部分从整体架构与消息存储出发, 覆盖 ISR 与 Leader 选举、Producer 发送流程与幂等/事务、Consumer Group Rebalance、端到端不丢失与 exactly-once, 并延伸到消息顺序性、零拷贝、KRaft 元数据管理、Offset 管理与日志清理; 最后一部分讨论 ClickHouse 与 Kafka 联合的实时数仓分层、Kafka Engine 消费、写入与分布式查询优化, 以及实时用户行为分析系统、消费积压排查、集群扩容三类综合方案. ClickHouse 行为以 25.x 系列为准, Kafka 行为以 4.x 系列为准. 缓存与分布式锁主题见 [Redis 技术手册](./redis), 关系型存储的对照见 [MySQL 与 InnoDB 技术手册](./mysql).
 
 ## 一、ClickHouse 存储引擎
 

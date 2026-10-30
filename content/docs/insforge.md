@@ -2,6 +2,7 @@
 title: "InsForge: 面向 Coding Agent 的开源 BaaS 平台"
 description: "拆解 InsForge 作为 agent-native 后端平台的产品能力、Express 控制面与 PostgREST 数据面架构、鉴权与安全模型、存储与 S3 协议网关、Deno 边缘函数沙箱与定时任务, 以及文档即 API、MCP 接入通道与 monorepo 工程化。"
 local_path: "$HOME/Downloads/insforge"
+local_commit: "21ce31dd8fb3b75f2c3237eddff947431cfb4028"
 ---
 
 InsForge 是一个开源的 BaaS (Backend as a Service) 后端平台, 它把数据库、鉴权、存储、边缘计算、站点部署与 AI 网关打包成一套可自托管的服务, 并按“终端前坐着一个 coding agent”这一前提设计接口。本文面向需要为 Agent 提供后端基座的工程师, 拆解它的进程架构、控制面与数据面的分工、鉴权与安全默认值, 以及面向 Agent 的文档即 API 与 MCP 接入通道。阅读本文可以先建立整体能力图, 再按鉴权、数据库、存储、边缘函数、MCP 逐域深入。
@@ -237,7 +238,7 @@ Secrets 不以明文进数据库。`server.ts` 从 `system.secrets` 取密文, �
 MCP Server 本体位于独立仓库, 不在本代码库内; 本文只描述本仓库里可验证的接入面。Agent 通过 MCP 连接 InsForge 有两条路径:
 
 - 远程 MCP: 端点 `https://mcp.insforge.dev/mcp`, 可用 `npx add-mcp` 一键接入。
-- 本地进程: dashboard 的连接向导为 14 种 Agent 客户端预置了安装命令。生成的命令形如 `npx @insforge/install --client <id> --env API_KEY=<key> --env API_BASE_URL=<url>`; 直接写 MCP JSON 时, 服务器配置是 `npx -y @insforge/mcp@latest` (Windows 下用 `cmd /c npx` 包一层), 环境变量注入 `API_KEY` 与 `API_BASE_URL`。
+- 本地进程: dashboard 的连接向导预置了 14 个客户端条目 (13 个 Agent 客户端加手填 JSON 的 manual 项)。生成的命令形如 `npx @insforge/install --client <id> --env API_KEY=<key> --env API_BASE_URL=<url>`; 直接写 MCP JSON 时, 服务器配置是 `npx -y @insforge/mcp@latest` (Windows 下用 `cmd /c npx` 包一层), 环境变量注入 `API_KEY` 与 `API_BASE_URL`。
 
 被预置的客户端包括 cursor、claude-code、trae、cline、windsurf、roo-code、qoder、github-copilot、google-antigravity、codex、kiro、opencode、openclaw, 以及手填 JSON 的 manual 项。云环境还提供 CLI 增强通道 (`npx @insforge/cli link --project-id`) 与配套 Skills。
 

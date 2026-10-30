@@ -1,5 +1,8 @@
 ---
 title: "ACP"
+description: "ACP (Agent Client Protocol) 编辑器集成: `--acp` (stdio) 与 `--acp-ws` (WebSocket, 默认 127.0.0.1:18889) 模式下 Yukino 把自身实现为 ACP agent, 供 Zed 等兼容编辑器以 JSON-RPC 驱动初始化、会话、提示词与权限确认"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 ACP (Agent Client Protocol) 是编辑器与外部 agent 之间的集成协议: 编辑器作为 ACP 客户端拉起一个 agent 进程, 通过 JSON-RPC 驱动它完成初始化、会话、提示词、权限确认等交互

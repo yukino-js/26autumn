@@ -255,7 +255,7 @@ Redis 是内存 KV 数据库, 是离数据库最近的一层缓存:
 
 RPC (Remote Procedure Call, 远程过程调用) 是一种进程间通信方式: 调用方像调用本地函数一样调用另一台机器上服务的方法, 底层的网络传输、序列化、服务寻址对业务代码透明。完整流程:
 
-1. 服务提供方用 IDL (Interface Description Language, 接口描述语言, 例如 Thrift、Protobuf) 定义服务接口: 方法名、入参、出参的数据结构。
+1. 服务提供方用 IDL (Interface Definition Language, 接口定义语言, 例如 Thrift、Protobuf) 定义服务接口: 方法名、入参、出参的数据结构。
 2. 代码生成工具根据 IDL 生成服务端骨架 (skeleton) 与客户端存根 (stub)。
 3. 调用方调用客户端存根的方法, 存根把入参按协议序列化成二进制字节流。
 4. 字节流通过网络传输 (通常是长连接加连接多路复用) 发送到服务端。

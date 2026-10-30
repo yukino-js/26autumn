@@ -2,6 +2,7 @@
 title: "yukino_orm 技术笔记"
 description: "yukino_orm 是构建在 MongoDB 官方驱动之上的 Knex 风格链式 Go ORM: 引擎与连接管理、链式查询构建、聚合分组、流式查询、事务与自增序列"
 local_path: "$HOME/github/yukino.go/libs/yukino_orm"
+local_commit: "c71a35a07a47607d136b1d97c294bc64b785bf24"
 ---
 
 yukino_orm 是一个面向 MongoDB 的 Go ORM, 设计主旨是把 Knex.js 的链式 (chainable) 查询体验带到 Go: 用 `Where` 系列方法累积条件, 用 `OrderBy`/`Limit`/`Offset`/`Select` 累积排序、分页与投影, 只在调用终结方法时才真正访问数据库。它在官方驱动 `go.mongodb.org/mongo-driver/v2` 之上做薄封装, 因此保留驱动的全部能力, 同时补上集合名反射推导、`$set` 自动包装、聚合与分组、流式游标、事务会话绑定与自增序列等常用能力。本文面向已经熟悉 MongoDB 文档模型、希望在 Go 中用一套统一的链式 API 组织查询的工程师, 说明其抽象模型、查询构建规则、执行语义与适用边界。

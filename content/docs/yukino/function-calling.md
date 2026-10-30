@@ -1,5 +1,8 @@
 ---
 title: "工具调用"
+description: "工具调用 (function calling): LLM 负责决策、CLI 负责执行 — 覆盖协议本身、Tool 接口与 ToolRegistry、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 工具调用 (function calling) 是 Agent 的核心机制: LLM 负责决策, 请求调用工具; CLI 负责执行工具调用, 把结果回传给 LLM。本页覆盖协议本身、工具接口与注册表、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线。
@@ -287,8 +290,8 @@ src/tools/computer-use.ts, 操作本机 GUI: 截图、点击、输入、滚动�
 宿主在基础注册之上的差异:
 
 - 交互式 UI (src/ui/app.tsx): + LoadSkill、InstallSkill、AskUserQuestion、Agent、Workflow、SyntheticOutput、TeamCreate、SendMessage、TeamList、TeamDelete、TaskStop; `attachBackgroundTaskManager` 把后台任务注册表共享给 Bash/PowerShell/TaskOutput, 使 run_in_background、Ctrl+B 和后台 agent 走同一个通知管道
-- remote (src/remote/server.ts): 与 UI 相同的装配, 但没有 InstallSkill 和 TeamList; LoadSkill 额外带 fork host (fork 模式 skill 在隔离子代理中执行); AskUserQuestion 仅在提供 askUser 处理器时注册; 浏览器端的 Ctrl+B 等价能力通过同样的 backgroundAllForegroundTasks 实现
-- print 模式 (src/print-mode.ts): + Agent、Workflow、SyntheticOutput、TeamCreate、SendMessage、TeamDelete、TaskStop (无 skills、无 AskUserQuestion); 权限检查器固定 bypassPermissions, 没有审批通道 (见 [print-mode](./print-mode))
+- remote (src/remote/server.ts): 与 UI 相同的装配, 但没有 InstallSkill; LoadSkill 额外带 fork host (fork 模式 skill 在隔离子代理中执行); AskUserQuestion 仅在提供 askUser 处理器时注册; 浏览器端的 Ctrl+B 等价能力通过同样的 backgroundAllForegroundTasks 实现
+- print 模式 (src/print-mode.ts): + Agent、Workflow、SyntheticOutput、TeamCreate、SendMessage、TeamList、TeamDelete、TaskStop (无 skills、无 AskUserQuestion); 权限检查器固定 bypassPermissions, 没有审批通道 (见 [print-mode](./print-mode))
 - teammate / subagent: `filterToolsForAgent` / `cloneRegistryForTeammate` (src/subagent/tool-filter.ts) 分层过滤 —— MCP 工具豁免全局层, 但仍受定义级黑白名单约束; 全局禁用 SUBAGENT_DISALLOWED_TOOLS (Workflow、ComputerUse、AskUserQuestion、EnterPlanMode、ExitPlanMode、Goal、Agent、TeamCreate、TeamDelete、SendMessage —— 主线程独占设备或防递归); 后台 Agent 再过一道 ASYNC_AGENT_ALLOWED_TOOLS 白名单; 最后叠加定义级 disallowedTools 黑名单和 tools 白名单 (`"*"` 关闭白名单层); TodoWrite/ToolSearch/McpCall/LoadSkill/TaskStop 换成委派作用域的实例。详见 [subagent](./subagent)
 
 ## 流式 tool_use 解析: 拼接 partial_json 碎片

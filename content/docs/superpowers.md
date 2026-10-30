@@ -2,6 +2,7 @@
 title: "Superpowers: 面向编码 Agent 的软件方法论与技能注入体系"
 description: "拆解 Superpowers 的设计选择与实现: 为什么把开发流程写成技能并强制注入、using-superpowers 的 bootstrap 链路、15 个技能的分类与触发方式、多 harness 适配架构、零依赖 visual companion 服务器、证据化诊断流程、测试与质量体系及其适用边界"
 local_path: "$HOME/Downloads/superpowers"
+local_commit: "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b"
 ---
 
 Superpowers 是一套面向编码 Agent 的软件开发方法论, 其本体不是运行时或 CLI, 而是一批可组合的 markdown 进程文档 (技能) 加上少量粘合代码。它把 "Agent 应该怎么干活" 写成技能, 再通过每个宿主自己的会话启动事件强制注入模型上下文, 让方法论在用户不做任何特殊操作的前提下自动生效。本文要回答的是这套东西由什么构成、为什么可以这样构成、各条机制具体怎么实现, 以及它在什么场景下成立、在什么条件下不成立。读者最好已经了解至少一个编码 Agent 宿主 (Claude Code、Codex、Cursor 等) 的工作方式, 并对 TDD、代码评审这类工程实践有基本认识。

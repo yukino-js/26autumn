@@ -267,7 +267,7 @@ M 必须绑定一个 P 才能执行 G. 当某个 G 触发阻塞式系统调用�
 
 工作窃取 (work stealing) 保证负载均衡: P 的本地队列空时, 先从全局队列取一批 G (每 61 次调度也会周期性检查全局队列, 防止全局队列饥饿), 仍空则从其它 P 的本地队列偷取一半任务. 网络 I/O 则由 netpoller (epoll/kqueue) 接管: goroutine 在网络等待时被挂起而非阻塞 M, 这是 Go 并发网络程序高效的根本原因.
 
-实践含义: 不要无节制创建 goroutine, 用带缓冲的 channel 或信号量控制并发度; 避免在热路径做未走 netpoller 的阻塞系统调用 (如某些文件 I/O), 它会触发 M/P 解绑与线程创建; Go 1.25 起运行时直接感知 Linux cgroup CPU 配额: `GOMAXPROCS` 默认取逻辑 CPU 数、进程 CPU 亲和掩码与 cgroup 配额的最小值, 并周期性跟随配额变化, 不再需要 `automaxprocs` 之类的第三方修正; 可用 `GODEBUG=containermaxprocs=0` 关闭该行为 (语言版本 1.24 及以下默认保持旧行为).
+实践含义: 不要无节制创建 goroutine, 用带缓冲的 channel 或信号量控制并发度; 避免在热路径做未走 netpoller 的阻塞系统调用 (如某些文件 I/O), 它会触发 M/P 解绑与线程创建; Go 1.25 起运行时直接感知 Linux cgroup CPU 配额: `GOMAXPROCS` 默认取可用逻辑 CPU 数 (受进程 CPU 亲和掩码影响) 与 cgroup CPU 带宽限制的较小值, 不再需要 `automaxprocs` 之类的第三方修正, `GODEBUG=containermaxprocs=0` 可关闭该行为; 运行时还会周期性跟随可用 CPU 数与配额的变化更新 `GOMAXPROCS` (所有平台生效, `GODEBUG=updatemaxprocs=0` 关闭). 手动设置 `GOMAXPROCS` 环境变量或调用 `runtime.GOMAXPROCS` 会禁用这两项行为; 语言版本 1.24 及以下的模块默认保持旧行为.
 
 ### 3.2 channel
 
@@ -286,7 +286,7 @@ channel 适合传递数据所有权与编排 goroutine 生命周期; 单纯保�
 
 ### 3.3 sync 包与原子操作
 
-`sync.Mutex` 与 `sync.RWMutex` 保护临界区; 读写锁只在读远多于写且临界区较长时才划算, 否则其额外开销不如普通互斥锁. `sync.WaitGroup` 等待一组 goroutine 完成, 注意 `Add` 要在启动 goroutine 之前调用; Go 1.25 起可直接用 `WaitGroup.Go(f)`: 隐含 `Add(1)`、启动 goroutine 执行 f、f 返回时自动 `Done` (f 不允许 panic), 杜绝漏写 `Add`/`Done`. `sync.Once` 保证初始化只执行一次, 是惰性单例的标准写法.
+`sync.Mutex` 与 `sync.RWMutex` 保护临界区; 读写锁只在读远多于写且临界区较长时才划算, 否则其额外开销不如普通互斥锁. `sync.WaitGroup` 等待一组 goroutine 完成, 注意 `Add` 要在启动 goroutine 之前调用; Go 1.25 起可直接用 `WaitGroup.Go(f)`: 隐含 `Add(1)`、启动 goroutine 执行 f、f 返回时自动 `Done`, 杜绝漏写 `Add`/`Done`. `sync.Once` 保证初始化只执行一次, 是惰性单例的标准写法.
 
 `sync.Pool` 缓存可复用的临时对象以减轻 GC 压力, 但它不是连接池: 池内对象可能在任意一次 GC 时被清空, 因此只适合"丢了也无所谓、重建成本低"的对象 (如缓冲区). `sync.Map` 针对"读多写少且键集合基本稳定"的场景优化, 通用并发 map 仍应使用互斥锁保护.
 
@@ -325,7 +325,7 @@ Go 的分配器源自 TCMalloc 思路, 分三级: mcache (每个 P 一份, 无�
 
 ### 4.3 GC
 
-Go 使用并发的三色标记-清除 (tri-color mark-sweep) GC, 目标是把停顿控制在亚毫秒级. 流程: 短暂 STW 开启写屏障并标记根对象 → 并发标记 (与用户代码同时运行, 写屏障维护引用一致性) → 短暂 STW 完成标记终止 → 并发清扫. 标记是并发的, 因此 GC 会占用一部分 CPU.
+Go 使用并发的三色标记-清除 (tri-color mark-sweep) GC, 目标是把停顿控制在亚毫秒级. 流程: 短暂 STW 开启写屏障并标记根对象 → 并发标记 (与用户代码同时运行, 写屏障维护引用一致性) → 短暂 STW 完成标记终止 → 并发清扫. 标记是并发的, 因此 GC 会占用一部分 CPU. Go 1.26 起默认启用 Green Tea GC: 仍是并发三色标记-清除, 但改进了标记的内存局部性与 CPU 可扩展性, 并在较新的 amd64 平台上用向量指令扫描小对象, 重度使用 GC 的程序开销可降低约 10%~40%; 构建时 `GOEXPERIMENT=nogreenteagc` 可回退旧实现, 该开关预计在 Go 1.27 移除.
 
 `GOGC` 控制触发频率: 默认 100, 表示当堆增长到上次 GC 后存活堆大小的 2 倍时触发. 调大 `GOGC` 减少 GC 次数、降低 CPU 占用但增加内存; 调小则相反. Go 1.19 起新增 `GOMEMLIMIT` (软内存上限), 让 GC 在接近内存上限时更积极地回收, 是容器环境下比 `GOGC` 更直接的内存控制手段, 两者可配合使用. 注意 `GOMEMLIMIT` 不会自动读取 cgroup 内存限制: 默认值为不限制, 容器环境需要显式设置 (实践上取容器内存限额的 80%~90%), 这与 Go 1.25 起自动感知 CPU 配额的 `GOMAXPROCS` 不同.
 

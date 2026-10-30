@@ -1,10 +1,11 @@
 ---
 title: "MCP 和 Skill"
+description: "MCP 和 Skill: 物流/售后两个演示 MCP 服务器 (Hono + 官方 SDK, 确定性 Mock)、主服务 mcp-client 接入与 registry 合并注册、formatResult 状态码翻译、执行引擎、写前人工确认与审计, 以及测试与验收"
+local_path: "$HOME/github/yukino-ecomm-agent"
+local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 ---
 
-# MCP 和 Skill
-
-MCP (Model Context Protocol) 把工具放进独立进程, 通过标准协议暴露端点; agent 主服务用 client 连接, 动态拿到工具清单并调用。本项目自带两个演示第三方对接的 MCP 服务器 (物流、售后), 主服务侧用统一的工具注册表 (registry) 和执行引擎 (engine) 把它们和内置工具合并成同一份工具列表, 对模型来说两者没有区别。
+MCP (Model Context Protocol) 把工具放进独立进程, 通过标准协议暴露端点; agent 主服务用 client 连接, 动态拿到工具清单并调用. 本项目自带两个演示第三方对接的 MCP 服务器 (物流、售后), 主服务侧用统一的工具注册表 (registry) 和执行引擎 (engine) 把它们和内置工具合并成同一份工具列表, 对模型来说两者没有区别.
 
 ## 两个 MCP 服务器
 
@@ -36,7 +37,7 @@ MCP (Model Context Protocol) 把工具放进独立进程, 通过标准协议暴�
 - 启动时 detached spawn `tsx src/mcp-servers/*.ts`, stdout/stderr 写 `log/<name>.log`, pid 写 `data/<name>.pid`; 就绪检测轮询 `http://127.0.0.1:8101/` (售后同理), 超时 5 秒, 超时未应答不阻塞启动
 - `mcp-down` 读 pid 文件发 SIGTERM, 然后删除 pid 文件
 
-主服务侧的连接地址在 `server/src/config.ts`: `MCP_LOGISTICS_URL` (默认 `http://127.0.0.1:8101/mcp`)、`MCP_AFTERSALES_URL` (默认 `http://127.0.0.1:8102/mcp`)。
+主服务侧的连接地址在 `server/src/config.ts`: `MCP_LOGISTICS_URL` (默认 `http://127.0.0.1:8101/mcp`)、`MCP_AFTERSALES_URL` (默认 `http://127.0.0.1:8102/mcp`).
 
 ## 主服务接入: mcp-client.ts
 
@@ -68,7 +69,7 @@ MCP (Model Context Protocol) 把工具放进独立进程, 通过标准协议暴�
 | `query_warranty`      | MCP aftersales     | 查订单保修状态和到期时间                                         |
 | `query_return_status` | MCP aftersales     | 查订单退货进度                                                   |
 
-`main_agent` 节点每步都调 `registry.getAllSpecs()`, 把每个 spec 映射成 function 定义 (`name` / `description` / `parameters: jsonSchema`) 后 `bindTools` 给 chat 模型 —— MCP 工具和内置工具在模型眼里完全同构。工具列表每步重新拉取, 增删 MCP 服务或工具不需要改 agent 代码; `AGENT_SYSTEM` 也向模型声明「工具列表可能动态变化 (物流轨迹、保修状态、退货进度由外部服务提供), 按工具描述的用途选择」。
+`main_agent` 节点每步都调 `registry.getAllSpecs()`, 把每个 spec 映射成 function 定义 (`name` / `description` / `parameters: jsonSchema`) 后 `bindTools` 给 chat 模型 —— MCP 工具和内置工具在模型眼里完全同构. 工具列表每步重新拉取, 增删 MCP 服务或工具不需要改 agent 代码; `AGENT_SYSTEM` 也向模型声明「工具列表可能动态变化 (物流轨迹、保修状态、退货进度由外部服务提供), 按工具描述的用途选择」.
 
 ### formatResult: 把机器状态码翻译成自然语言
 
@@ -80,7 +81,7 @@ MCP 服务返回的是内部状态码, 主服务侧 `FORMATTERS` 为每个 MCP �
 | `query_warranty`      | IN_WARRANTY -> "Under warranty"、EXPIRED -> "Warranty expired"                                                    | `policy_ref`   |
 | `query_return_status` | AUDITING -> "Under review"、RETURNING -> "Return in progress"、REFUNDED -> "Refunded"、NONE -> "No return record" | 无             |
 
-翻译器对意外情况有明确降级: 未知状态码原样透传; payload 类型不匹配 (safeParse 失败) 时整个结果原样透传, 绝不抛错。
+翻译器对意外情况有明确降级: 未知状态码原样透传; payload 类型不匹配 (safeParse 失败) 时整个结果原样透传, 绝不抛错.
 
 ## 执行引擎 engine.ts
 
@@ -145,7 +146,7 @@ register(
 | `errorMessage`                          | 错误消息 (截断 500 字符)                                            |
 | `retryCount` / `durationMs`             | 实际重试次数; 本次调用耗时                                          |
 
-审计写库失败只记 error 日志, 不影响工具执行本身; 同时用 pino 打一条结构化日志 `tool_run` (含 source、server、status、retry、duration_ms)。
+审计写库失败只记 error 日志, 不影响工具执行本身; 同时用 pino 打一条结构化日志 `tool_run` (含 source、server、status、retry、duration_ms).
 
 ### 写操作: 写前人工确认 + 不自动重试
 
@@ -158,7 +159,7 @@ register(
 2. **submit_refund 更保守**: 工具调用本身不落库, 只在归属校验通过后把退款表单交给用户 (`suggestedActions` 追加 `{ type: "refund_form", draft: { order_id, reason } }`); 真正的提交走 `POST /api/actions/create-refund` (reason 为五选一枚举: no_reason_7_day / quality_issue / wrong_item / no_longer_wanted / other), 由 API 创建 ticket_type 为 refund 的工单
 3. **写工具从不自动重试**: 引擎里 `permission === "write"` 的工具重试次数强制为 0, 避免「超时后重试」造成重复写入
 
-图的中断/恢复机制和 SSE 事件见 [workflow](./workflow), 各 action 端点的请求/响应契约见 [HTTP API 和管理台](./api)。
+图的中断/恢复机制和 SSE 事件见 [workflow](./workflow), 各 action 端点的请求/响应契约见 [HTTP API 和管理台](./api).
 
 ## Skill
 

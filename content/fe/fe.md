@@ -345,7 +345,7 @@ DOM 操作慢的原因有三层: DOM 是渲染引擎中的原生对象, JS 访�
 
 `MutationObserver` 监听 DOM 变化, 回调以微任务批量触发, 参数是 `MutationRecord` 数组, 配置项包括 `childList`、`attributes`、`characterData`、`subtree`、`attributeOldValue` 等。用途包括富文本编辑器状态同步、水印防篡改、第三方脚本 DOM 监控; 回调中再次修改 DOM 会触发新一轮记录, 需要防止死循环。
 
-`IntersectionObserver` 异步监听目标元素与视口 (或指定 root 祖先) 的交叉状态, 可配置 `root`、`rootMargin` (支持正负值, 用于提前或延后触发)、`threshold` (0 到 1 的数组, 交叉比例跨过阈值才回调)。典型用途是懒加载、无限滚动、曝光埋点、视频自动播放暂停; 相比 scroll 监听加 `getBoundingClientRect`, 它由浏览器在合成阶段计算, 不阻塞主线程。较新的规范还提供 `isVisible` 用于真实可见性 (被遮挡、透明) 判断。
+`IntersectionObserver` 异步监听目标元素与视口 (或指定 root 祖先) 的交叉状态, 可配置 `root`、`rootMargin` (支持正负值, 用于提前或延后触发)、`threshold` (0 到 1 的数组, 交叉比例跨过阈值才回调)。典型用途是懒加载、无限滚动、曝光埋点、视频自动播放暂停; 相比 scroll 监听加 `getBoundingClientRect`, 它由浏览器在每帧渲染更新的末尾统一计算交叉状态并异步派发回调, 不需要在滚动事件里读取几何属性触发强制同步布局。较新的规范还提供 `isVisible` 用于真实可见性 (被遮挡、透明) 判断。
 
 `ResizeObserver` 监听元素的尺寸变化, 回调提供 `contentBoxSize`、`borderBoxSize`、`devicePixelContentBoxSize`, 解决 window resize 无法感知元素级尺寸变化的问题, 用于响应式组件、图表自适应、文本溢出检测。回调在布局之后、绘制之前执行, 回调内修改尺寸可能触发迭代, 需要留意浏览器给出的循环警告。
 
@@ -394,9 +394,9 @@ hash 模式修改 `location.hash` 不产生请求, 触发 `hashchange` 事件; �
 
 加载阶段 `document.readyState` 经历 `loading` → `interactive` → `complete`, 对应的事件是: `readystatechange` 在状态切换时触发; `DOMContentLoaded` 在 HTML 解析完成且 defer/模块脚本执行完毕后触发, 不等待图片等子资源, 但会等待阻塞脚本的样式表; `window` 的 `load` 在所有资源 (图片、样式、iframe 等) 加载完成后触发。
 
-卸载与可见性阶段由 Page Lifecycle API 描述: `beforeunload` 可提示用户确认离开 (现代浏览器忽略自定义文案, 且要求用户与页面有过交互); `unload` 是历史遗留, 移动端不可靠且会阻止 bfcache, 规范上不建议使用; `pagehide` 是卸载统一入口, `event.persisted` 表示页面是否进入 bfcache; `pageshow` 每次显示时触发, `persisted` 为 true 表示从 bfcache 恢复, 需要在此恢复定时器、重连 WebSocket 等; `visibilitychange` 配合 `document.visibilityState` 用于暂停视频、降低轮询频率、上报数据; `freeze`/`resume` 在页面被冻结或恢复时触发, 用于释放非必要资源。
+卸载与可见性阶段由 Page Lifecycle API 描述: `beforeunload` 可提示用户确认离开 (现代浏览器忽略自定义文案, 且要求用户与页面有过交互); `unload` 是历史遗留, 移动端不可靠且会阻止 bfcache, 规范上不建议使用; `pagehide` 是卸载统一入口, `event.persisted` 表示页面是否进入 bfcache; `pageshow` 每次显示时触发, `persisted` 为 true 表示从 bfcache 恢复, 需要在此重校依赖真实时间的逻辑、重连 WebSocket 等; `visibilitychange` 配合 `document.visibilityState` 用于暂停视频、降低轮询频率、上报数据; `freeze`/`resume` 在页面被冻结或恢复时触发, 用于释放非必要资源。
 
-实践建议是把埋点与状态持久化放在 `visibilitychange` (hidden) 与 `pagehide`, 发送用 `navigator.sendBeacon` 或 `fetch` 的 `keepalive`, 而不是依赖 `beforeunload`/`unload`。使用 bfcache 时还要注意: 页面恢复后缓存的定时器不会继续运行, 需要重新建立。
+实践建议是把埋点与状态持久化放在 `visibilitychange` (hidden) 与 `pagehide`, 发送用 `navigator.sendBeacon` 或 `fetch` 的 `keepalive`, 而不是依赖 `beforeunload`/`unload`。使用 bfcache 时还要注意: 定时器在页面冻结期间被暂停、恢复后继续运行而非丢失, 但冻结期间不会触发回调; 倒计时、轮询、心跳这类依赖真实时间的逻辑会因此漂移, 应在 pageshow (persisted 为 true) 回调里按时间戳重校或重建。
 
 ### 跨窗口与跨标签通信
 

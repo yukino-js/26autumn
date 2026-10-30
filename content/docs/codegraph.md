@@ -2,6 +2,7 @@
 title: "CodeGraph: 面向 AI 编码 Agent 的本地代码知识图谱"
 description: "把代码库预计算成一张本地 SQLite 知识图谱, 通过 MCP 查询面给编码 Agent 提供精确的结构化上下文, 替代 grep 加逐文件读取的探索循环"
 local_path: "$HOME/Downloads/codegraph"
+local_commit: "69af19ace270f2e940444d514de6dde971df12df"
 ---
 
 本文讲解 CodeGraph 的设计与实现: 它如何把代码库的符号、调用边、依赖关系预计算成一张可查询的知识图谱, 再通过 MCP (Model Context Protocol) 工具面喂给编码 Agent。读完之后, 你应该能判断它在什么场景下能显著压缩 Agent 的探索成本, 以及它在静态分析的哪些边界上必须诚实退让。适合正在搭建内部 Agent 基础设施、评估代码检索方案, 或想理解"确定性预计算 + 按需查询"这一路线的工程师阅读。

@@ -1,10 +1,13 @@
 ---
 title: "RAG"
+description: "RAG 检索: Markdown 文档切割 (标题分节 / 表格按行 / 句子级 overlap)、embedding 策略、关系库与向量库双写状态位、可选 Milvus 与进程内 BM25/稠密检索, 以及召回 → RRF 粗排 → rerank 精排管线与置信度闸"
+local_path: "$HOME/github/yukino-ecomm-agent"
+local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 ---
 
 RAG, Retrieval-Augmented Generation 检索增强生成
 
-知识库: 文档库和历史聊天。历史聊天可以分批提供给 LLM, 提取为问答对 (挖掘管线见 [可观测性和数据飞轮](./observable) 的知识挖掘一节)
+知识库: 文档库和历史聊天. 历史聊天可以分批提供给 LLM, 提取为问答对 (挖掘管线见 [可观测性和数据飞轮](./observable) 的知识挖掘一节)
 
 1. 离线建库: 对文档解析、切片、向量化、存储到向量库; 初始跑一次, 定期更新
 2. 在线问答: 用户提问, 将问题转换为向量、到向量库查询, 将查到的内容提供给 LLM 生成回答
@@ -35,7 +38,7 @@ RAG, Retrieval-Augmented Generation 检索增强生成
 3. 每块结构化为 chunk: `sectionPath` 取标题路径 ("一级标题 / 二级标题 / 三级标题"); `questions` 取最后一级标题 (无标题时取 contentType); `category` 取标题路径去掉最后一级 (只剩一级时取该级, 无标题时取 contentType); `answer` 取正文片段
 4. `isKey` 标记关键条款: 标题拼接正文前 40 字符后小写化, 命中 refund / return / timeframe / time limit / shipping fee / postage / fee / warranty / compensation / period / free shipping 之一则 `isKeyClause=1`; 该标记参与置信度计算的关键条款信号
 
-知识库材料是 `server/data/kb/` 下的 6 份 markdown, `sources.ts` 的 `SOURCE_TYPES` 把每份文件映射到一个 contentType: product-faq → faq, returns-policy → policy, after-sales-manual → manual, product-specs → spec, member-benefits → policy, billing-shipping → policy; contentType 全集是 faq / policy / manual / spec (`CONTENT_TYPES`)。
+知识库材料是 `server/data/kb/` 下的 6 份 markdown, `sources.ts` 的 `SOURCE_TYPES` 把每份文件映射到一个 contentType: product-faq → faq, returns-policy → policy, after-sales-manual → manual, product-specs → spec, member-benefits → policy, billing-shipping → policy; contentType 全集是 faq / policy / manual / spec (`CONTENT_TYPES`).
 
 一个文本块是一个结构化的 JSON:
 
@@ -57,9 +60,9 @@ RAG, Retrieval-Augmented Generation 检索增强生成
 }
 ```
 
-被向量化的文本是 `category\nquestions\nanswer` 三段拼接 —— 与写入 Milvus `text` 字段的是同一个字符串。`prevChunkId` / `nextChunkId` 由 `db/repository.ts` 的 `insertKnowledgeChunks` 在事务内回填, 把同一批写入的相邻 chunk 串成双向链表。
+被向量化的文本是 `category\nquestions\nanswer` 三段拼接 —— 与写入 Milvus `text` 字段的是同一个字符串. `prevChunkId` / `nextChunkId` 由 `db/repository.ts` 的 `insertKnowledgeChunks` 在事务内回填, 把同一批写入的相邻 chunk 串成双向链表.
 
-除文档 chunk 外还有两类写回 chunk (`documents.ts`): `approvedReviewChunk` (category=flywheel_review, contentType=faq, 人工审核通过的答案写回知识库) 和 `approvedStagingChunk` (category=conversation_history, contentType=mined, sectionPath=mined, 历史会话挖掘的暂存问答经审核后写回)。
+除文档 chunk 外还有两类写回 chunk (`documents.ts`): `approvedReviewChunk` (category=flywheel_review, contentType=faq, 人工审核通过的答案写回知识库) 和 `approvedStagingChunk` (category=conversation_history, contentType=mined, sectionPath=mined, 历史会话挖掘的暂存问答经审核后写回).
 
 ## embedding 策略
 
@@ -69,7 +72,7 @@ RAG, Retrieval-Augmented Generation 检索增强生成
 
 有些 embedding 模型会加 query: 检索前缀和 document: 文档前缀, 进一步提升检索效果
 
-本项目通过 EMBED_MODEL / EMBED_BASE_URL / EMBED_API_KEY 接 OpenAI 兼容的 embedding 端点 (默认模型 qwen3.7-text-embedding-flash, 默认端点 `https://maas.aliyuncs.com/compatible-mode/v1`), `core/embeddings.ts` 用 openai SDK 的 `embeddings.create` 调用, 不加检索/文档前缀。`vectorizePending` 外层按 64 条一批扫库, 每批 embedding 请求最多 20 条文本 (`MAX_EMBED_BATCH=20`)。
+本项目通过 EMBED_MODEL / EMBED_BASE_URL / EMBED_API_KEY 接 OpenAI 兼容的 embedding 端点 (默认模型 qwen3.7-text-embedding-flash, 默认端点 `https://maas.aliyuncs.com/compatible-mode/v1`), `core/embeddings.ts` 用 openai SDK 的 `embeddings.create` 调用, 不加检索/文档前缀. `vectorizePending` 外层按 64 条一批扫库, 每批 embedding 请求最多 20 条文本 (`MAX_EMBED_BATCH=20`).
 
 ## 向量库
 
@@ -87,7 +90,7 @@ Milvus: 支持 dense 向量, 也支持 BM25 全文检索
 2. 后续调整切割策略、更换向量维度、微调, 都要求全量重新生成向量
 3. 向量库擅长相似度搜索, 业务可能对原文进行关系型查询
 
-本项目的关系型数据库是 PostgreSQL (Prisma), 原文存 knowledge_chunk 表, 完整表设计见 [LLM 接入、表设计与工具设计](./llm)。
+本项目的关系型数据库是 PostgreSQL (Prisma), 原文存 knowledge_chunk 表, 完整表设计见 [LLM 接入、表设计与工具设计](./llm).
 
 ### 原文和向量的搭配
 
@@ -119,7 +122,7 @@ Milvus: 支持 dense 向量, 也支持 BM25 全文检索
 3. Milvus 模式: `milvus.upsert` 批量写入 (id 直接用关系表主键, 不依赖 Milvus 自增 ID), `flush` 后 `markChunkVectorizedExternal` 写回 `vectorId=String(id)` 并标记 done, 关系表的 embedding 字段保持为空; 内置模式: `markChunkVectorized` 把向量 JSON 直接存进关系表的 embedding 字段
 4. `deleteChunks` / `rependChunks` 删除或变更 chunk 时同步删除 Milvus 中对应行; repend 会原地更新 questions / answer, 清空 embedding / vectorId, 状态重置回 pending, 配合 kb-vectorize 实现补丁式重嵌 (`scripts/kb-repatch.ts`: 按 (contentType, sectionPath) 分组对齐 md 与库内 chunk, 归一化比对正文, 变更的重置为 pending, md 新增的只报告不写入, 库内独有的行不动)
 
-离线管线的入口是 `node main.js` 的子命令: kb-preview (干跑切割预览, 不写库)、kb-build (从 data/kb 建库, 与库内完全一致的 chunk 跳过, 部分命中时报错并提示改用 kb-repatch)、kb-vectorize、kb-repatch、kb-reset (清空知识表和向量库, 但把已审核通过的飞轮答案和暂存问答保留为 pending chunk)、kb-mine (历史会话挖掘问答对)。管理台的 /api/kb/* 端点 (overview 的双写计数校验、preview、ingest 单篇录入、search 调试) 见 [HTTP API 和管理台](./api)。
+离线管线的入口是 `node main.js` 的子命令: kb-preview (干跑切割预览, 不写库)、kb-build (从 data/kb 建库, 与库内完全一致的 chunk 跳过, 部分命中时报错并提示改用 kb-repatch)、kb-vectorize、kb-repatch、kb-reset (清空知识表和向量库, 但把已审核通过的飞轮答案和暂存问答保留为 pending chunk)、kb-mine (历史会话挖掘问答对). 管理台的 /api/kb/* 端点 (overview 的双写计数校验、preview、ingest 单篇录入、search 调试) 见 [HTTP API 和管理台](./api).
 
 ### 内置检索 (无 Milvus)
 
@@ -132,7 +135,7 @@ Milvus: 支持 dense 向量, 也支持 BM25 全文检索
 
 ### Milvus 模式
 
-配置 MILVUS_URI 后, Milvus 是权威向量库 (`server/src/kb/milvus.ts`, 官方 Node SDK @zilliz/milvus2-sdk-node 直连 gRPC :19530, 无桥接进程; 本机部署由 `node main.js milvus-up` 拉起 systemd 的 milvus.service 或 `deploy/milvus/docker-compose.yml`, 健康检查 `http://127.0.0.1:9091/healthz`)。所有请求 15s 超时, 任何一步返回错误码直接抛异常, 不静默降级回内置检索。
+配置 MILVUS_URI 后, Milvus 是权威向量库 (`server/src/kb/milvus.ts`, 官方 Node SDK @zilliz/milvus2-sdk-node 直连 gRPC :19530, 无桥接进程; 本机部署由 `node main.js milvus-up` 拉起 systemd 的 milvus.service 或 `deploy/milvus/docker-compose.yml`, 健康检查 `http://127.0.0.1:9091/healthz`). 所有请求 15s 超时, 任何一步返回错误码直接抛异常, 不静默降级回内置检索.
 
 collection 名取 MILVUS_COLLECTION (默认 knowledge), 在第一次 upsert 时懒创建, 维度从首条向量推断 (模型无关, 不硬编码), Strong 一致性 (这样管理台的双写计数校验 `stats.done == milvus.count` 是确定性的), MILVUS_TOKEN 可选:
 
@@ -142,7 +145,7 @@ collection 名取 MILVUS_COLLECTION (默认 knowledge), 在第一次 upsert 时�
 - sparse: SparseFloatVector, is_function_output, 由绑定在 text 上的 BM25 Function (`text_bm25`, 输入 text 输出 sparse) 自动派生, SPARSE_INVERTED_INDEX + BM25
 - question / answer / section_path / content_type / category: VarChar 标量字段 (max_length 依次 2048 / 8192 / 512 / 32 / 255)
 
-Milvus 的 BM25 Function 自动给 text 字段生成稀疏向量, 应用侧不需要维护分词器。使用前 `describeCollection` 做 schema 校验: collection 必须同时含 text 和 sparse 字段, 否则拒绝服务并给出重建步骤 (kb-reset → kb-build → kb-vectorize)。
+Milvus 的 BM25 Function 自动给 text 字段生成稀疏向量, 应用侧不需要维护分词器. 使用前 `describeCollection` 做 schema 校验: collection 必须同时含 text 和 sparse 字段, 否则拒绝服务并给出重建步骤 (kb-reset → kb-build → kb-vectorize).
 
 ## 在线问答
 
@@ -160,7 +163,7 @@ Milvus 的 BM25 Function 自动给 text 字段生成稀疏向量, 应用侧不�
 └── SKU-iPhone17White512: iPhone17 / White / 512G
 ```
 
-商家提问: SKU-iPhone17White256 支持快充吗? 知识库中有一份 SKU-iPhone16White256 的参数表, 也有一份 SKU-iPhone17White256 的参数表, 相似度搜索很容易出错 (型号字面高度相似, 向量模型未必分得清); BM25 字面匹配才能精确命中。
+商家提问: SKU-iPhone17White256 支持快充吗? 知识库中有一份 SKU-iPhone16White256 的参数表, 也有一份 SKU-iPhone17White256 的参数表, 相似度搜索很容易出错 (型号字面高度相似, 向量模型未必分得清); BM25 字面匹配才能精确命中.
 
 ## BM25 关键词检索
 
@@ -190,35 +193,35 @@ Milvus SDK 的 `hybrid_search` 在一次请求里同时发出两路召回: 稀�
 
 一类方法是「分数级融合」例如都归一化到 [0, 1], 再按权重相加, 缺点是不够灵活, 需要按场景微调; 对于粗排 (分数级融合), 权重可以按 query 类型指定, 例如对于商品 SKU、优惠券码, 应该更偏向 BM25 关键词检索; 对于口语化的模糊问题, 应该更偏向向量相似度搜索
 
-另一类方法是「RRF 倒排融合」, 不比较分数, 只比较排名: 一路召回中, 每份文档贡献 `1 / (k + 排名)` 分数; 两路召回贡献分数相加, k 通常取 60。本项目 Milvus 模式的 RRF 在服务端完成 (`RANKER_TYPE.RRF`, `k=60`), 内置模式在进程内用同样的参数融合
+另一类方法是「RRF 倒排融合」, 不比较分数, 只比较排名: 一路召回中, 每份文档贡献 `1 / (k + 排名)` 分数; 两路召回贡献分数相加, k 通常取 60. 本项目 Milvus 模式的 RRF 在服务端完成 (`RANKER_TYPE.RRF`, `k=60`), 内置模式在进程内用同样的参数融合
 
 **精排**
 
-精排使用更慢、质量更高的 cross-encoder 交叉编码 rerank 模型, 拼接 query 和文档块输入到 rerank 模型。本项目实现在 `server/src/core/rerank.ts`: RERANK_MODEL 默认 qwen3.7-text-rerank, RERANK_BASE_URL 默认与 embedding 同一个 compatible-mode 端点; RERANK_PROTOCOL 切换两种协议:
+精排使用更慢、质量更高的 cross-encoder 交叉编码 rerank 模型, 拼接 query 和文档块输入到 rerank 模型. 本项目实现在 `server/src/core/rerank.ts`: RERANK_MODEL 默认 qwen3.7-text-rerank, RERANK_BASE_URL 默认与 embedding 同一个 compatible-mode 端点; RERANK_PROTOCOL 切换两种协议:
 
 - jina (默认): base 缺版本段时才补 `/v1`, 请求 `{base}/rerank`, body 为 `{ model, query, documents, top_n }`
 - dashscope: base 先剥掉 /v1、/v2、/compatible-mode、/compatible-api 后缀再补 /api, 请求 `/api/v1/services/rerank/text-rerank/text-rerank`, body 为 `{ model, input: { query, documents }, parameters: { top_n, return_documents: false } }`
 
-响应用 zod 解析 (兼容 `results` 与 `output.results` 两种形态, relevance_score 支持数字字符串); 429/500/502/503/504 自动重试 3 次, 指数退避从 1.5s 起; 单次请求 60s 超时。精排分低于 RERANK_MIN_SCORE=0.3 视为证据不足。
+响应用 zod 解析 (兼容 `results` 与 `output.results` 两种形态, relevance_score 支持数字字符串); 429/500/502/503/504 自动重试 3 次, 指数退避从 1.5s 起; 单次请求 60s 超时. 精排分低于 RERANK_MIN_SCORE=0.3 视为证据不足.
 
 ### 本项目的检索管线
 
 `searchKnowledge` (`server/src/core/retrieval.ts`), 选项 `{ strategy, topK, category, bm25Text, split }`, strategy 默认 hybrid_rerank, topK 默认 RERANK_TOP_K=10:
 
-1. 子查询拆分 (SUBQUERY_SPLIT 默认开启): 问题按逗号/分号/问号/句号 (中英文) 切分, 每段 `>=` 4 字符算一个子句, 切出至少 2 段才触发; 每个子句单独检索, 结果按轮转 (round-robin) 合并去重: 按 chunk id 去重 (无 id 时退化为 section_path:question), 同一 section_path 的首个结果保留原位、后续结果降权到队尾, 避免单个子句霸榜, 最后截取 topK。触发拆分时每个子句以自身文本检索, 调用方传入的 bm25Text 不再下传
+1. 子查询拆分 (SUBQUERY_SPLIT 默认开启): 问题按逗号/分号/问号/句号 (中英文) 切分, 每段 `>=` 4 字符算一个子句, 切出至少 2 段才触发; 每个子句单独检索, 结果按轮转 (round-robin) 合并去重: 按 chunk id 去重 (无 id 时退化为 section_path:question), 同一 section_path 的首个结果保留原位、后续结果降权到队尾, 避免单个子句霸榜, 最后截取 topK. 触发拆分时每个子句以自身文本检索, 调用方传入的 bm25Text 不再下传
 2. 四种策略: vector (embedQuery 后 denseSearch)、bm25 (用 `bm25Text || query` 直接 bm25Search)、hybrid (RRF 融合后截取 topK)、hybrid_rerank (召回 `max(topK, RECALL_TOP_K)`=50 条候选, 把每条的 "question answer" 拼接后送 rerank 精排取前 10, 结果附 rerank_score)
-3. 查询改写 (`core/query-understanding.ts`): `understand()` 用 QUERY_REWRITE_PROMPT 做结构化输出 `{ standard, expanded }` —— standard 是把口语化、情绪化表述改写成的标准问题, expanded 是 3-6 个同义词/别名扩展 (如 postage ↔ shipping fee), LLM 调用失败时降级为原问题; 调用方把 expanded 拼进 bm25Text, 向量一路只用 standard, 扩写不污染 dense 检索。`expandQueries()` 用 EXPAND_QUERIES_PROMPT 产出恰好 3 条检索友好的英文查询, 供退款流程的 retrievePolicy 节点使用: 对每条查询独立检索, 按 chunk id 取最大 rerank_score 合并后排序
+3. 查询改写 (`core/query-understanding.ts`): `understand()` 用 QUERY_REWRITE_PROMPT 做结构化输出 `{ standard, expanded }` —— standard 是把口语化、情绪化表述改写成的标准问题, expanded 是 3-6 个同义词/别名扩展 (如 postage ↔ shipping fee), LLM 调用失败时降级为原问题; 调用方把 expanded 拼进 bm25Text, 向量一路只用 standard, 扩写不污染 dense 检索. `expandQueries()` 用 EXPAND_QUERIES_PROMPT 产出恰好 3 条检索友好的英文查询, 供退款流程的 retrievePolicy 节点使用: 对每条查询独立检索, 按 chunk id 取最大 rerank_score 合并后排序
 4. 结果排布 `arrangeHeadTail`: 把第 2 名挪到队尾 (1, 3, 4, ..., 2), 利用首因/近因效应让模型更关注头部证据
 
-调用方有三处: 会话图 retrieve_knowledge 节点 (knowledge 路由, 见 [workflow](./workflow))、主力 agent loop 里的 query_faq 内置工具 (注册 timeout 30s、maxRetries 0, 系统提示词要求政策/规则/时效/费用类问题必须走它)、管理台的 /api/kb/search (暴露全部四种策略)。前两处都是先 `understand()` 改写, 再以 hybrid_rerank + bm25Text 调 `searchKnowledge`, 然后做证据充分性判定。
+调用方有三处: 会话图 retrieve_knowledge 节点 (knowledge 路由, 见 [workflow](./workflow))、主力 agent loop 里的 query_faq 内置工具 (注册 timeout 30s、maxRetries 0, 系统提示词要求政策/规则/时效/费用类问题必须走它)、管理台的 /api/kb/search (暴露全部四种策略). 前两处都是先 `understand()` 改写, 再以 hybrid_rerank + bm25Text 调 `searchKnowledge`, 然后做证据充分性判定.
 
 ## 置信度闸
 
-进入主力 agent loop 前, 有一道置信度闸: 判断检索到的知识是否足够回答该问题, 如果不够, 则回复兜底话术, 同时记录该问题, 推入到数据飞轮。实现分布在 `core/confidence.ts`、`core/selfcheck.ts` 和 `graph/routing.ts`:
+进入主力 agent loop 前, 有一道置信度闸: 判断检索到的知识是否足够回答该问题, 如果不够, 则回复兜底话术, 同时记录该问题, 推入到数据飞轮. 实现分布在 `core/confidence.ts`、`core/selfcheck.ts` 和 `graph/routing.ts`:
 
 1. `computeEvidenceConfidence` 对精排结果加权打分: top1 精排分 (权重 0.5, clip 到 [0, 1])、有效条数 (精排分 `>=` 0.3 的条数封顶 3, 权重 0.2)、top1 对 top2 的分差 margin (权重 0.2)、关键条款命中 (前 3 条结果的问答文本含 KEY_TERMS 之一, 权重 0.1)
 2. 总分低于 EVIDENCE_CONFIDENCE_THRESHOLD (默认 0.26) 直接判 weak, 记录 `fallbackSource=retrieval_low_conf`
 3. 过了分数闸还有一道 LLM 自检 `selfcheck.checkSufficient` (SELF_CHECK_PROMPT 结构化输出 `{ useful, reason }`), 判定证据不足以精确回答则 weak, `fallbackSource=self_check`; 自检调用失败一律按证据不足处理
 4. 图中 confidence_check 节点按 `confidenceGate` 分流: strong → main_agent, 证据以 "[n] question: answer" 的编号引用注入回合上下文, 要求模型引用 [1][2] 编号、照抄型号、证据不足时明说; weak → fallback_reply, 回复固定兜底话术并附转人工建议, 同时把问题、原因和 top3 检索快照写入 low_confidence_question 表, 成为数据飞轮的燃料
 
-query_faq 工具走同样的判定 (`evaluateHits`: top1 精排分低于 RERANK_MIN_SCORE 或自检不通过 → sufficient=false, agent 按提示词规则拒答)。置信度权重的展示、阈值校准 (calibrate-confidence) 和飞轮闭环见 [可观测性和数据飞轮](./observable)。
+query_faq 工具走同样的判定 (`evaluateHits`: top1 精排分低于 RERANK_MIN_SCORE 或自检不通过 → sufficient=false, agent 按提示词规则拒答). 置信度权重的展示、阈值校准 (calibrate-confidence) 和飞轮闭环见 [可观测性和数据飞轮](./observable).

@@ -265,7 +265,7 @@ SDK 暴露的文件系统 API 模仿 Node 的 `fs.promises`, 但作用域被限�
 
 每条消息还带预览标识、端口、路径名、查询串与哈希, 便于定位是哪个预览页的哪条路由出错。设为 `exceptions-only` 时不会转发控制台错误。
 
-SDK 还提供 `setPreviewScript`: 向所有未来重新加载的预览页注入一段脚本(可指定 `module` / `importmap` 类型与 defer / async 属性), 但已打开的预览需要显式重新加载才生效。独立的 `/webcontainer/connect` 子路径导出 `setupConnect`, 用于"预览开在另一个标签页"的形态: 该页必须服务在 `/webcontainer/connect/` 路径下且由 opener 打开, 函数内部再挂一个指向官方源同路径的隐藏 iframe, 在 opener 与 iframe 之间双向透传 postMessage(递归收集并转移其中的 MessagePort), 收到 `close` 指令时自行关窗——多标签预览的连接由此复用同一条运行时通道。配套的 `reloadPreview` 工具函数走一条端口协议: 通过 MessageChannel 向预览页发送重载指令, 预览页回传重载完成消息; 若在很短的超时内没有回执, 则退化为直接重置 iframe 的 `src`。这条"先礼后兵"的刷新策略, 说明预览页与宿主之间不仅有单向注入, 还有一条回执通道。
+SDK 还提供 `setPreviewScript`: 向所有未来重新加载的预览页注入一段脚本(可指定 `module` / `importmap` 类型与 defer / async 属性), 但已打开的预览需要显式重新加载才生效。独立的 `connect` 子路径 (`@webcontainer/api/connect`) 导出 `setupConnect`, 用于"预览开在另一个标签页"的形态: 该页必须服务在 `/webcontainer/connect/` 路径下且由 opener 打开, 函数内部再挂一个指向官方源同路径的隐藏 iframe, 在 opener 与 iframe 之间双向透传 postMessage(递归收集并转移其中的 MessagePort), 收到 `close` 指令时自行关窗——多标签预览的连接由此复用同一条运行时通道。配套的 `reloadPreview` 工具函数走一条端口协议: 通过 MessageChannel 向预览页发送重载指令, 预览页回传重载完成消息; 若在很短的超时内没有回执, 则退化为直接重置 iframe 的 `src`。这条"先礼后兵"的刷新策略, 说明预览页与宿主之间不仅有单向注入, 还有一条回执通道。
 
 ### 4.6 私有包与 OAuth 鉴权
 

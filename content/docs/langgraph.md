@@ -2,6 +2,7 @@
 title: "LangGraph.js: Pregel 超步引擎、通道状态模型与检查点持久化"
 description: "从 monorepo 包分层讲到 StateGraph 到 Pregel 的超步执行循环、channels 与 reducers 的状态更新语义、节点间状态与上下文传递、上下文压缩与 Store 长期记忆、checkpointer 持久化与恢复、interrupt/resume 人机协同、流式输出模式与 SDK/前端集成"
 local_path: "$HOME/Downloads/langgraphjs"
+local_commit: "7ab1b8d840c068c2593fea4683899508d93e6b33"
 ---
 
 LangGraph.js 是一个用 TypeScript 编写的低层 agent 编排 runtime。仓库对自身方向的表述很直接: LangGraph 是 runtime, 它负责四件事——图执行 (Pregel 超步循环)、检查点持久化 (checkpointer)、流式输出 (八种 stream mode 与协议事件流)、以及 interrupt/resume 人机协同; 而"如何搭一个好用的 agent"属于上一层的关注点。本文以仓库源码为唯一事实来源, 沿着一条主线展开: 一张 StateGraph 如何被编译成 Pregel 引擎, 状态如何以 channel + reducer 的模型在超步之间流转与落盘, 运行如何被暂停、恢复与回放, 以及这一切如何通过 SDK 暴露给前端。

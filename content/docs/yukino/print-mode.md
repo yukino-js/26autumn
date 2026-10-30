@@ -1,5 +1,8 @@
 ---
 title: "Print Mode"
+description: "Print 模式 (-p): 非交互一次性执行, 自组装完整运行时并消费 agent.run() 事件流; 覆盖旗标解析, slash command 特判, 与交互模式的差异 (bypassPermissions, 无 hook/skill), 工具集装配, text / stream-json 输出, 退出码与清理, SyntheticOutput 结构化交付"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 Print 模式是非交互的执行模式: 一条命令进去, agent 循环跑完, 结果打印到 stdout, 进程退出; 用于脚本、CI 流水线和「把 Yukino 当 Unix 工具用」的组合场景
@@ -56,7 +59,7 @@ prompt 先经过与交互模式同一套的命令解析器 `parseCommand()` (以
 
 在基座之上 print 模式追加:
 
-- 团队工具: TeamCreate、SendMessage、TeamDelete、TaskStop。单次非交互执行内 leader 仍然可以组建 team 委派任务 (见 [agent-team](./agent-team)); 团队不从磁盘恢复 —— print 模式只管理自己创建的 team 运行时, 避免退出清理时误杀交互会话留下的外部 teammate
+- 团队工具: TeamCreate、SendMessage、TeamDelete、TeamList、TaskStop。单次非交互执行内 leader 仍然可以组建 team 委派任务 (见 [agent-team](./agent-team)); 团队不从磁盘恢复 —— print 模式只管理自己创建的 team 运行时, 避免退出清理时误杀交互会话留下的外部 teammate
 - SyntheticOutput: 结构化交付通道 (见下文)
 - Agent: subagent 委派工具, `defaultFork` 跟随 config 的 `enable_fork` (缺省开启), teammate 路径纯前台运行 (见 [subagent](./subagent))
 - Workflow: `attachWorkflow()` 注册的编排工具, 与后台 TaskManager 共享
@@ -67,7 +70,7 @@ prompt 先经过与交互模式同一套的命令解析器 `parseCommand()` (以
 - `attachBackgroundTaskManager()` 把同一个 `TaskManager` 注入 Bash / PowerShell / TaskOutput, 于是 `run_in_background` 与超时自动转后台的命令, 和后台 agent 走同一条任务通知排水通道, 退出等待策略也能统一按任务类型区分
 - MCP 在内置工具全部注册后才连接: `connectAll()` 之后每个远端工具包一层 `MCPToolWrapper` 注册, 连接失败逐个写 `MCP warning: <server>: <error>` 到 stderr 而不中断执行; 随后 `decideAndApply()` 用「全部 MCP schema 的总大小」对比上下文窗口决定 eager / native / dispatch 加载模式 —— 这个对比只有在工具全部就位后才准确 (见 [mcp](./mcp))
 
-coordinator 模式 (`enable_coordinator_mode`) 在 print 模式同样生效: Agent 拿到 `coordinatorToolFilter` 作为 toolFilter, leader 全程只剩白名单工具 (Workflow、Goal、Agent、SendMessage、TaskStop、SyntheticOutput、TeamDelete、TodoWrite), 读文件写代码一律委派给 teammate
+coordinator 模式 (`enable_coordinator_mode`) 在 print 模式同样生效: Agent 拿到 `coordinatorToolFilter` 作为 toolFilter, leader 全程只剩白名单工具 (Workflow、Goal、Agent、SendMessage、TaskStop、SyntheticOutput、TeamCreate、TeamDelete、TeamList、TodoWrite), 读文件写代码一律委派给 teammate
 
 ## Agent 装配
 

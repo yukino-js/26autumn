@@ -3,6 +3,7 @@ title: "电商客服 Agent"
 overview: true
 description: "yukino-ecomm-agent 栏目: Node.js/TypeScript 电商客服 Agent (Yukino Select) 的系统性技术笔记, 覆盖 Hono + LangGraph 服务端与 Lit 控制台的总体组织、会话上下文分层、LLM 接入与表设计、MCP 工具、可观测性与数据飞轮、RAG 检索、图编排 workflow 与 HTTP API"
 local_path: "$HOME/github/yukino-ecomm-agent"
+local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 ---
 
 围绕 yukino-ecomm-agent 仓库的系统性技术笔记, 共 9 个页面 (含本落地页). 仓库是一个 pnpm workspace: `server/` 是 Hono + LangChain/LangGraph + Prisma/PostgreSQL 的客服 Agent 服务端, `client/` 是 Lit 单页控制台; 全部文档以该仓库源码为唯一事实依据.

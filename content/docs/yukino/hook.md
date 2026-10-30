@@ -1,5 +1,8 @@
 ---
 title: "Hook"
+description: "Hook: 在生命周期事件上挂载自动化动作 (事件/条件/动作三要素) — 写文件后自动 format、危险命令执行前拦截、会话开始时注入项目约定; 配置只来自 `~/.yukino/config.yaml` 顶层 hooks 数组"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 在 Agent 的生命周期事件上挂载自动化动作: 写文件后自动 format, 危险命令执行前直接拦截, 会话开始时注入项目约定

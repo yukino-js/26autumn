@@ -2,9 +2,10 @@
 title: "Claude Code 兼容实现: 构建体系、核心循环与多 Provider 兼容层"
 description: "一个终端 AI 编码助手的工程实现剖析: Bun 代码分割构建、流式 Agent 循环与工具并发调度、核心白名单加延迟发现的工具系统, 以及把异构模型协议收敛到 Anthropic 内部格式的流适配器模式, 可以参考 claude-code 目录"
 local_path: "$HOME/Downloads/claude-code"
+local_commit: "8d80e740f764be358e265eed4250606c78fca579"
 ---
 
-本文剖析一个与官方 Claude Code CLI 配置兼容的终端 AI 编码助手 (Bun 运行时, TypeScript/React monorepo) 的实现: 它如何组织构建与特性裁剪, 如何驱动"模型流式输出、工具并发执行、结果按序回吐"的核心循环, 如何设计工具注册与延迟发现, 以及如何用一层流适配器把多家模型协议收敛成同一种内部格式。适合想自建或二次开发终端编码 Agent 的工程师阅读。文中不含本机路径与版本快照, 关注的是设计本身。
+本文剖析一个与官方 Claude Code CLI 配置兼容的终端 AI 编码助手 (Bun 运行时, TypeScript/React monorepo) 的实现: 它如何组织构建与特性裁剪, 如何驱动"模型流式输出、工具并发执行、结果按序回吐"的核心循环, 如何设计工具注册与延迟发现, 以及如何用一层流适配器把多家模型协议收敛成同一种内部格式。适合想自建或二次开发终端编码 Agent 的工程师阅读。
 
 ## 一、它是什么, 解决什么问题
 
@@ -42,7 +43,7 @@ API 客户端 (`src/services/api/claude.ts`, 约 3600 行) 负责组装请求参
 
 构建由 Bun 的打包器完成 (`build.ts`), 入口是 `src/entrypoints/cli.tsx`, 开启 `splitting: true`, 输出一个主文件加大量分块文件, 并注入 `MACRO.*` 编译期常量 (版本号从 `package.json` 读取, 避免漂移) 与 `NODE_ENV=production`。构建后自动复制需要随包分发的 vendor 资源 (音频采集原生插件、搜索用的 ripgrep 二进制)。
 
-为什么必须代码分割, 是这份实现里最有价值的工程结论之一。Bun 使用的 JavaScript 引擎 (JSC) 会全量解析单个大文件的字节码并做即时编译, 17MB 的单文件产物使进程 RSS 暴涨到约 1GB (同样产物在 Node/V8 下因懒解析只需约 220MB)。分割成 600 多个小 chunk 后按需加载, `--version` 这类只触及少量模块的路径 RSS 从 966MB 降到 35MB, 完整加载也从 1GB 以上降到约 500MB。这不是风格偏好, 而是被内存数据验证过的硬约束。
+为什么必须代码分割, 是这份实现里最有价值的工程结论之一。Bun 使用的 JavaScript 引擎 (JSC) 会全量解析单个大文件的字节码并做即时编译, 17MB 的单文件产物使进程 RSS 暴涨到约 1GB (同样产物在 Node/V8 下因懒解析只需约 220MB)。分割成 600 多个小 chunk (实测 627 个) 后按需加载, `--version` 这类只触及少量模块的路径 RSS 从 966MB 降到 30MB, 完整加载 (pipe 模式) 也从 1088MB 降到 318MB。这不是风格偏好, 而是被内存数据验证过的硬约束。
 
 同时提供另一条基于 Vite/Rollup 的备选管线 (`vite.config.ts`), 同样开启代码分割, chunk 输出到 `dist/chunks/`; 构建后处理脚本 (`scripts/post-build.ts`) 对仅 Bun 支持的运行时 API 做兼容处理并复制 vendor 资源。
 

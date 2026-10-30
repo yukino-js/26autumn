@@ -2,15 +2,6 @@
 title: "后端"
 overview: true
 description: "后端栏目: Go 语言与运行时、MySQL/Redis/ClickHouse/Kafka 与后端中间件、generic-pool 源码解析, 以及 Yukino Go 系列的 HTTP/RPC/ORM/缓存、Agent 协议网关、基础设施组件、AI 运维 Agent 与任务调度引擎"
-local_path: "$HOME/Downloads/node-pool"
-local_path2: "$HOME/github/yukino.go/libs/yukino_http"
-local_path3: "./yukino-http.md"
-local_path4: "$HOME/github/yukino.go/libs/yukino_rpc"
-local_path5: "./yukino-rpc.md"
-local_path6: "$HOME/github/yukino.go/libs/yukino_orm"
-local_path7: "./yukino-orm.md"
-local_path8: "$HOME/github/yukino.go/libs/yukino_cache"
-local_path9: "./yukino-cache-go.md"
 ---
 
 后端方向的系统性技术笔记, 按主题分为三部分, 共 15 个页面 (含本落地页).
@@ -23,13 +14,13 @@ local_path9: "./yukino-cache-go.md"
 
 ## 第二部分: 存储与中间件
 
-| 页面                                   | 内容概要                                                                                                                                                                                  |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [mysql](./mysql)                       | MySQL 与 InnoDB 技术手册: 连接与 SQL 执行流程、物理结构与索引体系、事务 MVCC 与锁、redo/undo/binlog 与崩溃恢复、主从复制、分库分表与在线 DDL、读写分离下的缓存一致性与慢查询调优方法论    |
-| [redis](./redis)                       | Redis 7.x 技术手册: 数据结构与底层编码、单线程与 IO 多线程模型、RDB/AOF/混合持久化、过期与淘汰、主从哨兵与 Cluster、缓存设计、分布式锁与 Redlock 争议、限流与延时队列、大 key/热 key 治理 |
-| [clickhouse-kafka](./clickhouse-kafka) | ClickHouse 列式存储、MergeTree 家族、分布式架构与查询优化, Kafka 存储模型、消息语义、高可用与调优, 以及两者的联合实时数仓架构与综合方案设计                                               |
-| [middleware](./middleware)             | etcd、Kafka、groupcache、gRPC、Prometheus、Grafana、OpenTelemetry 的关键机制、生产注意事项与选型建议                                                                                      |
-| [node-pool](./node-pool)               | generic-pool 3.9.0 源码级解析: 从资源池要解决的竞态出发, 逐层拆解借还生命周期、工厂契约、超时排队、双向链表与优先级队列、空闲驱逐、配置默认值与停机语义, 并给出连接池场景的实践建议       |
+| 页面                                   | 内容概要                                                                                                                                                                                                                   |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [mysql](./mysql)                       | MySQL 与 InnoDB 技术手册: 以 MySQL 8.4 LTS 为基准, 覆盖连接与 SQL 执行流程、InnoDB 物理结构与索引体系、事务 MVCC 与锁、redo/undo/binlog 与崩溃恢复、主从复制、分库分表与在线 DDL、读写分离下的缓存一致性与慢查询调优方法论 |
+| [redis](./redis)                       | Redis 7.x 技术手册: 数据结构与底层编码、单线程与 IO 多线程模型、RDB/AOF/混合持久化、过期与淘汰、主从哨兵与 Cluster、缓存设计、分布式锁与 Redlock 争议、限流与延时队列、大 key/热 key 治理                                  |
+| [clickhouse-kafka](./clickhouse-kafka) | ClickHouse 列式存储、MergeTree 家族、分布式架构与查询优化, Kafka 存储模型、消息语义、高可用与调优, 以及两者的联合实时数仓架构与综合方案设计, 行为以 ClickHouse 25.x 与 Kafka 4.x 为基准                                    |
+| [middleware](./middleware)             | etcd、Kafka、groupcache、gRPC、Prometheus、Grafana、OpenTelemetry 的关键机制、生产注意事项与选型建议                                                                                                                       |
+| [node-pool](./node-pool)               | generic-pool 3.9.0 源码级解析: 从资源池要解决的竞态出发, 逐层拆解借还生命周期、工厂契约、超时排队、双向链表与优先级队列、空闲驱逐、配置默认值与停机语义, 并给出连接池场景的实践建议                                        |
 
 ## 第三部分: Yukino Go 系列
 

@@ -1,19 +1,20 @@
 ---
 title: "数据模型"
+description: "数据模型: 26 张 Drizzle 表按域分组、主键与并发安全序列 (id_sequences)、领域类型 (types.ts)、状态码展示元数据 (enums.ts)"
+local_path: "$HOME/github/yukino-test-agent"
+local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 ---
 
-# 数据模型 (26 张表)
-
-数据库结构定义在 `src/db/schema.ts` (Drizzle ORM + PostgreSQL, 共 721 行); 连接客户端在 `src/db/index.ts` (`drizzle-orm/node-postgres`, 读取环境变量 `DATABASE_URL`); 迁移由 drizzle-kit 按 `drizzle.config.ts` 生成到 `./drizzle` 目录 (dialect `postgresql`)。
+数据库结构定义在 `src/db/schema.ts` (Drizzle ORM + PostgreSQL, 共 721 行); 连接客户端在 `src/db/index.ts` (`drizzle-orm/node-postgres`, 读取环境变量 `DATABASE_URL`); 迁移由 drizzle-kit 按 `drizzle.config.ts` 生成到 `./drizzle` 目录 (dialect `postgresql`).
 
 设计约定:
 
-- **主键**: 多为服务层生成的 32 位 uuid hex 字符串 (无连字符, `varchar(36)`, 见 `server/services/projects.ts` 的 `uuid()`); 两类例外使用人类可读 ID——`test_cases` 用 `TC-000001` 式全局序列 (`varchar(20)` + 项目内序号 `projectSeq`), `execution_records` 用 `EX-xxxxxxxx` (uuid 前 8 位)。
-- **并发安全 ID**: `id_sequences` 表保存跨进程单调计数器。`server/services/testcases.ts` 的 `nextSequenceValue` 在与插入同一个事务里对计数行加 `FOR UPDATE` 行锁, 取代并发下会发放重复主键的 `max(id)+1` 扫描; 首次分配会用现存行回填计数 (数值比较而非字典序), 保证永不倒退。
-- **结构化载荷**: 用 jsonb 列, 并以 `src/lib/types.ts` 中的共享领域类型约束 (Drizzle 的 `$type<T>()`)。
-- **状态码**: 数据库只存稳定的英文码 (如 `passed`/`failed`/`needs_review`), 展示元数据 (label/tone/description) 统一放在 `src/lib/enums.ts`。
-- **时间**: 统一 `timestamp with timezone` + `defaultNow()`。
-- **反规范化快照**: 历史表冻结上下文, 用例/需求被改名或删除后仍可读——`execution_records.testCaseTitle` 与必填的 `testCaseSnapshot` (执行时刻的完整用例快照), `execution_requirements.requirementVersion/requirementName`, `workflow_runs.requirementVersion/requirementName`。
+- **主键**: 多为服务层生成的 32 位 uuid hex 字符串 (无连字符, `varchar(36)`, 见 `server/services/projects.ts` 的 `uuid()`); 两类例外使用人类可读 ID——`test_cases` 用 `TC-000001` 式全局序列 (`varchar(20)` + 项目内序号 `projectSeq`), `execution_records` 用 `EX-xxxxxxxx` (uuid 前 8 位).
+- **并发安全 ID**: `id_sequences` 表保存跨进程单调计数器. `server/services/testcases.ts` 的 `nextSequenceValue` 在与插入同一个事务里对计数行加 `FOR UPDATE` 行锁, 取代并发下会发放重复主键的 `max(id)+1` 扫描; 首次分配会用现存行回填计数 (数值比较而非字典序), 保证永不倒退.
+- **结构化载荷**: 用 jsonb 列, 并以 `src/lib/types.ts` 中的共享领域类型约束 (Drizzle 的 `$type<T>()`).
+- **状态码**: 数据库只存稳定的英文码 (如 `passed`/`failed`/`needs_review`), 展示元数据 (label/tone/description) 统一放在 `src/lib/enums.ts`.
+- **时间**: 统一 `timestamp with timezone` + `defaultNow()`.
+- **反规范化快照**: 历史表冻结上下文, 用例/需求被改名或删除后仍可读——`execution_records.testCaseTitle` 与必填的 `testCaseSnapshot` (执行时刻的完整用例快照), `execution_requirements.requirementVersion/requirementName`, `workflow_runs.requirementVersion/requirementName`.
 
 ## 表清单 (按域分组)
 
@@ -66,7 +67,7 @@ workflow_runs 1─N workflow_result_analyses
 id_sequences / llm_profiles                             (全局计数与配置, 无业务外键)
 ```
 
-表间只有索引没有数据库级外键, 引用完整性由服务层事务维护。
+表间只有索引没有数据库级外键, 引用完整性由服务层事务维护.
 
 ## 重点表: test_cases
 
@@ -95,14 +96,14 @@ id_sequences / llm_profiles                             (全局计数与配置, 
 
 ## 增量需求域 (requirement_snapshots 家族)
 
-代码分析是项目级「最新事实」, 增量比较必须读取当时冻结的快照, 否则后续重新分析会悄悄改写基线。四张表由 `server/services/incremental.ts` 驱动, 与在用 `test_cases`/`requirement_cases` 完全隔离:
+代码分析是项目级「最新事实」, 增量比较必须读取当时冻结的快照, 否则后续重新分析会悄悄改写基线. 四张表由 `server/services/incremental.ts` 驱动, 与在用 `test_cases`/`requirement_cases` 完全隔离:
 
-- **`requirement_snapshots`**: 每个需求版本一条不可变快照——`endpoints` (参数展开、鉴权与关联规则归一化后的接口)、`rules`、`stateTransitions`、`security` (安全配置摘要: hash + signals)、`warnings`, 外加 `fingerprint` (varchar(64)) 用于快速判等; `source` 取 `code_analysis | manual`, 可回指 `analysisId` 与 `baselineRequirementId`。
-- **`requirement_change_runs`**: 一次增量运行, `status` 走 `analyzing → review → generating → completed` (或 `failed`); 同时持有 `baselineSnapshotId` 与 `currentSnapshotId`, `summary` jsonb 存接口/规则/用例变更与回归统计。
-- **`requirement_changes`**: 两个快照间的一条结构化差异。`entityType`: `endpoint | business_rule | state_transition | permission | conflict`; `changeType`: `added | modified | deleted | unchanged | uncertain`; 用 `matchKey` + `oldRef/newRef` + `oldData/newData` 描述前后态; `requiresConfirmation` 标记需人工确认的项, `reviewStatus`: `auto | pending | confirmed | rejected`。
-- **`requirement_case_changes`**: 每条基线用例在增量运行中的去向。`action`: `created | updated | reused | pending_delete | missing` (`missing` 时 `testCaseId` 为 null); `baselineCaseId` 指向一期历史用例; 回归建议用 `regressionImpact` (`direct | indirect | none`) + `regressionReason` + `regressionStatus` (`suggested | accepted | rejected`) 表达; `dedupeKey` (形如 `reuse:{caseId}` / `update:{caseId}:{sig}` / `gen:{endpoint}:{sig}`) 配唯一索引 `uq_requirement_case_changes_dedupe`, 使重复生成幂等。
+- **`requirement_snapshots`**: 每个需求版本一条不可变快照——`endpoints` (参数展开、鉴权与关联规则归一化后的接口)、`rules`、`stateTransitions`、`security` (安全配置摘要: hash + signals)、`warnings`, 外加 `fingerprint` (varchar(64)) 用于快速判等; `source` 取 `code_analysis | manual`, 可回指 `analysisId` 与 `baselineRequirementId`.
+- **`requirement_change_runs`**: 一次增量运行, `status` 走 `analyzing → review → generating → completed` (或 `failed`); 同时持有 `baselineSnapshotId` 与 `currentSnapshotId`, `summary` jsonb 存接口/规则/用例变更与回归统计.
+- **`requirement_changes`**: 两个快照间的一条结构化差异. `entityType`: `endpoint | business_rule | state_transition | permission | conflict`; `changeType`: `added | modified | deleted | unchanged | uncertain`; 用 `matchKey` + `oldRef/newRef` + `oldData/newData` 描述前后态; `requiresConfirmation` 标记需人工确认的项, `reviewStatus`: `auto | pending | confirmed | rejected`.
+- **`requirement_case_changes`**: 每条基线用例在增量运行中的去向. `action`: `created | updated | reused | pending_delete | missing` (`missing` 时 `testCaseId` 为 null); `baselineCaseId` 指向一期历史用例; 回归建议用 `regressionImpact` (`direct | indirect | none`) + `regressionReason` + `regressionStatus` (`suggested | accepted | rejected`) 表达; `dedupeKey` (形如 `reuse:{caseId}` / `update:{caseId}:{sig}` / `gen:{endpoint}:{sig}`) 配唯一索引 `uq_requirement_case_changes_dedupe`, 使重复生成幂等.
 
-**`case_generations`** 则是全量生成的归档: 每次运行一行, `mode` 取 `auto | rule | llm | legacy` (legacy 为回填的历史档案), `summary` jsonb 记录 mode/requestedMode/fallback/fallbackReason/counts/byType, `snapshot` jsonb 保存逐用例轻量快照 (id/title/module/type/priority/source/score/expected)。UI 据此提供版本下拉与只读检视; 在用用例仍遵循原有替换语义, 该表从不改写它们。
+**`case_generations`** 则是全量生成的归档: 每次运行一行, `mode` 取 `auto | rule | llm | legacy` (legacy 为回填的历史档案), `summary` jsonb 记录 mode/requestedMode/fallback/fallbackReason/counts/byType, `snapshot` jsonb 保存逐用例轻量快照 (id/title/module/type/priority/source/score/expected). UI 据此提供版本下拉与只读检视; 在用用例仍遵循原有替换语义, 该表从不改写它们.
 
 ## 领域类型 (src/lib/types.ts)
 
@@ -112,11 +113,11 @@ id_sequences / llm_profiles                             (全局计数与配置, 
 
 - **后端事实 `BackendResult`**: `language`、`endpoints: Endpoint[]` (id/method/path/controller/methodName/file/line, 可选 `params: EndpointParam[]`——name/type/source (`request_body | path_variable | request_param | unknown`)/required/constraints/dtoType, 以及 `auth: string[]` 安全注解如 `@PreAuthorize`)、`entities: Entity[]` (name/file/`EntityField[]`/`FieldConstraint[]` 字段约束)、`enums: EnumDef[]`、`businessRules: BusinessRule[]` (id/description/guard 守卫表达式/file/line)、`uiTexts: string[]`;
 - **前端事实 `FrontendResult`**: `language`、`pages: Page[]` (name/route/file/forms), 每个 `Form` 含 `FormField[]` (label/prop/type/required/placeholder/rules), 另有 `selectors: PageSelector[]` (type/value/page)、`uiTexts` 与 `components`;
-- **状态机 `StateMachineSpec`**: `states` (name/label)、`transitions: StateMachineTransition[]` (id/from/to/trigger/verified/evidence/guard), `confidence` 置信度。覆盖率矩阵会向 transition 回填 `planned/plannedCaseIds/executed` 三个可选字段。
+- **状态机 `StateMachineSpec`**: `states` (name/label)、`transitions: StateMachineTransition[]` (id/from/to/trigger/verified/evidence/guard), `confidence` 置信度. 覆盖率矩阵会向 transition 回填 `planned/plannedCaseIds/executed` 三个可选字段.
 
 ### 测试点 (Test Point)
 
-从 PRD 抽取的「应被覆盖的场景」, 是需求与用例之间的桥梁。`TestPointDraft` 含 title/category/priority/description/pageRoute/endpoint/fields/expected/source/confidence, 落库后成为 `TestPoint` (追加 id/requirementId/seq)。类别 `TestPointCategory`: `functional | negative | boundary | state | api | permission`; 优先级 `CasePriority`: P0/P1/P2; 来源 `rule | llm`。
+从 PRD 抽取的「应被覆盖的场景」, 是需求与用例之间的桥梁. `TestPointDraft` 含 title/category/priority/description/pageRoute/endpoint/fields/expected/source/confidence, 落库后成为 `TestPoint` (追加 id/requirementId/seq). 类别 `TestPointCategory`: `functional | negative | boundary | state | api | permission`; 优先级 `CasePriority`: P0/P1/P2; 来源 `rule | llm`.
 
 ### 结构化步骤 (StructuredStep) —— 可执行契约
 
@@ -137,7 +138,7 @@ interface StructuredStep {
 ```
 
 - `UiSelectorType` 取值: `route | placeholder | text | label | role | testid | css | xpath`;
-- **capture 步骤**: 从页面抓取运行时变量 (如列表当前总数 `base_count`), 供后续步骤以 `${name}`、`${name+1}`、`${name-1}` 引用 (`runner.ts` 的 `VARIABLE_RE`)——这是「计数断言」的基础。引用未捕获的变量、或对非整数做加减, 都以 `CASE_INVALID` 失败, 绝不静默替换。
+- **capture 步骤**: 从页面抓取运行时变量 (如列表当前总数 `base_count`), 供后续步骤以 `${name}`、`${name+1}`、`${name-1}` 引用 (`runner.ts` 的 `VARIABLE_RE`)——这是「计数断言」的基础. 引用未捕获的变量、或对非整数做加减, 都以 `CASE_INVALID` 失败, 绝不静默替换.
 
 ### 锚点 (Anchors) —— 预期结果的写法约定
 
@@ -147,7 +148,7 @@ interface StructuredStep {
 After submitting, the page shows "Order created successfully".
 ```
 
-执行时 `runner.ts` 的三层断言按「URL 路径 → 引号锚点在 body 文本中精确查找 → 诚实 skipped」的顺序判定; 锚点由 `QUOTE_ANCHOR_RE` (`/["“]([^"”]+)["”]/g`) 提取, 直引号与弯引号均被识别 (同一正则也出现在 `quality-gate.ts` 与 `evaluation/metrics.ts`)。锚点必须来自代码事实里的真实文案; 标题、描述等散文保持英文。详见 [浏览器执行](./execution)。
+执行时 `runner.ts` 的三层断言按「URL 路径 → 引号锚点在 body 文本中精确查找 → 诚实 skipped」的顺序判定; 锚点由 `QUOTE_ANCHOR_RE` (`/["“]([^"”]+)["”]/g`) 提取, 直引号与弯引号均被识别 (同一正则也出现在 `quality-gate.ts` 与 `evaluation/metrics.ts`). 锚点必须来自代码事实里的真实文案; 标题、描述等散文保持英文. 详见 [浏览器执行](./execution).
 
 ### 覆盖引用 (CoverageRefs)
 
@@ -160,18 +161,18 @@ interface CoverageRefs {
 }
 ```
 
-覆盖率矩阵 (`server/services/coverage.ts` 组装 + `server/lib/coverage.ts` 的 `buildCoverageMatrix` 计算) 据此产出 `CoverageMatrix`: `apiEndpoint`/`stateTransition`/`businessRule` 三个覆盖块加 `caseExecution` 状态统计。语义固定: **计划覆盖** = coverageRefs 引用了真实存在的接口、已验证的状态迁移或业务规则; **执行覆盖** = 只有 `passed` 的执行记录计入, 且优先读取执行时刻的用例快照; 不在最新代码事实中的过期 id 一律不计, 比率钳制在 0~1。
+覆盖率矩阵 (`server/services/coverage.ts` 组装 + `server/lib/coverage.ts` 的 `buildCoverageMatrix` 计算) 据此产出 `CoverageMatrix`: `apiEndpoint`/`stateTransition`/`businessRule` 三个覆盖块加 `caseExecution` 状态统计. 语义固定: **计划覆盖** = coverageRefs 引用了真实存在的接口、已验证的状态迁移或业务规则; **执行覆盖** = 只有 `passed` 的执行记录计入, 且优先读取执行时刻的用例快照; 不在最新代码事实中的过期 id 一律不计, 比率钳制在 0~1.
 
 ### 执行证据与运行态类型
 
 - `ExecutionStepRecord` / `RunnerResult`: 执行器产出的逐步记录与整案结果 (status/errorCategory/errorMessage/videoPath/passedSteps/totalSteps/steps), 与 `execution_steps`、`execution_records` 列一一对应;
 - `ImageReview` / `ReviewIssue`: 视觉复核的逐图判定与问题清单, 对应 `execution_review_images` / `execution_review_issues`;
 - `LlmKind` (`text | vision`) 与 `LlmProfileDict` (含 `apiKeyConfigured` 布尔, 前端不回传明文 key);
-- `JobState` / `JobStatus`: 内存态后台任务进度 (id/kind/status/message/current/total), 不落库, 由 `server/lib/jobs.ts` 管理。
+- `JobState` / `JobStatus`: 内存态后台任务进度 (id/kind/status/message/current/total), 不落库, 由 `server/lib/jobs.ts` 管理.
 
 ## 状态码与展示元数据 (enums.ts)
 
-数据库存英文码, UI/报告通过 `meta(MAPPING, code)` 取得 `label/tone/description`; 未收录的码回退为 `Uncategorized` + tone `info`。`tone` 取值 `info | primary | success | danger | warning`, 由 `StatusBadge` 组件映射为语义色边框/背景/圆点。
+数据库存英文码, UI/报告通过 `meta(MAPPING, code)` 取得 `label/tone/description`; 未收录的码回退为 `Uncategorized` + tone `info`. `tone` 取值 `info | primary | success | danger | warning`, 由 `StatusBadge` 组件映射为语义色边框/背景/圆点.
 
 | 映射表                         | 取值                                                                                                          |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------- |
@@ -190,7 +191,7 @@ interface CoverageRefs {
 | `PRIORITY_META`                | P0 / P1 / P2                                                                                                  |
 | `STAGE_LABELS`                 | code_analysis / test_points / case_generation / case_review / execution / result_analysis / report 的英文标签 |
 
-对应的联合类型 (`ExecutionStatusCode`、`ReviewVerdict`、`ErrorCategory`、`FailureCategory`、`WorkflowStatus`、`WorkflowStageName`、`StageStatus`、`ReviewStatus`、`AutomationStatus`) 都定义在 `src/lib/types.ts`, schema 通过 `$type`/导出别名 (`ExecutionStatusColumn`、`LlmKindColumn`) 与之对齐。
+对应的联合类型 (`ExecutionStatusCode`、`ReviewVerdict`、`ErrorCategory`、`FailureCategory`、`WorkflowStatus`、`WorkflowStageName`、`StageStatus`、`ReviewStatus`、`AutomationStatus`) 都定义在 `src/lib/types.ts`, schema 通过 `$type`/导出别名 (`ExecutionStatusColumn`、`LlmKindColumn`) 与之对齐.
 
 几个关键语义 (来自 enums.ts 的 description):
 
@@ -198,4 +199,4 @@ interface CoverageRefs {
 - `needs_review`: 证据不足、AI 判定可疑或复核不可用, 需要人工确认;
 - `cancelled`: 用户中止, **不得视为通过**;
 - `ok` (AI 复核): 证据支持预期, 但**绝不覆盖确定性执行失败**;
-- `partial` (流水线): 部分阶段失败但产出了可用结果; `unknown` (失败分类): 证据不足或多因难辨, 需人工复核。
+- `partial` (流水线): 部分阶段失败但产出了可用结果; `unknown` (失败分类): 证据不足或多因难辨, 需人工复核.

@@ -266,7 +266,7 @@ Cache Components 模型下, 缓存的生命周期由 `cacheLife` 配置, 提供�
 
 `revalidateTag` 的第二个参数 (`cacheLife` 档位名或 `{ expire }` 对象) 决定旧数据还能被提供多久, 推荐传 `max` 获得最长的陈旧窗口; 需要写后立即读到自己的变更时改用 `updateTag`. 标签必须先被赋给缓存数据——用 `fetch` 的 `next.tags`, 或在 `use cache` 作用域内调用 `cacheTag`.
 
-一个容易误解的点: 重验证由请求触发, 而不是由 `revalidateTag` 调用触发. 打了标签的页面在下次被访问时才刷新, 不会在调用的一瞬间全部更新. 客户端侧还有 `refresh()` 用于清除当前路由的客户端缓存并重新请求, 它不失效服务端缓存.
+一个容易误解的点: 重验证由请求触发, 而不是由 `revalidateTag` 调用触发. 打了标签的页面在下次被访问时才刷新, 不会在调用的一瞬间全部更新. 客户端侧还有 `router.refresh()` 用于清除当前路由的客户端缓存并重新请求, 它不失效服务端缓存; Next 16 另有同名的服务端 `refresh()` (`next/cache`, 仅限 Server Action), 不碰缓存, 只重新执行未缓存的数据读取, 二者互补.
 
 ### Cache Components 与 use cache
 

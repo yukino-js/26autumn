@@ -1,5 +1,8 @@
 ---
 title: "Task Tracking"
+description: "两套同名不同义的 task 机制: TodoWrite 任务板 (私有板与团队共享板、原子增量编辑、依赖校验) 与 TaskManager 后台任务 (登记、通知、TaskOutput/TaskStop), 含多团队下的板选择语义"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
 ---
 
 任务跟踪在 Yukino 里是两套互不相干的机制, 只是碰巧都叫「task」:
@@ -100,7 +103,7 @@ agent loop 每轮通过 `notificationFn` 调 `drainNotifications()` 取出所有
 - `TaskOutput` (src/tools/task-output.ts): 按 `task_id` 查看后台任务状态与结果, 或用 `wait: true` 有界等待一次 (`timeout_ms` 取值 0–60000, 缺省 30000)。它不消费完成通知、超时也不会停任务, 返回里带 `timed_out`。推荐等 `<task-notification>` 而不是反复轮询。任务板的整数 id 不能在这里用
 - `TaskStop` (src/teams/task-stop.ts): `task_id` 和 `teammate` 二选一, 传其它组合直接报错
   - `task_id`: 停后台任务, 先查本轮上下文的 TaskManager (`ctx.taskManager`) 再回退宿主级 —— 委派出去的 loop 不能取消属于父 agent 的任务
-  - `teammate`: 按名停团队成员 (leader 专属; 委派出去的 subagent 版工具没有这个参数)
+  - `teammate`: 按名停团队成员 (leader 专属; 委派出去的 subagent 版工具没有这个参数)。成员名可能跨团队重名, 团队解析走 `resolveTeam(team_name, teammate)`: 传了 `team_name` 时团队必须存在且含该成员; 未传时选中唯一含该成员的团队, 多个团队匹配则报歧义错误
 
 ## 用法约定
 
@@ -110,6 +113,8 @@ agent loop 每轮通过 `notificationFn` 调 `drainNotifications()` 取出所有
 - 计数只认 `completed` (`TODO completed/total`); 已完成的任务在显式删除前一直留在板上
 - `TodoWrite` 只做跟踪, 绝不启动 Agent 或后台任务 —— 执行是 Agent 的事, 跟踪是任务板的事
 - 团队协作时: leader 和 teammates 共享团队任务板 —— 每个 teammate 拿到的 `TodoWrite` 底层是绑定本团队的 `TeamTodoWriteTool`, leader/主 agent 的版本则在无团队时回退到私有板; 普通 subagent 和 fork 永远用各自独立的私有清单 (见 [agent-team](./agent-team))
+- 团队板选择: `TeamTodoWriteTool` 在基础 schema 上追加 `team_name` 参数, 多个团队并存时用它选择目标团队的板; 未传且多团队并存时报 `Multiple teams match. Specify team_name; use TeamList to see available teams.`; teammate 被限制在本团队的板, 传其它团队名报 `Teammates can only access their own team.`
+- leader 侧的板订阅 (`subscribeLeaderTasks`, src/teams/task-tools.ts, UI 与 remote 共用) 在多团队时聚合全部团队板: 任务 id 变成 `["<团队名>", "<id>"]` 的 JSON 字符串做命名空间, subject 加 `[<团队名>]` 前缀, boardId 含团队名数组; 单团队时原样展示, 无团队时回退私有板
 - teammate 以自己的名字认领 `in_progress` 任务; 只有 leader 能把任务指派给别人, 且同一时刻一个 teammate 只能有一个 `in_progress` 任务
 
 ## 宿主差异
