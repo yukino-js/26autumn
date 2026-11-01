@@ -2,7 +2,7 @@
 title: "Skill"
 description: "Skill: 写给 AI 的 SOP (SKILL.md + YAML frontmatter), inline / fork 两种执行模式; 覆盖三层目录扫描与优先级, 渐进式披露两阶段加载, LoadSkill / InstallSkill 工具, $ARGUMENTS 替换, 热加载三层机制, 自动注册为 Slash Command 与目录型 skill 资产"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 skill 是写给 AI 的 SOP (Standard Operation Procedure): 一个带 YAML frontmatter 的 SKILL.md, 描述一类任务该怎么一步步做
@@ -15,7 +15,7 @@ skill 是写给 AI 的 SOP (Standard Operation Procedure): 一个带 YAML frontm
 4. 有两种执行模式: inline 或 fork
 5. 支持参数占位符 `$ARGUMENTS`
 
-代码位于 `src/skills/`: `catalog.ts` (扫描 / 解析 / 热重载), `constants.ts` (常量与正则), `prompts.ts` (prompt 组装), `executor.ts` (runInline / runFork), `load-skill-tool.ts`, `install-skill-tool.ts`
+代码位于 `src/skills/`: `catalog.ts` (扫描 / 解析 / 热重载), `constants.ts` (常量与正则), `prompts.ts` (prompt 组装), `executor.ts` (runInline / runFork), `load-skill-tool.ts`, `install-skill-tool.ts`, `index.ts` (类型与命名空间导出)
 
 ## SKILL.md 的 Frontmatter
 
@@ -126,7 +126,7 @@ runFork 的实现:
   - none 不携带对话历史 (默认)
   - recent 携带最近的 5 条消息 (FORK_CONTEXT_RECENT_MESSAGES)
   - full 携带最近的 100 条消息 (FORK_CONTEXT_FULL_MESSAGES)
-- snapshotParentMessages 把最近 N 条消息逐行格式化为 `[role] content`
+- snapshotParentMessages 把最近 N 条消息逐行格式化: TUI 与 remote 的 slash command fork host 输出 `[role] content`, remote 的 LoadSkill fork host 输出 `role: content`
 - runSubagent spawn 一个 subagent: `/skill` 命令路径用 skill 的 name / description / model 构造 AgentDefinition, 模型解析顺序是 skill.model 优先, 缺省用当前 provider 的 model
 - subagent 的最终输出原样返回: LoadSkill 路径作为工具调用结果, slash command 路径作为 assistant 消息展示
 
@@ -156,7 +156,7 @@ URL 下载的安全约束 (fetchPublicHttpUrl):
 
 校验与写入:
 
-- 内容必须能解析出带 name 的 frontmatter, 否则报 "source must be a valid SKILL.md" — HTML 页面和仓库页面在这里被拒绝
+- 内容必须能解析出带 name 的 frontmatter, 否则报 "Error: source must be a valid SKILL.md with a frontmatter name" — HTML 页面和仓库页面在这里被拒绝
 - 安装位置是用户级 `~/.yukino/skills/<name>/SKILL.md`, 所有项目可用
 - 路径安全: realpath 解析 home 后逐段检查 `.yukino`、`skills`、`<name>` 三个组件, symlink 和非目录一律拒绝; 目标 SKILL.md 必须是普通文件
 - 原子替换: 先写临时文件 `.SKILL-<uuid>.tmp` (wx 独占创建, 继承旧文件权限), 再 rename 覆盖, 避免截断旧文件的其它硬链接

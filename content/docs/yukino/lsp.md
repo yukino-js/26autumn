@@ -2,7 +2,7 @@
 title: "LSP"
 description: "LSP 集成: 只读 stdio JSON-RPC 客户端与 LSP 工具给 agent 11 种语义级查询 (定义, 引用, 调用层级, 诊断等); 覆盖 lsp_servers 配置与校验, 握手与超时, 文档同步与 LRU 缓存, pull/push 诊断模型, 1-based 输入 / 0-based 返回约定与只读保证"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 LSP (Language Server Protocol) 集成: 给 agent 语义级的代码导航能力
@@ -48,7 +48,7 @@ lsp_servers:
 No LSP server configured for '.rs'. Add an installed server to lsp_servers.
 ```
 
-配置在所有宿主间一致装配: 交互式 UI、print 模式、remote、ACP、A2A 都把 `cfg.lsp_servers` 传进共享的 `createToolRegistry`, LSP 工具始终注册 (见 [function-calling](./function-calling))
+配置在所有宿主间一致装配: 交互式 UI、print 模式、remote、A2A 都把 `cfg.lsp_servers` 传进共享的 `createToolRegistry` (A2A 经 `createRemoteAgent` 间接装配), LSP 工具始终注册 (见 [function-calling](./function-calling))
 
 ## LspClient
 

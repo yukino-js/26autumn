@@ -2,7 +2,7 @@
 title: "Hook"
 description: "Hook: 在生命周期事件上挂载自动化动作 (事件/条件/动作三要素) — 写文件后自动 format、危险命令执行前拦截、会话开始时注入项目约定; 配置只来自 `~/.yukino/config.yaml` 顶层 hooks 数组"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 在 Agent 的生命周期事件上挂载自动化动作: 写文件后自动 format, 危险命令执行前直接拦截, 会话开始时注入项目约定
@@ -79,7 +79,7 @@ hooks:
 
 ### 生效范围
 
-HookEngine 只在两处创建: 交互式 UI (src/ui/app.tsx) 和 remote 的 createRemoteAgent (src/remote/server.ts); ACP 与 A2A 复用 createRemoteAgent (见 [acp](./acp) 和 [a2a](./a2a)), 因此同样生效
+HookEngine 只在两处创建: 交互式 UI (src/ui/app.tsx) 和 remote 的 createRemoteAgent (src/remote/server.ts); A2A 复用 createRemoteAgent 并传入 config.hooks (见 [a2a](./a2a)), 因此同样生效
 
 - print 模式不创建 HookEngine, hook 不生效 (见 [print-mode](./print-mode))
 - subagent 不创建 HookEngine, hook 只作用于主 Agent 的循环 (见 [subagent](./subagent))
@@ -298,7 +298,7 @@ hooks:
 启动时 validate 全部 hook 配置 (src/hooks/index.ts), 校验失败抛错阻断启动, 两个调用点:
 
 - 交互式 UI: 初始化 LLM 客户端前 (src/ui/app.tsx)
-- remote 的 createRemoteAgent: 创建 agent handle 时 (src/remote/server.ts), [acp](./acp) 和 [a2a](./a2a) 共用这个入口
+- remote 的 createRemoteAgent: 创建 agent handle 时 (src/remote/server.ts), [a2a](./a2a) 共用这个入口
 
 校验规则:
 

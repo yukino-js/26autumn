@@ -2,15 +2,16 @@
 title: "数据模型"
 description: "数据模型: 26 张 Drizzle 表按域分组、主键与并发安全序列 (id_sequences)、领域类型 (types.ts)、状态码展示元数据 (enums.ts)"
 local_path: "$HOME/github/yukino-test-agent"
-local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
+local_commit: "939179e40f2ca6f25e141dbb5d2d5c61c49304be"
 ---
 
-数据库结构定义在 `src/db/schema.ts` (Drizzle ORM + PostgreSQL, 共 721 行); 连接客户端在 `src/db/index.ts` (`drizzle-orm/node-postgres`, 读取环境变量 `DATABASE_URL`); 迁移由 drizzle-kit 按 `drizzle.config.ts` 生成到 `./drizzle` 目录 (dialect `postgresql`).
+数据库结构定义在 `src/db/schema.ts` (Drizzle ORM + PostgreSQL, 共 729 行); 连接客户端在 `src/db/index.ts` (`drizzle-orm/node-postgres`, 读取环境变量 `DATABASE_URL`); 迁移由 drizzle-kit 按 `drizzle.config.ts` 生成到 `./drizzle` 目录 (dialect `postgresql`).
 
 设计约定:
 
 - **主键**: 多为服务层生成的 32 位 uuid hex 字符串 (无连字符, `varchar(36)`, 见 `server/services/projects.ts` 的 `uuid()`); 两类例外使用人类可读 ID——`test_cases` 用 `TC-000001` 式全局序列 (`varchar(20)` + 项目内序号 `projectSeq`), `execution_records` 用 `EX-xxxxxxxx` (uuid 前 8 位).
 - **并发安全 ID**: `id_sequences` 表保存跨进程单调计数器. `server/services/testcases.ts` 的 `nextSequenceValue` 在与插入同一个事务里对计数行加 `FOR UPDATE` 行锁, 取代并发下会发放重复主键的 `max(id)+1` 扫描; 首次分配会用现存行回填计数 (数值比较而非字典序), 保证永不倒退.
+- **数据库级唯一性**: `requirements` 带 `ux_requirements_project_version` (projectId, version) 唯一索引——即使两个并发创建都通过了服务层 `checkVersionUnique` 的 check-then-insert, 数据库也保证每个项目每个版本至多一行.
 - **结构化载荷**: 用 jsonb 列, 并以 `src/lib/types.ts` 中的共享领域类型约束 (Drizzle 的 `$type<T>()`).
 - **状态码**: 数据库只存稳定的英文码 (如 `passed`/`failed`/`needs_review`), 展示元数据 (label/tone/description) 统一放在 `src/lib/enums.ts`.
 - **时间**: 统一 `timestamp with timezone` + `defaultNow()`.
@@ -23,12 +24,12 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 | 项目     | `projects`                 | 项目 (name/description/sourceType 默认 `local_path`/sourcePath/gitUrl/gitBranch/techStack jsonb/prdContent/targetUrl)                                                                                      |
 | 代码分析 | `code_analyses`            | 每次静态分析一条 (status 默认 pending/backendResult/frontendResult/warnings jsonb/errorMessage)                                                                                                            |
 | 代码分析 | `state_machines`           | 推断出的状态机 (name/states/transitions jsonb/confidence real 默认 0)                                                                                                                                      |
-| 需求     | `requirements`             | 需求版本 (name/version 默认 V1.0/content/sourceFile/status 默认 draft/errorMessage)                                                                                                                        |
+| 需求     | `requirements`             | 需求版本 (name/version 默认 V1.0/content/sourceFile/status 默认 draft/errorMessage), `ux_requirements_project_version` 唯一索引 ⇒ 每项目每版本至多一行                                                     |
 | 需求     | `test_points`              | 测试点 (seq/title/category 默认 functional/priority 默认 P1/description/pageRoute/endpoint/fields jsonb/expected/source 默认 rule/confidence 默认 1)                                                       |
 | 增量需求 | `requirement_snapshots`    | 按需求版本冻结的不可变代码事实快照 (详见「增量需求域」)                                                                                                                                                    |
 | 增量需求 | `requirement_change_runs`  | 一次增量变更分析/生成运行 (status/mode/baselineSnapshotId/currentSnapshotId/summary jsonb)                                                                                                                 |
 | 增量需求 | `requirement_changes`      | 两个快照之间的一条结构化变更 (entityType/changeType/matchKey/oldData/newData/confidence/requiresConfirmation/reviewStatus)                                                                                 |
-| 增量需求 | `requirement_case_changes` | 增量运行中每条基线用例的去向 (action/regressionImpact/regressionStatus/dedupeKey 唯一索引保证幂等)                                                                                                         |
+| 增量需求 | `requirement_case_changes` | 增量运行中每条基线用例的去向 (action/regressionImpact/regressionStatus/dedupeKey 与 runId 组成唯一索引保证幂等)                                                                                            |
 | 用例     | `test_cases`               | 测试用例 (详见下节)                                                                                                                                                                                        |
 | 用例     | `test_case_versions`       | 用例版本快照 (version 整数/snapshot jsonb 必填/changeNote), 支持回滚                                                                                                                                       |
 | 用例     | `requirement_cases`        | 需求 ↔ 用例 关联 (可带 testPointId), 多对多桥表                                                                                                                                                            |
@@ -36,7 +37,7 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 | 用例     | `id_sequences`             | 命名计数器 (name 主键/value/updatedAt), TC 编号与项目内序号的并发安全来源                                                                                                                                  |
 | 执行     | `execution_records`        | 执行记录 (testCaseTitle/testCaseSnapshot jsonb 必填/batchId/status 默认 running/mode 默认 programmatic/targetUrl/startTime/endTime/durationMs/errorCategory/errorMessage/videoPath/passedSteps/totalSteps) |
 | 执行     | `execution_requirements`   | 执行 ↔ 需求版本 快照关联 (requirementVersion/requirementName), `ux_execution_requirements_exec` 唯一索引 ⇒ 一条执行至多一条                                                                                |
-| 执行     | `execution_steps`          | 逐步记录 (stepIndex/action/target/stepType 默认 ui_action/selectorUsed/result 默认 passed/screenshotBefore/screenshotAfter/error/durationMs)                                                               |
+| 执行     | `execution_steps`          | 逐步记录 (stepIndex/action/target/stepType 默认 ui_action/selectorUsed/result 默认 passed/screenshotBefore/screenshotAfter/error/evidence jsonb/durationMs)                                                |
 | 复核     | `execution_reviews`        | 复核结论 (verdict/reason/model/imageCount/reviewer llm 或 manual/reviewerNote/reviewedAt), `ux_execution_reviews_exec` 唯一索引 ⇒ 与执行记录 1─1                                                           |
 | 复核     | `execution_review_images`  | 逐图判定 (imageIndex/stepIndex/label/screenshot/verdict/analysis/bbox jsonb 四元组)                                                                                                                        |
 | 复核     | `execution_review_issues`  | 复核发现的问题 (imageIndex/stepIndex/label/screenshot/bbox jsonb/problem)                                                                                                                                  |
@@ -101,7 +102,7 @@ id_sequences / llm_profiles                             (全局计数与配置, 
 - **`requirement_snapshots`**: 每个需求版本一条不可变快照——`endpoints` (参数展开、鉴权与关联规则归一化后的接口)、`rules`、`stateTransitions`、`security` (安全配置摘要: hash + signals)、`warnings`, 外加 `fingerprint` (varchar(64)) 用于快速判等; `source` 取 `code_analysis | manual`, 可回指 `analysisId` 与 `baselineRequirementId`.
 - **`requirement_change_runs`**: 一次增量运行, `status` 走 `analyzing → review → generating → completed` (或 `failed`); 同时持有 `baselineSnapshotId` 与 `currentSnapshotId`, `summary` jsonb 存接口/规则/用例变更与回归统计.
 - **`requirement_changes`**: 两个快照间的一条结构化差异. `entityType`: `endpoint | business_rule | state_transition | permission | conflict`; `changeType`: `added | modified | deleted | unchanged | uncertain`; 用 `matchKey` + `oldRef/newRef` + `oldData/newData` 描述前后态; `requiresConfirmation` 标记需人工确认的项, `reviewStatus`: `auto | pending | confirmed | rejected`.
-- **`requirement_case_changes`**: 每条基线用例在增量运行中的去向. `action`: `created | updated | reused | pending_delete | missing` (`missing` 时 `testCaseId` 为 null); `baselineCaseId` 指向一期历史用例; 回归建议用 `regressionImpact` (`direct | indirect | none`) + `regressionReason` + `regressionStatus` (`suggested | accepted | rejected`) 表达; `dedupeKey` (形如 `reuse:{caseId}` / `update:{caseId}:{sig}` / `gen:{endpoint}:{sig}`) 配唯一索引 `uq_requirement_case_changes_dedupe`, 使重复生成幂等.
+- **`requirement_case_changes`**: 每条基线用例在增量运行中的去向. `action`: `created | updated | reused | pending_delete | missing` (`missing` 时 `testCaseId` 为 null); `baselineCaseId` 指向一期历史用例; 回归建议用 `regressionImpact` (`direct | indirect | none`) + `regressionReason` + `regressionStatus` (`suggested | accepted | rejected`) 表达; `dedupeKey` (形如 `reuse:{caseId}` / `update:{caseId}:{sig}` / `gen:{endpoint}:{sig}`) 配 (runId, dedupeKey) 唯一索引 `uq_requirement_case_changes_dedupe`, 使同一次运行内的重复生成幂等.
 
 **`case_generations`** 则是全量生成的归档: 每次运行一行, `mode` 取 `auto | rule | llm | legacy` (legacy 为回填的历史档案), `summary` jsonb 记录 mode/requestedMode/fallback/fallbackReason/counts/byType, `snapshot` jsonb 保存逐用例轻量快照 (id/title/module/type/priority/source/score/expected). UI 据此提供版本下拉与只读检视; 在用用例仍遵循原有替换语义, 该表从不改写它们.
 
@@ -148,7 +149,7 @@ interface StructuredStep {
 After submitting, the page shows "Order created successfully".
 ```
 
-执行时 `runner.ts` 的三层断言按「URL 路径 → 引号锚点在 body 文本中精确查找 → 诚实 skipped」的顺序判定; 锚点由 `QUOTE_ANCHOR_RE` (`/["“]([^"”]+)["”]/g`) 提取, 直引号与弯引号均被识别 (同一正则也出现在 `quality-gate.ts` 与 `evaluation/metrics.ts`). 锚点必须来自代码事实里的真实文案; 标题、描述等散文保持英文. 详见 [浏览器执行](./execution).
+执行时 `runner.ts` 的 `doAssert` 把 URL 路径与引号锚点作为两个**独立**维度检查, 要求所有可验证维度都命中: URL 未命中或锚点缺失即 `failed`, URL 命中但文本锚点缺失绝不 `passed` (那会是假绿); 只有完全不含可验证锚点的预期才诚实 `skipped` (含 URL 提示词但提取不到路径时同样 skipped). URL 路径由 `URL_PATH_RE` 提取 (必须以字母/下划线/花括号开头, `20/21 characters` 不会被误判为路径), 匹配由 `urlPathMatches` 按完整路径分段比对, 支持 `{id}` 占位符, 杜绝 `/order` 命中 `/orders` 的子串假绿; 锚点由 `QUOTE_ANCHOR_RE` (`/["“]([^"”]+)["”]/g`) 提取, 直引号与弯引号均被识别 (同一正则也出现在 `quality-gate.ts` 与 `evaluation/metrics.ts`). 锚点必须来自代码事实里的真实文案; 标题、描述等散文保持英文. 详见 [浏览器执行](./execution).
 
 ### 覆盖引用 (CoverageRefs)
 
@@ -165,14 +166,14 @@ interface CoverageRefs {
 
 ### 执行证据与运行态类型
 
-- `ExecutionStepRecord` / `RunnerResult`: 执行器产出的逐步记录与整案结果 (status/errorCategory/errorMessage/videoPath/passedSteps/totalSteps/steps), 与 `execution_steps`、`execution_records` 列一一对应;
+- `ExecutionStepRecord` / `RunnerResult`: 执行器产出的逐步记录与整案结果 (status/errorCategory/errorMessage/videoPath/passedSteps/totalSteps/steps), 与 `execution_steps`、`execution_records` 列一一对应; 每步可携带 `evidence` (`Record<string, unknown>`, 落库于 `execution_steps.evidence` jsonb): input 步骤由 `runner.ts` 的 `inputEvidence` 记录可验证证据——`inputValueLength`/`actualValueLength`/`inputValueHash`/`actualValueHash` (sha256)/`valueMatch`/`actualValuePreview` (超 40 字符截为首 20 + 尾 20); 敏感字段 (target/action/selector 文本含 `password`/`pwd`) 只记长度与 `valueMatch` 并置 `sensitive: true`, 绝不落明文; 证据采集失败只记 `evidenceError`, 不会让步骤本身失败. 视觉复核 (`vision-review.ts`) 会把这些字段拼进喂给模型的步骤文本, 使长输入无需靠截图认字即可核对;
 - `ImageReview` / `ReviewIssue`: 视觉复核的逐图判定与问题清单, 对应 `execution_review_images` / `execution_review_issues`;
 - `LlmKind` (`text | vision`) 与 `LlmProfileDict` (含 `apiKeyConfigured` 布尔, 前端不回传明文 key);
 - `JobState` / `JobStatus`: 内存态后台任务进度 (id/kind/status/message/current/total), 不落库, 由 `server/lib/jobs.ts` 管理.
 
 ## 状态码与展示元数据 (enums.ts)
 
-数据库存英文码, UI/报告通过 `meta(MAPPING, code)` 取得 `label/tone/description`; 未收录的码回退为 `Uncategorized` + tone `info`. `tone` 取值 `info | primary | success | danger | warning`, 由 `StatusBadge` 组件映射为语义色边框/背景/圆点.
+数据库存英文码, UI/报告通过 `meta(MAPPING, code)` 取得 `label/tone/description`; 未收录的码 label 回退为码本身 (码为空时 `Uncategorized`), tone 回退 `info`. `tone` 取值 `info | primary | success | danger | warning`, 由 `StatusBadge` 组件映射为语义色边框/背景/圆点.
 
 | 映射表                         | 取值                                                                                                          |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------- |

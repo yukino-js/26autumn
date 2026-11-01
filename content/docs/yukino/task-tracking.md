@@ -2,7 +2,7 @@
 title: "Task Tracking"
 description: "两套同名不同义的 task 机制: TodoWrite 任务板 (私有板与团队共享板、原子增量编辑、依赖校验) 与 TaskManager 后台任务 (登记、通知、TaskOutput/TaskStop), 含多团队下的板选择语义"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 任务跟踪在 Yukino 里是两套互不相干的机制, 只是碰巧都叫「task」:
@@ -61,7 +61,7 @@ id 由 `nextId` 单调分配: 每创建一个任务消耗一个整数并落进�
   - 板子上被省略的任务原样保留; 空数组什么都不做
 - `deleteIds: ["1"]`: 显式删除任务, 同时把其它任务里指向它的依赖边一并移除
 
-返回结果是一段 JSON, 含 `boardId`、完整的 `todos` 快照, 以及 `progress` 字符串 (`TODO completed/total`, 来自 `taskProgress`, 只有 `completed` 计入分子, src/todo/progress.ts)。
+返回结果是一段 JSON, 含 `boardId`、完整的 `todos` 快照, 以及 `progress` 字符串 (`DONE completed/total`, 来自 `taskProgress`, 只有 `completed` 计入分子, src/todo/progress.ts)。
 
 原子性: `applyTodoWrite` 在 `structuredClone` 的副本上操作, 任一条目非法就整体抛错; `TaskList.write` 只有在成功返回后才 `store.save` 并更新 `this.tasks` / `this.nextId`。所以整批要么全成、要么全废 —— 不产生部分写入, 也不消耗 id。
 
@@ -110,7 +110,7 @@ agent loop 每轮通过 `notificationFn` 调 `drainNotifications()` 取出所有
 工具的行为边界靠每轮注入的运行时工具指南维持 (`buildToolGuidance` 把 `TODO_WRITE_RULE`、`TASK_OUTPUT_RULE`、`BACKGROUND_TASK_STOP_RULE` 等规则拼进一条 `<system-reminder>`, src/prompt/tools.ts, 见 [system-prompt](./system-prompt)):
 
 - 只跟踪复杂工作, 琐碎请求不建任务; 开始前标 `in_progress`, 验证通过后才标 `completed`, `blocked` / `cancelled` 如实使用
-- 计数只认 `completed` (`TODO completed/total`); 已完成的任务在显式删除前一直留在板上
+- 计数只认 `completed` (`DONE completed/total`); 已完成的任务在显式删除前一直留在板上
 - `TodoWrite` 只做跟踪, 绝不启动 Agent 或后台任务 —— 执行是 Agent 的事, 跟踪是任务板的事
 - 团队协作时: leader 和 teammates 共享团队任务板 —— 每个 teammate 拿到的 `TodoWrite` 底层是绑定本团队的 `TeamTodoWriteTool`, leader/主 agent 的版本则在无团队时回退到私有板; 普通 subagent 和 fork 永远用各自独立的私有清单 (见 [agent-team](./agent-team))
 - 团队板选择: `TeamTodoWriteTool` 在基础 schema 上追加 `team_name` 参数, 多个团队并存时用它选择目标团队的板; 未传且多团队并存时报 `Multiple teams match. Specify team_name; use TeamList to see available teams.`; teammate 被限制在本团队的板, 传其它团队名报 `Teammates can only access their own team.`

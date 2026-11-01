@@ -2,7 +2,7 @@
 title: "Telemetry"
 description: "遥测子系统: OpenTelemetry/Langfuse/Sentry 三后端的启用条件与装配、agent/LLM/tool 三层观测点与指标、隐私洗消规则, 以及生命周期与环境变量参考"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 遥测回答的问题: 每个 agent 会话消耗了多少 token? 哪些工具调用最慢? 首 token 延迟是多少? 哪些请求失败了、为什么失败?
@@ -13,7 +13,7 @@ Yukino 的遥测默认关闭, 只通过环境变量配置, 不落配置文件 (�
 - Langfuse: LLM 可观测平台, 与 OpenTelemetry 共享同一棵 trace 树
 - Sentry: 进程级错误上报, 性能追踪仍由 OpenTelemetry 负责
 
-所有遥测 SDK (`@opentelemetry/*`、`@langfuse/*`、`@sentry/node`) 都声明在 optionalDependencies 里; `initializeTelemetry()` 判定需要开启后才动态 `import("./providers.js")` 装配运行时, 导入或装配失败则静默回退到 noop 运行时。providers.ts 静态引入 `@langfuse/*` 与 `@opentelemetry/*` 核心包, OTLP / Prometheus exporter 和 `@sentry/node` 在其内部按配置动态 import; 入口 `src/telemetry/index.ts` 还以 `Telemetry.Providers` 命名空间静态再导出 providers.js, 因此 provider 模块随入口一起进入模块图
+所有遥测 SDK (`@opentelemetry/*`、`@langfuse/*`、`@sentry/node`) 都声明在 optionalDependencies 里; `initializeTelemetry()` 判定需要开启后才动态 `import("./providers.js")` 装配运行时, 导入或装配失败则静默回退到 noop 运行时。providers.ts 静态引入 `@langfuse/*` 与 `@opentelemetry/*` 核心包, OTLP / Prometheus exporter 和 `@sentry/node` 在其内部按配置动态 import; 入口 `src/telemetry/index.ts` 刻意不静态再导出 providers.js — 它静态引入这些 optionalDependencies, 静态再导出会让库入口在可选依赖缺失时无法加载, 并与受保护的动态 import + noop 回退相矛盾, 因此 provider 模块只经由 `initializeTelemetry()` 的动态 import 进入运行时
 
 ```txt
 src/telemetry/
@@ -24,7 +24,7 @@ src/telemetry/
 └── instrumentation.ts # agent / LLM / tool 三个观测点的具体打点
 ```
 
-库形态下整个模块以 `Telemetry` 命名空间从包入口导出 (`Telemetry.Constants` / `Telemetry.Instrumentation` / `Telemetry.Privacy` / `Telemetry.Providers`)
+库形态下整个模块以 `Telemetry` 命名空间从包入口导出 (`Telemetry.Constants` / `Telemetry.Instrumentation` / `Telemetry.Privacy`)
 
 ## 启用条件
 
@@ -67,7 +67,7 @@ meter 和 logger 的 instrumentation scope 是 `@yukino.js/yukino` + 当前版�
 
 ## 运行模式
 
-`TelemetryMode` 取值为 `terminal` / `print` / `remote` / `acp` / `a2a` / `unknown` (未设置时的初始值)。五种运行模式 (ui / print / remote / acp+acp-ws / a2a) 的 runner 都会先 `await initializeTelemetry()` 再 `setTelemetryMode()`; ui 模式标记为 `terminal`, acp 和 acp-ws 都标记为 `acp`。模式以 `yukino.mode` 属性附加到每个 observation、每条 metric 和每条 log 上, 并通过 `setTag` 同步给 Sentry
+`TelemetryMode` 取值为 `terminal` / `print` / `remote` / `a2a` / `unknown` (未设置时的初始值)。四种运行模式 (ui / print / remote / a2a) 的 runner 都会先 `await initializeTelemetry()` 再 `setTelemetryMode()`; ui 模式标记为 `terminal`。模式以 `yukino.mode` 属性附加到每个 observation、每条 metric 和每条 log 上, 并通过 `setTag` 同步给 Sentry
 
 ## 观测点与层级
 
@@ -83,7 +83,7 @@ yukino.agent.run (一次 agent loop, kind=agent)
 | --------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `yukino.agent.run`    | trace/metric | `Agent.run()` 开始时由 `startAgentTelemetry` 创建, finally 中 `endAgentTelemetry` 收尾; counter `yukino.agent.runs`, histogram `yukino.agent.duration`, 属性含 outcome (completed / interrupted / error, abort 时强制 interrupted) 与 protocol                                                                                                  |
 | `yukino.llm.generate` | trace/metric | `observeLlmStream` 包裹 LLM 流式响应, 记录首事件时刻; counter `yukino.llm.requests`, histogram `yukino.llm.time_to_first_token` 与 `yukino.llm.duration` (outcome: completed / error / incomplete), counter `yukino.llm.tokens` (按 token.type 分维度), 失败时 log `yukino.llm.error`; span 上还写入 completionStartTime、model 与 usageDetails |
-| `yukino.tool.execute` | trace/metric | `observeToolExecution` 在 StreamingExecutor 中包裹每次 `tool.execute`; counter `yukino.tool.calls`, histogram `yukino.tool.duration`, 结果 `isError` 或抛异常都记 outcome=error, 失败时 log `yukino.tool.error`                                                                                                                                 |
+| `yukino.tool.execute` | trace/metric | `observeToolExecution` 在 StreamingExecutor 中包裹每次 `tool.execute`; counter `yukino.tool.calls`, histogram `yukino.tool.duration`, 结果 `isError` 或抛异常都记 outcome=error, 仅抛异常时 log `yukino.tool.error`                                                                                                                             |
 | `yukino.error`        | log          | 进程级错误 (`captureTelemetryError`), 携带 context: main / config / print / remote / uncaught exception / unhandled rejection; 同一错误同时以 tags 形式发给 Sentry; `AbortError` 直接跳过                                                                                                                                                       |
 
 histogram 单位统一为 `ms`。属性维度: `protocol` (anthropic / openai / openai-compat)、`model`、`tool`、`session.hash`、`token.type` (input / output / cache_creation / cache_read, 值为 0 的类型不上报)、`yukino.mode`。LLM client 的 model / protocol 元数据在 `createClient` 时通过 `registerLlmClient` 写入 WeakMap (源码: src/llm/client.ts), 打点时按 client 实例读取, 避免把配置对象传进观测层

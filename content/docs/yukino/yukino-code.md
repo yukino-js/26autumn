@@ -2,7 +2,7 @@
 title: "Yukino 源码解析: 终端 Coding Agent 的子系统机制"
 description: "按 Agent 主循环与事件流、Provider 适配与重试、工具系统与 MCP 延迟加载、上下文压缩与恢复、检查点与 fork、长期记忆、subagents 与团队、coordinator 与持久 goal、权限、Hooks 与沙箱、运行模式与遥测等子系统, 深入论述 Yukino Code 内置核的实现思路与设计取舍, 并以三十一问的设计问答篇补充边界与取舍"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 Yukino Code 是一个运行在终端里的 Coding Agent, 用 React + Ink 渲染 TUI, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环。本文以它的内置核为对象, 按子系统逐一深潜: Agent 主循环如何把一轮推理拆成可中断、可恢复、可观测的事件流, 多种协议如何在同一接口下收敛, 工具与 MCP 如何在不破坏 prompt cache 的前提下进入上下文, 上下文满了如何压缩并在恢复时找回细节, 会话如何回退与派生, 记忆如何跨会话沉淀, 多代理又如何被组织成团队和长期目标。它不是接口手册, 也不逐文件走读, 而是解释每个机制为什么这样设计、代价是什么、在什么场景下成立。适合正在构建或维护 Agent 基础设施的工程师阅读, 也适合把它当作「把 Agent 做成产品级终端应用」的工程权衡参考。本文前半按子系统论述实现思路, 后半 (设计问答篇) 以问答形式补充取舍与边界。它的官方 MCP 工具集见 [yukino-mcp](../../fe/yukino-mcp), 把它作为库复用的全栈代码生成平台见 [yukino-codegen](../../fe/yukino-codegen)。
@@ -11,7 +11,7 @@ Yukino Code 是一个运行在终端里的 Coding Agent, 用 React + Ink 渲染 
 
 ### 1.1 循环骨架
 
-核心是 Agent 类的 run() 方法, 它返回一个 `AsyncGenerator<AgentEvent>`, 把整轮自治过程暴露成可订阅的事件流。这样宿主 (TUI、print、remote、ACP、A2A、teammate) 都能用同一套 `for await` 消费, 而不必各自复制循环逻辑。一次 run 的生命周期大致是:
+核心是 Agent 类的 run() 方法, 它返回一个 `AsyncGenerator<AgentEvent>`, 把整轮自治过程暴露成可订阅的事件流。这样宿主 (TUI、print、remote、A2A、teammate) 都能用同一套 `for await` 消费, 而不必各自复制循环逻辑。一次 run 的生命周期大致是:
 
 1. restoreContext: 把项目指令、自动记忆、技能清单经会话管理器注入 (仅首次, 之后由压缩触发重注)。
 2. 打文件检查点快照, 让本轮开始时的文件状态可回退。
@@ -121,7 +121,7 @@ MCP 工具默认延迟加载, 但具体怎么进入上下文分三种模式, 在
 
 ### 3.4 工具名消歧与参数归一
 
-MCP 工具全名形如 `mcp__<服务器>__<工具>`, 两段各经 sanitizeSegment 清洗: 只保留字母、数字与下划线, 其余字符 (含连字符) 一律替换为下划线。源码注释解释了为什么连字符也要替换: Go 与 Python 实现做同样的清洗, 同一份 mcp_servers 配置必须在所有语言实现里产出相同的工具名, 否则同一份权限规则换个语言就失配。
+MCP 工具全名形如 `mcp__<服务器>__<工具>`, 两段各经 sanitizeSegment 清洗: 只保留字母、数字与下划线, 其余字符 (含连字符) 一律替换为下划线。
 
 经统一入口 McpCall 调用时, 权限规则的匹配目标不是某个参数, 而是 `服务器__工具` 形式 (传入全名会剥掉 mcp__ 前缀), 因此既能按服务器管控, 也能按具体工具管控。参数会先按目标工具的完整 schema 逐层归一 (coerceBySchema): 字符串与数字按全匹配模式互转、"true"/"false" 转布尔、单键对象解包进数组、逗号分隔字符串拆成数组、对象与数组递归处理, `__proto__` 这类危险键用 defineProperty 写入而不是直接赋值; 修不动的值原样透传, 让服务器自己报错而不是在本地猜。
 
@@ -132,6 +132,10 @@ ToolSearch 是延迟工具的发现入口: query 以 `select:` 开头时按名�
 代理派生时工具面按固定顺序多层过滤: MCP 工具豁免全局限制但仍受角色级黑白名单约束; 一组主线程专属工具被移除——Workflow、物理设备 ComputerUse、单例对话框 AskUserQuestion、计划模式入口 EnterPlanMode 与出口 ExitPlanMode、持久目标 Goal, 再加上委派策略限制的递归派生 Agent 与团队权限类 TeamCreate/TeamDelete/SendMessage; 后台代理再套一层允许白名单; 最后应用角色定义的黑名单与白名单交集 (`tools: ["*"]` 可关掉白名单层)。plan 模式派生的 teammate 例外保留 ExitPlanMode, 但被重绑到「向团队提交计划」。
 
 过滤不是简单复制引用: 本地任务工具被重绑到全新的私有任务列表, 工具搜索与统一入口重绑到新注册表, 技能加载换成惰性宿主, 任务停止换成「只能停自己任务」的限定版。这样普通子代理与 fork 拥有独立、初始为空的进度清单, 既不会与父代理共享进度, 也不会误动团队共享板。
+
+### 3.6 文件写入的统一原子落盘
+
+EditFile 与 WriteFile 共用同一条原子写路径 writeFileAtomically (tools/atomic-write.ts): 先在目标同目录独占创建 `.yukino-<uuid>.tmp` 临时文件, 写入并 fsync 后原子重命名到目标, 无论成败 finally 都清理临时文件。几个防御性细节: 目标是符号链接时先 realpath 解析到真实路径再写; 目标存在但不是常规文件时直接报错; 目标已存在则沿用其权限位, 私有状态路径统一用私有权限并在非 Windows 平台显式 chmod 保持一致; 写入前与重命名前各检查一次中止信号。两个工具的失败分支也区分中止与真实错误: 中止时报告「操作已中断」而不是笼统的写失败。效果是写入要么以完整新内容原子出现, 要么保持旧内容, 不存在半写文件。
 
 ## 四、上下文压缩与恢复
 
@@ -258,7 +262,7 @@ fork 禁止嵌套: fork 出的子代理 (与所有子代理一样) 被全局 SUB
 
 ### 7.4 团队模型与进程内 teammate
 
-团队可以多个并存: TeamCreate 只新增一个团队, 既有团队及其成员继续运行; create 本身在已有同名团队时直接返回现有团队; TeamList 列出全部团队及其成员。生成 teammate 的路径是 Agent 工具的 kind=teammate (默认值), 加入哪个团队由 `resolveTeam(team_name)` 解析: 传了 team_name 时该团队必须已存在 (否则报 `Team '<name>' not found.`); 未传时复用唯一存在的团队, 多个团队并存则报歧义错误要求显式指定, 一个团队都没有时以 leader 身份自动创建 (名字形如 `team-<uuid>`)。成员名总是由 description 派生: 空白折叠成连字符、转小写、清洗非法字符、截到 MAX_TEAMMATE_NAME_CHARS=30, 与 leader 名或现有成员重名时追加 `-2`、`-3` 后缀; 已完全回收的终态成员名字可复用。
+团队可以多个并存: TeamCreate 只新增一个团队, 既有团队及其成员继续运行; 它支持显式命名 (name 参数, 省略时自动生成), 已有同名团队时直接报错, 提示改名或用 team_name 指向既有团队——团队目录以私有权限排他创建, 目录已存在同样按同名冲突处理, 因此跨进程也不会撞出两个同名团队; TeamList 列出全部团队及其成员。生成 teammate 的路径是 Agent 工具的 kind=teammate (默认值), 加入哪个团队由 `resolveTeam(team_name)` 解析: 传了 team_name 时该团队必须已存在 (否则报 `Team '<name>' not found.`); 未传时复用唯一存在的团队, 多个团队并存则报歧义错误要求显式指定, 一个团队都没有时以 leader 身份自动创建 (名字形如 `team-<uuid>`)。成员名总是由 description 派生: 空白折叠成连字符、转小写、清洗非法字符、截到 MAX_TEAMMATE_NAME_CHARS=30, 与 leader 名或现有成员重名时追加 `-2`、`-3` 后缀; 已完全回收的终态成员名字可复用。
 
 teammate **一律进程内运行**: `Team.spawnTeammate` 接收一个 `runAgent` 回调 (由 `teamRunAgentFactory` 用 teammate 作用域的注册表与权限检查器构造), 在同一进程的事件循环里跑子代理主循环, 派生成功的回执明确标注 `(in-process)`。没有 tmux/iTerm/独立子进程那套外部 backend。进程内 teammate 共享事件循环, 因此进度 UI 能实时更新; 中止经 AbortController 直接传到成员的主循环, `stopMember` 会等成员当前循环真正停下。
 
@@ -300,7 +304,7 @@ Coordinator 模式把 leader 的工具面收窄为纯编排白名单: Workflow�
 
 预算耗尽不是直接掐断: 循环会尝试给模型一次「无工具总结轮」, 让它把已完成的工作、剩余事项与关键结论写下来。总结轮的准入条件是不在总结中、非 plan 模式、目标仍应续跑且 steering 队列为空; 满足则以一个特殊轮运行——工具过滤器恒为 false, 跳过上下文管理与延迟工具指引, 请求 maxRetries 为 0, 模型若仍尝试调工具, 调用被标 parseError 并附「目标预算已耗尽」提示。条件不满足 (比如用户正在插话) 则退而求其次: 把 goalManager.format() 的状态文本作为 stream_text 直接发给宿主, 再以 stopReason 为 budget_limited 的 loop_complete 收尾。两条路都保证预算终止时用户拿到的是一段可读的交代, 而不是无声停摆。
 
-续跑只在无工具收尾时发生, 且 plan 模式下不续跑 (只读调研不应自动推进变更); 若宿主还在排空排队中的后续消息, 也不续跑, 避免与用户输入抢方向。plan 模式有三条入口: 用户通过 Shift+Tab 循环权限模式进入 (default → acceptEdits → bypassPermissions → plan, 终端与浏览器 UI 一致); 模型通过 EnterPlanMode 工具主动进入 (仅交互式宿主注册该工具, print/ACP/A2A 等非交互宿主不注册; 且仅主代理可用, 委派代理与 teammate 调用直接被拒); teammate 以名为 plan 的角色派生 (见 7.4)。权限模式配置与启动参数不接受 plan 作为初始模式, 但运行时可以切入。
+续跑只在无工具收尾时发生, 且 plan 模式下不续跑 (只读调研不应自动推进变更); 若宿主还在排空排队中的后续消息, 也不续跑, 避免与用户输入抢方向。plan 模式有三条入口: 模型通过 EnterPlanMode 工具主动进入 (仅交互式宿主注册该工具, print/A2A 等非交互宿主不注册; 且仅主代理可用, 委派代理与 teammate 调用直接被拒); teammate 以名为 plan 的角色派生 (见 7.4); remote 协议的 set_permission_mode 消息也接受 plan, 服务端会进入 plan 模式、创建计划文件并广播提示。用户的 Shift+Tab 只在三个非 plan 模式间循环 (default → acceptEdits → bypassPermissions, 终端与浏览器一致); 处于 plan 模式时按 Shift+Tab 是退出 plan 并回到 default。配置项 permission_mode 是严格枚举 (default、acceptEdits、plan、bypassPermissions), 但终端 UI 不把 plan 用作初始模式 (回落到 default), print 模式固定 bypassPermissions, A2A 运行时按配置写入初始权限模式。
 
 ## 九、权限、Hooks 与沙箱
 
@@ -357,16 +361,16 @@ OS 沙箱在 macOS 用 Seatbelt (sandbox-exec)、Linux 用 bubblewrap, 其他平
 
 其余安全边界包括:
 
-- WebSocket 升级 (remote/acp-ws 模式): 每进程随机令牌 (randomBytes(32) 的 base64url 形式) 挂在 URL 查询参数上, 校验顺序是路径不匹配回 404、令牌恒时比较 (timingSafeEqual, 先比长度) 失败回 401、携带 Origin 时必须与 Host 同源且为 http 协议否则 403; 拒绝时向 socket 写一条裸 HTTP 响应后关闭。
+- WebSocket 升级 (remote 模式): 每进程随机令牌 (randomBytes(32) 的 base64url 形式) 挂在 URL 查询参数上, 校验顺序是路径不匹配回 404、令牌恒时比较 (timingSafeEqual, 先比长度) 失败回 401、携带 Origin 时必须与 Host 同源且为 http 协议否则 403; 拒绝时向 socket 写一条裸 HTTP 响应后关闭。
 - 公网抓取 (用于安装技能, utils/public-http): 只允许 http/https、拒绝带凭据的 URL、DNS 解析取全部应答且每个都必须是公网地址 (BlockList 挡内网/回环/链路本地等子网)、逐跳重定向重新校验 (有次数上限)、最终把连接钉在已验证的地址上发起——解析与连接分离会给 DNS rebinding 留窗口, 钉地址是标准防御。仅支持无 body 的 GET/HEAD, 使注入的 fetcher 与钉地址实现行为一致。
 - reminder 边界防伪造: 外部内容 (工具输出、引用文本) 注入 reminder 前, 把形如 `<system-reminder` 的左尖括号转义为 `&lt;`, 防止内容伪造 reminder 边界冒充系统指令。
 - 遥测负载递归洗消 (见 10.5)。
 
 ## 十、运行模式、资源所有权与遥测
 
-### 10.1 六种模式复用同一内核
+### 10.1 五种模式复用同一内核
 
-同一个 Agent 内核被多种宿主复用: TUI 交互、print 非交互 (支持流式 JSON 输出)、remote 浏览器 (Express 加 WebSocket)、teammate 成员 (进程内)、ACP 与 A2A 协议服务端。CLI 语法收敛在 src/cli.ts 的 parseCliArgs——注释称其为「CLI 语法的唯一所有者」: 互斥关系 (服务端模式与 -p、--resume 不能共存)、`-p --` 分隔符、默认端口 (remote 127.0.0.1:18888、acp-ws 18889、a2a 18890) 都在这一处裁决, 解析结果是一个判别联合的 CliMode (help/version/update/print/remote/acp/acp-ws/a2a/ui)。help、version、update 三种维护模式不属于 RuntimeMode——运行时 chunk (原生依赖与配置加载) 只在真正需要时才被动态加载; 且 cli.ts 用 realpathSync 比对自身是否为进程入口, 只有作为入口时才执行分发, 被 import 时不产生副作用。main.tsx 的启动顺序是 hydrateConfigEnv() 先于 recover(): 配置文件里的 env 块可能携带遥测相关环境变量, 必须先灌进 process.env, 遥测初始化才读得到。
+同一个 Agent 内核被多种宿主复用: TUI 交互、print 非交互 (支持流式 JSON 输出)、remote 浏览器 (Express 加 WebSocket)、teammate 成员 (进程内)、A2A 协议服务端。CLI 语法收敛在 src/cli.ts 的 parseCliArgs——注释称其为「CLI 语法的唯一所有者」: 互斥关系 (服务端模式与 -p、--resume 不能共存)、`-p --` 分隔符、默认端口 (remote 127.0.0.1:18888、a2a 18890) 都在这一处裁决, 解析结果是一个判别联合的 CliMode (help/version/update/print/remote/a2a/ui)。help、version、update 三种维护模式不属于 RuntimeMode——运行时 chunk (原生依赖与配置加载) 只在真正需要时才被动态加载; 且 cli.ts 用 realpathSync 比对自身是否为进程入口, 只有作为入口时才执行分发, 被 import 时不产生副作用。main.tsx 的启动顺序是 hydrateConfigEnv() 先于 recover(): 配置文件里的 env 块可能携带遥测相关环境变量, 必须先灌进 process.env, 遥测初始化才读得到。
 
 | 模式     | 触发方式                                      | 事件去向                              |
 | -------- | --------------------------------------------- | ------------------------------------- |
@@ -374,10 +378,9 @@ OS 沙箱在 macOS 用 Seatbelt (sandbox-exec)、Linux 用 bubblewrap, 其他平
 | print    | `-p`                                          | stdout, 支持文本或 stream-json        |
 | remote   | `--remote`                                    | Express + WebSocket, 广播给浏览器前端 |
 | teammate | Agent 工具 kind=teammate (默认值, 进程内派生) | 文件邮箱 / 进度通道                   |
-| ACP      | `--acp` / `--acp-ws`                          | 转成 Agent Client Protocol 更新       |
 | A2A      | `--a2a`                                       | 转成 Agent-to-Agent 消息              |
 
-remote 浏览器 UI 与终端 UI 对齐: 流式回复与思考块、工具卡片实时输出、权限与提问对话框、计划审批、代码审查表单、会话选择器、运行中 steering 与后续排队、提示历史、`@file` 补全、`!`/`!!` 用户 Bash (内联输出上限 50KB/2000 行)、图片附件、todo 进度、Agents 面板、上下文用量、明暗主题, 以及 /model、/login、/thinking、Shift+Tab 权限模式循环、/rewind、/sandbox、/worktree、/mcp reload 等命令全部可在浏览器操作。用户消息里的 `@路径` 引用由 at-refs 展开器处理: 单条消息最多 MAX_AT_REFS=32 个引用、单文件内联上限 100,000 字节、总量上限 300,000 字节、支持 `#L` 行号区间; 图片转 base64 内容块并以 `<image>` 占位。各宿主共用工具注册表的统一构建入口 (createToolRegistry: 按交互模式决定任务追踪形态、有团队管理器时注册 TeamTodoWriteTool 否则 TodoWriteTool、EnterPlanMode 仅交互式注册)、沙箱接线、权限检查器与 TeamManager 接线, 差异集中在输入输出与生命周期管理上: print 模式退出前只等待 agent 类后台任务 (shell 类可能无限运行, 不等待以避免挂起), 再 stopAll 与 teamManager.dispose, 最后释放注册表与断开 MCP; A2A 的运行时惰性创建、空闲 30 分钟回收, 回收后再来的请求按持久化转录重建运行时, 空闲计时器在处理期间解除、处理完重新武装; ACP 给每轮一个独立的 AbortController, 权限请求与取消信号竞速。
+remote 浏览器 UI 与终端 UI 对齐: 流式回复与思考块、工具卡片实时输出、权限与提问对话框、计划审批、代码审查 (/review 前台代理)、会话选择器、运行中 steering 与后续排队、提示历史、`@file` 补全、`!`/`!!` 用户 Bash (内联输出上限 50KB/2000 行)、图片附件、todo 进度、Agents 面板、上下文用量、明暗主题, 以及 /model、/login、/thinking、Shift+Tab 权限模式循环、/rewind、/sandbox、/worktree、/mcp reload 等命令全部可在浏览器操作。用户消息里的 `@路径` 引用由 at-refs 展开器处理: 单条消息最多 MAX_AT_REFS=32 个引用、单文件内联上限 100,000 字节、总量上限 300,000 字节、支持 `#L` 行号区间; 裸引用的正则排除中英文标点, 引用文件不存在时还会按汉字段回退到最长存在的路径前缀, 自动剥掉紧跟在路径后的中文叙述; 图片转 base64 内容块并以 `<image>` 占位。各宿主共用工具注册表的统一构建入口 (createToolRegistry: 有团队管理器时注册 TeamTodoWriteTool 否则 TodoWriteTool、EnterPlanMode 仅交互式注册, enableModelPlanMode 可显式覆盖)、沙箱接线、权限检查器与 TeamManager 接线, 差异集中在输入输出与生命周期管理上: print 模式退出前只等待 agent 类后台任务 (shell 类可能无限运行, 不等待以避免挂起), 再 stopAll 与 teamManager.dispose, 最后释放注册表与断开 MCP; A2A 的运行时惰性创建、空闲 30 分钟回收, 回收后再来的请求按持久化转录重建运行时, 空闲计时器在处理期间解除、处理完重新武装, 初始权限模式取自配置 permission_mode。A2A 服务端还要求 `A2A-Version: 1.0` 请求头、限制请求体 100KB、拒绝未知 JSON-RPC 方法, 同时挂载 JSON-RPC (/) 与 REST (/v1) 两套接口; 助手文本以 artifact 更新流式发出、轮末冲刷成完整消息, 任务历史默认返回最近 10 条; agent card 声明权限握手扩展——权限请求装在 INPUT_REQUIRED 状态消息里, 客户端在同一任务上以 allow / deny / allowAlways 应答, allowAlways 会持久化对应的项目规则但不覆盖显式 deny。
 
 ### 10.2 退出清理与所有权
 
@@ -419,7 +422,7 @@ yukino-code 的遥测子系统同时对接 OpenTelemetry、Sentry 与 Langfuse �
 
 三个后端的装配完全由环境变量驱动。`OTEL_TRACES_EXPORTER`、`OTEL_LOGS_EXPORTER`、`OTEL_METRICS_EXPORTER` 声明 exporter 列表 (console、otlp, 指标额外支持 prometheus 拉取模式), exporter 模块只在配置时才动态 import; OTLP 协议默认 `http/protobuf`, 可选 grpc 与 `http/json`, 三类信号可各自覆盖; 指标导出间隔默认 60 秒。Resource 的 `service.name` 固定为 yukino (`OTEL_SERVICE_NAME` 可覆盖), `OTEL_RESOURCE_ATTRIBUTES` 追加自定义键值。Langfuse 在 public 与 secret 密钥齐备时, 向同一个 TracerProvider 追加 `LangfuseSpanProcessor` (关闭媒体上传, release 取 `LANGFUSE_RELEASE` 或应用版本)。Sentry 在 `SENTRY_DSN` 存在时初始化: 关闭 `includeLocalVariables` 与 `sendDefaultPii`, 不注册 ESM loader 钩子, `skipOpenTelemetrySetup` 保持 OTel 独立, 并从默认 integrations 里移除 `OnUncaughtException` 与 `OnUnhandledRejection`——应用自己在 recover 入口装处理器 (见 10.2), 未捕获异常先 `captureTelemetryError` 再清理、flush 遥测后退出, 退出码与清理顺序由应用而非 SDK 掌控。每条信号线都被 `safely()` 包裹: traces 初始化失败不妨碍 metrics 与 Sentry 正常工作, 失败带标签记日志。
 
-六种运行模式 (a2a、acp、print、remote、terminal、unknown) 经 `setTelemetryMode` 写入运行时, 所有指标与日志自动携带 `yukino.mode` 属性, Sentry 也设同名 tag——同一份观测数据可以按宿主形态切片分析。生命周期与进程退出绑定: `beforeExit` 触发 flush; remote 服务器额外安装 SIGINT 与 SIGTERM 处理器, 先执行业务清理 (后台任务、teammate、MCP 子进程) 并保留真实退出码 (SIGINT 130、SIGTERM 143), 再 shutdown 遥测后退出; flush 与 close 统一有 2 秒超时上限 (SHUTDOWN_TIMEOUT_MS), 遥测永不阻塞退出。
+五种运行模式 (a2a、print、remote、terminal、unknown) 经 `setTelemetryMode` 写入运行时, 所有指标与日志自动携带 `yukino.mode` 属性, Sentry 也设同名 tag——同一份观测数据可以按宿主形态切片分析。生命周期与进程退出绑定: `beforeExit` 触发 flush; remote 服务器额外安装 SIGINT 与 SIGTERM 处理器, 先执行业务清理 (后台任务、teammate、MCP 子进程) 并保留真实退出码 (SIGINT 130、SIGTERM 143), 再 shutdown 遥测后退出; flush 与 close 统一有 2 秒超时上限 (SHUTDOWN_TIMEOUT_MS), 遥测永不阻塞退出。
 
 ### 10.5 隐私洗消
 
@@ -453,7 +456,7 @@ yukino-code 的遥测子系统同时对接 OpenTelemetry、Sentry 与 Langfuse �
 从分层看, 系统大致分为:
 
 ```text
-入口分发层    解析参数, 选择 TUI / print / remote / ACP / A2A
+入口分发层    解析参数, 选择 TUI / print / remote / A2A
 Agent 循环层  run(): AsyncGenerator<AgentEvent>, 多轮推理与工具执行
 LLM 抽象层    统一 LLMClient, 适配 anthropic / openai / openai-compat
 工具层        统一 Tool 接口, 按 category 分类并支持并行调度
@@ -495,7 +498,7 @@ LLM 抽象层    统一 LLMClient, 适配 anthropic / openai / openai-compat
 
 选判别联合而不是继承, 有三个原因。第一是穷尽性: 消费侧 `switch (event.type)` 配合 `never` 兜底, 新增事件类型会在编译期暴露所有未处理分支, 这对多宿主消费尤其重要。第二是零运行时开销: 事件是纯数据, print 模式可以直接序列化。第三是风格一致: 工具、权限、压缩都是"接口加纯数据"的写法, 没有深类层次。
 
-### 4. 六种运行模式如何复用同一套核心? 这种设计对可测试性意味着什么?
+### 4. 五种运行模式如何复用同一套核心? 这种设计对可测试性意味着什么?
 
 复用的关键是 Agent 核心只依赖注入的接口, 不依赖宿主环境 (模式与触发的对照表见 10.1)。各宿主共享 Agent 循环、对话管理器、工具注册表、权限检查器、压缩与会话模块; 宿主只负责三件事: 构造依赖、消费事件流、处理人机交互 (权限确认与提问)。
 
@@ -505,7 +508,7 @@ LLM 抽象层    统一 LLMClient, 适配 anthropic / openai / openai-compat
 
 如果核心是库, 那么 UI、持久化、权限、压缩这些横切关注点就要由调用方各自实现, 行为无法一致, 安全边界也无法统一。Yukino 的选择是: 内核 (循环、工具、权限、压缩、会话) 是一等公民, 运行模式是内核的薄适配层。
 
-这样做的收益是安全与行为一致——无论从终端、浏览器还是 ACP 客户端进入, 同一个工具都要过同一个权限管线, 同一份上下文都要走同一套压缩规则。代价是内核必须保持"宿主无关": 任何直接读写终端、直接调用进程退出、直接假设单会话的代码都不能进内核, 只能通过注入的回调完成。这也是为什么内核里到处都是 `onPermissionRequest`、`notificationFn`、`onLoopComplete` 这类回调, 而没有一个全局单例 UI。
+这样做的收益是安全与行为一致——无论从终端、浏览器还是 A2A 客户端进入, 同一个工具都要过同一个权限管线, 同一份上下文都要走同一套压缩规则。代价是内核必须保持"宿主无关": 任何直接读写终端、直接调用进程退出、直接假设单会话的代码都不能进内核, 只能通过注入的回调完成。这也是为什么内核里到处都是 `onPermissionRequest`、`notificationFn`、`onLoopComplete` 这类回调, 而没有一个全局单例 UI。
 
 ### 6. 一次 run 的单轮迭代依次做什么?
 

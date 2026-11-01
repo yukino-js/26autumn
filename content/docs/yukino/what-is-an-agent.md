@@ -1,8 +1,8 @@
 ---
 title: "What is an Agent"
-description: "agent 的概念拆解与 Yukino 的形态: provider 配置与三协议客户端、核心循环、五层架构、六种运行模式、内置工具分组与 agent 驱动开发的一等公民制品"
+description: "agent 的概念拆解与 Yukino 的形态: provider 配置与三协议客户端、核心循环、五层架构、四种运行模式、内置工具分组与 agent 驱动开发的一等公民制品"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 agent 是 LLM 在循环中根据环境反馈自主使用工具的系统。拆开这句话:
@@ -14,7 +14,7 @@ agent 是 LLM 在循环中根据环境反馈自主使用工具的系统。拆开
 
 ## Yukino
 
-Yukino 是一个基于终端的 AI coding agent: 以 npm 包 `@yukino.js/yukino` 发布, 只有一个 bin 入口 `yukino` (package.json 的 `bin` 指向 `dist/main.js`, 由 `src/cli.ts` 构建), 要求 Node >= 20。它连接可配置的 LLM provider, 用 React + Ink 渲染终端 UI, 在单个面板里提供流式输出、工具执行反馈、权限对话框和 slash 命令; 除了交互式使用, 还支持脚本化、浏览器、编辑器、agent 互通等宿主形态。
+Yukino 是一个基于终端的 AI coding agent: 以 npm 包 `@yukino.js/yukino` 发布, 只有一个 bin 入口 `yukino` (package.json 的 `bin` 指向 `dist/main.js`, 由 `src/cli.ts` 构建), 要求 Node >= 20。它连接可配置的 LLM provider, 用 React + Ink 渲染终端 UI, 在单个面板里提供流式输出、工具执行反馈、权限对话框和 slash 命令; 除了交互式使用, 还支持脚本化、浏览器、agent 互通等宿主形态。
 
 provider 在 `~/.yukino/config.yaml` 的 `providers` 列表中配置, 支持三种协议 (`protocol` 字段):
 
@@ -41,24 +41,22 @@ API key 取 provider 的 `api_key` 字段, 缺省时回落到环境变量 (`anth
 
 按 src/ 目录的职责划分:
 
-1. **交互层** —— 终端 TUI (`src/ui/`, Ink 渲染、流式输出、权限对话框、快捷键)、slash 命令 (`src/commands/`, `/compact` `/review` `/rewind` `/mcp` 等内置命令加自定义 prompt 模板)、skill (`src/skills/`, 以 `SKILL.md` 声明的可移植 SOP)、浏览器前端 (`src/remote/browser/`, React 实现)、编辑器集成 (`src/acp/`, Agent Client Protocol)
+1. **交互层** —— 终端 TUI (`src/ui/`, Ink 渲染、流式输出、权限对话框、快捷键)、slash 命令 (`src/commands/`, `/compact` `/review` `/rewind` `/mcp` 等内置命令加自定义 prompt 模板)、skill (`src/skills/`, 以 `SKILL.md` 声明的可移植 SOP)、浏览器前端 (`src/remote/browser/`, React 实现)、IDE 集成 (`src/vscode/`, 连接 VS Code 扩展内嵌的 MCP 服务, 把 `@` 提及的文件引用插入输入框)
 2. **引擎层** —— 对话管理 (`src/conversation/` 的 `ConversationManager`)、agent loop (`src/agent/` 的 `Agent.run()`)、system prompt 组装 (`src/prompt/`)、上下文压缩 (`src/compact/`)
 3. **工具层** —— 内置工具 (`src/tools/`, 在 `src/bootstrap/tool-registry.ts` 统一注册)、MCP 动态工具 (`src/mcp/`, 工具名带 `mcp__` 前缀)、hook 生命周期 (`src/hooks/`, `session_start` / `turn_start` / `pre_tool_use` / `post_tool_use` 等 9 个事件)
 4. **记忆层** —— 上下文窗口管理 (`src/compact/`)、会话持久化 (`src/session/`, JSONL 存到 `~/.yukino/sessions/` 下按 cwd 哈希分目录)、文件历史与回滚 (`src/file-history/`)、自动记忆 (`src/memory/`, `MEMORY.md` 索引与后台抽取)
 5. **安全层** —— 权限系统 (`src/permissions/`, `default` / `acceptEdits` / `plan` / `bypassPermissions` 四种模式加 allow/deny 规则)、OS 沙箱 (`src/sandbox/`, macOS 用 seatbelt、Linux 用 bubblewrap 包裹 shell 命令)、HITL (权限对话框与 `AskUserQuestion` 工具)
 
-## 6 种运行模式
+## 4 种运行模式
 
-同一个 agent 内核 (Agent loop + 工具 + 会话) 装在六种宿主里。入口是 `src/main.tsx` 的 `runMode()`, 旗标在 `src/cli.ts` 的 `parseCliArgs()` 里解析为 typed `CliMode`; 模式之间互斥, 组合使用会报用法错误:
+同一个 agent 内核 (Agent loop + 工具 + 会话) 装在四种宿主里。入口是 `src/main.tsx` 的 `runMode()`, 旗标在 `src/cli.ts` 的 `parseCliArgs()` 里解析为 typed `CliMode`; 模式之间互斥, 组合使用会报用法错误:
 
-| 模式            | 旗标              | 形态                                                                                                   |
-| --------------- | ----------------- | ------------------------------------------------------------------------------------------------------ |
-| 交互式          | (默认)            | 终端 TUI: 流式输出、权限对话框、slash 命令; `--resume [session-id]` 恢复历史会话, 省略 id 时打开选择器 |
-| print           | `-p <prompt>`     | 非交互一次执行, 结果打印到 stdout; `--output-format` 取 `text` (默认) 或 `stream-json`, 适合脚本和 CI  |
-| remote          | `--remote [addr]` | Express HTTP + WebSocket 服务器 (默认 `127.0.0.1:18888`), 托管浏览器聊天 UI                            |
-| ACP (stdio)     | `--acp`           | 经 stdio 服务 Agent Client Protocol, 供编辑器集成                                                      |
-| ACP (WebSocket) | `--acp-ws [addr]` | 同上, 经 WebSocket 传输 (默认 `127.0.0.1:18889`)                                                       |
-| A2A             | `--a2a [addr]`    | Agent2Agent Protocol 服务器 (默认 `127.0.0.1:18890`), 供 agent 互通                                    |
+| 模式   | 旗标              | 形态                                                                                                   |
+| ------ | ----------------- | ------------------------------------------------------------------------------------------------------ |
+| 交互式 | (默认)            | 终端 TUI: 流式输出、权限对话框、slash 命令; `--resume [session-id]` 恢复历史会话, 省略 id 时打开选择器 |
+| print  | `-p <prompt>`     | 非交互一次执行, 结果打印到 stdout; `--output-format` 取 `text` (默认) 或 `stream-json`, 适合脚本和 CI  |
+| remote | `--remote [addr]` | Express HTTP + WebSocket 服务器 (默认 `127.0.0.1:18888`), 托管浏览器聊天 UI                            |
+| A2A    | `--a2a [addr]`    | Agent2Agent Protocol 服务器 (默认 `127.0.0.1:18890`), 供 agent 互通                                    |
 
 `-h` / `--help`、`-v` / `--version` 和 `yukino update [--tag <tag>]` 是维护命令, 不加载运行时。agent team 的 teammate 不是独立的 CLI 模式: 它经 `Agent` 工具的 `kind: "teammate"` (也是默认值) 在同一进程内派生, 没有 `--teammate` 旗标, 见 [agent-team](./agent-team)。
 
@@ -82,7 +80,7 @@ API key 取 provider 的 `api_key` 字段, 缺省时回落到环境变量 (`anth
 - 任务与目标: [task-tracking](./task-tracking) (任务板与后台任务)、[goal](./goal) (持久目标与自动续跑)、[workflow](./workflow) (脚本编排多 subagent)
 - 多 agent: [subagent](./subagent) (主从委派)、[agent-team](./agent-team) (团队协作与 coordinator 模式)、[worktree](./worktree) (文件系统隔离)
 - 安全: [permission](./permission) (权限系统)、[sandbox](./sandbox) (OS 级沙箱)
-- 对外集成: [a2a](./a2a)、[acp](./acp)、[remote](./remote)、[print-mode](./print-mode)、[telemetry](./telemetry) (可观测性)
+- 对外集成: [a2a](./a2a)、[remote](./remote)、[print-mode](./print-mode)、[telemetry](./telemetry) (可观测性)
 - 交互: [terminal-ui](./terminal-ui) (终端 TUI: 原生滚动、用户 Bash、快捷键)
 - 质量: [code-review](./code-review) (/review 命令与 review 角色)
 

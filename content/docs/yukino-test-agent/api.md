@@ -2,7 +2,7 @@
 title: "API 与配置参考"
 description: "API 与配置参考: tRPC 13 个子路由共 79 个过程清单、Job 模型、非 tRPC 端点、环境变量、错误约定、启动恢复与排障速查"
 local_path: "$HOME/github/yukino-test-agent"
-local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
+local_commit: "939179e40f2ca6f25e141dbb5d2d5c61c49304be"
 ---
 
 本页是平台对外接口的完整参考: tRPC 过程清单、后台任务模型、非 tRPC HTTP 端点、环境变量与错误约定, 以及排障速查与术语表.
@@ -53,6 +53,8 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 | `testPoints`                   | query    | 该版本的测试点列表                                                                                                                  |
 | `analyze`                      | mutation | 抽取测试点, 入参 `{ rid, mode: "auto"/"rule"/"llm" (默认 auto), profileId? }`, 返回 `{ requirementId, status: "analyzing", jobId }` |
 
+同一项目内版本号唯一: 服务层 `checkVersionUnique` 对重复版本报 40012, 数据库再以唯一索引 `ux_requirements_project_version` (projectId, version) 兜底, 并发创建不可能同时通过.
+
 ### testcases (17 个过程)
 
 | 过程                                                        | 类型             | 说明                                                                                                                                           |
@@ -98,6 +100,8 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 | `manualReview`   | mutation | 人工裁定 (`{ eid, verdict: "passed"/"failed", note? }`)                                                                             |
 | `llmReview`      | mutation | 视觉复核单个执行 (`{ eid }`)                                                                                                        |
 | `batchLlmReview` | mutation | 批量视觉复核 (`{ eids }` → `{ jobId }`)                                                                                             |
+
+步骤记录 (`steps` 查询及执行详情内的 steps) 带 `evidence` 字段: 输入步骤记录预期/实际值长度、SHA-256 哈希、匹配结果与预览等可核验证据, 敏感字段 (密码类) 只记长度与匹配, 不落明文. 执行后的 AI 视觉复核在独立容错块中运行, 复核失败只记录日志并保留浏览器得出的确定性状态, 绝不覆盖已定结论.
 
 执行与复核语义详见[浏览器执行](./execution).
 
@@ -215,33 +219,33 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 | `pnpm dev` 起不来 / 数据库连接失败                       | 检查 `.env.local` 的 `DATABASE_URL`; 确认 PostgreSQL 已启动; 执行过 `pnpm db:push`; dev 端口为 3002                                               |
 | 路由 404 / 新页面不生效                                  | 新增或改名路由后运行 `pnpm generate-routes` (`src/routeTree.gen.ts` 由 tsr 生成, 勿手改)                                                          |
 | 执行全部失败、`SELECTOR_NOT_FOUND` / `NAVIGATION_FAILED` | 确认 `targetUrl` 指向真实可访问的被测站点 (演示站点 `pnpm demo-site`); 锚点/选择器是否来自最新代码事实——先重跑代码分析                            |
-| 断言总是 skipped                                         | 预期结果缺少双引号文本锚点或可验证 URL——引用真实页面文案                                                                                          |
+| 断言总是 skipped                                         | 预期结果缺少双引号文本锚点或可验证的 URL 路径——引用真实页面文案                                                                                   |
 | 视觉复核 unavailable                                     | 未配置可用视觉档案或调用失败/无截图; 属诚实降级, 不影响确定性执行结论                                                                             |
 | 流水线卡在 running                                       | 服务重启会中断进程内任务; 静置超过 2 小时后启动恢复会将其标记为 failed, 重新发起即可                                                              |
 | 轮询 jobId 报 40408                                      | job 注册表在进程内存中, 重启即失效; 持久结果改查对应数据表 (分析/执行/流水线运行)                                                                 |
 | LLM 返回无法解析 / 频繁超时                              | 换更大的 `max_tokens` 余量或用 `LLM_EXTRA_BODY` 关闭厂商思考模式; 客户端已内置截断修复与降级重试, 仍失败会抛 `LlmUnavailableError` 并降级规则模式 |
-| `pnpm check` 失败                                        | 运行 `pnpm format` (prettier -w) 后重试; `pnpm lint` 单独跑 eslint                                                                                |
+| `pnpm check` 失败                                        | 运行 `pnpm format` (prettier -w) 后重试; `pnpm lint` (`eslint . --fix --quiet`) 自动修复 lint 问题                                                |
 
 ## 术语表
 
-| 术语                         | 含义                                                                                      |
-| ---------------------------- | ----------------------------------------------------------------------------------------- |
-| SUT                          | System Under Test, 被测系统 (内置演示站点即一个 SUT)                                      |
-| 代码事实 (Code Facts)        | 静态分析抽取的 endpoints/entities/rules/forms/state machines, 用于给用例接地              |
-| 接地 (Grounding)             | 让选择器与断言引用真实存在的页面文案/接口, 而非凭空捏造                                   |
-| 测试点 (Test Point)          | 从 PRD 抽取的应覆盖场景, 是需求与用例之间的桥梁                                           |
-| 结构化步骤 (Structured Step) | 可被 Playwright 直接执行的步骤契约, `StepType` 取 ui_action/input/state_assert/capture    |
-| 锚点 (Anchor)                | 预期结果中用双引号引用的可见页面文案, 断言时精确查找                                      |
-| 回退链 (Fallback Chain)      | 由精确到宽泛的五级选择器定位策略 (`fallbackChain`), 降低脚本脆弱性                        |
-| 三层断言                     | URL 断言 → 引号文本锚点断言 → 诚实 skipped                                                |
-| 质量门 (Quality Gate)        | 对生成用例的确定性体检 (lint/打分/去重), 只有 kept 才持久化                               |
-| 修复轮 (Repair Round)        | 对评审为 revise 的用例, 让 LLM 依据问题清单修补, 最多 maxRevisions 轮                     |
-| 失败分类 (Failure Category)  | product_defect / test_script_issue / test_data_issue / environment_issue / unknown / none |
-| 证据 (Evidence)              | 截图、录像、步骤记录、断言明细等客观材料, 存于 OUTPUT_DIR                                 |
-| 视觉复核 (Vision Review)     | 视觉模型逐图判断 ok/suspect, 可升级人工但绝不把失败改成通过                               |
-| 任务 (Job)                   | 进程内后台任务, mutation 返回 jobId, 客户端轮询 `jobs.get` 直至终态                       |
-| 覆盖率矩阵                   | 计划覆盖 vs 实际执行覆盖 (接口/状态迁移/业务规则)                                         |
-| 代码快照 (Snapshot)          | 为需求版本冻结的不可变代码事实, 增量对比只读快照, 后续重新分析不会改写基线                |
-| 增量运行 (Change Run)        | 一次「当前版本 vs 基线版本」的变更检测及其派生的用例变更/回归建议                         |
-| BizError                     | 服务层业务错误, code 前三位为 404 映射 NOT_FOUND, 其余 BAD_REQUEST                        |
-| 绝不伪造绿色                 | 最高准则: 无法验证即诚实 skipped/failed, 确定性结论压过 AI 意见                           |
+| 术语                         | 含义                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| SUT                          | System Under Test, 被测系统 (内置演示站点即一个 SUT)                                           |
+| 代码事实 (Code Facts)        | 静态分析抽取的 endpoints/entities/rules/forms/state machines, 用于给用例接地                   |
+| 接地 (Grounding)             | 让选择器与断言引用真实存在的页面文案/接口, 而非凭空捏造                                        |
+| 测试点 (Test Point)          | 从 PRD 抽取的应覆盖场景, 是需求与用例之间的桥梁                                                |
+| 结构化步骤 (Structured Step) | 可被 Playwright 直接执行的步骤契约, `StepType` 取 ui_action/input/state_assert/capture         |
+| 锚点 (Anchor)                | 预期结果中用双引号引用的可见页面文案, 断言时精确查找                                           |
+| 回退链 (Fallback Chain)      | 由精确到宽泛的五级选择器定位策略 (`fallbackChain`), 降低脚本脆弱性                             |
+| 分层断言                     | URL 路径与引号文本锚点独立校验、所有可验证维度都必须通过, 全无可验证项才诚实 skipped           |
+| 质量门 (Quality Gate)        | 对生成用例的确定性体检 (lint/打分/去重), 只有 kept 才持久化                                    |
+| 修复轮 (Repair Round)        | 对评审为 revise 的用例, 让 LLM 依据问题清单修补, 最多 maxRevisions 轮                          |
+| 失败分类 (Failure Category)  | product_defect / test_script_issue / test_data_issue / environment_issue / unknown / none      |
+| 证据 (Evidence)              | 截图、录像等文件存于 OUTPUT_DIR; 步骤级输入证据 (长度/哈希/匹配/预览) 存于数据库 evidence 字段 |
+| 视觉复核 (Vision Review)     | 视觉模型逐图判断 ok/suspect, 可升级人工但绝不把失败改成通过                                    |
+| 任务 (Job)                   | 进程内后台任务, mutation 返回 jobId, 客户端轮询 `jobs.get` 直至终态                            |
+| 覆盖率矩阵                   | 计划覆盖 vs 实际执行覆盖 (接口/状态迁移/业务规则)                                              |
+| 代码快照 (Snapshot)          | 为需求版本冻结的不可变代码事实, 增量对比只读快照, 后续重新分析不会改写基线                     |
+| 增量运行 (Change Run)        | 一次「当前版本 vs 基线版本」的变更检测及其派生的用例变更/回归建议                              |
+| BizError                     | 服务层业务错误, code 前三位为 404 映射 NOT_FOUND, 其余 BAD_REQUEST                             |
+| 绝不伪造绿色                 | 最高准则: 无法验证即诚实 skipped/failed, 确定性结论压过 AI 意见                                |

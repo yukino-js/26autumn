@@ -2,7 +2,7 @@
 title: "LLM"
 description: "LLM 接入层 (src/llm/): 把对话历史翻译成 Anthropic / OpenAI Responses / OpenAI Chat Completions 三种协议的 API 请求, 把 SSE 流统一映射成 StreamEvent; 覆盖思考强度映射, token 计费与 prompt cache 打点, 消息构建与配对修复, 错误分类重试, 模型发现与 ConversationManager"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 Yukino 的 LLM 层在 src/llm/: 把 ConversationManager 里的对话历史翻译成三种协议的 LLM API 请求, 把各家返回的 SSE 流统一映射成内部的 `StreamEvent` 事件流, 交给上层 [Agent Loop](./react-and-agent-loop) 消费; 同时负责思考强度、token 计费口径、prompt cache 打点、错误分类重试和模型发现
@@ -16,8 +16,8 @@ src/llm/
 ├── errors.ts           # 统一错误类型与 containsContextLengthError
 ├── retry.ts            # 重试退避延迟与可中断等待
 ├── model-discovery.ts  # GET /models 模型列表
-├── model-resolver.ts   # 基于同一 provider 配置按模型名建客户端
-└── constants.ts        # 重试常量、anthropic-version、缺 key 报错文案
+├── constants.ts        # 重试常量、anthropic-version、缺 key 报错文案
+└── index.ts            # 库消费者的子模块命名空间导出 (LLM.<Sub>.*)
 ```
 
 ## 请求与响应的结构
@@ -192,9 +192,7 @@ interface ThinkingLevelControl {
 }
 ```
 
-`createClient(config, systemPrompt)` 按 protocol 动态 import 对应的实现 (AnthropicClient / OpenAIClient / OpenAICompatClient, 后两者同在 openai.ts), 只有配置到的协议 SDK 会被加载; 各客户端构造函数内先用 `resolveAPIKey` 解析令牌, 缺失时抛 `AuthenticationError` 并提示全局配置文件路径与对应环境变量。创建出的客户端再经 `registerLlmClient` 登记模型与协议元数据, 供遥测上报使用 (见 [遥测](./telemetry))
-
-`createModelResolver(baseConfig, systemPrompt)` 返回一个按模型名建客户端的函数: 复用同一份 provider 配置只替换 model; 作为库导出供外部消费者使用 (/model 切换模型走的是 discoverModels + createClient)
+`createClient(config, systemPrompt)` 按 protocol 动态 import 对应的实现 (AnthropicClient / OpenAIClient / OpenAICompatClient, 后两者同在 openai.ts), 只有配置到的协议 SDK 会被加载; 各客户端构造函数内先用 `resolveAPIKey` 解析令牌, 缺失时抛 `AuthenticationError` 并提示全局配置文件路径与对应环境变量。创建出的客户端再经 `registerLlmClient` 登记模型与协议元数据, 供遥测上报使用 (见 [遥测](./telemetry))。/model 切换模型走的也是这条路径: 选择器用 discoverModels 列出候选, 选定后复用同一份 provider 配置只替换 model, 再经 createClient 重建客户端立即生效
 
 ## 思考强度
 

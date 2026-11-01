@@ -2,14 +2,14 @@
 title: "七阶段流水线"
 description: "七阶段流水线: workflows.ts 编排逻辑、硬/软失败与最终状态判定、createRun 配置项、各阶段要点、结果分析与报告、中断恢复"
 local_path: "$HOME/github/yukino-test-agent"
-local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
+local_commit: "939179e40f2ca6f25e141dbb5d2d5c61c49304be"
 ---
 
-流水线由 `src/server/services/workflows.ts` (约 3400 行, 全仓最大的源文件) 编排, 是一个多智能体测试工作流, 把一次需求版本走完「从代码事实到可执行用例再到证据化结论」的闭环:
+流水线由 `src/server/services/workflows.ts` (约 3500 行, 全仓最大的源文件) 编排, 是一个多智能体测试工作流, 把一次需求版本走完「从代码事实到可执行用例再到证据化结论」的闭环:
 
 > 需求版本 → 测试点 (agent 1) → 用例 (agent 2) → 独立评审/修订 (agent 3) → Playwright 执行已批准的可自动化用例 → 证据驱动的结果分析 (agent 4) → 汇总报告.
 
-四个 LLM「agent」分别负责测试点抽取、用例生成、评审/修订与结果分析; 执行阶段是纯 Playwright 引擎, 不含 LLM. 设计原则 (源文件头注释):
+四个 LLM「agent」分别负责测试点抽取、用例生成、评审/修订与结果分析; 执行阶段由 Playwright 引擎驱动, 不属于这四个 agent——但配置了视觉模型时 `runCaseExecution` 会附加 AI 截图复核, `decideStatus` 据复核结论调整执行状态 (passed 可降为 needs_review, failed/cancelled 绝不改动). 设计原则 (源文件头注释):
 
 - 流水线**只新增** run/stage/review/analysis 记录, 不替换既有表与 API;
 - **每个阶段都持久化**: 阶段失败时保留已有产物, 后续阶段标记 skipped, 数据绝不静默丢弃;
@@ -138,7 +138,7 @@ payload (`analysisPayload`) 汇总 endpoints、pages、selectors、stateMachines
 
 1. **前置分流**: 用例已不存在 → `reject`; 经 `requirement_cases` 映射找到测试点, 用 `sourceFacts` 拉取接地事实并按「需求:测试点」缓存; `automationStatus` 为 `manual` → 记 `pass` 但不自动化, 为 `blocked` → 记 `reject`;
 2. **计数断言归一化**: `normalizeCaseCounts` 把「固定总数」断言改写为运行时基线 (`updateCase` 落库), 无法稳定化则 `drop` → `reject` 并置 `blocked`;
-3. **确定性评审 `deterministicReview`**: 规则检查每个用例, 产出 `blocking` (阻塞, 如无结构化步骤、缺预期结果、复合预期 `caseHasCompoundExpected`、单字段多输入 `caseHasMultipleInputs`)、`fixable` (可修复, 如缺失必填字段、锚点/选择器不在源码事实中)、`warnings` (非阻塞) 三桶, 并给出 `qualityScore`;
+3. **确定性评审 `deterministicReview`**: 规则检查每个用例 (`validateCase` + `missingRequiredFields`), 产出 `blocking` (阻塞, 如无结构化步骤、缺预期结果、复合预期 `caseHasCompoundExpected`、单字段多输入 `caseHasMultipleInputs`)、`fixable` (可修复, 如缺失必填字段、placeholder/label/选择器不在源码事实中、首步不是 route)、`warnings` (非阻塞建议项, 如按钮文案/断言锚点/testData 字段不在源码或需求事实中) 三桶, 并给出 `qualityScore`. 必填字段检查只对「positive/functional 且步骤文案像表单提交 (submit/save/create/add/confirm/register/login 等, `looksLikeFormSubmit`) 且含 route 步骤」的用例生效, 必填字段仅取自用例导航到的那一个页面 (`requiredFieldsForRoute` 按 `normalizeRoute` 归一尾斜杠后匹配), 绝不拿全项目字段校验每个用例;
 4. **LLM 评审**: 仅当无 blocking 且 LLM 可用时, 用 `caseReviewWorkflowPrompt` 让模型逐用例评审, `parseWorkflowReview` 经 `STATUS_ALIASES` 归一到 pass/revise/reject, 并把无问题却判负的结果补一条 issue;
 5. **合成结论 `composeReviewStatus`**: 有 blocking → `reject`; LLM 判 reject → 可修复则 `revise` 否则 `reject`; 有 fixable 或 LLM 判 revise → 可修复则 `revise` 否则 `reject`; 否则 `pass`. 「可修复」= `revisions < maxRevisions` 且 LLM 可用;
 6. **打分**: `score = deterministic.qualityScore - llmDeduction(llmIssues)` (blocker 扣 25、warning 扣 8、info 扣 2), 下限 0; 有 blocking 时封顶 30;
@@ -154,15 +154,15 @@ payload (`analysisPayload`) 汇总 endpoints、pages、selectors、stateMachines
 - 单用例启动异常计入 `errors` (`failedToStart`);
 - 全部批准用例都启动失败 (`executed = 0` 且 `errors > 0`) → 阶段 `failed` (软失败); 否则 `completed`, 部分失败标记 `partial`.
 
-执行引擎、五级选择器回退与三层断言详见[浏览器执行](./execution).
+执行引擎、五级选择器回退与分层断言 (URL 路径与引号文本锚点独立校验, 所有可验证维度都必须通过, 仅当预期结果不含任何可验证锚点时才诚实标记 skipped) 详见[浏览器执行](./execution).
 
 ### ⑥ 结果分析 (stageResultAnalysis)
 
-证据驱动的失败分类. `analyzeEnabled = false` → `skipped`; 否则选取本运行中 `executionId` 非空的**全部**用例 (通过或失败都分析, 通过的归为 `none`), 无则 `skipped`. 逐用例:
+证据驱动的失败分类. `analyzeEnabled = false` → `skipped`; 否则选取本运行中 `executionId` 非空的**全部**用例 (通过或失败都分析, 通过的归为 `none`, 但截图复核判 suspect 时降为 `unknown`), 无则 `skipped`. 逐用例:
 
 - `buildEvidence` 汇总客观证据: 至多 20 条步骤记录、errorCategory/errorMessage、执行时长与通过步数、视觉复核结论 (`visionReview`)、测试点与需求摘录;
 - `analyzeResult`: LLM 可用时优先用 `resultAnalysisPrompt` 分类 (`parseFailureAnalysis` 校验类别与置信度), 失败或不可用则退回 `ruleAnalysis` 规则分类 (按 error code 与脚本文本标记映射);
-- `guardAnalysis` + `hasGroundedEvidence` 守卫: 结论必须引用具体步骤 / 错误码 / 截图裁定, 否则降级为 `unknown`; 对 `unknown` 压低置信度, 对 `product_defect`/`unknown` 强制 `needsHumanReview`;
+- `guardAnalysis` + `hasGroundedEvidence` 守卫: 缺陷类结论 (`DEFECT_CATEGORIES`: product_defect/test_script_issue/test_data_issue/environment_issue) 必须引用具体步骤 / 错误码 / 截图裁定 / 预期结果文本, 否则降级为 `unknown`; `unknown` 置信度封顶 0.5、证据列表为空时封顶 0.3, 对 `product_defect`/`unknown` 强制 `needsHumanReview`;
 - 结果写入 `workflow_result_analyses` (含 `executionStatus` 快照、`failureCategory`、`failureReason`、`evidence`、`confidence`、`recommendedAction`、`needsHumanReview`、`source` (llm/rule)、`model`、`rawResponse`), 并把 `workflow_cases.analysisId` 指向它——**绝不修改 `execution_records.status`**;
 - 单用例分析抛错也会补写一条 `unknown` 行, 保证「有执行就有分析」.
 

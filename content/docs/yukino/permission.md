@@ -2,7 +2,7 @@
 title: "Permission"
 description: "权限系统: 对每次工具调用回答 allow / ask / deny, 多层短路判定 — plan 守卫, 显式规则, 协调工具, 安全命令白名单, shell 结构分析, 路径沙箱, OS 沙箱自动放行, 模式矩阵; 覆盖规则文件语法与裁决优先级, remember scope 持久化与人在回路审批"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 LLM 生成的每一次工具调用都是一次真实世界的动作: 执行命令、改写文件、发起网络请求。权限系统回答一个问题 — 这次调用应该直接放行 (allow)、停下来问人 (ask), 还是直接拒绝 (deny)。它要同时抵御三类攻击面:
@@ -75,9 +75,9 @@ export interface Decision {
 - **Shift+Tab 循环**: 终端 UI 监听 Shift+Tab, 按 `PERMISSION_MODE_CYCLE` = default → acceptEdits → bypassPermissions 循环切换 (src/ui/constants.ts); plan 不在循环里, UI 上 bypassPermissions 显示为 "YOLO"
 - **进入 plan**: `/plan` 斜杠命令或 EnterPlanMode 工具 (仅主 agent 可用) 都会走 `runPlanAgent`: 先 `checker.enterPlanMode()` (记录进入前的模式), 再运行内置 plan subagent。plan agent 声明 `permissionMode: "plan"` + `readOnly: true`, 且禁用 EditFile / WriteFile / ExitPlanMode, 它产出的计划文本由运行时 `savePlan` 写入 plan 文件 (src/subagent/plan.ts)
 - **退出 plan**: ExitPlanMode 工具成功后弹出 plan 审批对话框, 三选一: 批准并进 YOLO (exitPlanMode → `bypassPermissions`)、批准但每步编辑仍需确认 (→ `default`)、或给出修订反馈继续留在 plan 模式
-- **初始值**: 来自 config.yaml 的 `permission_mode` 键; 终端 UI 只接受 default / acceptEdits / bypassPermissions 三个合法值, 否则回落 default (plan 只能经由 /plan 进入, 不能作为初始值)
+- **初始值**: 来自 config.yaml 的 `permission_mode` 键, 配置层按 default / acceptEdits / plan / bypassPermissions 四值枚举校验, 非法值在加载时报错。各宿主消费方式不同: 终端 UI 只接受其中三个非 plan 值, plan 或未设置都回落 default (终端 UI 里 plan 只能在运行时经由 /plan 或 EnterPlanMode 进入); A2A 运行时直接应用配置值 (`config.permission_mode ?? "default"`), plan 可以作为初始模式; remote 不读取该键, 以 default 启动
 - **只读角色**: 内置 plan / explore subagent 声明 `readOnly: true`, `mode` getter 对 readOnly 的 checker 永远返回 `"plan"` — 这类角色是永久只读的
-- **subagent 继承**: `forSubagent` 派生子 checker 后, 有效模式按 `mode` getter 合并: 父或子任一是 bypassPermissions → bypassPermissions; 父是 acceptEdits → acceptEdits; teammate 且要求 leader 审批计划、自身值为 plan → plan; 其余情况用子自己的值, 缺省 default。继承只会放宽不会收紧
+- **subagent 继承**: `forSubagent` 派生子 checker 后, 有效模式按 `mode` getter 合并: teammate 且要求 leader 审批计划、自身值为 plan → plan (这一判定先于父模式合并, teammate 在计划获批前保持只读); 父或子任一是 bypassPermissions → bypassPermissions; 父是 acceptEdits → acceptEdits; 其余情况用子自己的值, 缺省 default。除 teammate 计划审批这一例外, 继承只会放宽不会收紧
 
 ## 安全只读命令白名单
 
@@ -125,7 +125,7 @@ export function isSafeCommand(command: string): boolean {
 `PathSandbox` 只管 write 类工具的路径参数; 读工具不再经过这一层 (`canReadSearchPath` 恒返回 true, 读路径由 deny 规则按需拦截), bypassPermissions 模式也跳过。
 
 - **允许的根目录**默认两个: 项目根目录 (构造时传入的工作目录) 和系统临时目录 (`os.tmpdir()`, macOS 上是 `/var/folders/...` 而不是 `/tmp`, Linux 是 `/tmp`)
-- **运行时追加**: `allowExtraRoot(path)` 追加可写根 — 典型场景是注册 worktree 时把 worktree 目录加进来 (见 [worktree](./worktree)), 主 agent 和委派 agent 共用同一份 extraRoots, 口径统一
+- **运行时追加**: `allowExtraRoot(path)` 追加可写根 — 典型场景是注册 worktree 时把 worktree 目录加进来 (见 [worktree](./worktree))。派生 checker 时 extraRoots 按快照拷贝, 而 worktree 登记簿 (`worktrees`) 跨派生共享; OS 沙箱的写根 (`sandboxWriteRoots`) 合并 extraRoots 与共享登记簿, 主 agent 和委派 agent 口径统一
 - **检查流程**: `resolveToolPath` 展开 `~` 并相对项目目录 resolve → `canonicalPath` 解析符号链接 (尾部文件甚至父目录不存在时逐级向上回退再拼接, 最大深度受 `MAX_SYMLINK_DEPTH` 限制) → `isPathWithin` 用 `path.relative` 判断是否落在某个根内
 - **越界处理**: `PathSandbox.check` 返回 `Path <filePath> is outside allowed directories`, 判定流程把它包装成 **ask** 而不是 deny — 用户可能确实需要写外部路径, deny 太激进。ask 之前会重查一次显式规则, 显式 allow 可以覆盖沙箱决策
 - **worktree 隔离**: 经 `forWorktree` 派生的隔离 agent 会把沙箱根切换为 worktree 目录本身 (`isolatedRoot`), 且不再包含系统临时目录
@@ -202,7 +202,6 @@ HITL 确认对话框的第二项是 "Yes, remember the scopes above for all agen
 
 - **终端 UI**: `createPermissionRequestHandler` 把请求渲染成 PermissionDialog, 标题 `<agentName>: <toolName> requires approval`, 正文一行展示 cwd · 参数摘要 (`formatToolArgs`: command 全文, file_path / pattern / description 截断到 80 字符) · decision.reason, 并为每个 rememberPattern 打印一行 `Remember scope: <pattern>`。选项 Yes / Yes, remember... / No, Esc 等同 deny; 并发的权限请求排队, 逐个弹出 (见 [terminal-ui](./terminal-ui))
 - **remote**: 服务端广播 `permission_request` WebSocket 消息, 浏览器端弹出审批卡片; 断线重连的客户端会收到 in-flight 请求的重放 (见 [remote](./remote))
-- **ACP**: 向编辑器客户端发起 `session/requestPermission` 请求 (见 [acp](./acp))
 - **A2A**: 任务状态转入 `TASK_STATE_INPUT_REQUIRED`, 等待调用方 agent 回传决策 (见 [a2a](./a2a))
 
 三种决策的落地方式:

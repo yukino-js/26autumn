@@ -2,7 +2,7 @@
 title: "ReAct and Agent Loop"
 description: "ReAct 范式与 Agent 主循环: Agent.run() 是 AsyncGenerator<AgentEvent>, 每轮经 abort / 预算检查, reminder 注入, 上下文压缩, LLM 流消费, 错误自愈, max_tokens 恢复与分批工具执行; 覆盖退出条件, Steering, partitionToolCalls 与 StreamingExecutor, Plan Mode 约束"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 ReAct (Reasoning + Acting) 是 Yukino agent loop 遵循的范式: 推理与行动交替进行, 每一步行动都建立在对上一步结果的观察之上。本页讲清这个范式如何落成代码 — `Agent.run()` 事件循环的每一轮做什么、何时退出、出错如何自愈, 以及工具如何分批执行。
@@ -30,7 +30,7 @@ Yukino 的主循环是 ReAct; 需要长时间自主推进时再叠加持久目�
 
 ## Agent Loop: 一个 AsyncGenerator 事件流
 
-agent loop 的载体是 `Agent.run()` (src/agent/index.ts), 它是一个 `AsyncGenerator<AgentEvent>`: 每消费一段 LLM API 流、每执行一批工具, 就 `yield` 事件给宿主。UI、remote、ACP、A2A、print 模式都是同一份循环的宿主 (UI 和 print 直接 `new Agent`, remote/ACP/A2A 经 `createRemoteAgent` 装配), 消费的都是同一种 `AgentEvent`。subagent、记忆提取等后台任务也是同一份循环的另一个实例。
+agent loop 的载体是 `Agent.run()` (src/agent/index.ts), 它是一个 `AsyncGenerator<AgentEvent>`: 每消费一段 LLM API 流、每执行一批工具, 就 `yield` 事件给宿主。UI、remote、A2A、print 模式都是同一份循环的宿主 (UI 和 print 直接 `new Agent`, remote/A2A 经 `createRemoteAgent` 装配), 消费的都是同一种 `AgentEvent`。subagent、记忆提取等后台任务也是同一份循环的另一个实例。
 
 骨架可以简化成这样:
 
@@ -143,7 +143,7 @@ agent loop 期间发射的事件都来自 src/agent/events.ts 定义的 `AgentEv
 | `error`              | 发生错误                                                                                                     |
 | `permission_request` | 权限请求 (UI 弹对话框前的通知性事件)                                                                         |
 
-UI 层只需从 `AgentEvent` 事件流中消费事件、据此更新界面, agent 与 UI 完全解耦。事件流用 AsyncGenerator (`async function*` + `yield`) 表达。ACP、A2A、remote、print 模式各自把 `AgentEvent` 翻译成自己的协议事件 (见 [acp](./acp) / [a2a](./a2a) / [remote](./remote) / [print-mode](./print-mode))。
+UI 层只需从 `AgentEvent` 事件流中消费事件、据此更新界面, agent 与 UI 完全解耦。事件流用 AsyncGenerator (`async function*` + `yield`) 表达。A2A、remote、print 模式各自把 `AgentEvent` 翻译成自己的协议事件 (见 [a2a](./a2a) / [remote](./remote) / [print-mode](./print-mode))。
 
 ## 状态机
 

@@ -2,7 +2,7 @@
 title: "工具调用"
 description: "工具调用 (function calling): LLM 负责决策、CLI 负责执行 — 覆盖协议本身、Tool 接口与 ToolRegistry、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 工具调用 (function calling) 是 Agent 的核心机制: LLM 负责决策, 请求调用工具; CLI 负责执行工具调用, 把结果回传给 LLM。本页覆盖协议本身、工具接口与注册表、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线。
@@ -146,7 +146,7 @@ export interface ToolResult {
 
 `ToolRegistry` (src/tools/registry.ts) 是工具的装配点:
 
-- `register` / `registerBorrowed` / `unregister` / `get` / `getInstanceOf` / `listTools`; `dispose` 时先跑 cleanup 回调, 再逐个 `dispose` 自己拥有的工具, 失败聚合为 AggregateError
+- `register` / `registerBorrowed` / `unregister` / `get` / `getInstanceOf` / `listTools`; `dispose` 以 `Promise.allSettled` 并发跑 cleanup 回调和自己拥有的工具的 `dispose`, 失败聚合为 AggregateError
 - `getAllSchemas(protocol, filter)` 和 `listVisibleToolNames` 共用同一套可见性谓词, 保证「对外宣称可用的工具」和「实际可调用的工具」一致
 - `mcpLoadingMode` (`eager` / `native` / `dispatch`) 由 mcp/strategy 在连接 server 后写入; `exposeToolSearch` / `exposeMcpCall` 在会话开始时算定一次, 不逐轮重算 —— tools 数组渲染在 system 之后、messages 之前, 数组任何变动都会使整段历史缓存失效 (实测两万 token 历史下, 往 tools 末尾追加一个工具使命中率从 99.4% 掉到 9.5%)
 - 延迟工具 (`deferred && !discovered`) 的可见性: native 模式下留在 tools[] 里带 `defer_loading`, 由服务端决定是否展示给模型; dispatch 模式下直接从 tools[] 中隐藏, 走 McpCall; eager 模式没有延迟工具, ToolSearch / McpCall 也不暴露
@@ -209,6 +209,8 @@ EditFile (src/tools/edit-file.ts), 参数 `file_path`、`edits[]` (每项 `old_s
 
 两个写工具都经 `withWorkspaceMutation`: 按规范化 cwd 取工作区互斥锁, 写类操作同一时刻只有一个在跑; 取锁后、执行前还会重查一次权限 (等待排队期间权限模式可能已变, 变了就报 `Permission changed while waiting`)。
 
+落盘统一走 `writeFileAtomically` (src/tools/atomic-write.ts): 先在目标同目录以 `wx` 独占创建 `.yukino-<uuid>.tmp` 临时文件, 写入并 fsync 后用 rename 原子替换目标, finally 里无论成败都删除临时文件 —— 目标文件只在 rename 一刻从旧内容切换到新内容。目标已存在时沿用其权限位 (mode & 0o777); `~/.yukino` 下的私有状态路径固定 0o600 (PRIVATE_FILE_MODE), 写前先建私有目录并做私有文件保护校验 (src/storage/private.ts)。符号链接路径经 realpath 解析后改写真实文件, 不替换链接本身; 目标不是常规文件时报 `File writes require a regular file.`。abort 信号在打开临时文件前和 rename 前各检查一次, 写入途中被中断统一报 `Error: operation interrupted` (OPERATION_INTERRUPTED_ERROR)。
+
 ### Bash / PowerShell
 
 Bash (src/tools/bash.ts), 参数 `command` (必填)、`timeout` 秒 (默认 120, 上限 600, 超过钳制)、`run_in_background` (仅当注入了 TaskManager 才出现在 schema 里):
@@ -224,7 +226,7 @@ Bash (src/tools/bash.ts), 参数 `command` (必填)、`timeout` 秒 (默认 120,
 
 PowerShell (src/tools/powershell.ts) 与 Bash 共享同一套 shell-background 基础设施 (输出文件、watchdog、后台化、通知格式), 差异:
 
-- win32 用 `powershell.exe` (命令前缀强制 `[Console]::OutputEncoding` 为 UTF-8), 其他平台用 `pwsh` (缺失时 spawn 错误附安装提示); 参数 `-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command`
+- win32 用 `powershell.exe` (命令前缀强制 `[Console]::OutputEncoding` 为 UTF-8), 其他平台用 `pwsh` (缺失时 spawn 错误附安装提示); 参数 `-NoProfile -NonInteractive -Command` (win32 另加 `-ExecutionPolicy Bypass`)
 - 进程树终止: Windows 走 `taskkill /pid N /T` (SIGKILL 等价时加 `/F`), POSIX 才需要 `detached` 进程组
 - 不做 OS 沙箱包装 (两种沙箱都只包 bash), Windows 本身也没有沙箱支持
 - 提示词标记 `PS> `, 后台任务 id 前缀 `ps`
@@ -285,7 +287,7 @@ src/tools/computer-use.ts, 操作本机 GUI: 截图、点击、输入、滚动�
 
 ## 工具注册的装配
 
-`createToolRegistry(cwd, taskList, options)` 的注册顺序: Goal、TodoWrite (有 teamManager 时换成 TeamTodoWriteTool)、TaskOutput、LSP、Bash、PowerShell、ComputerUse、EditFile、EnterPlanMode (条件注册)、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。options 包括 `enableModelPlanMode`、`interactionMode` ("interactive" / "non-interactive")、`lspServers`、`teamManager`。
+`createToolRegistry(taskList, options)` 的注册顺序: Goal、TodoWrite (有 teamManager 时换成 TeamTodoWriteTool)、TaskOutput、LSP、Bash、PowerShell、ComputerUse、EditFile、EnterPlanMode (条件注册)、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。options 包括 `enableModelPlanMode`、`interactionMode` ("interactive" / "non-interactive")、`lspServers`、`teamManager`。
 
 宿主在基础注册之上的差异:
 

@@ -2,7 +2,7 @@
 title: "Goal"
 description: "持久目标 (Persistent Goal): GoalManager 状态机、/goal 命令与 Goal 工具三件套, 让 agent 跨轮次、跨用户消息朝一个目标自动推进 — 循环退出前先问是否续跑, 直到完成、受阻或预算耗尽"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 持久目标 (Persistent Goal): 让 agent 跨轮次、跨用户消息地朝一个目标自动推进, 直到完成、受阻或预算耗尽
@@ -71,7 +71,7 @@ active   --turnsExecuted >= 150------> max_turns --/goal continue--> active (tur
 ```
 
 - 已有未完成目标时, `/goal <objective>` 报 `An unfinished goal already exists.`, 必须显式 `/goal replace <objective>`; 上一个目标已 complete 时可以直接设置新目标
-- budget_limited 后 resume/continue 都报 `The token budget is exhausted; replace the goal with an explicit new budget.`, 唯一出路是 replace 并给出新预算
+- budget_limited 目标 resume/continue 会被状态检查拒绝 (报 `Only a paused, blocked, or turn-limited goal can resume.`); `The token budget is exhausted; replace the goal with an explicit new budget.` 只在 paused / blocked / max_turns 目标的 tokensUsed 已达预算时出现 —— 两种情况的唯一出路都是 replace 并给出新预算
 - pause 只作用于 active; resume 只作用于 paused / blocked / max_turns 三种状态, 且会重置受阻计数; max_turns 必须用 continue (普通 resume 报 `Use /goal continue to reset the continuation limit.`), continue 又只认 max_turns, 用错状态会互相指路
 - `/goal complete` 不要求 active, 用户对任何存在的目标都有最终确认权
 
@@ -91,7 +91,7 @@ active   --turnsExecuted >= 150------> max_turns --/goal continue--> active (tur
 
 - 交互 UI: `currentGoal()` 按 sessionId 持有 GoalManager, 会话切换时重建。**流式运行中** 输入 `/goal`、`/goal status|pause|clear|complete` 会被正则识别并立即执行 (这几条都不产生 prompt, 不打断当前轮); 其余目标命令 (resume、continue、replace、设置) 进 follow-up 排队, 等当前轮结束再跑
 - [print-mode](./print-mode): 非交互单次执行同样支持 /goal; 无 prompt 的命令直接打印结果退出 (isError 时 exit code 1, stream-json 输出 `{ type: "goal", message, goal }`), 有 prompt 的命令把 prompt 作为输入正常跑 agent
-- [remote](./remote) / ACP: 会话运行时在 `run()` 入口识别 /goal 命令, 流式输出 message 后把 prompt 当作本轮 user 文本继续; 运行中同样支持 `/goal status|pause|clear|complete` 快捷控制
+- [remote](./remote): 会话运行时在 `run()` 入口识别 /goal 命令, 流式输出 message 后把 prompt 当作本轮 user 文本继续; 运行中同样支持 `/goal status|pause|clear|complete` 快捷控制
 
 ## 自动续跑
 
@@ -126,7 +126,7 @@ agent 用 Goal 工具汇报时, 三种 status 都要附非空 reason, 且只有 
   - 同一轮重复记录: 忽略, 返回 `A blocker was already recorded for this turn; reassess on the next continuation turn.`
   - 与上一轮原因相同 (trim + 忽略大小写) 且轮次相邻: blockedAttempts + 1; 否则重新计 1
   - 连续 3 轮同一 blocker (`>= MAX_BLOCKED_ATTEMPTS`) 才转为 blocked 停止续跑; 否则返回 `Blocked audit: N/3 consecutive turns.` + 状态报告, 循环继续
-- `complete`: 转为 complete 终态。工具描述和 reminder 都要求「全部需求达成且有验证过的证据, 包括测试覆盖检查, 不确定的工作视为未完成」
+- `complete`: 转为 complete 终态。工具描述要求「只有全部需求达成且经过验证才能标记完成」, reminder 进一步要求全部需求有验证过的证据支撑、包括测试覆盖检查、不确定的工作视为未完成
 
 设计动机: 「困难、慢、部分进展」不是受阻; 只有真正重复出现的不可逾越障碍才值得让 agent 停下来等用户, 防止它一遇挫折就放弃, 也防止它无限重试
 
@@ -150,4 +150,4 @@ agent 用 Goal 工具汇报时, 三种 status 都要附非空 reason, 且只有 
 /goal clear
 ```
 
-交互 UI、print、remote / ACP 共享同一套 GoalManager + `handleGoalCommand`, 目标行为一致: 设置/恢复目标后立即起跑, 运行中可随时 status / pause / clear / complete, 预算和轮次账目全程持久化在会话日志里
+交互 UI、print、remote 共享同一套 GoalManager + `handleGoalCommand`, 目标行为一致: 设置/恢复目标后立即起跑, 运行中可随时 status / pause / clear / complete, 预算和轮次账目全程持久化在会话日志里

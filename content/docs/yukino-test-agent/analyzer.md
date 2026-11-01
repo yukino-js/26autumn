@@ -2,7 +2,7 @@
 title: "静态代码分析"
 description: "纯规则、零 LLM 的代码事实接地层: scanner 技术栈探测、Spring/Go 后端解析、Vue/Lit 前端解析、Java/Go 状态机推断, 以及 code_analyses 持久化与流水线消费."
 local_path: "$HOME/github/yukino-test-agent"
-local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
+local_commit: "939179e40f2ca6f25e141dbb5d2d5c61c49304be"
 ---
 
 静态分析是整个平台「代码事实接地」的源头: 纯规则、零 LLM, 从被测项目的源码树中抽取 endpoints、entities、enums、业务规则、UI 表单/文案与状态机. 这些事实给后续生成的用例**接地** (grounding)——选择器与断言引用的都是真实存在的页面文案与接口, 而非凭空捏造.
@@ -28,7 +28,7 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 
 纯正则逐行解析 `.java` 文件 (`parseJavaFile`), 合并入口 `analyzeBackend`, 产出 `BackendResult` (language `java-spring`):
 
-- **endpoints**: 解析方法级 `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`; 类级 `@RequestMapping` (类声明上方 20 行内最近的一个) **只作为路径前缀, 绝不单独算作 endpoint** (源码注释强调的关键陷阱); 每个 endpoint 携带 controller 类名、方法名、file + line 证据, id 在合并时全局连续编号 (`ep-1`, `ep-2`, ...);
+- **endpoints**: 解析方法级 `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`, 以及方法级 `@RequestMapping(value = "...", method = RequestMethod.X)`——后者的动词取 `method` 属性里第一个 `RequestMethod.X` (识别 GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS), 未写 `method` 属性 (映射接受所有动词) 或动词不在识别集内时默认 GET; 类级 `@RequestMapping` (类声明上方 20 行内最近的一个) **只作为路径前缀, 绝不单独算作 endpoint** (源码注释强调的关键陷阱), 其行号在类前缀解析时被记录, endpoint 扫描遇到该行直接跳过, 避免被误读为方法级映射; 两种映射都要求向下 5 行内找到方法声明 (public/private/protected) 才产出 endpoint, 否则跳过; 每个 endpoint 携带 controller 类名、方法名、file + line 证据, id 在合并时全局连续编号 (`ep-1`, `ep-2`, ...);
 - **params**: 方法签名向下最多拼接 12 行, 用**平衡括号扫描** (跳过字符串字面量) 取出参数列表, 再按顶层逗号切分 (忽略泛型尖括号、注解圆括号与字符串内的逗号); 每个参数解析出 `EndpointParam`: `source` 由 `@RequestBody`/`@PathVariable`/`@RequestParam` 注解决定 (request_body / path_variable / request_param / unknown); `required` 规则——request_body 与 path_variable 恒必填, 带 `@NotBlank`/`@NotNull`/`@NotEmpty` 必填, `@RequestParam` 除非参数里出现 `required=false` 否则必填; Bean Validation 注解 (notblank、notnull、notempty、size、max、min、pattern、email、decimalmin、decimalmax、digits、positive、positiveorzero、negative、negativeorzero、length) 收集进 `constraints`; 大写开头且不在简单类型集合内的参数类型记为 `dtoType` (候选 DTO);
 - **auth**: 收集 mapping 注解前 3 行到方法声明之间的安全注解 (`@PreAuthorize`、`@Secured`、`@RolesAllowed`、`@PermitAll`、`@DenyAll`);
 - **entities**: 仅当文件声明的是 `class` (非 interface/enum)、类名大写开头且不以 `Controller`/`Service`/`ServiceImpl`/`Repository`/`Config`/`Application`/`Handler`/`Exception`/`Response` 结尾时才当作实体; 字段来自 `private Type name;` 声明; 约束注解**累积绑定到下一个字段声明** (一个字段可同时有 `@NotBlank` + `@Size`), 方法/类声明会清空累积 (避免跨字段泄漏); `@Size` 提取 `max`、`@Max`/`@Min` 提取数值、其余注解提取首个引号字面量, 得到 `FieldConstraint { field, rule, value }`;

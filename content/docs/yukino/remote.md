@@ -2,12 +2,12 @@
 title: "Remote"
 description: "Remote 模式: Express + 同端口 WebSocket 桥把 Yukino 变成本地 Web 服务, 浏览器 React 前端对齐终端 UI 功能; 覆盖 127.0.0.1:18888 默认地址, token + 同源 WS 接入控制, 18 种入站 / 44 种出站消息协议, 请求生命周期与心跳, 前端组件与离线队列, 优雅关闭"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 Remote 模式把 Yukino 变成一个本地 Web 服务: Express HTTP 服务器 + 同端口的 WebSocket 桥, 浏览器打开一个 React 前端, 得到与终端 UI 功能对齐的聊天界面 —— 流式回复、工具执行卡片、权限对话框、plan 审批、slash 命令、模型/provider 切换都在这里发生
 
-场景: 手机/平板访问开发机上的 agent、长跑任务放到服务器上跑、把 Yukino 嵌进自己的 Web 工作台。它和 [a2a](./a2a)、[acp](./acp) 一样是服务器形态, 区别在于 Remote 服务的是浏览器里的人
+场景: 手机/平板访问开发机上的 agent、长跑任务放到服务器上跑、把 Yukino 嵌进自己的 Web 工作台。它和 [a2a](./a2a) 一样是服务器形态, 区别在于 Remote 服务的是浏览器里的人
 
 ## 启动
 
@@ -19,7 +19,7 @@ yukino --remote 0                # OS 分配端口, 实际地址打印到 stderr
 ```
 
 - 地址由 `parseRemoteAddress` (src/remote/address.ts) 解析: 纯数字按端口处理 (`"9000"` 等价于 `":9000"`), 也接受 `host:port` 和 `[IPv6]:port`; host 缺省回落 `127.0.0.1`, 即默认只绑定 loopback, 绑定非 loopback 地址必须显式写 host; 缺省端口 18888, 合法范围 0-65535
-- 端口 `0` 时由 OS 选空闲端口, listen 成功后把实际地址写到 stderr: `Remote server listening at http://127.0.0.1:<port>/#token=<accessToken>` (与 --a2a / --acp-ws 的约定一致, 走 stderr 是为了不污染 stdout 上的 JSONL 日志流)
+- 端口 `0` 时由 OS 选空闲端口, listen 成功后把实际地址写到 stderr: `Remote server listening at http://127.0.0.1:<port>/#token=<accessToken>` (与 --a2a 的约定一致, 走 stderr 是为了不污染 stdout 上的 JSONL 日志流)
 - HTTP 侧由 Express 托管打包好的浏览器前端 (src/remote/browser 单独构建, `pnpm build:browser`, 发布时随 CLI dist 一起打包), 另有 `/health` 探针返回 `{ status, remote, clients }`; 未命中的路径回退 `index.html` 支撑 SPA 路由; WebSocket 挂在同端口的 `/ws` 路径
 - 配置装载与终端一致: `loadConfig` 允许空 provider 启动 (失败留到运行时暴露), 项目级 MCP 配置合并、hooks、sandbox、coordinator、fork、`enable_memory` 等开关全部透传给 `RemoteServer`
 
@@ -120,7 +120,7 @@ AgentEvent 到 WS 消息的转换在 `bridgeEvent`: agent loop 的事件流被�
 - 交互对话框: permission-dialog、ask-user-dialog、plan-approval-dialog、session-picker、rewind-dialog、provider-dialog、modal、picker-list
 - 输入与导航: input-area、slash-menu (斜杠命令补全)、welcome、status-bar、done-indicator、activity-panel、todo-progress、model-picker、thinking-picker、mcp-app
 
-hooks: use-web-socket (连接与重连)、use-chat (消息 reducer, `ChatItem` 模型, 最多保留 1000 条)、use-auto-scroll / use-scroll-follow (跟随滚动, 用户上翻或按住拖拽时暂停)、use-theme、offline-queue
+hooks: use-web-socket (连接与重连)、use-chat (消息 reducer, `ChatItem` 模型, 最多保留 1000 条)、use-auto-scroll (跟随滚动, 用户上翻或按住拖拽时暂停)、use-scroll-follow (键盘下拉菜单的光标行滚入可视区)、use-theme、offline-queue
 
 - WebSocket 断开自动重连 (3s 间隔), 连接状态 connecting / connected / reconnecting 展示在状态栏
 - 高频消息 (`stream_text` / `thinking_text` / `tool_output`) 按帧合并后经 requestAnimationFrame 批量派发, 避免每个 token 一次渲染
@@ -130,7 +130,7 @@ hooks: use-web-socket (连接与重连)、use-chat (消息 reducer, `ChatItem` �
 
 `run()` 阻塞直到服务器停止 (而不是一监听就返回), 调用方的退出簿记因此总发生在服务器真正倒下之后。`/quit` 留 250ms 给前端确认消息, 然后调用 `stop()`; Ctrl+C (SIGINT, 退出码 130) / SIGTERM (退出码 143) 触发的优雅关闭链:
 
-1. `stop()` 置 stopping 标记, 清空 followups 与 MCP app 状态, `cancelActiveRun` 中断当前 agent loop、compact、用户 Bash 与 subagent 控制器, 把所有待决权限按拒绝了结、待决提问按空答案了结
-2. 关闭所有 WS 客户端, 依次关闭 WebSocketServer 与 HTTP 服务器, 停掉心跳/teammate 轮询/空闲唤醒三个定时器
+1. `stop()` 置 stopping 标记, 清空 followups、待决 plan 执行与 MCP app 状态, `cancelActiveRun` 中断当前 agent loop、compact、用户 Bash 与 subagent 控制器, 把所有待决权限按拒绝了结、待决提问按空答案了结
+2. 停掉心跳/teammate 轮询/空闲唤醒三个定时器并中止在途的 model-list 请求, 关闭所有 WS 客户端, 依次关闭 WebSocketServer 与 HTTP 服务器
 3. 等待 `RemoteAgentHandle` 处置完成: 停后台记忆任务、杀掉 detached 的后台 shell 和 teammate 进程、断开 MCP 子进程、处置工具注册表与 OS sandbox
 4. 解除 `run()` 的阻塞, 记录真实退出码, 等遥测 flush 完成后以该退出码结束进程

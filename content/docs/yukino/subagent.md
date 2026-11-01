@@ -2,7 +2,7 @@
 title: "Subagent"
 description: "Yukino 的委派子系统: Agent 工具把有界子任务交给独立的 agent loop 执行, 覆盖参数与校验、角色定义、fork 上下文继承、五层工具过滤、后台异步任务, 以及 teammate 的多团队选择语义"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 一个大的重构任务中, 想插入一个小的「更新 README.md」任务: 直接在主对话里执行, 会把大量无关的工具调用和中间输出混进主 Agent 的上下文 (上下文污染)。Subagent 把这类有界子任务委派给独立的 agent loop 执行: 独立的上下文窗口、独立的工具集和权限边界, 只把一份简洁结果交回主 agent

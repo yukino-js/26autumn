@@ -2,7 +2,7 @@
 title: "前端架构"
 description: "React 19 + TanStack Start 前端全景: 文件式路由、应用外壳、项目详情九 Tab、组件分层、tRPC + TanStack Query 数据流、主题系统与共享 lib/hooks."
 local_path: "$HOME/github/yukino-test-agent"
-local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
+local_commit: "939179e40f2ca6f25e141dbb5d2d5c61c49304be"
 ---
 
 前端是一个跑在 **TanStack Start** (SSR 元框架) 上的 **React 19** 应用: 文件式路由 + tRPC 类型安全数据层 + Tailwind v4 + shadcn/ui. 全英文界面, shadcn `new-york` 风格 (zinc 基色), 底层原语用 **Base UI** (`@base-ui/react`), 图标统一 lucide-react, toast 提示用 sonner.
@@ -91,6 +91,8 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 
 注意 `mindmap` 与 `executions` 的 `TabsContent` 顺序与 `TabsTrigger` 声明略有交错, 但 `value` 一一对应, 不影响行为.
 
+`RequirementsTab` 对未保存的 PRD 编辑提供切换保护: 详情面板 (`RequirementDetail`, 以版本 id 为 `key` 重挂载) 经 `onDirtyChange` 上报文本框 dirty 状态, 点击其它需求版本时若存在未保存修改, 先弹 `window.confirm` 确认放弃后才切换, 避免重挂载静默丢弃编辑.
+
 ## 组件分层
 
 - **`components/ui/`** — shadcn/ui 基础组件, **27 个**: `alert` `alert-dialog` `badge` `breadcrumb` `button` `card` `checkbox` `collapsible` `dialog` `dropdown-menu` `input` `label` `popover` `progress` `scroll-area` `select` `separator` `sheet` `sidebar` `skeleton` `slider` `sonner` `switch` `table` `tabs` `textarea` `tooltip`. 全部基于 `@base-ui/react` 原语 (如 `dialog.tsx` 引 `@base-ui/react/dialog`, `button.tsx` 引 `@base-ui/react/button`), 按 `components.json` 的 new-york / zinc 约定生成, 用 shadcn CLI 添加;
@@ -170,7 +172,7 @@ useEffect(() => {
 
 - **`lib/enums.ts`** — 展示层枚举元数据的单一事实源. `EnumMeta = { label, tone, description }`, `tone` 取值 `info` / `primary` / `success` / `danger` / `warning`. 导出各域映射: `CASE_EXECUTION_STATUS_META`、`EXECUTION_RECORD_STATUS_META`、`AI_REVIEW_VERDICT_META`、`ERROR_CATEGORY_META`、`FAILURE_CATEGORY_META`、`CASE_TYPE_META`、`CASE_SOURCE_META`、`REQUIREMENT_STATUS_META`、`ANALYSIS_STATUS_META`、`WORKFLOW_STATUS_META`、`STAGE_STATUS_META`、`REVIEW_STATUS_META`、`PRIORITY_META`, 外加 `STAGE_LABELS` (阶段名→英文标签). `meta(mapping, code)` 返回带兜底的 `EnumMeta & { code }` (未知码回退 `label=code ?? "Uncategorized"`、`tone="info"`), 数据库存稳定英文码、UI 只渲染这里的文案;
 - **`lib/format.ts`** — 无依赖格式化工具: `formatDate`、`formatDateShort`、`formatDuration` (ms/s/m/h 逐级)、`formatPercent`、`formatNumber`、`truncateText`、`timeAgo` (相对时间 "5m ago");
-- **`lib/types.ts`** — 与后端契约对齐的前端域类型: `StructuredStep` (`ui_action` / `input` / `state_assert` / `capture` 四类步骤 + `UiSelector`)、`Endpoint`/`Entity`/`StateMachineSpec` 等分析事实、`TestPoint`/`GeneratedCase`、`RunnerResult`/`ExecutionStepRecord`、`LlmProfileDict`、`JobState` (`pending`/`running`/`completed`/`failed` + `current`/`total` 进度) 等;
+- **`lib/types.ts`** — 与后端契约对齐的前端域类型: `StructuredStep` (`ui_action` / `input` / `state_assert` / `capture` 四类步骤 + `UiSelector`)、`Endpoint`/`Entity`/`StateMachineSpec` 等分析事实、`TestPoint`/`GeneratedCase`、`RunnerResult`/`ExecutionStepRecord` (步骤记录可携带可选 `evidence`: 输入长度/哈希/匹配/预览等逐步可验证证据)、`LlmProfileDict`、`JobState` (`pending`/`running`/`completed`/`failed` + `current`/`total` 进度) 等;
 - **`lib/utils.ts`** — `cn(...inputs)`, 用 `clsx` + `tailwind-merge` 合并 className, 是全站样式合并的唯一入口 (shadcn 组件内部另引 `cn` 包);
 - **`lib/prd.ts`** — PRD 上传前置校验: `ALLOWED_PRD_EXTS`、`MAX_PRD_MB` (20)、`PRD_ACCEPT` (file input 的 `accept`)、`validatePrdFile` (扩展名 + 大小), 与后端 `parsePrdText` 守卫保持一致.
 

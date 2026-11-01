@@ -2,7 +2,7 @@
 title: "Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent"
 description: "自托管即时通讯平台的技术拆解: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级, 以及为每个用户进程内嵌入的只读 Yukino coding agent 与它的 JSON-RPC 桥。"
 local_path: "$HOME/github/yukino-chat"
-local_commit: "f8556823820fb0a62d406ec625fefafce44815e8"
+local_commit: "ec51bedc45442ed13f2ea292a278a3ce3395c533"
 ---
 
 本文拆解一个自托管即时通讯平台: 单聊与群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个完整的 AI coding agent 作为一等聊天参与者。内容覆盖数据模型、WebSocket 聊天枢纽、消息投递语义、通话信令、文件传输协议、缓存降级、Agent 的进程内只读运行时与 RPC 桥, 以及客户端的工程化组织。适合要做自托管 IM、或在既有产品中嵌入 Agent 的工程师阅读, 也适合作为"实时系统与长生命周期 Agent 如何共处一个进程"的参考。
@@ -15,24 +15,24 @@ local_commit: "f8556823820fb0a62d406ec625fefafce44815e8"
 
 ### 技术选型
 
-| 维度       | 选型                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------- |
-| 服务端     | Node.js 24 + TypeScript 5.9 + Hono, HTTP 由 `@hono/node-server` 承载                            |
-| ORM/数据库 | Prisma 7 + `@prisma/adapter-pg` 驱动适配器 + PostgreSQL                                         |
-| 缓存       | Redis(ioredis), `REDIS_URL` 为空串时降级进程内存                                                |
-| 认证       | 手写 HS256 JWT + bcryptjs 口令哈希                                                              |
-| 实时通道   | `@hono/node-ws` 适配器 + `ws`, 三条独立端点                                                     |
-| Agent      | `@yukino.js/yukino` 以库形式嵌入服务进程, 每用户一个运行时, 独立工作区, 只读工具策略            |
-| 前端       | React 19 + React Router 7 + Vite 8 + TypeScript 6 + Tailwind 4 + shadcn/ui(Base UI 原语)        |
-| 前端状态   | Zustand(会话、通话、Agent、主题与 UI 状态) + TanStack React Query/Form/Virtual                  |
-| 富文本     | TipTap 3(输入) + Streamdown(消息渲染, 含公式、mermaid 图表、代码高亮与中日韩排版插件)           |
-| PWA        | vite-plugin-pwa, `autoUpdate` 策略                                                              |
-| 工具链     | pnpm workspace(client + server)、ESLint(前端)、Biome(服务端)、Vitest 与 Node 冒烟脚本、Prettier |
+| 维度       | 选型                                                                                                                                |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 服务端     | Node.js 24 + TypeScript 5.9 + Hono, HTTP 由 `@hono/node-server` 承载                                                                |
+| ORM/数据库 | Prisma 7 驱动适配器, PostgreSQL(`@prisma/adapter-pg`, 默认)或 SQLite(`@prisma/adapter-better-sqlite3`), 由 `DATABASE_PROVIDER` 选择 |
+| 缓存       | Redis(ioredis), `REDIS_URL` 为空串时降级进程内存                                                                                    |
+| 认证       | 手写 HS256 JWT + bcryptjs 口令哈希                                                                                                  |
+| 实时通道   | `@hono/node-ws` 适配器 + `ws`, 三条独立端点                                                                                         |
+| Agent      | `@yukino.js/yukino` 以库形式嵌入服务进程, 每用户一个运行时, 独立工作区, 只读工具策略                                                |
+| 前端       | React 19 + React Router 7 + Vite 8 + TypeScript 6 + Tailwind 4 + shadcn/ui(Base UI 原语)                                            |
+| 前端状态   | Zustand(会话、通话、Agent、主题与 UI 状态) + TanStack React Query/Form/Virtual                                                      |
+| 富文本     | TipTap 3(输入) + Streamdown(消息渲染, 含公式、mermaid 图表、代码高亮与中日韩排版插件)                                               |
+| PWA        | vite-plugin-pwa, `autoUpdate` 策略                                                                                                  |
+| 工具链     | pnpm workspace(client + server)、ESLint(前端)、Biome(服务端)、Vitest 与 Node 冒烟脚本、Prettier                                     |
 
 ### 整体架构
 
 ```text
-   React SPA ──HTTP POST(统一信封 JSON)──> Hono 应用: routes -> services -> Prisma -> PostgreSQL
+   React SPA ──HTTP POST(统一信封 JSON)──> Hono 应用: routes -> services -> Prisma -> PostgreSQL/SQLite
    Zustand + Query                             │
                                                └──> CacheService ──> Redis(可选) / 进程内存
 
@@ -43,7 +43,7 @@ local_commit: "f8556823820fb0a62d406ec625fefafce44815e8"
 
 ### 运行时形态
 
-服务端是纯 Node.js 进程: 入口先创建三个静态目录(头像、普通文件、分块临时目录), 再组装依赖包, 确保内置 Agent 账号存在, 启动聊天枢纽与 Agent 管理器的定时器, 最后构建应用并监听端口。默认监听 `0.0.0.0:8000`, 开发态用 `tsx watch` 运行, 生产态构建后直接 `node` 启动。
+服务端是纯 Node.js 进程: 入口先创建三个静态目录(头像、普通文件、分块临时目录), 再组装依赖包, 确保内置 Agent 账号存在, 启动聊天枢纽与 Agent 管理器的定时器, 最后构建应用并监听端口。默认监听 `0.0.0.0:8000`, 开发态用 `tsx watch` 运行, 生产态构建后直接 `node` 启动。当 `WEB_DIST_DIR`(默认 `./web`)下存在 `index.html` 时, 应用还会托管构建后的 SPA: `/assets/*` 加 `immutable` 长缓存、`/sw.js` 强制 `no-cache`, 其余 GET 走静态文件并以 `index.html` 兜底, 于是单个进程即可同时提供前后端。
 
 依赖通过一个 `Deps` 接口集中注入路由: 数据库、缓存、通话管理器、聊天枢纽、五个业务服务(会话、用户、联系人、群组、消息)以及 Agent 管理器。没有全局单例, 便于测试时替换实现, 也让进程退出时可以按依赖顺序统一释放。
 
@@ -116,18 +116,20 @@ local_commit: "f8556823820fb0a62d406ec625fefafce44815e8"
 
 ### 数据模型
 
-数据库定义八个模型。每张表都带一个自增整数物理主键 `id`, 但业务层互相引用的一律是 `uuid` 列: 聊天实体的 `uuid` 是带前缀的 12 位随机串(1 位前缀加 11 位随机字符, 62 字符表), 前缀即路由语义——收件人 id 以 `U` 开头走单聊分支, 以 `G` 开头走群聊分支。用带前缀的字符串标识而非自增整数, 一方面避免跨表协调, 另一方面让业务层仅凭 id 前缀就能选择分发路径。唯一的例外是 AgentSession, 它直接以数据库生成的 UUID 作主键, 并以 `userId` 唯一约束保证每用户一行。
+数据库定义八个模型, 由两套镜像 schema 承载: `server/prisma/schema.prisma`(PostgreSQL)与 `server/prisma-sqlite/schema.prisma`(SQLite), 由 `DATABASE_PROVIDER` 选用(连同各自的 migrations 目录)。每张表都带一个自增整数物理主键 `id`, 但业务层互相引用的一律是 `uuid` 列: 聊天实体的 `uuid` 是带前缀的 12 位随机串(1 位前缀加 11 位随机字符, 62 字符表), 前缀即路由语义——收件人 id 以 `U` 开头走单聊分支, 以 `G` 开头走群聊分支。用带前缀的字符串标识而非自增整数, 一方面避免跨表协调, 另一方面让业务层仅凭 id 前缀就能选择分发路径。唯一的例外是 AgentSession, 它直接以数据库生成的 UUID 作主键, 并以 `userId` 唯一约束保证每用户一行。
 
 | 模型         | 要点                                                                                                                                                            |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | UserInfo     | 主体唯一; 手机号索引作为登录凭据; 状态与管理员用整数线路值; 记录最近上线/下线时间                                                                               |
 | Session      | 每用户每对端一行, 以拥有者(sendId)视角存储; 软删除; `lastReadAt` 驱动未读计数                                                                                   |
 | Message      | 冗余发送者昵称与头像以省去 JOIN; `status` 记送达状态; 通话信令以 JSON 存在 `avData` 字段                                                                        |
-| GroupInfo    | 成员用数据库原生数组; 入群模式 `addMode` 分直接进群与需审批两种; 状态覆盖正常、禁用、解散                                                                       |
+| GroupInfo    | 成员列在 PostgreSQL 用原生数组、SQLite 镜像 schema 用 JSON; 入群模式 `addMode` 分直接进群与需审批两种; 状态覆盖正常、禁用、解散                                 |
 | UserContact  | 双向联系人边, 状态覆盖正常、拉黑、被拉黑、删除、被删除、免打扰、退群、被踢(0 到 7)                                                                              |
 | ContactApply | 好友与入群申请, 状态覆盖申请中、通过、拒绝、拉黑                                                                                                                |
 | ContactTag   | 联系人标签, 注册时默认创建 "Friends" 标签                                                                                                                       |
 | AgentSession | 每用户一行; 对话上下文与激活技能(`activeSkills`)以 JSON 存快照, 另存权限模式与最近活跃时间; 状态是六值数据库枚举(IDLE/RUNNING/WAITING/COMPLETED/ABORTED/FAILED) |
+
+两套 schema 的列类型按各自数据库能力对齐(PostgreSQL 用 `@db.VarChar` 与原生数组, SQLite 用无标注字符串与 JSON), 但模型形状一致, 因此应用代码只对单一 Prisma 客户端类型编程——`createPrismaClient` 在 SQLite 模式下把 better-sqlite3 客户端 cast 成 PostgreSQL 客户端类型。为兼容 SQLite 的 JSON 成员列, 入群写操作从数组 `push` 改为整列重写(`members: [...group.members, userId]`)。
 
 聊天域的状态与类型列刻意保持整数而不改成数据库枚举: 线路上传输的就是原始整数, 这些取值是承重墙, 一旦改成枚举就会引入序列化层的不一致; 枚举只用于 Agent 内部状态。消息类型常量为: 0 文本、1 图片、2 文件、3 音视频信令、4 视频、5 系统通知, 客户端镜像同一组常量; 消息送达状态为 0 未送达、1 已送达。内置 Agent 账号是保留主体 `UYUKINOAGENT`(以 `U` 开头, 因此天然是单聊分支)。
 
@@ -252,7 +254,7 @@ UI 层维护 `空闲/振铃/拨号/通话中` 状态机, 拨出 45 秒无应答�
 
 Agent 配置按两级回退加载, 并在进程内缓存一次(运行期改配置需要重启):
 
-1. 首选库的标准配置: `Config.loadConfig` 允许 provider 列表为空, 取第一个 provider, 连同 MCP 服务器列表、钩子与权限模式一起使用。
+1. 首选库的标准配置: `Config.loadConfig` 允许 provider 列表为空, 按 `default_provider` 解析默认 provider(越界钳制、缺省回落第一个), 连同 MCP 服务器列表、钩子、`lsp_servers`、`enable_memory` 开关与权限模式一起使用。
 2. 无配置文件时用环境变量合成单 provider(`YUKINO_AI_PROTOCOL` 为空时默认 `openai-compat`), `YUKINO_AI_BASE_URL` 或 `YUKINO_AI_MODEL` 为空则返回 `null`。
 3. `null` 表示"Agent 不可用": 聊天主流程完全不受影响, 用户私聊 Agent 会收到一条"未配置"的聊天回复; AgentManager 构造时就把 `available` 算好。
 
@@ -266,21 +268,21 @@ Agent 管理器维护"用户到运行时"的懒创建映射, 每个用户的工�
 
 ### AgentRuntime: 只读策略、队列与再水化
 
-每个用户的运行时是长生命周期对象, 首次使用时创建或复用数据库中的会话行, 创建工作区目录, 并经 `Remote.Server.createRemoteAgent` 构造完整 Agent 栈句柄(LLM 客户端、会话管理器、工具注册表、命令注册表、技能目录、MCP 管理器、团队与后台任务管理器等), 用 Promise 缓存防止并发重建; 初始化失败**不缓存**——瞬态的 provider/MCP 错误不能把用户运行时永久钉死, 下次 attach/dispatch 会重试。
+每个用户的运行时是长生命周期对象, 首次使用时创建或复用数据库中的会话行, 创建工作区目录, 并经 `Remote.Server.createRemoteAgent` 构造完整 Agent 栈句柄(LLM 客户端、会话管理器、工具注册表、命令注册表、技能目录、MCP 管理器、团队与后台任务管理器等), 并把配置里的 `lspServers` 与 `memoryEnabled` 一并传入; 用 Promise 缓存防止并发重建; 初始化失败**不缓存**——瞬态的 provider/MCP 错误不能把用户运行时永久钉死, 下次 attach/dispatch 会重试。
 
 **多用户只读策略**在句柄就绪时一次性施加(`applyReadOnlyPolicy`), 由 `read-only-tools.ts` 实现三层隔离:
 
-1. **工具白名单**。`handle.toolFilter` 只放行读类工具(ReadFile/Glob/Grep/WebFetch/ToolSearch/McpCall/LoadSkill/AskUserQuestion/SyntheticOutput、任务板与 Goal 等内部状态工具), 外加全部 `mcp__*` MCP 工具——后者仍受权限 broker 把关。写/命令类工具(Bash、PowerShell、EditFile、WriteFile、worktree、团队、子代理派生、计划模式开关等 14 个)从模型可见面与执行面同时消失。
+1. **工具白名单**。`handle.toolFilter` 只放行读类工具(ReadFile/Glob/Grep/WebFetch/LSP/ToolSearch/McpCall/LoadSkill/AskUserQuestion/SyntheticOutput, 以及 TodoWrite/TaskOutput/Goal 这几个每会话内部状态工具), 外加全部 `mcp__*` MCP 工具——后者仍受权限 broker 把关。库虽把 EnterPlanMode/ExitPlanMode/TeamList 也归为读类, 但前两者会翻转权限模式、破坏"永远只读"的不变量, 后者在禁用团队编排(`enableCoordinatorMode: false`)下只能返回空表, 故一并排除; 其余写/命令类工具(Bash、PowerShell、EditFile、WriteFile、worktree、团队、子代理派生等)从模型可见面与执行面同时消失。
 2. **路径圈禁**。Yukino 自身的权限层只对**写**做路径沙箱, 读是放行的; 因此 `containReadTools` 把 ReadFile/Glob/Grep 重新注册为带守卫的包装版: 路径参数按"展开 `~`、解析符号链接(逐层回溯到最近存在的祖先)、再判包含关系"归一化后必须落在本用户工作区内, Glob 的 pattern 还额外拒绝绝对路径与 `..` 段——否则直接返回"在工作区之外"的错误结果。没有这层, 一个 ReadFile 就能读到隔壁用户的工作区或宿主机的 `~/.yukino/config.yaml`。
-3. **网络与 fork 出口**。WebFetch 包装后先过库自带的公网 URL 断言(拒绝环回、私网、链路本地与保留段, 含 DNS 解析后的地址); fork 模式的技能子代理则通过 `FORK_DISALLOWED_TOOLS` 剥掉同一组写工具, 并复用被包装的注册表、继承路径圈禁——委派不成为写的逃生舱。LoadSkill 工具本身也被替换为挂只读 fork host 的版本。
+3. **网络与 fork 出口**。WebFetch 包装后先过一道本仓库自建的公网断言 `assertPublicHttpUrl`: 只允许 http/https、拒绝内嵌凭据, 对主机名做 DNS 解析后逐个地址用库的 `Utils.PublicHttp.isPublicIpAddress` 判定, 拒绝环回、私网、链路本地与保留段(Yukino 0.0.20 不再导出该断言, 故自行拼装); fork 模式的技能子代理则通过 `FORK_DISALLOWED_TOOLS`(14 个写/命令工具)剥掉同一组能力, 并复用被包装的注册表、继承路径圈禁——委派不成为写的逃生舱。LoadSkill 工具本身也被替换为挂只读 fork host 的版本。
 
-再水化与持久化采用"数据库为唯一事实源"的策略: 从数据库的上下文 JSON 恢复对话, 并过滤掉可再生的系统提醒包裹消息(`<system-reminder>...</system-reminder>`), 防止跨重启累积; 同时按 `activeSkills` 名单从磁盘当前内容重新内联执行技能, 让压缩后的上下文恢复仍带 SOP; 每回合结束把消息快照与激活技能名单一起写回数据库。
+再水化与持久化采用"数据库为唯一事实源"的策略, 但**不重置**对话: `createRemoteAgent` 已在会话头部注入了长期记忆提醒(项目指令加自动记忆), 重置会把它一并抹掉, 因此再水化只把数据库里的历史消息追加在后, 并过滤掉可再生的系统提醒包裹消息(`<system-reminder>...</system-reminder>`), 防止跨重启累积、同时让头部那条记忆提醒始终生效; 按 `activeSkills` 名单从磁盘当前内容重新内联执行技能, 让压缩后的上下文恢复仍带 SOP; 每回合结束把消息快照与激活技能名单一起写回数据库。
 
 提示队列是单 worker 串行消费, 队长达到上限(默认 8)时向所有连接推送"仍在处理更早的消息, 请等待"的系统通知并丢弃新任务。串行化的意义在于: 一个用户的多个提示若并发执行, 工具执行与文件读取会互相踩踏, 排队是正确性要求而非性能取舍。
 
 回合执行的流程是: 先按技能目录的 `needsReload()` 做**技能热刷新**(重载目录、重新接线斜杠命令、并把新命令清单推给客户端); 斜杠开头且能被命令解析器识别才走命令分支——以 `/` 开头的普通路径因命令名不含 `/` 而解析失败, 会按普通用户消息执行; 否则先通知回合开始(携带用户消息 id 作为锚点), 然后 `for await` 消费句柄 `run()` 的事件流交适配器翻译, 每个事件同时喂给按用户分流的 JSONL 事件记录器(只记失败工具结果、重试、压缩、错误这类降级信号, 例行进度丢弃), 收尾时保存上下文。
 
-斜杠命令是**注册表驱动**的: 内置命令、用户自定义命令(`~/.yukino/prompts`)与技能命令全部来自句柄的命令注册表, 运行时只执行聊天场景适用的子集并拒绝其余: `local` 类只放行 `help`/`status`, `local_ui` 类放行 `clear`(清空对话并广播)/`compact`(强制压缩, 压缩边界同步落盘)/`skills`(列技能), 而 `prompt` 与 `skill_fork` 类全部放行——技能命令会拉起一个只读 fork 子代理执行, 结果文本按普通回复落库。`/plan` 会被礼貌拒绝: 聊天里 Agent 本来就只读, 计划模式没有意义。取消通过 `cancel()` 中止在途回合与 fork、并让交互 broker 拒绝所有挂起交互; 销毁是幂等的, 会保存上下文、断开 MCP、停止后台任务与团队、并以 1001 正常关闭码关闭所有连接。
+斜杠命令是**注册表驱动**的: 内置命令、用户自定义命令(`~/.yukino/prompts`)与技能命令全部来自句柄的命令注册表, 运行时只执行聊天场景适用的子集并拒绝其余: `local` 类只放行 `help`/`status`, `local_ui` 类放行 `clear`(清空对话并广播)/`compact`(强制压缩, 压缩边界同步落盘)/`skills`(列技能), 而 `prompt` 与 `skill_fork` 类全部放行——技能命令会拉起一个只读 fork 子代理执行, 结果文本按普通回复落库。其余不在聊天子集内的命令(如 `/plan`、`/quit`)统一回一句"在聊天中不可用, 输入 /help 查看可用命令"。取消通过 `cancel()` 中止在途回合与 fork、并让交互 broker 拒绝所有挂起交互; 销毁是幂等的, 会保存上下文、断开 MCP、停止后台任务与团队、并以 1001 正常关闭码关闭所有连接。
 
 工作区路径 `.yukino/chat/<uid>` 的 uid 段先经 `safeSegment` 清洗(只保留字母数字下划线与连字符, 全空则归 `anonymous`)——用户 id 是路径组成部分, 构造的 id 不能穿越进别人的工作区。
 
@@ -381,9 +383,9 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 
 ## 测试策略
 
-单测覆盖七个模块: JWT 的往返、错密钥、畸形输入与 `exp=0` 永久令牌, 随机 id 生成与文件名清洗; 通话管理器的房间 id 派生、忙状态、离开返回剩余成员与空房解散; 事件适配器的流文本累积与工具调用触发冲刷、回合计数; 交互 broker 在假定时器下验证权限超时 fail-closed、abort 信号即刻拒绝与快照重放; 只读工具策略的路径圈禁(符号链接解析、`..` 逃逸、glob 绝对路径)与包装语义、WebFetch 私网拦截; 运行时连接生命周期(半开 socket 被清扫后 `connectionCount` 归零, 驱逐可行)与工作区路径清洗。
+单测覆盖七个模块: JWT 的往返、错密钥、畸形输入与 `exp=0` 永久令牌, 随机 id 生成与文件名清洗; 通话管理器的房间 id 派生、忙状态、离开返回剩余成员与空房解散; 事件适配器的流文本累积与工具调用触发冲刷、回合计数; 交互 broker 在假定时器下验证权限超时 fail-closed、abort 信号即刻拒绝与快照重放; 只读工具策略的路径圈禁(符号链接解析、`..` 逃逸、glob 绝对路径)与包装语义、WebFetch 私网拦截, 以及 `assertPublicHttpUrl` 对非 http 协议、内嵌凭据与解析到非公网地址的直接单测; 运行时连接生命周期(半开 socket 被清扫后 `connectionCount` 归零, 驱逐可行)与工作区路径清洗。
 
-此外有一个装配级冒烟: 用真实的 `createRemoteAgent` 组装完整 agent 栈(不发起 LLM 调用), 施加聊天只读策略后断言注册表被收敛为圈禁过的只读工具集、包装后的 ReadFile 读不到工作区之外。
+此外有一个装配级冒烟: 用真实的 `createRemoteAgent` 组装完整 agent 栈(不发起 LLM 调用), 施加聊天只读策略后断言注册表被收敛为圈禁过的只读工具集、包装后的 ReadFile 读不到工作区之外, 并校验聊天分派依赖的命令注册表(help/status/clear/compact/skills/goal 在册, 而 quit 虽在册却不被聊天宿主提供)。
 
 除单测外还有两个对运行中服务器的冒烟脚本: 一个以数十次请求覆盖注册、登录、错误路径、联系人、群组、会话、消息与管理守卫全流程, 末尾循环登录直到触发限流以验证按 IP 限流(刻意放在最后, 避免污染后续请求的限流桶); 另一个覆盖聊天通道的握手、在线状态、单聊与群聊扇出、未读游标、顶号驱逐、通话失败、Agent 通道握手(模型与权限模式)、私聊分发与助手回复落库、看板管理员守卫。
 
@@ -391,17 +393,22 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 
 ## 部署形态与已知约束
 
-| 约束             | 说明                                                                                                                                                                  |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 单实例           | 连接表、通话房间、消息串行链、Agent 运行时表、限流桶都在进程内存, 无跨实例总线                                                                                        |
-| 无 TLS           | 明文 HTTP/WS, 需前置网关终结                                                                                                                                          |
-| 改密无验证       | 免鉴权按手机号重置, 只有按 IP 限流, 公网暴露前必须加验证                                                                                                              |
-| 无 STUN/TURN     | WebRTC 跨 NAT 打不通                                                                                                                                                  |
-| 外部依赖自备     | PostgreSQL 与 Redis 由部署方提供; Redis 可选, 为空时降级进程内存                                                                                                      |
-| 默认连接串需覆盖 | `DATABASE_URL` 默认 `postgresql://yukino:yukino@localhost:5432/yukino_chat`, `REDIS_URL` 默认 `redis://localhost:6379`, `JWT_SECRET` 默认一个写死的字符串             |
-| 迁移不自动执行   | 建表靠 `prisma migrate deploy`(`pnpm db:deploy`), 服务进程启动时不做迁移                                                                                              |
-| 容器化不可用     | `client/Dockerfile` 与 `client/docker/` 仍按 Go 服务端与 MongoDB 配置编写(拷贝 `server/go.mod` 后 `go build`), 与当前 TypeScript 服务端不符; 仓库内没有可用的编排文件 |
-| 声明未消费的依赖 | 服务端 package 中对象存储与压缩库被声明但零引用, 属于预留                                                                                                             |
+### 容器化部署
+
+仓库根提供一套可用的单镜像编排。根 `Dockerfile` 多阶段构建: `deps` 装全量依赖, `web-builder` 构建前端, `server-builder` 构建服务端, `prod-deps` 只装生产依赖, `app` 把服务端 `dist`、两套 Prisma schema 与 migrations、`prisma.config.ts` 以及前端构建产物(拷进 `./web`)组装成运行镜像, 再由前述 SPA 托管逻辑一并提供前后端, 单容器暴露 8000 端口。`docker-compose.yml` 编排 `postgres:17-alpine`、`redis:7-alpine` 与 app 三个服务: 数据库与缓存带健康检查, app 经 `depends_on` 条件等待二者就绪。容器入口 `docker/entrypoint.sh` 先跑 `prisma migrate deploy` 再 `exec node dist/index.js`, 因此建表在启动前自动完成; `DATABASE_PROVIDER` 决定迁移读取 `prisma/`(pg)还是 `prisma-sqlite/`(sqlite)。前端 API 源在构建期由 `VITE_API_URL`/`VITE_WS_URL` 烧入(默认 `http://localhost:8000`); 上传目录与 SQLite 数据文件分别落在 `app-static`、`app-data` 命名卷; Agent 配置可经 `YUKINO_AI_*` 环境变量提供, 也可把 `docker/yukino.config.example.yaml` 式的 `config.yaml` 只读挂到 `/root/.yukino/config.yaml`。
+
+### 已知约束
+
+| 约束             | 说明                                                                                                                                                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 单实例           | 连接表、通话房间、消息串行链、Agent 运行时表、限流桶都在进程内存, 无跨实例总线                                                                                                                                                                                           |
+| 无 TLS           | 明文 HTTP/WS, 需前置网关终结                                                                                                                                                                                                                                             |
+| 改密无验证       | 免鉴权按手机号重置, 只有按 IP 限流, 公网暴露前必须加验证                                                                                                                                                                                                                 |
+| 无 STUN/TURN     | WebRTC 跨 NAT 打不通                                                                                                                                                                                                                                                     |
+| 外部依赖自备     | PostgreSQL 与 Redis 由部署方提供(compose 已内置两者); 选 SQLite 后端则无需外部数据库, Redis 为空时降级进程内存                                                                                                                                                           |
+| 默认连接串需覆盖 | `DATABASE_PROVIDER` 默认 `pg`; `DATABASE_URL` 缺省按后端回落(PostgreSQL 为 `postgresql://yukino:yukino@localhost:5432/yukino_chat`, SQLite 为 `file:./prisma-sqlite/dev.db`)且须与后端匹配, `REDIS_URL` 默认 `redis://localhost:6379`, `JWT_SECRET` 默认一个写死的字符串 |
+| 迁移不自动执行   | 裸 `node` 进程启动时不做迁移, 建表靠 `prisma migrate deploy`(`pnpm db:deploy`); 容器入口脚本会在启动前自动执行该命令                                                                                                                                                     |
+| 声明未消费的依赖 | 服务端 package 中对象存储与压缩库被声明但零引用, 属于预留                                                                                                                                                                                                                |
 
 这些约束大多属于"内网自托管"定位下的自觉取舍: 单实例换来了极简的内存态设计与可预测的调试体验, 代价是无法水平扩展。若要做多实例, 需要先解决四件事: 把聊天扇出改为跨实例总线、把通话房间状态外置、把 Agent 运行时按用户做粘性路由或外置会话、把限流桶换成共享计数器。
 

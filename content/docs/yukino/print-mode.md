@@ -2,7 +2,7 @@
 title: "Print Mode"
 description: "Print 模式 (-p): 非交互一次性执行, 自组装完整运行时并消费 agent.run() 事件流; 覆盖旗标解析, slash command 特判, 与交互模式的差异 (bypassPermissions, 无 hook/skill), 工具集装配, text / stream-json 输出, 退出码与清理, SyntheticOutput 结构化交付"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 Print 模式是非交互的执行模式: 一条命令进去, agent 循环跑完, 结果打印到 stdout, 进程退出; 用于脚本、CI 流水线和「把 Yukino 当 Unix 工具用」的组合场景
@@ -21,7 +21,7 @@ CLI 语法由 `src/cli.ts` 的 `parseCliArgs()` 统一解析, print 模式只涉
 - `-p <prompt>`: prompt 必须紧跟在 -p 之后, 多词 prompt 加引号; 值为空、全空白或以 `-` 开头都视为缺少 prompt, 报错退出; prompt 本身以 `-` 开头时用 `-p -- <prompt>`, 分隔符后的 token 一律当作 prompt 数据, 且其后不允许再有参数
 - `--output-format text|stream-json`: 输出格式, 默认 text; 值缺失或非法报 usage 错误; 单独使用 (没有 -p) 也是错误
 
-组合限制: `-p` 不能与 `--resume` 或任何服务器模式 (`--remote`、`--acp`、`--acp-ws`、`--a2a`) 同时出现, 也不能重复指定。所有 usage 错误打印 `Error: <message>` 到 stderr 并以退出码 1 结束。没有 `--print` 长旗标
+组合限制: `-p` 不能与 `--resume` 或任何服务器模式 (`--remote`、`--a2a`) 同时出现, 也不能重复指定。所有 usage 错误打印 `Error: <message>` 到 stderr 并以退出码 1 结束。没有 `--print` 长旗标
 
 运行时参数不从命令行取, 而是与交互模式同源:
 
@@ -55,7 +55,7 @@ prompt 先经过与交互模式同一套的命令解析器 `parseCommand()` (以
 
 ## 工具集
 
-基座是 `createToolRegistry(cwd, taskList, { interactionMode: "non-interactive", ... })` 的 18 个内置工具: Goal、TodoWrite、TaskOutput、LSP、Bash、PowerShell、ComputerUse、EditFile、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。与交互注册的唯一差别是 EnterPlanMode 不注册 —— 计划模式需要用户审批出口, 非交互场景没有意义
+基座是 `createToolRegistry(taskList, { interactionMode: "non-interactive", teamManager, lspServers })` 的 18 个内置工具: Goal、TodoWrite、TaskOutput、LSP、Bash、PowerShell、ComputerUse、EditFile、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。与交互注册的唯一差别是 EnterPlanMode 不注册 —— 计划模式需要用户审批出口, 非交互场景没有意义
 
 在基座之上 print 模式追加:
 
@@ -93,7 +93,7 @@ Agent 循环封装: run() 是一个 AsyncGenerator...
 
 ## stream-json 输出
 
-每个事件一行 JSON, 供程序消费。四类事件做字段映射 (camelCase 转 snake_case), 其余逐行原样输出:
+每个事件一行 JSON, 供程序消费。五类事件做字段映射 (tool_use / tool_result / usage 由 camelCase 转 snake_case, error 与 compact 只保留 message 字段), 其余可输出的事件逐行原样输出:
 
 ```jsonc
 // 流式文本增量 (thinking_text、turn_complete、loop_complete、

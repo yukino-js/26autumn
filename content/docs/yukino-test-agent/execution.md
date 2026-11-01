@@ -1,17 +1,17 @@
 ---
 title: "浏览器执行"
-description: "浏览器执行: Playwright 运行器 (五级选择器回退 + 三层断言)、执行服务与状态裁决、视觉复核、证据驱动的失败分类与证据存储"
+description: "浏览器执行: Playwright 运行器 (五级选择器回退 + 分层断言 + 输入证据)、执行服务与状态裁决、双轮视觉复核、证据驱动的失败分类与证据存储"
 local_path: "$HOME/github/yukino-test-agent"
-local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
+local_commit: "939179e40f2ca6f25e141dbb5d2d5c61c49304be"
 ---
 
-执行域是「绝不伪造绿色」原则的物理落点: Playwright 真实浏览器执行 + 三层断言 + 视觉复核 + 确定性优先的状态裁决. 三个核心文件:
+执行域是「绝不伪造绿色」原则的物理落点: Playwright 真实浏览器执行 + 分层断言 + 视觉复核 + 确定性优先的状态裁决. 三个核心文件:
 
 | 文件                                        | 规模       | 职责                                                           |
 | ------------------------------------------- | ---------- | -------------------------------------------------------------- |
-| `src/server/lib/execution/runner.ts`        | 约 500 行  | 单用例浏览器执行: 步骤引擎、选择器回退、断言、截图与录像       |
-| `src/server/lib/execution/vision-review.ts` | 约 400 行  | 视觉模型对执行结果的截图复核                                   |
-| `src/server/services/executions.ts`         | 约 1000 行 | 执行服务: 连通性预检、持久化、状态裁决、批量任务、人工/AI 复审 |
+| `src/server/lib/execution/runner.ts`        | 约 640 行  | 单用例浏览器执行: 步骤引擎、选择器回退、断言、截图与录像       |
+| `src/server/lib/execution/vision-review.ts` | 约 500 行  | 视觉模型对执行结果的截图复核                                   |
+| `src/server/services/executions.ts`         | 约 1070 行 | 执行服务: 连通性预检、持久化、状态裁决、批量任务、人工/AI 复审 |
 
 ```mermaid
 %%{init: {'themeVariables': {'fontFamily': 'Yukino, Maple Mono, Menlo, Cascadia Code, Sarasa Gothic SC, PingFang SC, Microsoft YaHei'}}}%%
@@ -41,9 +41,9 @@ flowchart LR
 | type           | 行为                                                                                                                                                                                                                                                                                                     |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ui_action`    | 三分支: `uiSelector.type === "route"` 时导航 (targetUrl 拼接 route 值后 `page.goto`, 响应 ≥ 400 抛 `NAVIGATION_FAILED`, 随后等 300ms); 命中 `REFRESH_RE` (`refresh the page` / `refresh the browser` / `reload`, 不区分大小写) 时走 `reloadAndVerify` 刷新校验; 否则经回退链定位后 click, 点击后等 300ms |
-| `input`        | 必须同时具备 `uiSelector.value` 与 `inputValue` (缺失抛 `CASE_INVALID`); 经回退链定位后 `fill` 变量展开后的输入值                                                                                                                                                                                        |
+| `input`        | 必须同时具备 `uiSelector.value` 与 `inputValue` (缺失抛 `CASE_INVALID`); 经回退链定位后 `fill` 变量展开后的输入值, 随后回读 DOM 实际值采集结构化输入证据 (见「步骤证据与整体结果」)                                                                                                                      |
 | `capture`      | 用 `pattern` 正则在 body 文本中抓取运行时变量 `variable`: 有捕获组取 `match[1]`, 否则取整段匹配 `match[0]`; 变量名或正则非法抛 `CASE_INVALID`, 页面上匹配不到抛 `ASSERT_FAILED`                                                                                                                          |
-| `state_assert` | 执行三层断言 (见下); 若 action/expected 含刷新语义则先执行 `reloadAndVerify`; 断言前等待 800ms 让导航/渲染落定                                                                                                                                                                                           |
+| `state_assert` | 执行分层断言 (见下); 若 action/expected 含刷新语义则先执行 `reloadAndVerify`; 断言前等待 800ms 让导航/渲染落定                                                                                                                                                                                           |
 
 未知步骤类型抛 `CASE_INVALID`.
 
@@ -53,7 +53,7 @@ flowchart LR
 
 ### 五级选择器回退链 (fallbackChain)
 
-定位失败是脚本脆弱性的主因, 运行器按「由精确到宽泛」的顺序构造候选选择器; `findLocator` 逐个尝试, 取第一个 `count() > 0` 且 `isVisible()` 的 `.first()` 匹配, 全部尝试过的选择器记录在 `attempted` 中 (失败时随错误信息落库, 便于排查):
+定位失败是脚本脆弱性的主因, 运行器按「由精确到宽泛」的顺序构造候选选择器; `findLocator` 逐个尝试: 对每个候选取 `.first()` 并 `waitFor({ state: "visible" })` 自动等待至多 `PROBE_TIMEOUT_MS = 2_500` (2.5 秒), 元素可见即采用——慢几百毫秒的异步渲染不再产生假 `SELECTOR_NOT_FOUND`; 等待超时才换下一级. 全部尝试过的选择器记录在 `attempted` 中 (失败时随错误信息落库, 便于排查):
 
 1. **精确 uiSelector 匹配**: 按 `uiSelector.type` 映射——`placeholder` 映射为 `[placeholder="v"]`; `label` 映射为 `label:has-text("v") >> xpath=following::input[1]`; `role` 映射为 `[role="v"]`; `testid` 映射为 `[data-testid="v"]`; `css`/`xpath` 原样使用; `text` 特殊, 映射为 `button`/`a`/`[role="button"]`/`input[value]`/`summary` 的 `:has-text` 组合;
 2. **target 文案在按钮类元素上**: `button`/`a`/`[role="button"]` 的 `:has-text(target)`;
@@ -63,21 +63,23 @@ flowchart LR
 
 全部失败抛 `SELECTOR_NOT_FOUND`——诚实失败, 进入失败分类.
 
-### 三层断言 (doAssert)
+### 分层断言 (doAssert)
 
-源码注释: "Three-layer assertion: URL -> quoted text anchors -> honest skipped":
+`doAssert` 实现注释: "Layered assertion: URL and quoted text anchors are checked independently and every verifiable dimension must pass"——URL 与引号文本锚点两个维度**独立检查**, 每个可验证维度都必须通过; 只有完全无可验证锚点的预期才诚实 skipped:
 
-1. **URL 断言**: 预期文本命中 `/URL|redirect|route|page address|\/[\w/]+/i` 时, 用 `/(\/[\w/{}]+)/` 提取路径并检查 `page.url()` 是否包含它, 命中即 passed (证据 `URL hit: <path>`); 未命中**不判失败**, 继续下一层;
-2. **引号文本锚点断言**: `QUOTE_ANCHOR_RE` (`/["“]([^"”]+)["”]/g`, 直引号与弯引号均可) 提取预期中双引号内的锚点, 在 body `innerText` 中逐一精确查找: 全部命中 → passed (证据 `Text anchors hit: ...`); 有缺失 → failed (错误信息列出缺失锚点);
-3. **诚实 skipped**: 既无可验证 URL 也无引号锚点 → skipped, 证据不足, 不判通过也不判失败.
+1. **URL 维度**: `URL_PATH_RE` (`/(?<![\w])\/(?=[A-Za-z_{])[\w/{}.-]+/`) 从预期文本提取路径——路径必须以字母/下划线/花括号开头, "20/21 characters" 这类文本不会被误认成路由; `urlPathMatches` 取当前 URL 的 pathname (`currentPathname`, 容错非标准 URL) 做**整段全匹配**: 尾斜杠归一, `{id}` 等花括号占位符编译为 `[^/]+`, 杜绝 `/order` 子串命中 `/orders` 的假绿. 命中 → 证据 `URL hit: <path>`; 未命中 → **failed** (错误信息 `URL not hit: <path> (current <pathname>)`);
+2. **引号文本锚点维度**: `QUOTE_ANCHOR_RE` (`/["“]([^"”]+)["”]/g`, 直引号与弯引号均可) 提取预期中双引号内的锚点, 在 body `innerText` 中逐一精确查找: 全部命中 → 证据 `Text anchors hit: ...`; 有缺失 → failed (错误信息列出缺失锚点);
+3. **汇总与诚实 skipped**: 任一可验证维度失败即 failed; 两个维度并存时必须**都通过**才 passed (证据拼接 `URL hit: ...; Text anchors hit: ...`)——URL 命中不再单独放行, 锚点缺失照样 failed, 杜绝「路由对了但页面文案不对」的假绿; 既无可验证路径也无引号锚点 → skipped, 不判通过也不判失败, 其中预期含 URL 提示词 (`URL_HINT_RE`: `URL`/`redirect`/`route`/`page address`, 不区分大小写) 却提取不出可验证路径时, 返回专门的 skipped 说明 "Contains a URL hint but no verifiable path or text anchor".
 
 ### 刷新校验 (reloadAndVerify)
 
-刷新是截图「看不见」的动作, 运行器因此不信任调用本身: `page.reload({ waitUntil: "load" })` 后读取 Navigation Timing (`performance.getEntriesByType('navigation')`), 最后一条 entry 的 `type` 不是 `reload` 就抛 `NAVIGATION_FAILED`. 成功时步骤记录的 action 追加 `(browser reloaded: performance.navigation.type=reload)`, target/selectorUsed 写入 `browser.reload`——这条客观证据供视觉复核直接引用.
+刷新是截图「看不见」的动作, 运行器因此不信任调用本身: `page.reload({ waitUntil: "load" })` 后读取 Navigation Timing (`performance.getEntriesByType('navigation')`), 最后一条 entry 的 `type` 不是 `reload` 就抛 `NAVIGATION_FAILED`. 成功时步骤记录的 action 追加 `(browser reloaded: performance.navigation.type=reload)`, target 写入 `browser.reload`, selectorUsed 写入 `browser.reload; navigationType=reload`——这条客观证据供视觉复核直接引用.
 
 ### 步骤证据与整体结果
 
 每步记录 before/after 截图 (截图失败降级为 null 而不中断执行)、实际使用的选择器、耗时 `durationMs` 与结果; 断言与抓取证据拼进 action 字段 (`(assertion evidence: ...)`、`(variable evidence: capture name=value)`), action/target 截断 255 字符、selectorUsed 截断 500 字符. **遇到第一个 failed 步骤即终止循环**, 不再执行后续无意义的步骤.
+
+`input` 步骤额外产出**结构化输入证据** (`inputEvidence`): `fill` 之后用 `locator.inputValue()` 回读 DOM 实际值, 与变量展开后的期望值一起写入步骤记录的 `evidence` 字段 (对应 `execution_steps.evidence` jsonb 列)——`inputValueLength`/`actualValueLength` (期望/实际长度)、`inputValueHash`/`actualValueHash` (sha256)、`valueMatch` (是否完全一致)、`actualValuePreview` (换行替换为空格, 超 40 字符只保留首尾各 20 字符). 敏感字段——target/action/uiSelector.value 拼接小写后含 `password` 或 `pwd`——只记录长度与 `valueMatch` 并置 `sensitive: true`, 明文、哈希与预览**绝不落库**. 证据采集失败不会让步骤失败: 降级记录 `inputValueLength`、`valueMatch: null` 与截断 200 字符的 `evidenceError`. 这份证据让 AI 复核无需从截图辨认长输入 (见「复核提示词」).
 
 整体状态汇总: 有 errorCategory → failed; 任一步 failed → failed; 任一步 skipped → skipped; 否则 passed. 没有结构化步骤的用例直接 failed (`CASE_INVALID`); 浏览器启动失败等非业务异常整体归 `ENV_ERROR`.
 
@@ -106,8 +108,8 @@ flowchart LR
 
 1. 写 `execution_records`: ID 为 `EX-xxxxxxxx` (uuid 前 8 位), status `running`, 必填 `testCaseSnapshot` 冻结执行时刻的完整用例快照 (用例被改名或删除后历史仍可读); 同步把 `test_cases.executionStatus` 置 `running`;
 2. 写 `execution_requirements`: 冻结关联需求的 id/version/name (1:1 唯一索引), 供追溯执行对应的需求版本;
-3. 调 runner `executeCase`, 把每一步写入 `execution_steps` (截图/录像存**磁盘绝对路径**);
-4. 视觉模型可用时执行 `reviewExecution` 并 `persistReview` 落库, 再由 `decideStatus` 裁决最终状态; 未配置视觉模型时直接采用 runner 结论;
+3. 调 runner `executeCase`, 把每一步写入 `execution_steps` (截图/录像存**磁盘绝对路径**, 结构化输入证据存 `evidence` jsonb 列);
+4. 视觉模型可用时执行 `reviewExecution` 并 `persistReview` 落库, 再由 `decideStatus` 裁决最终状态; 未配置视觉模型时直接采用 runner 结论. 复核运行在**独立的 try/catch** 里: 复核自身抛异常只记录日志并保持 runner 的确定性状态——浏览器里已经通过的执行绝不因复核故障被改写;
 5. 回写记录: 最终状态、`endTime`/`durationMs`、`errorCategory`/`errorMessage` (无整体错误信息时取第一个 failed 步骤的 error)、`videoPath`、`passedSteps`/`totalSteps`, 并同步 `test_cases.executionStatus`;
 6. 中途抛异常时 `markExecutionInterrupted` 补偿性地把记录置为终态 failed (`ENV_ERROR`), 绝不留下幽灵 running.
 
@@ -154,13 +156,19 @@ flowchart LR
 
 视觉客户端由 `getVisionClient` 解析: 优先默认 vision 档案 (需同时配置 model 与 apiKey), 回退默认 text 档案, 再回退环境变量 `LLM_VISION_*` / `LLM_*`; `available()` 只看 apiKey 是否存在.
 
-### 关键截图挑选 (pickImages)
+### 关键截图挑选与动态预算 (pickImages / imageLimit)
 
-按优先级最多取 `MAX_IMAGES = 6` 张, 去重且要求文件存在、大小 ≤ `MAX_IMAGE_BYTES` (8MB): 失败步骤的 after/before → 最后一步 after → 各 `state_assert` 步骤 after → 第一步 after → 其余步骤 after 补齐. 每张图带 label (步骤序号、动作、结果) 供提示词引用.
+`pickImages` 按优先级挑选: 失败步骤的 after/before → 最后一步 after → 各 `state_assert` 步骤 after → 第一步 after → 其余步骤 after 补齐; 去重且要求文件存在、大小 ≤ `MAX_IMAGE_BYTES` (8MB), 每张图带 label (步骤序号、动作、结果) 供提示词引用.
+
+`reviewExecution` 先不带上限地取出全部候选截图, 再按 `imageLimit` 的动态预算截取送审: 基础 `MAX_IMAGES = 6` 张; 任一步骤非 passed 时提高到 `MAX_IMAGES_FAILED = 10` 张——失败执行需要更多上下文才能判断.
+
+### 双轮复核 (two-pass review)
+
+单轮复核由 `reviewBatch` 封装. 第一轮结论若是「纯证据不足的 suspect」——`isEvidenceSuspect`: verdict = suspect 但 issues 为空且没有任何逐图 suspect, 即模型没发现具体问题、只是截图不够——且仍有未送审的截图, 就以扩展预算 `MAX_IMAGES_EXTENDED = 12` 张重新复核一轮, reason 追加 "; re-reviewed with additional screenshots" (截断 2000 字符), 避免留下因证据不足造成的假 suspect. 第一轮已发现具体问题 (存在 issue 或逐图 suspect) 时不再重审.
 
 ### 复核提示词 (buildPrompt)
 
-截图以 base64 data URL 随文本标签逐张发送, 调用 `chatJson` (上限 2500 token, 要求 JSON 输出). 提示词核心约束:
+步骤记录经 `stepsText` 序列化进提示词: 除动作、结果、target、selectorUsed 外, 还携带 `evidence` 里的结构化输入证据 (input length、DOM actual length、value match、sensitive field 提示、value preview、evidence collection failed). 截图以 base64 data URL 随文本标签逐张发送, 调用 `chatJson` (上限 2500 token, 要求 JSON 输出). 提示词核心约束:
 
 1. 只依据截图与步骤记录可见的信息判断, 不臆测未展示的内容;
 2. 截图出现错误 toast、空白页、登录页、或与预期矛盾的页面/文案/数据 → suspect;

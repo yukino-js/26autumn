@@ -2,7 +2,7 @@
 title: "架构总览"
 description: "架构总览: 分层视图与请求数据流、进程内 job 任务系统 (jobs.ts + useJobPoller)、启动恢复、BizError 映射、证据文件服务、LLM 客户端与档案、Sentry 与构建配置"
 local_path: "$HOME/github/yukino-test-agent"
-local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
+local_commit: "939179e40f2ca6f25e141dbb5d2d5c61c49304be"
 ---
 
 Yukino QA 是一个 TanStack Start 全栈应用: 前端是 React 19 文件式路由 + tRPC 类型安全数据层, 后端由 services 编排层、领域引擎与 Drizzle/PostgreSQL 组成. 本页给出总体架构: 分层与请求数据流、进程内后台任务系统 (jobs.ts + useJobPoller) 与启动恢复、BizError 错误映射、证据文件服务、LLM 客户端与档案、Sentry 与构建配置. 七阶段流水线见[七阶段流水线](./pipeline), 表结构见[数据模型](./data-model).
@@ -32,7 +32,7 @@ flowchart TD
 
 - **服务层** (`src/server/services/`, 14 个模块): projects、analysis、requirements、incremental、testcases、case-review、generation、executions、workflows、coverage、mindmap、stats、reports、settings, 负责业务编排与持久化, 是 tRPC 路由唯一直接调用的层.
 - **领域引擎** (`src/server/lib/`): 纯逻辑, 不直接暴露给前端——`analyzer/` (扫描与代码分析)、`generation/` (规则/LLM 用例生成、测试点、质量门)、`execution/` (Playwright 运行器、视觉复核)、`evaluation/metrics.ts` (离线评估指标), 以及横切的 `jobs.ts`、`llm.ts`、`files.ts`、`coverage.ts`、`mindmap.ts`、`text-list.ts`.
-- 体量最大的四个文件: `services/workflows.ts` (约 3400 行, [七阶段流水线](./pipeline)编排)、`services/incremental.ts` (约 3000 行, 增量需求分析)、`lib/generation/rule-cases.ts` (约 1300 行, 规则用例)、`services/executions.ts` (约 1100 行, 执行服务).
+- 服务端体量最大的四个文件: `services/workflows.ts` (约 3450 行, [七阶段流水线](./pipeline)编排)、`services/incremental.ts` (约 3000 行, 增量需求分析)、`lib/generation/rule-cases.ts` (约 1350 行, 规则用例)、`services/executions.ts` (约 1070 行, 执行服务).
 - **数据层** (`src/db/schema.ts`): 单文件 Drizzle schema, 共 26 张 PostgreSQL 表, 详见[数据模型](./data-model).
 
 ## 路由与请求入口

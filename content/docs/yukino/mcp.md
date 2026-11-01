@@ -2,7 +2,7 @@
 title: "MCP"
 description: "MCP 接入: JSON-RPC 2.0 协议与 stdio / streamable http / sse 传输, MCPClient / MCPManager 生命周期, 用户级与项目级配置与环境变量展开, mcp__ 命名与权限匹配, eager / native / dispatch 三种延迟加载模式, ToolSearch / McpCall, server instructions 公告与 remote 模式的 MCP Apps"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 MCP (Model Context Protocol) 是一个开放协议, 定义 AI 应用 (MCP Client) 与外部工具服务 (MCP Server) 之间的标准化通信方式。Yukino 的内置工具随 CLI 静态注册, 而外部工具通过 MCP 动态接入: 配置好 server, 连接建立后工具自动进入 ToolRegistry, 供 LLM 在后续轮次调用。本页覆盖协议与传输层、MCPClient / MCPManager 的实现、配置来源与校验、工具命名与权限、三种延迟加载模式 (eager / native / dispatch)、ToolSearch / McpCall、server instructions 公告, 以及 remote 模式的 MCP Apps。
@@ -147,7 +147,7 @@ MCPManager (src/mcp/manager.ts) 管理全部连接, 所有生命周期变更经 
 
 - 交互 UI: initClient 完成工具装配后 fire-and-forget 发起 connectMcpServers, 不阻塞启动; 连接错误以 system 消息提示
 - print 模式: 内置工具全部注册完成后才连接 MCP 并决定加载模式 (模式决策依赖全量 schema 体积, 注册不全会算不准); 错误写 stderr (`MCP warning: ...`)
-- remote server: 以 `new MCPManager(true)` 创建, 启用 MCP Apps; A2A / ACP 运行时复用 createRemoteAgent, 同样启用; ACP 明确拒绝客户端在会话参数里自带的 MCP server 列表, 只用 Yukino 自己的配置
+- remote server: 以 `new MCPManager(true)` 创建, 启用 MCP Apps; A2A 运行时复用 createRemoteAgent, 同样启用
 
 ## 配置
 
@@ -232,7 +232,7 @@ remote server 有等价的 reload 流程 (MCPManager 以 apps 启用模式创建
 
 ## 工具命名与注册
 
-MCP 工具命名规范: `mcp__serverName__toolName`。sanitizeSegment 把 serverName 和 toolName 中非 `[a-zA-Z0-9_]` 的字符替换为下划线 (连字符 API 虽然允许, 也统一替换): 同一份 mcp_servers 配置在各语言实现中必须产出相同的工具名, 否则切换实现后 permissions.yaml 的规则就失配了。
+MCP 工具命名规范: `mcp__serverName__toolName`。sanitizeSegment 把 serverName 和 toolName 中非 `[a-zA-Z0-9_]` 的字符替换为下划线。
 
 ```ts
 export function sanitizeSegment(s: string): string {
@@ -337,7 +337,7 @@ McpCall (src/tools/mcp-call.ts) 是 dispatch 模式的唯一调用通道, schema
 | array            | 逗号分隔字符串       | 按逗号拆分并 trim              |
 | object / array   | 对象 / 数组          | 按 properties / items 递归纠型 |
 
-- 纠不动的值原样透传, 交给 MCP Server 报领域错误 — 服务端错误对模型比本地类型错误更有指导性; 四种语言的纠型规则逐条一致
+- 纠不动的值原样透传, 交给 MCP Server 报领域错误 — 服务端错误对模型比本地类型错误更有指导性
 - agent loop 在执行 McpCall 前先跑 prepareArguments, 再按双重权限检查 (见权限一节)
 
 ## Server instructions 公告
@@ -351,7 +351,7 @@ MCP Server 可以在 initialize 响应中携带 instructions (使用说明), 这
 
 ## MCP Apps (remote 模式)
 
-MCP Apps 让 Server 的工具返回可交互的 HTML UI, 只在 remote (浏览器) 场景启用: remote server 及 A2A / ACP 共用的 createRemoteAgent 以 `new MCPManager(true)` 创建, 交互 UI 和 print 模式都是 false。
+MCP Apps 让 Server 的工具返回可交互的 HTML UI, 只在 remote (浏览器) 场景启用: remote server 及 A2A 复用的 createRemoteAgent 以 `new MCPManager(true)` 创建, 交互 UI 和 print 模式都是 false。
 
 ### 协商与载荷
 
@@ -363,7 +363,7 @@ MCP Apps 让 Server 的工具返回可交互的 HTML UI, 只在 remote (浏览�
 
 - 经 `read_resource` 请求拉取 resourceUri 对应的 HTML (mimeType 必须匹配), 清洗: 移除 `<base>` 元素, 注入由 `_meta.ui.csp` 构造的 CSP meta
 - 以 `sandbox="allow-scripts"` 的 iframe + srcdoc 加载, 通过 `@modelcontextprotocol/ext-apps/app-bridge` 的 AppBridge (postMessage 传输) 握手, 有初始化超时; 握手成功后把工具输入和 result 推送给 app
-- app 的回调经浏览器转发: oncalltool / onreadresource → `mcp_app_request` WS 消息; onmessage → 送入聊天输入框; onopenlink 只放行 http/https 并在新窗口打开; sizechange 事件在上下限之间调整 iframe 高度
+- app 的回调经浏览器转发: oncalltool / onreadresource → `mcp_app_request` WS 消息; onmessage → 文本直接作为用户消息发送 (`user_message` WS 消息); onopenlink 只放行 http/https 并在新窗口打开; sizechange 事件在上下限之间调整 iframe 高度
 
 ### 服务端网关 (RemoteMcpApps)
 

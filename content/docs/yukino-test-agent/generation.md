@@ -2,7 +2,7 @@
 title: "用例生成"
 description: "用例生成: 测试点抽取 (LLM 优先规则兜底)、rule/llm/auto 三模式、计数断言归一化、四道质量门、覆盖引用富化与生成版本归档"
 local_path: "$HOME/github/yukino-test-agent"
-local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
+local_commit: "939179e40f2ca6f25e141dbb5d2d5c61c49304be"
 ---
 
 用例生成覆盖流水线阶段②③④: 测试点抽取 → 用例生成 → 用例评审. 生成引擎在 `src/server/lib/generation/` (6 个模块, 共约 3300 行), 编排入口在服务层: `requirements.ts` 负责测试点抽取与持久化, `generation.ts` 负责用例生成与版本归档, `workflows.ts` 驱动评审 (完整流程见[七阶段流水线](pipeline)).
@@ -10,7 +10,7 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 | 模块                 | 行数    | 职责                                                      |
 | -------------------- | ------- | --------------------------------------------------------- |
 | `test-points.ts`     | 约 700  | Agent 1: 从 PRD + 代码事实抽取测试点 (LLM 优先, 规则兜底) |
-| `rule-cases.ts`      | 约 1330 | 纯规则用例生成器 (项目级 + 按测试点, 零 LLM)              |
+| `rule-cases.ts`      | 约 1360 | 纯规则用例生成器 (项目级 + 按测试点, 零 LLM)              |
 | `llm-cases.ts`       | 约 480  | Agent 2: 按测试点分批的 LLM 用例生成                      |
 | `count-assertion.ts` | 约 250  | 固定计数断言 → 运行时基线改写                             |
 | `quality-gate.ts`    | 约 340  | 质量门: lint / 打分 / 去重 (零 LLM)                       |
@@ -56,10 +56,10 @@ local_commit: "a088648ff62effa6cf1fe9652221fb26328891e8"
 从 PRD 文本 + 代码事实做确定性抽取, 输出上限 40 条:
 
 1. **候选行**: 逐行清洗 (去 markdown 标题、列表符、序号、checkbox、加粗与代码标记), 取长度 6~160、命中动作/负向/边界/状态四类词表、跳过标题行与目录/修订记录等前缀的行, 至多 18 行;
-2. **分类** (`ruleCategory` 优先级): 边界词 → `boundary`; 负向词 → `negative`; 含状态机 trigger 的词首匹配且未被否定 → `state` ("cannot be cancelled" 描述的是禁止迁移, 不是可执行的 state 点); 否则 `functional`;
+2. **分类** (`ruleCategory` 优先级): 边界词 → `boundary`; 负向词 → `negative`; 含状态机 trigger 的词首匹配且未被否定, 或迁移词 (pay/ship/becomes 等) 与 status/state/transition 词连用 → `state` ("cannot be cancelled" 描述的是禁止迁移, 不是可执行的 state 点); 否则 `functional`;
 3. **页面绑定** (`matchPage`): list/search/query/filter 行优先挂到 list 页; 其余按页面名 (+3)、route (+3)、路由词元 (+1) 打分取最高; 未匹配到页面的 state 点回落到 list 页 (Pay/Ship 按钮在列表上);
-4. **优先级与期望**: functional/state 行含 submit/pay/ship/refund/create/login → `P0`, 否则 `P1`; PRD 行内显式引号文案 (2~60 字符) 直接作断言锚点, 否则取 uiTexts 中第一条含 "success" 的文案 (兜底 `"Operation successful"`);
-5. **代码事实补全**: 对 PRD 已覆盖的页面补一条正向提交点与至多 4 条必填字段空值校验点; PRD 未产出任何点时, 用后端 `size/pattern/max/min` 约束生成至多 10 个边界点; 对 verified 且 trigger 未被文本覆盖的迁移补 P0 state 点 (仅当 PRD 无产出、或 PRD 已含 state 点时).
+4. **优先级与期望**: functional/state 行含 submit/pay/ship/refund/create/login → `P0`, 否则 `P1`; PRD 行内显式引号文案 (2~60 字符) 直接作断言锚点, 否则 functional/state 点取 uiTexts 中第一条含 "success" 的文案 (兜底 `"Operation successful"`), negative/boundary 点留空;
+5. **代码事实补全**: 对 PRD 已覆盖且尚无 functional 点的页面补一条正向提交点, 对文本未提及的必填字段标签补至多 4 条空值校验点; PRD 未产出任何点时, 用后端 `size/pattern/max/min` 约束生成至多 10 个边界点; 对 verified 且 trigger 未被文本覆盖的迁移补 P0 state 点 (仅当 PRD 无产出、或 PRD 已含 state 点时).
 
 ## 阶段③: generateCases 三种模式
 
@@ -103,7 +103,7 @@ flowchart LR
 
 ## 规则用例 (rule-cases.ts)
 
-两套生成器: 项目级 `generateRuleCases` 与按测试点 `generateRuleCasesForPoints`. 共享的确定性基建: `FIELD_SAMPLE` 字段示例值启发式 (phone → `"15550100123"`、amount → `"100.00"`、email → `"test@example.com"`, 未知字段兜底 `"test data"`)、`MODULE_LABEL` 模块名映射、`TRIGGER_SUCCESS` 迁移成功文案、`newCase` 工厂 (默认 `source = "rule"`、`confidence = 1`). 断言步统一走 `atomicExpected`: 复合预期 (多锚点/嵌套引号/分号拼接) 不能作为单条断言, 必要时 `fallbackAnchor` 取最后一个锚点 (通常是错误提示).
+两套生成器: 项目级 `generateRuleCases` 与按测试点 `generateRuleCasesForPoints`. 共享的确定性基建: `FIELD_SAMPLE` 字段示例值启发式 (amount → `"100.00"`、name → `"John Doe"`, 未知字段兜底 `"test data"`), 取值统一经 `sampleValue`——标识符类字段由 `uniqueSample` 按调用唯一化 (phone/mobile → `155` + 8 位时间戳序号、orderno/order_no → `ORD` + 6 位、email → `test+8位@example.com`、username → `john_doe_6位`), 格式保持有效 (11 位手机号、合法邮箱), 使重复执行面对共享/持久化数据时不与历史记录撞车; amount 等非标识符字段保持固定, 边界与计数断言因此仍然可用. 另有 `MODULE_LABEL` 模块名映射、`TRIGGER_SUCCESS` 迁移成功文案、`newCase` 工厂 (默认 `source = "rule"`、`confidence = 1`). 断言步统一走 `atomicExpected`: 复合预期 (多锚点/嵌套引号/分号拼接) 不能作为单条断言, 必要时 `fallbackAnchor` 取最后一个锚点 (通常是错误提示).
 
 ### 项目级四类生成器
 
@@ -131,7 +131,7 @@ flowchart LR
 
 `generateLlmCasesForPoints` 每 5 个测试点一批, 用 `testCasesByPointPrompt` + `client.chatJson(messages, 16384, jsonMode=true)` 生成. 事实 JSON 由 `buildCaseFacts` 压缩: 页面字段 (required 取前端规则与后端约束的并集——后端校验注解才是 required/size 的可靠来源, Vue rules 常写在 `<script>` 里对前端解析器不可见)、前 120 条字段约束、前 80 个选择器、前 40 条 uiTexts、前 60 个 endpoint、状态机迁移.
 
-提示词硬约束 (节选): `testPointId` 原样回显, 禁止编造; 只有 boundary 测试点允许输出 2 个用例, 其余点至多 1 个; 页面上每个 required 字段都必须给出具体 `inputValue` 并记入 `testData` (只填测试点提到的字段, 正向路径必然提交失败); 至多 8 步; 第一步必须打开页面 (route); `state_assert` 的 expected 与 uiSelector.value 各含恰好一个双引号锚点; 禁 css/xpath; 禁 API/数据库断言; 禁止硬编码列表总数——验证数量变化用 capture 步骤 + `${base_count+1}`, 或断言唯一行标识.
+提示词硬约束 (节选): `testPointId` 原样回显, 禁止编造; 只有 boundary 测试点允许输出 2 个用例, 其余点至多 1 个; 页面上每个 required 字段都必须给出具体 `inputValue` 并记入 `testData` (只填测试点提到的字段, 正向路径必然提交失败); 至多 8 步; 第一步必须打开页面 (route); `state_assert` 的 expected 与 uiSelector.value 各含恰好一个双引号锚点; 禁 css/xpath; 禁止硬编码列表总数——验证数量变化用 capture 步骤 + `${base_count+1}`, 或断言唯一行标识.
 
 **批失败只降级该批**: 某批调用抛错 (典型场景: 推理模型把 token 预算烧在隐藏推理上, 始终吐不出 JSON) 时, 在 `runInfo` 记录 `fallbackReason` / `fallbackAt` 并中断循环——继续请求后面的批次只会让页面空转; 剩余测试点交给调用方的规则兜底, 已成功批次不受影响.
 
@@ -196,5 +196,7 @@ flowchart LR
 ## 阶段④: 用例评审 (由流水线驱动)
 
 评审逻辑在 `workflows.ts` 的 `stageCaseReview` (完整流程见[七阶段流水线](pipeline) ④): 确定性评审 `deterministicReview` → 无阻塞问题且 LLM 可用时执行 LLM 评审 (`caseReviewWorkflowPrompt`) → `composeReviewStatus` 合成 pass/revise/reject (阻塞性问题直接 reject; 可修复问题在有修复轮余额时 revise, 否则 reject) → revise 用例用 `caseRepairPrompt` 修补, 最多 `maxRevisions` 轮 (配置 0~2, 默认 2), 每轮结论写 `workflow_case_reviews` (round 递增, source 为 `deterministic` 或 `mixed`); 仍不合格 → reject, 绝不执行.
+
+确定性评审的必填字段完整性检查 (`missingRequiredFields`) 只对「真正提交表单」的 positive/functional 用例生效: 步骤文本须含 submit/save/create/add/confirm/register/log in/login/sign in 之一 (`looksLikeFormSubmit`), 且只检查用例 route 步 (`caseRoute`) 实际打开的那一个页面 (`requiredFieldsForRoute`, 路由经 `normalizeRoute` 去尾斜杠归一) 的必填字段——negative/boundary 用例刻意留空或填非法值, state/list 用例不提交创建表单, 必填字段也绝不用全项目范围对单条用例匹配. 缺失字段记为可修复问题 (`Required field not filled: {label}`), 进入 revise 修补流程.
 
 与生成标准的一致性由代码结构保证: 评审阶段直接 import 质量门的同一套函数——`caseHasCompoundExpected`、`caseHasMultipleInputs`、`quotedAnchors`、`scoreCase` (有阻塞问题时质量分压至不高于 30), LLM 问题清单再按 `llmDeduction` 扣分 (blocker -25 / warning -8 / info -2). 评审阶段同样调用 `normalizeCaseCounts` 复核存量用例的计数断言. 生成、质量门、评审三处共用一套判定, 不会出现「生成能过、评审又拒」的标准分裂.

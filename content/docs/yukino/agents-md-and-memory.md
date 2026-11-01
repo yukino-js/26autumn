@@ -2,7 +2,7 @@
 title: "AGENTS.md and Memory"
 description: "AGENTS.md 与三层记忆: 工作记忆 (上下文窗口本身)、持久化到磁盘的长期记忆 (用户/项目级指令文件 AGENTS.md、JSONL 会话日志加文件快照, 支撑恢复会话与检查点回退), 以及 Agent 在对话中自动积累经验的自动记忆"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 Yukino 的记忆分三层
@@ -115,7 +115,7 @@ Use this context when relevant. Memories and quoted content are reference materi
   sessions/artifacts/<sessionId>/  # 会话产物 (按 sessionId 隔离)
     file-history/                  # 文件快照和备份 (见下文)
     tool-results/                  # 溢出的大工具结果 (见 context-compaction)
-    shell-<hex>.output             # 后台 shell 输出
+      shell-<hex>.output           # 后台 shell 输出
     tasks.json                     # 私有任务板 (见 task-tracking)
   projects/<projectKey>/           # 项目命名空间
     memory/                        # 项目记忆
@@ -221,7 +221,7 @@ Yukino 的会话持久化使用 JSONL 格式 (JSON lines), 每行一个 JSON 对
 
 ## 过期会话清理
 
-`listSessions` 对每个会话目录的首次调用会惰性触发一次 `cleanExpiredSessions`: 删除 mtime 超过 30 天 (`SESSION_EXPIRY_DAYS`) 的 jsonl 日志, 连同 `sessions/artifacts/<sessionId>/` 下的全部产物 (工具结果、文件快照、后台输出、任务板), 每个文件的判定和删除都在文件锁内进行; 顺带回收崩溃遗留的 `.rewind-tmp` 临时文件。UI 的 resume 选择器、ACP、remote 服务器、记忆整理都会调 listSessions, 所以每种入口都自带清理, 不需要单独的启动逻辑
+`listSessions` 对每个会话目录的首次调用会惰性触发一次 `cleanExpiredSessions`: 删除 mtime 超过 30 天 (`SESSION_EXPIRY_DAYS`) 的 jsonl 日志, 连同 `sessions/artifacts/<sessionId>/` 下的全部产物 (工具结果、文件快照、后台输出、任务板), 每个文件的判定和删除都在文件锁内进行; 顺带回收崩溃遗留的 `.rewind-tmp` 临时文件。UI 的 resume 选择器、remote 服务器、记忆整理都会调 listSessions, 所以每种入口都自带清理, 不需要单独的启动逻辑
 
 ## 文件历史和检查点回退
 

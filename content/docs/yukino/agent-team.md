@@ -2,7 +2,7 @@
 title: "Agent Team"
 description: "Agent Team 网状多代理协作: 多个 team 可并存, 协作工具经 team_name 选择目标 team; 每个 teammate 是有独立上下文窗口的 agent 实例, 协调建立在共享任务板 (tasks.json) 与文件邮箱 (inboxes/) 之上, 邮件以文件加轮询投递, 突破 subagent 星型拓扑不能互通的限制; 覆盖团队解析与隔离、SendMessage/TodoWrite/TaskStop、plan 审批与 Coordinator 模式"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "bef5439b54e6510a12da61bcfa4285ecb1cd2192"
+local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
 ---
 
 ## Why
@@ -74,18 +74,19 @@ config.json (TeamFile) 字段: `name`, `description?`, `createdAt` (unix 秒), `
 多个 team 可以同时存在: TeamCreate 只新增一个 team, 已有 team 及其成员继续运行; 协作工具 (Agent、SendMessage、TodoWrite、TaskStop、TeamDelete) 都带可选的 `team_name` 参数选择目标 team, 解析统一走 `TeamManager.resolveTeam(name?, memberName?)` (src/teams/index.ts):
 
 - 显式给出 team_name: 按名字查 team, 不存在直接报 `Team '<name>' not found.` (buildTeamNotFoundError); 带成员名解析时 (SendMessage / TaskStop 传 memberName), 该成员不在这个 team 里视为未命中
-- 省略 team_name: 按成员归属过滤 (teammate 只能命中自己所在的 team); 命中多个 team 报 `Multiple teams match. Specify team_name; use TeamList to see available teams.` (AMBIGUOUS_TEAM_ERROR); 一个都没有时, Agent 自动创建 team, 其余工具报 `No active team.`
+- 省略 team_name: 按成员归属过滤 (teammate 只能命中自己所在的 team); 命中多个 team 报 `Multiple teams match. Specify team_name; use TeamList to see available teams.` (AMBIGUOUS_TEAM_ERROR); 一个都没有时, Agent 自动创建 team, SendMessage 报 `No active team found for this sender.`, TeamList / TeamDelete 返回 `No active team.`, TodoWrite 回落私有任务板
 
 四个顶层工具:
 
-- TeamCreate 工具: 只有可选的 `description` 参数; 团队名自动生成 `team-<uuid>`, 创建 TeamFile、初始化空 tasks.json; 返回消息提示后续操作带上 team_name (`Team '<name>' created. Use Agent with kind="teammate" and team_name="<name>" to add teammates.`)
+- TeamCreate 工具: 可选参数 `name` 和 `description`; 省略 name 时团队名自动生成 `team-<uuid>`, 给出 name 时 sanitize 后作为目录 slug; 重名直接拒绝 —— 内存 slug 已存在, 或磁盘 team 目录已存在 (目录用非递归 mkdir 独占创建, EEXIST 即重名), 报 `Team '<name>' already exists. Choose a different name, or target the existing team with team_name='<name>'.` (buildTeamExistsError); 成功时创建 TeamFile、初始化空 tasks.json; 返回消息提示后续操作带上 team_name (`Team '<name>' created. Use Agent with kind="teammate" and team_name="<name>" to add teammates.`)
 - Agent 工具: `kind` 默认就是 `"teammate"`, 向选中的 team spawn 一个 teammate; 没有 team 时自动创建, 只有一个 team 时复用, 多 team 时必须传 team_name (否则报歧义错误); teammate 名字从 description 自动生成 (小写、空白转连字符、sanitize、截断 30 字符, 冲突追加 `-2` / `-3` 后缀)
 - TeamList 工具: 无参数, 列出所有 team, 每个 team 一行 `<team名>: name1 (active), name2`; 没有 team 时返回 `No active team.`
 - TeamDelete 工具: 可选 `team_name`, 停止并删除选中的 team (注销成员名字、停止全部成员、删除该 team 目录), 其他 team 不受影响; 省略时经 resolveTeam 选择, 多 team 命中同样报歧义错误
 
 ```js
-// 创建 team (名字自动生成, 已有 team 继续运行)
+// 创建 team (name 可选: 省略时自动生成 team-<uuid>, 给出时不得与已有 team 重名; 已有 team 继续运行)
 TeamCreate.execute(ctx, {
+  name: "router-migration",
   description: "迁移 react-router 到 @tanstack/router",
 });
 
