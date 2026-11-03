@@ -1,6 +1,6 @@
 ---
 title: "移动端性能采集与数据链路: 从设备侧抓栈到前端长列表"
-description: "设备端性能采集的插桩与抓栈两种范式、JS 运行时采集与 CPU profiling 火焰图分析、Kafka/Hive/ClickHouse/MySQL/Redis 的链路分工、RPC 与 BFF 分层, 以及不定高虚拟滚动的实现与取舍"
+description: "设备端性能采集的插桩与抓栈两种范式、JS 运行时采集与 CPU profiling 火焰图分析、Kafka 至少一次语义与端到端不丢、消费顺序性与幂等去重、积压定位、Hive/ClickHouse/MySQL/Redis 的链路分工与 ClickHouse 选型优化、RPC 与 BFF 分层, 以及不定高虚拟滚动的实现与取舍"
 ---
 
 这份文档整理一条完整的设备性能数据链路: 从海量 Android 设备侧采集卡顿数据开始, 经过 Kafka 与多种存储的加工, 由后端 RPC 服务与前端 BFF 层逐级适配, 最后在浏览器里用虚拟滚动渲染成长列表。适合做移动端性能监控、数据平台链路设计或大列表渲染优化的工程师阅读。
@@ -189,9 +189,180 @@ Kafka 在这条链路中充当数据接入层:
 - 削峰填谷: 海量设备上报流量有明显的波峰波谷, Kafka 先把数据持久化到 topic, 下游消费方按自己的处理能力匀速消费, 避免上报洪峰直接打垮数据库。
 - 解耦上报端与消费端: 设备侧只需写入 Kafka, 不需要知道下游有哪些存储; 后续新增一个分析库只需新增一个消费组, 上报逻辑不用改。
 - 数据分发: 一份上报数据可以被多个消费组独立消费, 分别写入 Hive、ClickHouse 等不同存储, 这是"一份数据落多个库"的实现基础。
-- 可重放: 数据按保留策略落盘保存, 某个下游消费任务写错数据时可以重置消费位点重新消费、重新灌库。
+- 可重放: 数据按保留策略落盘保存, 某个下游消费任务写错数据时可以重新消费、重新灌库; 当前链路按至少一次消费, 回放会产生重复, 依赖下游业务唯一键或去重表收敛, 见"重复消费"一节。
 
 Kafka 在这里不承担查询职责, 它只是流动的管道, 真正的查询能力由后面的存储提供。
+
+### 投递语义: 至少一次与端到端不丢
+
+这条链路按至少一次 (At Least Once) 投递: 消费位点在业务处理成功之后提交, 失败或进程崩溃时消息会被重新投递, 因此不会因为消费失败而丢失, 代价是同一条消息可能被处理多次。选择它的依据是设备性能数据不可替代——丢失无法从上游重建, 而重复可以通过业务唯一键与幂等写入收敛。
+
+三种语义的取舍:
+
+| 语义     | 保证         | 代价                     | 适用               |
+| -------- | ------------ | ------------------------ | ------------------ |
+| 最多一次 | 不重, 可能丢 | 实现简单, 丢失不可恢复   | 可采样的统计型遥测 |
+| 至少一次 | 不丢, 可能重 | 需要幂等与去重           | 绝大多数业务数据   |
+| 恰好一次 | 不丢不重     | 事务开销大, 跨系统难落地 | 资金、账务、库存   |
+
+恰好一次在海量链路上很少真正端到端成立: Kafka 的事务只能保证 Kafka 内部读写与位点提交的原子性, 数据一旦写入 ClickHouse、Hive 或对象存储, 是否重复取决于 sink 自身的幂等能力。工程上的"恰好一次"通常是"至少一次加幂等写"。
+
+端到端不丢要同时守住生产、Broker、消费三段, 任何一段放松都会出现缺口:
+
+| 环节   | 典型丢失原因                               | 关键手段                                            |
+| ------ | ------------------------------------------ | --------------------------------------------------- |
+| 生产   | 未等待 ack、重试耗尽、缓冲区满、元数据超时 | acks=all、幂等生产者、有限重试加失败落 outbox       |
+| Broker | 副本落后、unclean 选举、保留期过期         | 多副本、min.insync.replicas、禁用 unclean、监控 ISR |
+| 消费   | 先提交后处理、rebalance、处理超时、毒消息  | 手动提交、处理成功后提交、优雅停机、死信队列        |
+
+生产者侧:
+
+- acks=all: 等待 ISR 中所有副本确认, 不能只用 acks=1 或 acks=0。
+- 开启幂等生产者 (enable.idempotence=true): 配合 acks=all、retries>0、max.in.flight.requests.per.connection 不超过 5, 避免重试在 broker 端写出重复。
+- 设置足够的 retries 与 delivery.timeout.ms, 并在发送回调里处理异常; 缓冲区满 (buffer.memory) 或 metadata 超时会直接抛错, 不能吞掉。
+- 关键数据不要 fire-and-forget: 发送失败要落本地 outbox 或重试队列, 否则生产端就是缺口。
+
+Broker 侧:
+
+- 副本数至少 3, min.insync.replicas 至少 2, 再配合 acks=all, 单副本故障时仍可写且不丢。
+- 关闭 unclean.leader.election.enable: 宁可短暂不可用, 也不让落后副本当 leader 造成数据截断。
+- 监控 UnderReplicatedPartitions 与 ISR 收缩, 副本尽量跨机架或可用区。
+- 保留期要覆盖最长故障恢复时间: 积压或消费者停机超过 retention 时, 未消费数据会被删除。
+
+消费者侧:
+
+- 关闭自动提交 (enable.auto.commit=false), 处理成功后再提交位点; 下游写入失败时不提交, 让消息重新投递。
+- 提交时机与下游事务对齐: 先写库成功、再提交位点; 反过来会在崩溃时丢消息。
+- 单批处理时间要小于 max.poll.interval.ms, 否则消费者被踢出组, 未提交的消息重新分配; 长任务用 pause/resume 加定期 poll。
+- 实现 ConsumerRebalanceListener: revoke 时提交已处理完的位点; 停机时处理完当前批再退出。
+- 毒消息不能无限重试: 超过阈值转死信队列并告警, 否则会阻塞整个分区。
+
+### 消费顺序性: 只保证分区内有序
+
+Kafka 的顺序保证边界是分区: 同一分区内按 offset 有序, 不同分区之间没有顺序。因此"保证顺序"是两道设计题: 把需要保序的消息路由到同一分区, 并保证该分区在消费端串行处理。
+
+- 生产端按业务键选分区: 同一设备、同一会话或同一订单用同一个 key (设备 ID、session_id、order_id), 默认分区器会把相同 key 落到同一分区。不要用随机 key 再指望全局有序。
+- 分区扩容会改变 key 到分区的映射: 同一设备的历史消息可能落到新分区, 保序链路要么预留分区, 要么在扩容时做双读或切换。
+- 消费组内一个分区同一时刻只由一个消费者消费, 这是 Kafka 的顺序基础; 但消费者内部用线程池并发处理会立刻破坏顺序。做法是按 key 哈希到固定 worker 队列, 每个 key 串行, 或对保序 topic 单线程消费。
+- 生产端开启幂等后, max.in.flight.requests.per.connection 可以到 5 而不会因重试乱序; 不开启幂等时要设为 1, 否则重试可能让后发的消息先到。
+- 重试与死信会打破顺序: 失败消息进重试 topic 后, 与原队列的后续消息形成竞态。需要保序时按 key 阻塞后续消息, 或用序列号加下游重排缓冲。
+- 跨系统写库也可能乱序: 两个消费者线程同时写同一 key, 后到的旧版本会覆盖新版本。用版本号或序列号做条件更新, 或在 ClickHouse 用 ReplacingMergeTree(version) 保留最新版本。
+
+全局有序的代价是单分区, 吞吐会被锁死; 海量上报场景应把"有序"收敛到设备或会话维度, 而不是要求整个 topic 有序。
+
+### 重复消费: 至少一次的必然代价
+
+至少一次语义下, 重复不是异常, 而是协议的一部分。常见来源:
+
+- 生产端重试: 未开幂等生产者时, broker 已写入但客户端没收到 ack, 重试会写两条。
+- 消费端提交失败: 业务已处理成功, 提交位点前进程崩溃或网络超时, 重启后从旧位点重放。
+- rebalance: 分区从一个消费者转移到另一个, 原消费者已处理但未提交的消息会被新消费者再处理一次。
+- 处理超时: 超过 max.poll.interval.ms 被踢出组, 位点未提交, 消息重新分配。
+- 人工回放或补数: 重置位点或新消费组重放, 必然产生重复。
+
+解决思路分三层:
+
+1. 业务幂等 (首选): 用业务唯一键做 upsert 或状态机条件更新, 例如 INSERT ... ON DUPLICATE KEY UPDATE、UPDATE ... WHERE status = 'pending', 让重复执行的结果与执行一次一致。这是最可靠的一层, 不依赖 MQ。
+2. 去重表或去重键: 消费前用 event_id 做 SETNX 或唯一索引插入, 已存在则跳过; 去重键的 TTL 要覆盖最大重试与回放窗口, 否则窗口外的重复仍会漏过。
+3. 存储层收敛: ClickHouse 用 ReplacingMergeTree(version) 按主键保留最新版本, 查询时用 FINAL 或 argMax 取最新; Hive 用 row_number() over (partition by event_id order by ts desc) 去重。注意 ReplacingMergeTree 是后台最终合并, 不是写入瞬间去重。
+
+| 去重层 | 做法                                 | 注意                               |
+| ------ | ------------------------------------ | ---------------------------------- |
+| 业务表 | 唯一索引加 upsert、状态机条件更新    | 最可靠, 与业务写入放在同一事务     |
+| 去重表 | event_id 唯一键, 冲突即跳过          | 保留期要覆盖重试与回放窗口         |
+| 缓存   | Redis SET NX EX                      | 缓存丢失会退化为重复, 不能单独兜底 |
+| OLAP   | ReplacingMergeTree(version)          | 最终合并, 查询需 FINAL 或 argMax   |
+| 离线   | row_number() over (partition by ...) | 批处理去重, 有延迟                 |
+
+两个容易踩的坑:
+
+- 去重与业务写入必须在同一个事务或同一张本地表里完成; 先写去重表再写业务表, 中间崩溃会出现"标记已消费但业务没写"的丢数据。
+- 不要用 offset 当幂等键: 它只在单个分区内唯一, 跨分区会冲突; 分区调整或重建后也无法稳定映射到同一条业务消息。
+
+如果链路只在 Kafka 内部流转 (Kafka 到 Kafka), 可以用事务生产者加 sendOffsetsToTransaction 做到 Kafka 范围内的恰好一次; 一旦落到外部存储, 仍然要回到业务幂等。
+
+### 积压定位: 从 lag 到 SQL 慢查询
+
+积压的第一现场不在 MQ, 而在消费链路。定位顺序是: 确认 lag 与消费速率, 判断是"消费能力不足"还是"单条处理变慢", 再下钻到下游 SQL。
+
+先量化三组指标:
+
+- Kafka: 消费组总 lag、单分区 lag、消费速率 (messages/s)、rebalance 次数。单分区倾斜说明 key 热点; 全组同步上涨说明消费能力整体不足。
+- 消费端: 单批处理耗时、线程池队列长度、下游调用 RT 与错误率。处理耗时突然上升而流量没变, 基本可以锁定下游。
+- 存储端: QPS、P99 RT、慢查询数量、锁等待、连接池占用。SQL 慢查询是消费变慢最常见的根因之一: 消费线程阻塞在数据库上, poll 频率下降, lag 随之上涨。
+
+不同 lag 曲线对应的排查方向:
+
+| 现象                         | 指向                    | 下一步                             |
+| ---------------------------- | ----------------------- | ---------------------------------- |
+| 全组 lag 上涨, 消费 RT 平稳  | 流量洪峰或消费能力不足  | 扩容消费者、评估加分区             |
+| lag 上涨, 消费 RT 上升       | 下游变慢                | 慢查询、锁等待、连接池             |
+| 单分区 lag 明显倾斜          | key 热点或分区不均      | 检查 key 分布与分区数              |
+| 消费速率归零, 频繁 rebalance | 处理超时或滚动发布      | max.poll.interval.ms、优雅停机     |
+| 写入错误率上升               | ClickHouse 小 part 限流 | 批量写、system.parts 与 merge 监控 |
+
+MySQL 侧的排查入口:
+
+- 慢查询日志: 开启 slow_query_log, 把 long_query_time 调到业务可感知的阈值 (例如 1s), 用 pt-query-digest 聚合出 Top SQL; 临时排查可以配合 log_queries_not_using_indexes, 但线上长期开启会放大日志量。
+- performance_schema: 按总耗时、扫描行数、临时表、排序行数排序, 找可疑 digest:
+
+```sql
+SELECT
+    DIGEST_TEXT,
+    COUNT_STAR,
+    ROUND(SUM_TIMER_WAIT / 1e12, 3) AS total_seconds,
+    ROUND(AVG_TIMER_WAIT / 1e9, 2) AS avg_ms,
+    SUM_ROWS_EXAMINED,
+    SUM_ROWS_SENT,
+    SUM_NO_INDEX_USED,
+    SUM_CREATED_TMP_TABLES
+FROM performance_schema.events_statements_summary_by_digest
+ORDER BY SUM_TIMER_WAIT DESC
+LIMIT 20;
+```
+
+- 正在执行的慢 SQL: SHOW PROCESSLIST 或查询 information_schema.processlist, 关注 State 里的 Waiting for table metadata lock、Waiting for row lock、Sending data。
+- 锁等待: sys.innodb_lock_waits、performance_schema.data_lock_waits (MySQL 8.0), 或 SHOW ENGINE INNODB STATUS 的 LATEST DETECTED DEADLOCK; 消费批越大、事务越长, 持锁时间越长, 越容易把并发消费拖成串行。
+- 执行计划: 对 Top SQL 做 EXPLAIN, 看 type=ALL、rows 过大、Using filesort、Using temporary; 常见修复是补联合索引、把范围条件放到索引前缀、拆分大批事务。
+- 连接池: Threads_running 持续接近上限、消费线程等待连接, 也会表现为 lag 上涨; 这时 SQL 单条不一定慢, 但整体吞吐被池大小卡住。
+
+ClickHouse 侧没有 MySQL 那种慢查询日志, 用系统表:
+
+```sql
+SELECT
+    query_duration_ms,
+    read_rows,
+    formatReadableSize(read_bytes) AS read_bytes,
+    formatReadableSize(memory_usage) AS memory,
+    written_rows,
+    query
+FROM system.query_log
+WHERE type = 'QueryFinish'
+  AND event_time > now() - INTERVAL 1 HOUR
+ORDER BY query_duration_ms DESC
+LIMIT 20;
+```
+
+- system.query_log: 看耗时、扫描行数、内存、写入行数; 扫描行数远大于结果行数通常是分区裁剪失效或排序键不匹配。
+- system.processes: 看当前正在跑的查询, 必要时 KILL QUERY。
+- system.parts: 单分区 active part 数异常升高, 说明写入批太小或合并跟不上, 会触发 Too many parts 限流, 消费端写入 RT 直接上升。
+- system.merges 与 system.mutations: 后台合并或 mutation 占满 IO 时, 写入会排队。
+- EXPLAIN indexes=1: 确认 granule 是否被跳过; 没跳过就是全表扫描。
+
+把 SQL 与消费批次关联起来:
+
+- 在 SQL 注释里带上消费上下文, 例如 /* consumer=perf-etl partition=3 offset=123456 */, 这样慢查询日志和 query_log 能直接定位到是哪个 topic、分区、批次拖慢。
+- 或者在消费端记录"批次开始/结束加下游 RT", 与 lag 曲线放在同一时间轴; 没有关联 ID 时只能靠时间窗口猜, 效率很低。
+
+定位后的处理顺序:
+
+1. 索引与 SQL 重写: 补覆盖索引、避免函数包裹索引列、减少回表与排序。
+2. 批处理与事务: 减小单事务行数, 缩短持锁时间; 批量写入但不要一次提交过大。
+3. 连接池与并发: 调整池大小与消费线程数, 避免消费者等连接。
+4. 存储扩容或降级: 读写分离、冷热分离、把非核心查询挪走; 仍不够再扩分片。
+5. 消费端: 扩容消费者、pause/resume 背压、把慢 sink 拆到独立消费组。
+
+一句话: SQL 慢查询是"消费变慢"的证据, 不是根因; 根因通常在索引、锁、事务粒度、连接池或存储写入模型。用 lag 定位到时间段, 用慢查询定位到具体 digest, 再用执行计划确认修复点。
 
 ### Hive: 全量历史的离线数仓
 
@@ -214,6 +385,85 @@ ClickHouse 是列式存储的 OLAP 数据库, 承担在线可查的分析职责:
 ClickHouse 不擅长高频单行更新与事务, 所以只承接"写入后主要做聚合查询"的性能数据, 不存需要频繁修改的业务数据。
 
 写入侧有一条对应的硬约束: 必须批量写。MergeTree 把每次写入落成一批数据分片 (part), 再由后台线程异步合并; 高频单行插入会瞬间堆出大量小分片, 触发 "Too many parts" 限流甚至拒写。因此消费任务从 Kafka 取数后按批写入 (每批数千到数万行, 或按秒级窗口攒批), 而不是逐条插入——这也是 Kafka 作为缓冲层的另一重价值: 它把设备侧零散的上报攒成适合 ClickHouse 的批量写入节奏。
+
+### ClickHouse 的选型依据
+
+选型不是"因为它快", 而是数据形态与查询模式刚好落在它的强项上。这条链路的数据是设备性能明细: 只追加、不更新、写入量大且可批量; 查询是多维过滤加聚合排序, 例如按机型、系统版本、App 版本、时间范围过滤, 再按机型聚合性能分排序。延迟要求秒级, 数据规模到亿级甚至更高, 不需要事务。
+
+用其他存储承接都会在某一维上明显吃亏:
+
+| 组件          | 强项                       | 为什么不适合承接性能明细                   |
+| ------------- | -------------------------- | ------------------------------------------ |
+| MySQL         | 点查、事务、小规模关系数据 | 亿级数据做全表聚合扫描会把 OLTP 库拖垮     |
+| Hive          | 全量历史、离线 ETL         | 查询分钟级起步, 在线页面等不起             |
+| Elasticsearch | 全文检索、日志检索         | 高基数多维聚合的内存与精度成本高, 压缩比低 |
+| Druid         | 固定维度的预聚合           | 维度组合灵活时预聚合表膨胀, 明细回溯能力弱 |
+| Redis         | 热点结果缓存               | 内存成本高, 不能存明细, 不能做范围聚合     |
+
+契合点可以归纳为四条:
+
+- 列存加向量化执行: 聚合只读涉及的列, 亿级数据上的 group by 能到秒级甚至亚秒级。
+- MergeTree 批量追加: 与 Kafka 消费侧攒批写入天然匹配, 不需要事务与行级更新。
+- 压缩比高: 同列类型一致、取值相近, 存储成本明显低于行存, 适合长期保留明细。
+- 分片加副本水平扩展: 写入与查询都能随数据量扩展。
+
+边界同样明确: 不做高频单行更新、不做事务、不适合高并发点查。所以配置与元数据放 MySQL, 热点结果放 Redis, 页面层再做缓存, 各存储只承接自己擅长的负载。
+
+### ClickHouse 的优化策略
+
+优化分四层, 先建模再调参, 顺序反了收益很小。
+
+建模:
+
+- 分区按天或按月, 分区总数控制在几百到几千; 不要按机型、设备 ID 这类高基数列分区, 否则小 part 与元数据开销会失控。
+- ORDER BY 就是稀疏主键, 把最常用的等值过滤维度放在前缀, 低基数列在前更利于压缩; 时间范围交给分区裁剪。例如查询基本都带机型条件时, ORDER BY (model, os_version, app_version, ts)。
+- 机型、版本用 LowCardinality(String); 时间用 DateTime 而不是字符串; 避免 Nullable, 它会额外存空值标记列。
+- 时间列用 DoubleDelta 或 Delta 编码, 浮点用 Gorilla, 整体再套 ZSTD。
+- 用 AggregatingMergeTree 加物化视图做分钟级、机型级预聚合, 查询路由到聚合表, 用 avgMerge、quantileMerge 读结果, 把"每次扫明细"变成"扫小表"。
+- 非主键但常过滤的列可以加 minmax、bloom_filter 跳数索引, 但要权衡存储与写入成本。
+- 明细按 TTL 转冷存储, 超期降采样或删除; 聚合表长期保留。
+
+预聚合的典型写法:
+
+```sql
+CREATE MATERIALIZED VIEW perf_model_minute
+ENGINE = AggregatingMergeTree
+PARTITION BY toDate(ts)
+ORDER BY (model, ts)
+AS
+SELECT
+    model,
+    toStartOfMinute(ts) AS ts,
+    avgState(duration) AS avg_duration,
+    quantileState(0.95)(duration) AS p95_duration
+FROM perf_detail
+GROUP BY model, ts;
+```
+
+查询侧用 avgMerge(avg_duration)、quantileMerge(0.95)(p95_duration) 读取合并后的状态。
+
+写入:
+
+- 批量是硬约束: 每批数千到数万行, 或按秒级窗口攒批; 逐条插入会堆出大量 part。
+- 写本地表, 不写分布式表: 副本由 ReplicatedMergeTree 负责, 写分布式表多一跳且容易重复。
+- 监控 system.parts 的未合并 part 数与 merge 延迟; 避免 ALTER UPDATE/DELETE 这类 mutation, 它会重写整个 part。
+- 分片键按 hash(device_id) 之类打散, 避免单分片热点。
+- 客户端批太小时可以用 async_insert 让服务端攒批, 但它引入可见延迟, 去重语义要单独确认。
+
+查询:
+
+- 只 SELECT 需要的列, 禁止 SELECT *; 带上分区过滤条件, 确保分区裁剪生效。
+- 避免对大表 JOIN, 维表用字典或 IN 下推; 避免 FINAL, 需要去重时用 argMax 或预聚合表。
+- 去重用 uniqCombined, 分位数用 quantileTDigest, 不在大结果集上做精确 COUNT(DISTINCT)。
+- 排行榜类查询先聚合再排序再 LIMIT, 不让明细参与排序。
+- 限制 max_memory_usage 与 max_threads, 大查询走队列, 避免单条查询打满集群。
+- 结果缓存分三层: ClickHouse query cache、Redis 热点结果、BFF 预聚合降采样; 高 QPS 的榜单头部不应该每次都打到 ClickHouse。
+
+运维:
+
+- 监控 system.query_log 里的慢查询与扫描行数、system.parts、system.merges、副本延迟与 Keeper 状态。
+- 容量按"日增量 × 保留天数 × 副本数 × 压缩比"估算, 提前规划分片。
+- 排序键、分区键的变更属于重建表级别操作, 上线前用真实数据量压测。
 
 ### MySQL: 小规模的关系型数据
 
@@ -424,6 +674,9 @@ function onMeasure(index: number, realHeight: number) {
 
 - 五类存储的划分依据是数据的读写模式与延迟要求, 不是技术偏好。判断新数据放哪里, 先问它是高吞吐流动数据、全量历史、在线聚合、事务型小数据, 还是热点读。
 - 引入 BFF 的前提是后端能力有多个消费方、数据需要面向前端适配、以及服务端必须控制下发数据量; 如果只有一个前端且数据模型就是视图模型, BFF 只会增加一跳延迟与运维成本。
+- 投递语义选至少一次: 不丢靠生产者 acks=all 加幂等、Broker 多副本与 min.insync.replicas、消费者处理成功后提交位点; 重复靠业务唯一键、去重表与存储层收敛; 顺序只保证分区内, 按设备或会话维度选 key。
+- 积压定位先看 lag 与消费 RT, 再下钻 MySQL 慢查询与锁等待、ClickHouse query_log 与 part 数量; SQL 慢是消费变慢的常见根因, 修复点在索引、事务粒度、连接池与写入模型。
+- ClickHouse 的选型依据是 append-only 明细与大范围聚合, 优化顺序是先建模 (分区、排序键、预聚合) 再调写入与查询; 只在已有表结构上改参数, 收益有限。
 
 渲染侧:
 

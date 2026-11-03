@@ -241,7 +241,7 @@ React 17+ 生产环境的 componentStack 带 bundle 行列号, 可以走 sourcem
 
 ### 与静态代码知识图谱的互补
 
-componentStack 与 [CodeGraph](codegraph) 这类静态代码知识图谱在结构上是互补的:
+componentStack 与 CodeGraph 这类静态代码知识图谱在结构上是互补的:
 
 - 信息形态同构: componentStack 本身是「出错组件到组件树根的组件名序列」, 恰好对应代码图里的一条组件父子链路径。图把 React 组件建模为一等节点并生成 JSX 子组件边, 因此 componentStack 的每一行都能映射成图上的节点与边, 等于给自动分析提供了一条现成的图遍历起点序列。
 - 查询入口互补: 有源码文件行列号的帧可以按位置命中符号; 只有组件名的帧可以按符号名查询; React 17+ 的 bundle 行列号先经 sourcemap 反解再按位置查询。几种形态都有对应入口。

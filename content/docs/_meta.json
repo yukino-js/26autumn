@@ -14,15 +14,12 @@
   },
   "a2ui",
   "mcp-app",
-  "webc",
   {
     "type": "section-header",
     "label": "Coding Agent 调研"
   },
-  "codegraph",
   "claude-code",
   "pi",
-  "open-code-review",
   {
     "type": "section-header",
     "label": "AI 框架与平台调研"
@@ -30,8 +27,6 @@
   "insforge",
   "langchain",
   "langgraph",
-  "openspec",
-  "superpowers",
   {
     "type": "section-header",
     "label": "项目"
@@ -50,10 +45,5 @@
     "type": "dir",
     "name": "yukino-ecomm-agent",
     "label": "yukino-ecomm-agent"
-  },
-  {
-    "type": "dir",
-    "name": "yukino-test-agent",
-    "label": "yukino-test-agent"
   }
 ]
