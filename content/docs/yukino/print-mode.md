@@ -2,7 +2,7 @@
 title: "Print Mode"
 description: "Print 模式 (-p): 非交互一次性执行, 自组装完整运行时并消费 agent.run() 事件流; 覆盖旗标解析, slash command 特判, 与交互模式的差异 (bypassPermissions, 无 hook/skill), 工具集装配, text / stream-json 输出, 退出码与清理, SyntheticOutput 结构化交付"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 Print 模式是非交互的执行模式: 一条命令进去, agent 循环跑完, 结果打印到 stdout, 进程退出; 用于脚本、CI 流水线和「把 Yukino 当 Unix 工具用」的组合场景
@@ -55,13 +55,13 @@ prompt 先经过与交互模式同一套的命令解析器 `parseCommand()` (以
 
 ## 工具集
 
-基座是 `createToolRegistry(taskList, { interactionMode: "non-interactive", teamManager, lspServers })` 的 18 个内置工具: Goal、TodoWrite、TaskOutput、LSP、Bash、PowerShell、ComputerUse、EditFile、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。与交互注册的唯一差别是 EnterPlanMode 不注册 —— 计划模式需要用户审批出口, 非交互场景没有意义
+基座是 `createToolRegistry(taskList, { interactionMode: "non-interactive", teamManager })` 的 17 个内置工具: Goal、TodoWrite、TaskOutput、Bash、PowerShell、ComputerUse、EditFile、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。与交互注册的唯一差别是 EnterPlanMode 不注册 —— 计划模式需要用户审批出口, 非交互场景没有意义
 
 在基座之上 print 模式追加:
 
 - 团队工具: TeamCreate、SendMessage、TeamDelete、TeamList、TaskStop。单次非交互执行内 leader 仍然可以组建 team 委派任务 (见 [agent-team](./agent-team)); 团队不从磁盘恢复 —— print 模式只管理自己创建的 team 运行时, 避免退出清理时误杀交互会话留下的外部 teammate
 - SyntheticOutput: 结构化交付通道 (见下文)
-- Agent: subagent 委派工具, `defaultFork` 跟随 config 的 `enable_fork` (缺省开启), teammate 路径纯前台运行 (见 [subagent](./subagent))
+- Agent: subagent 委派工具, fork 缺省 true (复制父对话快照), teammate 路径纯前台运行 (见 [subagent](./subagent))
 - Workflow: `attachWorkflow()` 注册的编排工具, 与后台 TaskManager 共享
 - 传入 teamManager 时 TodoWrite 实际是 TeamTodoWriteTool (工具名不变), 任务板与团队共享 (见 [task-tracking](./task-tracking))
 
@@ -141,7 +141,7 @@ Agent 循环封装: run() 是一个 AsyncGenerator...
 - 排水到的任务通知在打印前还会作为 system reminder 写回会话 jsonl, 保证恢复会话时能看到这些结果
 - 信号处理: SIGINT 置退出码 130, SIGTERM 置 143, 同时 abort 主循环并停掉所有在跑的后台任务; 监听器在 finally 里移除, 不泄漏到宿主进程
 - 退出码: 正常结束 0; `error` 事件或 `loop_complete` 的 stopReason 为 interrupted 且非本次 abort 引起时置 1; 信号终止为 130/143
-- finally 清理顺序: 停后台任务 (`stopAll`) 与团队 (`teamManager.dispose()`, 内部 stopAll 所有 team) 并行 → 释放工具注册表 (`registry.dispose()`, 关掉 LSP 等长连接工具) → 断开 MCP 子进程 (`disconnectAll`)。清理失败被吞掉, 不掩盖执行本身的错误、不改变已打印的结果; 会话文件与产物目录保留
+- finally 清理顺序: 停后台任务 (`stopAll`) 与团队 (`teamManager.dispose()`, 内部 stopAll 所有 team) 并行 → 释放工具注册表 (`registry.dispose()`) → 断开 MCP 子进程 (`disconnectAll`)。清理失败被吞掉, 不掩盖执行本身的错误、不改变已打印的结果; 会话文件与产物目录保留
 
 ## 结构化交付: SyntheticOutput
 

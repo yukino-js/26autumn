@@ -2,7 +2,7 @@
 title: "上下文压缩"
 description: "上下文压缩的两层机制: 第 1 层在工具结果进入历史时把大结果溢出到磁盘、只留预览; 第 2 层在 token 用量越过阈值 (或手动 /compact) 时由 LLM 生成对话摘要, 近期消息逐字保留"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 > 两层压缩: 大工具结果溢出磁盘, 对话历史压缩成摘要

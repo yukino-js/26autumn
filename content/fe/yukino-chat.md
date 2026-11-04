@@ -1,11 +1,11 @@
 ---
 title: "Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent"
-description: "自托管即时通讯平台的技术拆解: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级, 以及为每个用户进程内嵌入的只读 Yukino coding agent 与它的 JSON-RPC 桥。"
+description: "自托管即时通讯平台的技术拆解: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级、前后端分离的 Nginx 边缘部署与移动端适配, 以及为每个用户进程内嵌入的只读 Yukino coding agent 与它的 JSON-RPC 桥。"
 local_path: "$HOME/github/yukino-chat"
-local_commit: "ec51bedc45442ed13f2ea292a278a3ce3395c533"
+local_commit: "e8135bfd372dceca19ead4d09afcd89ea9fef6f2"
 ---
 
-本文拆解一个自托管即时通讯平台: 单聊与群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个完整的 AI coding agent 作为一等聊天参与者。内容覆盖数据模型、WebSocket 聊天枢纽、消息投递语义、通话信令、文件传输协议、缓存降级、Agent 的进程内只读运行时与 RPC 桥, 以及客户端的工程化组织。适合要做自托管 IM、或在既有产品中嵌入 Agent 的工程师阅读, 也适合作为"实时系统与长生命周期 Agent 如何共处一个进程"的参考。
+本文拆解一个自托管即时通讯平台: 单聊与群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个完整的 AI coding agent 作为一等聊天参与者。内容覆盖数据模型、WebSocket 聊天枢纽、消息投递语义、通话信令、文件传输协议、缓存降级、Agent 的进程内只读运行时与 RPC 桥, 以及客户端的工程化组织与前后端分离的部署形态。适合要做自托管 IM、或在既有产品中嵌入 Agent 的工程师阅读, 也适合作为"实时系统与长生命周期 Agent 如何共处一个进程"的参考。
 
 ## 定位与整体形态
 
@@ -32,6 +32,8 @@ local_commit: "ec51bedc45442ed13f2ea292a278a3ce3395c533"
 ### 整体架构
 
 ```text
+   浏览器 ──> Nginx 边缘(托管 SPA 构建产物; /api/* 剥前缀反代到后端) ──> 后端 :8000
+
    React SPA ──HTTP POST(统一信封 JSON)──> Hono 应用: routes -> services -> Prisma -> PostgreSQL/SQLite
    Zustand + Query                             │
                                                └──> CacheService ──> Redis(可选) / 进程内存
@@ -43,7 +45,7 @@ local_commit: "ec51bedc45442ed13f2ea292a278a3ce3395c533"
 
 ### 运行时形态
 
-服务端是纯 Node.js 进程: 入口先创建三个静态目录(头像、普通文件、分块临时目录), 再组装依赖包, 确保内置 Agent 账号存在, 启动聊天枢纽与 Agent 管理器的定时器, 最后构建应用并监听端口。默认监听 `0.0.0.0:8000`, 开发态用 `tsx watch` 运行, 生产态构建后直接 `node` 启动。当 `WEB_DIST_DIR`(默认 `./web`)下存在 `index.html` 时, 应用还会托管构建后的 SPA: `/assets/*` 加 `immutable` 长缓存、`/sw.js` 强制 `no-cache`, 其余 GET 走静态文件并以 `index.html` 兜底, 于是单个进程即可同时提供前后端。
+服务端是纯 Node.js 进程: 入口先创建四个静态目录(头像、普通文件、分块临时目录、Sentry 遥测日志目录), 再组装依赖包, 确保内置 Agent 账号存在, 启动聊天枢纽与 Agent 管理器的定时器, 最后构建应用并监听端口。默认监听 `0.0.0.0:8000`, 开发态用 `tsx watch` 运行, 生产态构建后直接 `node` 启动。进程只提供 API, 不托管任何前端静态文件: SPA 由独立的 Nginx 边缘镜像部署, 边缘把 `/api/*` 全量路径(HTTP、WebSocket、上传静态资源)剥前缀反代到后端(见部署形态章节), 于是换域名、加 TLS 都无需重建前端。应用另暴露免鉴权的 `GET /health` 存活探针, 供容器编排与反向代理做健康检查。
 
 依赖通过一个 `Deps` 接口集中注入路由: 数据库、缓存、通话管理器、聊天枢纽、五个业务服务(会话、用户、联系人、群组、消息)以及 Agent 管理器。没有全局单例, 便于测试时替换实现, 也让进程退出时可以按依赖顺序统一释放。
 
@@ -51,18 +53,19 @@ local_commit: "ec51bedc45442ed13f2ea292a278a3ce3395c533"
 
 ### HTTP API 面
 
-所有 HTTP 业务路由均为 POST, 按业务域分组:
+所有 HTTP 业务路由均为 POST, 按业务域分组; 统一信封之外另有两个运维类端点(见下表末行):
 
-| 分组      | 代表端点                                                          | 备注                     |
-| --------- | ----------------------------------------------------------------- | ------------------------ |
-| 认证/用户 | 登录、注册、改密、搜索用户、改资料、查资料、WS 登出               | 前三免鉴权; 登录注册限流 |
-| 用户管理  | 用户列表、启用、禁用、批量删除、设管理员                          | 需管理员                 |
-| 群组      | 建群、邀请入群、退群、解散、搜索群等                              | 部分端点需管理员         |
-| 会话      | 打开会话、拉单人/群会话列表、标记已读、删除会话、校验是否允许打开 |                          |
-| 联系人    | 申请好友、通过申请、拉黑、打标签、更新联系人等                    |                          |
-| 消息      | 单聊/群聊历史、上传文件、上传头像                                 |                          |
-| 分块上传  | 校验、上传分块、合并                                              | 见文件传输章节           |
-| 聊天室    | 在线用户、通话成员                                                | 通话成员带房间可见性校验 |
+| 分组      | 代表端点                                                          | 备注                                |
+| --------- | ----------------------------------------------------------------- | ----------------------------------- |
+| 认证/用户 | 登录、注册、改密、搜索用户、改资料、查资料、WS 登出               | 前三免鉴权; 登录注册限流            |
+| 用户管理  | 用户列表、启用、禁用、批量删除、设管理员                          | 需管理员                            |
+| 群组      | 建群、邀请入群、退群、解散、搜索群等                              | 部分端点需管理员                    |
+| 会话      | 打开会话、拉单人/群会话列表、标记已读、删除会话、校验是否允许打开 |                                     |
+| 联系人    | 申请好友、通过申请、拉黑、打标签、更新联系人等                    |                                     |
+| 消息      | 单聊/群聊历史、上传文件、上传头像                                 |                                     |
+| 分块上传  | 校验、上传分块、合并                                              | 见文件传输章节                      |
+| 聊天室    | 在线用户、通话成员                                                | 通话成员带房间可见性校验            |
+| 运维/遥测 | `GET /health` 存活探针、`POST /log` 前端遥测摄入                  | 均免鉴权; 后者见 PWA 与可观测性章节 |
 
 ### WebSocket 通道
 
@@ -72,11 +75,11 @@ local_commit: "ec51bedc45442ed13f2ea292a278a3ce3395c533"
 | `/agent/ws`     | Agent 的 JSON-RPC 流     | query token 验签                                         |
 | `/dashboard/ws` | 管理员缓存看板推送       | query token 验签 + 管理员校验                            |
 
-浏览器无法在 WebSocket 升级请求上添加自定义请求头, 因此 token 只能走 query。`/wss` 额外校验客户端自报的 `client_id`: 非空时必须与 token 主体一致, 否则握手直接回 403。动机是安全——若信任客户端自报的 id, 任何知道他人 uuid 的人都能顶掉其连接并接收消息。`/agent/ws` 与 `/dashboard/ws` 只认 token, 后者再叠加一次管理员校验。
+浏览器无法在 WebSocket 升级请求上添加自定义请求头, 因此 token 只能走 query。`/wss` 额外校验客户端自报的 `client_id`: 非空时必须与 token 主体一致, 否则握手直接回 403。动机是安全——若信任客户端自报的 id, 任何知道他人 uuid 的人都能顶掉其连接并接收消息。`/agent/ws` 与 `/dashboard/ws` 只认 token, 后者再叠加一次管理员校验。经 Nginx 边缘访问时, 三条通道分别位于 `/api/wss`、`/api/agent/ws` 与 `/api/dashboard/ws`, 升级头由边缘的 `Upgrade`/`Connection` 映射透传。
 
 ### 中间件
 
-- 鉴权: 只拦 POST, 登录、注册、改密三个公开路径直通; Bearer token 验签后把用户主体写入请求上下文。
+- 鉴权: 只拦 POST, 登录、注册、改密、遥测摄入(`/log`)四个公开路径直通; Bearer token 验签后把用户主体写入请求上下文。
 - 限流: 每个中间件实例维护一张"IP 到时间戳数组"的滑动窗口表, IP 取 `X-Forwarded-For` 首段或套接字地址; 登录与注册各 10 次/分钟, 改密 5 次/分钟。
 - 管理员: 先查缓存中的用户投影, 未命中再查数据库的管理员标记。
 - CORS: 全放开并处理预检。
@@ -219,6 +222,7 @@ Redis 实现的读写一律用 try/catch 吞掉异常(连接本身也关掉错�
 - candidate 竞态: 远端描述尚未就绪时, candidate 先进入队列, 设置远端描述后统一冲刷。
 - 连接状态为失败即丢弃该对端; 一对一唯一对端消失即整场结束, 群聊则继续。
 - 携带房间 id 且与当前房间不符的迟到帧直接忽略, 防止跨通话串台。
+- `getUserMedia` 失败按错误名归类为人类可读提示(非安全上下文需 HTTPS、权限被拒、设备不存在、设备被占用等), 拨号与接听失败都先挂断/拒接再弹对应提示。
 
 UI 层维护 `空闲/振铃/拨号/通话中` 状态机, 拨出 45 秒无应答自动挂断; 信令监听在模块加载时全局订阅, 因此任何页面都能响铃。通话弹窗渲染本地与远端视频瓦片、静音与挂断按钮以及计时, 对端数大于 0 即进入通话中并记录接通时刻。
 
@@ -240,7 +244,7 @@ UI 层维护 `空闲/振铃/拨号/通话中` 状态机, 拨出 45 秒无应答�
 
 客户端分块上传的参数经过精心选择: 分块大小 5 MiB, 是服务端上限的一半, 留出 multipart 编码开销的余量; 并发分块数 3, 用信号量限流; 每块重试 3 次并线性退避(第 n 次等 n 秒); 总大小上限 2 GiB。
 
-哈希在 Web Worker 中计算, 逐 5 MiB 切片做 SHA-256, 再把所有分片摘要拼接后做第二次 SHA-256 得到最终值。这样做的动机是 Web Crypto 没有增量摘要 API, 一次性哈希 2 GiB 需要整块 ArrayBuffer 驻留内存; 分片二次哈希把内存占用钳制在一个切片大小。哈希进度经消息通道回报, UI 分"哈希中"与"上传中"两段进度显示。
+哈希在 Web Worker 中计算, 逐 5 MiB 切片做 SHA-256, 再把所有分片摘要拼接后做第二次 SHA-256 得到最终值。这样做的动机是 Web Crypto 没有增量摘要 API, 一次性哈希 2 GiB 需要整块 ArrayBuffer 驻留内存; 分片二次哈希把内存占用钳制在一个切片大小。worker 开工前先检查 `crypto.subtle` 是否存在——Web Crypto 只在安全上下文可用, 非 HTTPS 页面直接报"需要安全连接"的错误而非晦涩的 undefined。哈希进度经消息通道回报, UI 分"哈希中"与"上传中"两段进度显示。
 
 完整流程是: 哈希 -> 校验 -> 秒传则直接返回 -> 只上传缺失的分块(刷新页面后重选同一文件, 已上传分块不再传) -> 合并 -> 返回访问地址、文件名与大小。全链路穿透中止信号, worker 收到中止即终止。
 
@@ -254,7 +258,7 @@ UI 层维护 `空闲/振铃/拨号/通话中` 状态机, 拨出 45 秒无应答�
 
 Agent 配置按两级回退加载, 并在进程内缓存一次(运行期改配置需要重启):
 
-1. 首选库的标准配置: `Config.loadConfig` 允许 provider 列表为空, 按 `default_provider` 解析默认 provider(越界钳制、缺省回落第一个), 连同 MCP 服务器列表、钩子、`lsp_servers`、`enable_memory` 开关与权限模式一起使用。
+1. 首选库的标准配置: `Config.loadConfig` 允许 provider 列表为空, 按 `default_provider` 解析默认 provider(越界钳制、缺省回落第一个), 连同 MCP 服务器列表、钩子、`enable_memory` 开关与权限模式一起使用。LSP 集成刻意不接入聊天宿主, 配置中的 `lsp_servers` 从不被读取。
 2. 无配置文件时用环境变量合成单 provider(`YUKINO_AI_PROTOCOL` 为空时默认 `openai-compat`), `YUKINO_AI_BASE_URL` 或 `YUKINO_AI_MODEL` 为空则返回 `null`。
 3. `null` 表示"Agent 不可用": 聊天主流程完全不受影响, 用户私聊 Agent 会收到一条"未配置"的聊天回复; AgentManager 构造时就把 `available` 算好。
 
@@ -268,11 +272,11 @@ Agent 管理器维护"用户到运行时"的懒创建映射, 每个用户的工�
 
 ### AgentRuntime: 只读策略、队列与再水化
 
-每个用户的运行时是长生命周期对象, 首次使用时创建或复用数据库中的会话行, 创建工作区目录, 并经 `Remote.Server.createRemoteAgent` 构造完整 Agent 栈句柄(LLM 客户端、会话管理器、工具注册表、命令注册表、技能目录、MCP 管理器、团队与后台任务管理器等), 并把配置里的 `lspServers` 与 `memoryEnabled` 一并传入; 用 Promise 缓存防止并发重建; 初始化失败**不缓存**——瞬态的 provider/MCP 错误不能把用户运行时永久钉死, 下次 attach/dispatch 会重试。
+每个用户的运行时是长生命周期对象, 首次使用时创建或复用数据库中的会话行, 创建工作区目录, 并经 `Remote.Server.createRemoteAgent` 构造完整 Agent 栈句柄(LLM 客户端、会话管理器、工具注册表、命令注册表、技能目录、MCP 管理器、团队与后台任务管理器等), 并把配置里的 `memoryEnabled` 传入; 用 Promise 缓存防止并发重建; 初始化失败**不缓存**——瞬态的 provider/MCP 错误不能把用户运行时永久钉死, 下次 attach/dispatch 会重试。
 
 **多用户只读策略**在句柄就绪时一次性施加(`applyReadOnlyPolicy`), 由 `read-only-tools.ts` 实现三层隔离:
 
-1. **工具白名单**。`handle.toolFilter` 只放行读类工具(ReadFile/Glob/Grep/WebFetch/LSP/ToolSearch/McpCall/LoadSkill/AskUserQuestion/SyntheticOutput, 以及 TodoWrite/TaskOutput/Goal 这几个每会话内部状态工具), 外加全部 `mcp__*` MCP 工具——后者仍受权限 broker 把关。库虽把 EnterPlanMode/ExitPlanMode/TeamList 也归为读类, 但前两者会翻转权限模式、破坏"永远只读"的不变量, 后者在禁用团队编排(`enableCoordinatorMode: false`)下只能返回空表, 故一并排除; 其余写/命令类工具(Bash、PowerShell、EditFile、WriteFile、worktree、团队、子代理派生等)从模型可见面与执行面同时消失。
+1. **工具白名单**。`handle.toolFilter` 只放行读类工具(ReadFile/Glob/Grep/WebFetch/ToolSearch/McpCall/LoadSkill/AskUserQuestion/SyntheticOutput, 以及 TodoWrite/TaskOutput/Goal 这几个每会话内部状态工具), 外加全部 `mcp__*` MCP 工具——后者仍受权限 broker 把关。库虽把 EnterPlanMode/ExitPlanMode/TeamList/LSP 也归为读类, 但前两者会翻转权限模式、破坏"永远只读"的不变量, TeamList 在禁用团队编排(`enableCoordinatorMode: false`)下只能返回空表, LSP 在聊天宿主没有任何语言服务器接线, 故一并排除; 其余写/命令类工具(Bash、PowerShell、EditFile、WriteFile、worktree、团队、子代理派生等)从模型可见面与执行面同时消失。
 2. **路径圈禁**。Yukino 自身的权限层只对**写**做路径沙箱, 读是放行的; 因此 `containReadTools` 把 ReadFile/Glob/Grep 重新注册为带守卫的包装版: 路径参数按"展开 `~`、解析符号链接(逐层回溯到最近存在的祖先)、再判包含关系"归一化后必须落在本用户工作区内, Glob 的 pattern 还额外拒绝绝对路径与 `..` 段——否则直接返回"在工作区之外"的错误结果。没有这层, 一个 ReadFile 就能读到隔壁用户的工作区或宿主机的 `~/.yukino/config.yaml`。
 3. **网络与 fork 出口**。WebFetch 包装后先过一道本仓库自建的公网断言 `assertPublicHttpUrl`: 只允许 http/https、拒绝内嵌凭据, 对主机名做 DNS 解析后逐个地址用库的 `Utils.PublicHttp.isPublicIpAddress` 判定, 拒绝环回、私网、链路本地与保留段(Yukino 0.0.20 不再导出该断言, 故自行拼装); fork 模式的技能子代理则通过 `FORK_DISALLOWED_TOOLS`(14 个写/命令工具)剥掉同一组能力, 并复用被包装的注册表、继承路径圈禁——委派不成为写的逃生舱。LoadSkill 工具本身也被替换为挂只读 fork host 的版本。
 
@@ -313,7 +317,7 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 
 握手流程: token 验签, 获取或创建运行时并 `attach` 连接, 依次推送连接就绪通知(含模型、流式状态、就绪标记、锚点、token 用量、权限模式)、命令清单通知、以及 broker 快照中全部挂起的权限与提问。运行时创建失败(未配置)时回一条 `agent/error` 错误通知而不中断连接, 因此前端可以稳定地显示"Agent 不可用"。
 
-连接关闭/出错时路由层的闭包会 `detach`——少了这一步, 连接槽永不释放, 空闲驱逐失效, 是每用户一条的泄漏。入站帧上限 4 MiB, 超限回 `-32600`; 解析失败回 `-32700`; `jsonrpc` 版本或 method 非法同样回 `-32600`; 运行时不可用回 `-32000`。
+连接关闭/出错时路由层的闭包会 `detach`——少了这一步, 连接槽永不释放, 空闲驱逐失效, 是每用户一条的泄漏。入站帧上限由 `AGENT_WS_MAX_MESSAGE_BYTES` 配置(默认 4 MiB), 超限回 `-32600`; 解析失败回 `-32700`; `jsonrpc` 版本或 method 非法同样回 `-32600`; 运行时不可用回 `-32000`。
 
 客户端可调方法: 保活应答(`ping`)、权限响应(允许、拒绝、始终允许)、提问响应、会话取消。未知方法返回 `-32601`, 参数不合法返回 `-32602`, 响应类方法返回 `{applied: boolean}`, 其中 `false` 表示 id 未知或已过期。
 
@@ -353,6 +357,7 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 | ws          | 无             | 主聊天连接、帧分派、重连                                                                             |
 | call        | 无             | 通话状态机, 桥接通话管理器                                                                           |
 | agent       | 无             | Agent 的 RPC 时间线                                                                                  |
+| ui          | 无             | 命令面板可见性; 移动端无 ⌘ 键, 底部导航的搜索按钮翻转此状态                                          |
 | dashboard   | 无             | 缓存看板快照, 固定间隔重连                                                                           |
 
 选择 sessionStorage 存认证状态是一个刻意的隔离决定: 同一浏览器的不同标签页各自独立登录, 适合多账号调试, 也降低了 token 在多标签页间被共享的风险。
@@ -361,18 +366,20 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 
 路由用 `createBrowserRouter`: 根路径由 loader 鉴权, 未登录重定向; 主框架布局下挂会话列表、联系人、资料、具体会话、管理端五个子路由; 缓存看板独立于主框架但仍挂在鉴权根下。登录与注册页在已登录时反向重定向。
 
+响应式与移动端适配是全站性的: `useIsMobile` 用媒体查询镜像 Tailwind 的 `md` 断点(47.9375rem), 保证 JS 布局判断与 `md:` 类永不分歧; `useIsTouch` 识别粗指针; `useVisualViewport` 把视觉视口高度与偏移写入 CSS 变量(`--app-height` 等), 让应用与传送门弹窗始终待在软键盘之上的可见区域内。手机上导航从左侧竖栏换成底部标签栏(带 safe-area 内边距, 会话进行中隐藏), 会话页走 master-detail 单栏: 列表全屏, 进入会话后由返回按钮回到列表; 触屏设备回车只换行不发送(避免软键盘"发送"键误触), 交互元素普遍满足 44px 触控目标。`index.html` 用内联脚本在首次绘制前从 localStorage 读出主题并应用, 防止暗色模式闪白; viewport meta 追加 `viewport-fit=cover` 与 `interactive-widget=resizes-content`。
+
 - 消息渲染: Streamdown 静态模式加公式、mermaid、代码高亮与中日韩排版插件。由于渲染器携带语法高亮与图表库、体积较大, 在气泡与 Agent item 中都单独懒加载成独立分块。
-- 气泡列表: 按天分隔条、入场动画、贴底滚动, 配合前述的流式渲染策略。
+- 气泡列表: 按天分隔条、入场动画、贴底滚动(滚离底部时浮现回到底部按钮), 配合前述的流式渲染策略。
 - 输入器: TipTap 的 StarterKit 关掉全部 mark 与列表、标题、引用等节点, 让字面 markdown 原样入库、由渲染端还原; 回车发送、Shift 加回车换行、输入法组字过程中不发送; 斜杠命令菜单虚拟化, 键盘导航与悬停高亮分离; 拖拽上传在助手会话中干脆不挂载, 因为禁用它会让停止按钮也被读作不可用。
 - 生成头像: 用 FNV-1a 播种的 xorshift32 随机数发生器在画布上绘制 5x5 镜像格, 按用户 id 记忆化, 作为缺省头像。
-- 命令面板: 用 cmdk 加 `mod+k` 热键, 仅在打开时才拉取数据。
-- 主题: 导航栏提供明暗切换; 主题 store 支持 light/dark/system 三态并持久化, 监听系统配色变化实时解析。表格虚拟化用 spacer 行保持真实表格语义。
+- 命令面板: 用 cmdk 加 `mod+k` 热键, 仅在打开时才拉取数据; 开关状态存进 ui store, 小屏下改为顶部全宽抽屉并提供关闭按钮。
+- 主题: 独立的 ThemeToggle 组件提供明暗切换(桌面导航栏、移动端会话列表头与会话页菜单各有一处); 主题 store 支持 light/dark/system 三态并持久化, 监听系统配色变化实时解析; 切换时优先用 View Transition API 做一次合成层交叉淡入(避免逐元素动画拖慢长会话), 不支持时退化为 paint-only 的类过渡, 两者都尊重 `prefers-reduced-motion`, 并同步更新 `theme-color` meta。表格虚拟化用 spacer 行保持真实表格语义。
 - 表单: TanStack Form 加 zod(手机号正则、密码最少 6 位、昵称 3 到 10 位), 登录页含封禁检测与重置密码弹窗。
 
 ### PWA 与可观测性
 
-- PWA 采用自动更新策略, workbox 预缓存脚本、样式、文档、图片与字体, 并对两个外部字体域走缓存优先策略。manifest 的 scope 与 start_url 在生产构建下指向 `/yukino-chat/` 子路径(开发态为根路径), 而 Vite 构建的 base 保持默认根路径。当前 manifest 的名称字段是模板残留(仍写作 resume), 与产品名不一致, 属于上线前需要修正的细节。
-- [浏览器监控 SDK](./yukino-sentry)仅在开发环境初始化(projectId `yukino-chat`, dsn 指向本地 `/api/log`), 并启用性能采集与录屏两个插件, 配合构建插件的本地 mock 上报端点闭环调试; 登录主体变化时同步用户 id 给 SDK。生产构建使用隐藏式 source map(`sourcemap: "hidden"`), 并用自定义插件把映射文件挪出发布产物目录, 兼顾可反解与源码不外泄; 另有插件给样式与模块脚本注入高优先级抓取提示(`fetchpriority="high"`)。
+- PWA 采用自动更新策略, workbox 预缓存脚本、样式、文档、图片与字体, 并对两个外部字体域走缓存优先策略。manifest 名称为 Yukino Chat, scope 与 start_url 固定为根路径, 并声明 `display_override` 与社交/通讯类目, 主题色与背景色对齐设计令牌。
+- [浏览器监控 SDK](./yukino-sentry)仅在开发环境初始化(projectId `yukino-chat`, dsn 指向 `/api/log`), 并启用性能采集与录屏两个插件, 配合构建插件的本地 mock 上报端点闭环调试; 登录主体变化时同步用户 id 给 SDK。服务端另备一个轻量摄入端点供生产启用 SDK 时使用: `POST /log`(公开)把每批上报事件按一行 JSONL 追加进 `<SENTRY_LOG_DIR>/<YYYY-MM>/sentry.jsonl`, `HEAD /log` 供 SDK 探测服务恢复; 经 Nginx 边缘时 dsn 的 `/api` 前缀被代理剥掉, 高吞吐部署则应把 dsn 指向独立的 `@yukino.js/sentry` 摄入服务。生产构建使用隐藏式 source map(`sourcemap: "hidden"`), 并用自定义插件把映射文件挪出发布产物目录, 兼顾可反解与源码不外泄; 另有插件给样式与模块脚本注入高优先级抓取提示(`fetchpriority="high"`)。
 - 错误边界分两级: 根级组件边界(监控 SDK 的 React 边界)包裹整个应用, 路由级边界展示路由错误。
 
 ## 管理端与缓存看板
@@ -395,14 +402,14 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 
 ### 容器化部署
 
-仓库根提供一套可用的单镜像编排。根 `Dockerfile` 多阶段构建: `deps` 装全量依赖, `web-builder` 构建前端, `server-builder` 构建服务端, `prod-deps` 只装生产依赖, `app` 把服务端 `dist`、两套 Prisma schema 与 migrations、`prisma.config.ts` 以及前端构建产物(拷进 `./web`)组装成运行镜像, 再由前述 SPA 托管逻辑一并提供前后端, 单容器暴露 8000 端口。`docker-compose.yml` 编排 `postgres:17-alpine`、`redis:7-alpine` 与 app 三个服务: 数据库与缓存带健康检查, app 经 `depends_on` 条件等待二者就绪。容器入口 `docker/entrypoint.sh` 先跑 `prisma migrate deploy` 再 `exec node dist/index.js`, 因此建表在启动前自动完成; `DATABASE_PROVIDER` 决定迁移读取 `prisma/`(pg)还是 `prisma-sqlite/`(sqlite)。前端 API 源在构建期由 `VITE_API_URL`/`VITE_WS_URL` 烧入(默认 `http://localhost:8000`); 上传目录与 SQLite 数据文件分别落在 `app-static`、`app-data` 命名卷; Agent 配置可经 `YUKINO_AI_*` 环境变量提供, 也可把 `docker/yukino.config.example.yaml` 式的 `config.yaml` 只读挂到 `/root/.yukino/config.yaml`。
+仓库根提供一套前后端严格分离的双镜像编排。根 `Dockerfile` 只构建后端: `deps` 只装 server workspace 的依赖, `server-builder` 构建服务端, `prod-deps` 只装生产依赖, `app` 把服务端 `dist`、两套 Prisma schema 与 migrations、`prisma.config.ts` 组装成运行镜像, 不再包含任何前端构建产物。`docker/nginx.Dockerfile` 构建前端边缘镜像: 只装 client workspace 构建 Vite SPA(默认烧入 `VITE_API_URL=/api`, 即同源前缀), 产物拷进 `nginx:stable-alpine`, 配置由官方镜像的 envsubst 钩子从 `docker/nginx.conf.template` 渲染。Nginx 是唯一入口: 托管 SPA(`/assets/*` 一周 immutable 长缓存、`/sw.js` 强制再验、其余路径回落 `index.html`), 并把 `/api/*` 全量路径(HTTP、三条 WebSocket、`/api/static/*` 上传)剥前缀反代到后端, 带 `Upgrade` 头映射、小时级读写超时、关闭请求与响应缓冲, `client_max_body_size` 提到 100 MB 以容纳分块上传, 另开 gzip。`docker-compose.yml` 编排 `postgres:17-alpine`、`redis:7-alpine`、app 与 nginx 四个服务: 数据库与缓存带健康检查, app 经 `depends_on` 条件等待二者就绪并以 `GET /health` 做自身存活检查; app 不发布端口, 只有 nginx 暴露 `${HTTP_PORT:-8000}:80`, 后端上游可用 `YUKINO_API_UPSTREAM` 覆盖(默认 `app:8000`)。容器入口 `docker/entrypoint.sh` 先跑 `prisma migrate deploy` 再 `exec node dist/index.js`, 因此建表在启动前自动完成; `DATABASE_PROVIDER` 决定迁移读取 `prisma/`(pg)还是 `prisma-sqlite/`(sqlite)。上传目录、SQLite 数据文件与遥测日志分别落在 `app-static`、`app-data`、`app-logs` 三个命名卷; Agent 配置可经 `YUKINO_AI_*` 环境变量提供, 也可把 `docker/yukino.config.example.yaml` 式的 `config.yaml` 只读挂到 `/root/.yukino/config.yaml`。client 与 server 各提供 `.env.example` 供参考; 仓库另附 `docs/OPERATIONS.md` 运维手册, 覆盖裸机 systemd 部署、Nginx 配置、发布流程与回收策略。
 
 ### 已知约束
 
 | 约束             | 说明                                                                                                                                                                                                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 单实例           | 连接表、通话房间、消息串行链、Agent 运行时表、限流桶都在进程内存, 无跨实例总线                                                                                                                                                                                           |
-| 无 TLS           | 明文 HTTP/WS, 需前置网关终结                                                                                                                                                                                                                                             |
+| 无 TLS           | 后端与边缘容器均为明文 HTTP, TLS 需在 Nginx 之前终结(模板只监听 80 端口); 且 `getUserMedia` 与 Web Crypto 都要求安全上下文, 非 HTTPS 页面上音视频通话与分块上传哈希不可用(客户端与 worker 均有显式报错)                                                                  |
 | 改密无验证       | 免鉴权按手机号重置, 只有按 IP 限流, 公网暴露前必须加验证                                                                                                                                                                                                                 |
 | 无 STUN/TURN     | WebRTC 跨 NAT 打不通                                                                                                                                                                                                                                                     |
 | 外部依赖自备     | PostgreSQL 与 Redis 由部署方提供(compose 已内置两者); 选 SQLite 后端则无需外部数据库, Redis 为空时降级进程内存                                                                                                                                                           |

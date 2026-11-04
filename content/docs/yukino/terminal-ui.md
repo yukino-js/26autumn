@@ -2,7 +2,7 @@
 title: "Terminal UI"
 description: "交互式 TUI: 主屏原生滚动加实时帧的渲染模型、stdin 过滤、输入框 (粘贴折叠、剪贴板图片、补全菜单)、快捷键、用户 Bash、Agents 列表、prompt 历史与退出摘要"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 交互式 TUI: React 19 + Ink 7 渲染的单窗格终端界面 (src/ui/)。入口是 `runUiMode()` (src/main.tsx): 装好终端输出层和 stdin 过滤层后, 用 Ink 的 `render()` 挂载 App 组件 (src/ui/app.tsx, `exitOnCtrlC: false`, 键盘语义全部自管)。流式回复、工具卡片、权限对话框、用户 Bash、slash 命令、Agents 列表都发生在这一屏里
@@ -26,7 +26,7 @@ Yukino 使用终端的**主屏**, 不进 alternate screen, 启动时主动写 `\
 - **transcript identity 变化即整体重印**: identity 是 `<sessionId>-<revision>-<expanded>`, Ctrl+O (切换 expanded)、/resume、/rewind (递增 revision) 都会改变它 —— 此时清屏 (含 scrollback) 按新状态重放全部历史; 普通重绘永远保留 scrollback
 - **resize 只重绘实时帧**: 终端变宽/变高时擦掉帧自身那几行、按新高度重画; 已打印的历史保留原换行, 走终端自己的 reflow, 不为更宽的终端重建或拉伸
 - **流式文本增量进历史**: 流超过 2048 字符后, `stableStreamingPrefix()` 把已完成的 Markdown 前置块提交进 scrollback (保留最后一块可编辑, 后续 delta 还能续写列表/表格/围栏代码), 其余在轮次结束时提交
-- **主题检测**: config 的 `theme` 为 auto 时, 先看 `COLORFGBG` 环境变量, 再向终端发 `CSI ?996n` 和 OSC 11 背景色查询 (100 ms 超时, 无应答按 dark), 按背景色亮度选 light/dark 调色板
+- **主题检测**: config 的 `theme` 为 auto 时, 先看 `COLORFGBG` 环境变量, 再向终端发 `CSI ?996n` 和 OSC 11 背景色查询 (100 ms 超时, 无应答按 dark), 按背景色亮度选 light/dark 调色板。终端与浏览器 UI 共用同一套官方 Catppuccin 调色板 (src/theme/palettes.js): dark 用 Mocha、light 用 Latte, Teal 为共同强调色, 语法高亮、diff、thinking 级别、工具状态与消息表面都从同一套色板取色
 
 ## stdin 过滤
 

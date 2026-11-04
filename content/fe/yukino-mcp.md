@@ -2,7 +2,7 @@
 title: "Yukino 官方 MCP: 一个进程内的工具集合服务器"
 description: "把本地 RAG 文档检索、MCP Apps 交互式 UI、gh CLI 与 PostgreSQL/MySQL/ClickHouse/Redis/MongoDB/Prometheus/Grafana/MinIO/etcd/Milvus/Kafka 十一类数据后端收敛成 15 个 MCP 工具, 用 stdio 与无状态 Streamable HTTP 双传输对外暴露, 并以进程级单例承载向量索引与连接生命周期。"
 local_path: "$HOME/github/yukino-code/apps/mcp"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 本文拆解 Yukino 官方 MCP 服务器(`@yukino.js/mcp`): 它把一组彼此独立的能力——本地知识库的语义检索、可交互的单文件 HTML 应用、任意 `gh` 命令、以及十一种数据/消息/可观测后端——统一封装成 MCP 工具, 通过 stdio 或 HTTP 暴露给 Yukino CLI 及任何 MCP 宿主。内容以功能、实现思路与适用场景为主线, 覆盖传输层、工具模块契约、RAG 检索链路、MCP Apps UI 生成、数据库与中间件工具面与配置体系。适合正在搭建 MCP 服务器、关心工具注册与进程内状态管理的工程师阅读。

@@ -2,7 +2,7 @@
 title: "Code Review"
 description: "Code Review: 收敛为一条 `/review` slash command 加一个内置 `review` subagent 角色, 审查 agent 用 gh CLI 拉取 PR 详情与 diff、用常规只读工具读代码与项目指令, 发现以文字直接返回当前会话供主 agent 继续动作"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 Code Review 在 Yukino 中不是独立子系统: 一条 `/review` slash command + 一个内置的 `review` subagent 角色。审查 agent 用 `gh` CLI 拉取 PR 详情和 diff, 用常规只读工具读代码和项目指令, 最后把发现以文字形式直接返回当前会话, 主 agent 下一轮可以基于发现继续动作 (比如直接按发现修复)
@@ -92,7 +92,7 @@ review 的「只读」由三层约束合成:
 - 全局层 (`filterToolsForAgent`, src/subagent/tool-filter.ts): 剥掉 `MAIN_AGENT_ONLY_TOOLS` (Workflow、ComputerUse、AskUserQuestion、EnterPlanMode、ExitPlanMode、Goal) 和委派策略工具 (Agent、TeamCreate、TeamDelete、SendMessage) — review 不能递归 spawn、不能编排 Workflow、不能反问用户
 - 提示词层: 角色描述和 `/review` 提示词都禁止修改文件、禁止发布 review
 
-`/review` 路径下 review 同步前台运行 (`isAsync` 为 false), 不经后台异步白名单 (`ASYNC_AGENT_ALLOWED_TOOLS`) 过滤; 过滤后剩下的可用工具为 Bash / PowerShell (跑 gh)、ReadFile、Grep、Glob、LSP、WebFetch、TodoWrite、TaskOutput、TaskStop、LoadSkill、ToolSearch、McpCall、SyntheticOutput、TeamList、EnterWorktree / ExitWorktree (终端 UI 宿主还注册了 InstallSkill), 以及全部已注册的 `mcp__*` MCP 工具
+`/review` 路径下 review 同步前台运行 (`isAsync` 为 false), 不经后台异步白名单 (`ASYNC_AGENT_ALLOWED_TOOLS`) 过滤; 过滤后剩下的可用工具为 Bash / PowerShell (跑 gh)、ReadFile、Grep、Glob、WebFetch、TodoWrite、TaskOutput、TaskStop、LoadSkill、ToolSearch、McpCall、SyntheticOutput、TeamList、EnterWorktree / ExitWorktree (终端 UI 宿主还注册了 InstallSkill), 以及全部已注册的 `mcp__*` MCP 工具
 
 review 不设 `maxTurns`, 角色没有默认轮数上限 (`maxIterations` 仅在定义显式配置时生效)
 

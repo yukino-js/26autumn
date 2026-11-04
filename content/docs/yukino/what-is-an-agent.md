@@ -2,7 +2,7 @@
 title: "What is an Agent"
 description: "agent 的概念拆解与 Yukino 的形态: provider 配置与三协议客户端、核心循环、五层架构、四种运行模式、内置工具分组与 agent 驱动开发的一等公民制品"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 agent 是 LLM 在循环中根据环境反馈自主使用工具的系统。拆开这句话:
@@ -67,7 +67,6 @@ API key 取 provider 的 `api_key` 字段, 缺省时回落到环境变量 (`anth
 - **文件**: `ReadFile` `WriteFile` `EditFile` `Glob` `Grep`
 - **执行**: `Bash` `PowerShell`, 长任务可转后台, `TaskOutput` 取后台任务输出
 - **网络**: `WebFetch` 抓取网页
-- **代码智能**: `LSP` (语言服务器诊断、引用等)
 - **规划与任务**: `EnterPlanMode` / `ExitPlanMode` (plan 模式只读, 方案经审批后执行)、`Goal` (持久目标)、`TodoWrite` (任务清单, 团队模式下换用共享任务板版本)
 - **多 agent**: `Agent` (派生 subagent / teammate)、`Workflow` (脚本编排)、`TeamCreate` / `TeamList` / `SendMessage` / `TeamDelete` / `TaskStop`
 - **上下文与扩展**: `ToolSearch` / `McpCall` (按需发现和调用 MCP 工具)、`LoadSkill` / `InstallSkill`、`AskUserQuestion`、`EnterWorktree` / `ExitWorktree` (git worktree 隔离)、`ComputerUse`、`SyntheticOutput`
@@ -75,7 +74,7 @@ API key 取 provider 的 `api_key` 字段, 缺省时回落到环境变量 (`anth
 ## 文档地图
 
 - 核心循环: [react-and-agent-loop](./react-and-agent-loop) (ReAct 范式与循环机制)、[llm](./llm) (三种协议的封装)、[function-calling](./function-calling) (工具抽象与内置工具)、[system-prompt](./system-prompt) (prompt 工程)
-- 扩展能力: [mcp](./mcp) (动态工具接入)、[hook](./hook) (生命周期事件)、[skills](./skills) (可移植 SOP)、[slash-command](./slash-command) (命令系统)、[lsp](./lsp) (语言服务器集成)
+- 扩展能力: [mcp](./mcp) (动态工具接入)、[hook](./hook) (生命周期事件)、[skills](./skills) (可移植 SOP)、[slash-command](./slash-command) (命令系统)
 - 记忆与上下文: [context-compaction](./context-compaction) (自动与手动压缩)、[agents-md-and-memory](./agents-md-and-memory) (AGENTS.md 指令文件、会话持久化、自动记忆、文件历史)
 - 任务与目标: [task-tracking](./task-tracking) (任务板与后台任务)、[goal](./goal) (持久目标与自动续跑)、[workflow](./workflow) (脚本编排多 subagent)
 - 多 agent: [subagent](./subagent) (主从委派)、[agent-team](./agent-team) (团队协作与 coordinator 模式)、[worktree](./worktree) (文件系统隔离)

@@ -2,7 +2,7 @@
 title: "Agent Team"
 description: "Agent Team 网状多代理协作: 多个 team 可并存, 协作工具经 team_name 选择目标 team; 每个 teammate 是有独立上下文窗口的 agent 实例, 协调建立在共享任务板 (tasks.json) 与文件邮箱 (inboxes/) 之上, 邮件以文件加轮询投递, 突破 subagent 星型拓扑不能互通的限制; 覆盖团队解析与隔离、SendMessage/TodoWrite/TaskStop、plan 审批与 Coordinator 模式"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 ## Why

@@ -2,7 +2,7 @@
 title: "Worktree"
 description: "worktree 子系统: 用 git worktree 给每个并发工作单元一份独立检出, 覆盖路径与分支格式、创建与 HEAD 读取、创建后准备、进入/退出、变更检测与删除安全闸"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 worktree 子系统 (src/worktree/) 用 git worktree 给每个并发工作单元一份独立的检出: 独立的目录、独立的分支, 并发的文件修改互不覆盖, 产出落在各自的分支上, 是否合并由主 agent 决定

@@ -2,7 +2,7 @@
 title: "Remote"
 description: "Remote 模式: Express + 同端口 WebSocket 桥把 Yukino 变成本地 Web 服务, 浏览器 React 前端对齐终端 UI 功能; 覆盖 127.0.0.1:18888 默认地址, token + 同源 WS 接入控制, 18 种入站 / 44 种出站消息协议, 请求生命周期与心跳, 前端组件与离线队列, 优雅关闭"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 Remote 模式把 Yukino 变成一个本地 Web 服务: Express HTTP 服务器 + 同端口的 WebSocket 桥, 浏览器打开一个 React 前端, 得到与终端 UI 功能对齐的聊天界面 —— 流式回复、工具执行卡片、权限对话框、plan 审批、slash 命令、模型/provider 切换都在这里发生
@@ -21,7 +21,7 @@ yukino --remote 0                # OS 分配端口, 实际地址打印到 stderr
 - 地址由 `parseRemoteAddress` (src/remote/address.ts) 解析: 纯数字按端口处理 (`"9000"` 等价于 `":9000"`), 也接受 `host:port` 和 `[IPv6]:port`; host 缺省回落 `127.0.0.1`, 即默认只绑定 loopback, 绑定非 loopback 地址必须显式写 host; 缺省端口 18888, 合法范围 0-65535
 - 端口 `0` 时由 OS 选空闲端口, listen 成功后把实际地址写到 stderr: `Remote server listening at http://127.0.0.1:<port>/#token=<accessToken>` (与 --a2a 的约定一致, 走 stderr 是为了不污染 stdout 上的 JSONL 日志流)
 - HTTP 侧由 Express 托管打包好的浏览器前端 (src/remote/browser 单独构建, `pnpm build:browser`, 发布时随 CLI dist 一起打包), 另有 `/health` 探针返回 `{ status, remote, clients }`; 未命中的路径回退 `index.html` 支撑 SPA 路由; WebSocket 挂在同端口的 `/ws` 路径
-- 配置装载与终端一致: `loadConfig` 允许空 provider 启动 (失败留到运行时暴露), 项目级 MCP 配置合并、hooks、sandbox、coordinator、fork、`enable_memory` 等开关全部透传给 `RemoteServer`
+- 配置装载与终端一致: `loadConfig` 允许空 provider 启动 (失败留到运行时暴露), 项目级 MCP 配置合并、hooks、sandbox、coordinator、`enable_memory` 等开关全部透传给 `RemoteServer`
 
 ### WS 接入控制
 
@@ -43,7 +43,7 @@ RemoteServer (Express + ws)
    v
 RemoteAgentHandle (封装全部 agent 状态)
    ├── LLMClient (模型 / provider 运行时可切换)
-   ├── ToolRegistry (19 个基础工具 + LoadSkill + teams + Agent + Workflow + MCP)
+   ├── ToolRegistry (18 个基础工具 + LoadSkill + teams + Agent + Workflow + MCP)
    ├── ConversationManager + 会话持久化 (session JSONL)
    ├── FileHistory (rewind 快照) + TaskList (共享任务板)
    ├── PermissionChecker (权限请求转发到浏览器)
@@ -54,7 +54,7 @@ RemoteAgentHandle (封装全部 agent 状态)
 - agent 装配有懒创建兜底: `run()` 启动时先尝试 `createRemoteAgent`, 失败 (例如 provider 未配置) 只记一条警告, 推迟到第一条消息经 `ensureAgent()` 重试, 初始化去重靠共享的 init Promise, 失败会给所有客户端广播 `error`
 - 与 [terminal-ui](./terminal-ui) 共享同一套 Agent 循环和会话文件: remote 会话写入同样的 session JSONL, 既能被 CLI `--resume` 恢复, 也能在浏览器里用 `/resume` 选择器恢复 (最多列 50 条)
 - 记忆的后台整理 (consolidation) 在 remote 和交互式 UI 都会运行, 同一套 `MemoryConsolidator` 门槛: 距上次整理 ≥ 24h、会话数 ≥ 5、文件锁互斥
-- 工具装配: `createToolRegistry` 以交互模式给出 19 个基础工具 (见 [function-calling](./function-calling)), remote 再注册 LoadSkill、AskUserQuestion、TeamCreate、SendMessage、TeamDelete、TeamList、TaskStop、SyntheticOutput、Agent、Workflow (`attachWorkflow`) 和 MCP 工具包装; 与终端 UI 的差异是 remote 不注册 InstallSkill
+- 工具装配: `createToolRegistry` 以交互模式给出 18 个基础工具 (见 [function-calling](./function-calling)), remote 再注册 LoadSkill、AskUserQuestion、TeamCreate、SendMessage、TeamDelete、TeamList、TaskStop、SyntheticOutput、Agent、Workflow (`attachWorkflow`) 和 MCP 工具包装; 与终端 UI 的差异是 remote 不注册 InstallSkill
 - skills 同时被接成 slash 命令: inline 模式注册为 `prompt` 类型, fork 模式注册为 `skill_fork` 类型 (隔离 subagent 里执行)
 
 ## WebSocket 协议

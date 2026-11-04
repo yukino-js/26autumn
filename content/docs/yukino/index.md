@@ -1,12 +1,12 @@
 ---
 title: "Yukino Code"
 overview: true
-description: "yukino 栏目: 终端 Coding Agent Yukino Code (npm 包 @yukino.js/yukino) 源码解析, 覆盖 ReAct 主循环与事件流、LLM 三协议接入、工具调用与 MCP、system prompt 与上下文压缩、权限/沙箱/Hook、AGENTS.md 与三层记忆、Skill 与 Slash Command、Subagent/Agent Team/Workflow/Worktree/Goal 多代理协作、TUI/Print/Remote/A2A 宿主形态, 以及 LSP、遥测、任务跟踪与代码评审"
+description: "yukino 栏目: 终端 Coding Agent Yukino Code (npm 包 @yukino.js/yukino) 源码解析, 覆盖 ReAct 主循环与事件流、LLM 三协议接入、工具调用与 MCP、system prompt 与上下文压缩、权限/沙箱/Hook、AGENTS.md 与三层记忆、Skill 与 Slash Command、Subagent/Agent Team/Workflow/Worktree/Goal 多代理协作、TUI/Print/Remote/A2A 宿主形态, 以及遥测、任务跟踪与代码评审"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
-yukino-code 仓库 `apps/yukino` (Yukino Code, npm 包 `@yukino.js/yukino`, Node >= 20) 的系统性源码笔记, 共 28 个页面 (含本落地页). CLI 用 React 19 + Ink 7 渲染单窗格终端界面, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环; 全部文档以该仓库源码为唯一事实依据. 总览篇见 [what-is-an-agent](./what-is-an-agent) 与 [yukino-code](./yukino-code), 其余页面按子系统拆分, 顺序与侧边栏一致.
+yukino-code 仓库 `apps/yukino` (Yukino Code, npm 包 `@yukino.js/yukino`, Node >= 20) 的系统性源码笔记, 共 27 个页面 (含本落地页). CLI 用 React 19 + Ink 7 渲染单窗格终端界面, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环; 全部文档以该仓库源码为唯一事实依据. 总览篇见 [what-is-an-agent](./what-is-an-agent) 与 [yukino-code](./yukino-code), 其余页面按子系统拆分, 顺序与侧边栏一致.
 
 | 页面                                           | 内容概要                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -19,7 +19,6 @@ yukino-code 仓库 `apps/yukino` (Yukino Code, npm 包 `@yukino.js/yukino`, Node
 | [goal](./goal)                                 | 持久目标 (Persistent Goal): GoalManager 状态机、/goal 命令与 Goal 工具三件套, 让 agent 跨轮次、跨用户消息朝一个目标自动推进 — 循环退出前先问是否续跑, 直到完成、受阻或预算耗尽                                                                                                                                                             |
 | [hook](./hook)                                 | Hook: 在生命周期事件上挂载自动化动作 (事件/条件/动作三要素) — 写文件后自动 format、危险命令执行前拦截、会话开始时注入项目约定; 配置只来自 `~/.yukino/config.yaml` 顶层 hooks 数组                                                                                                                                                          |
 | [llm](./llm)                                   | LLM 接入层 (src/llm/): 把对话历史翻译成 Anthropic / OpenAI Responses / OpenAI Chat Completions 三种协议的 API 请求, 把 SSE 流统一映射成 StreamEvent; 覆盖思考强度映射, token 计费与 prompt cache 打点, 消息构建与配对修复, 错误分类重试, 模型发现与 ConversationManager                                                                    |
-| [lsp](./lsp)                                   | LSP 集成: 只读 stdio JSON-RPC 客户端与 LSP 工具给 agent 11 种语义级查询 (定义, 引用, 调用层级, 诊断等); 覆盖 lsp_servers 配置与校验, 握手与超时, 文档同步与 LRU 缓存, pull/push 诊断模型, 1-based 输入 / 0-based 返回约定与只读保证                                                                                                        |
 | [mcp](./mcp)                                   | MCP 接入: JSON-RPC 2.0 协议与 stdio / streamable http / sse 传输, MCPClient / MCPManager 生命周期, 用户级与项目级配置与环境变量展开, mcp__ 命名与权限匹配, eager / native / dispatch 三种延迟加载模式, ToolSearch / McpCall, server instructions 公告与 remote 模式的 MCP Apps                                                             |
 | [permission](./permission)                     | 权限系统: 对每次工具调用回答 allow / ask / deny, 多层短路判定 — plan 守卫, 显式规则, 协调工具, 安全命令白名单, shell 结构分析, 路径沙箱, OS 沙箱自动放行, 模式矩阵; 覆盖规则文件语法与裁决优先级, remember scope 持久化与人在回路审批                                                                                                      |
 | [print-mode](./print-mode)                     | Print 模式 (-p): 非交互一次性执行, 自组装完整运行时并消费 agent.run() 事件流; 覆盖旗标解析, slash command 特判, 与交互模式的差异 (bypassPermissions, 无 hook/skill), 工具集装配, text / stream-json 输出, 退出码与清理, SyntheticOutput 结构化交付                                                                                         |

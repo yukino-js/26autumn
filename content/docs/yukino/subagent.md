@@ -2,7 +2,7 @@
 title: "Subagent"
 description: "Yukino 的委派子系统: Agent 工具把有界子任务交给独立的 agent loop 执行, 覆盖参数与校验、角色定义、fork 上下文继承、五层工具过滤、后台异步任务, 以及 teammate 的多团队选择语义"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 一个大的重构任务中, 想插入一个小的「更新 README.md」任务: 直接在主对话里执行, 会把大量无关的工具调用和中间输出混进主 Agent 的上下文 (上下文污染)。Subagent 把这类有界子任务委派给独立的 agent loop 执行: 独立的上下文窗口、独立的工具集和权限边界, 只把一份简洁结果交回主 agent
@@ -45,7 +45,7 @@ export interface Tool {
   "kind": "teammate", // 可选, "teammate" (默认, 所选团队的持久成员, 没有团队则自动创建) | "subagent" (一次性, 只返回工具结果)
   "team_name": "", // 可选, 仅对 kind="teammate" 有意义: 要加入的团队名 (TeamCreate/TeamList 的返回值); 只有一个团队时可省略, 多团队时必填
   "subagent_type": "general-purpose", // 可选, 枚举值来自已加载的 agent 定义, 缺省 general-purpose
-  "fork": true, // 可选, true 复制父对话快照作为初始上下文 / false 全新对话; 缺省取会话配置 enable_fork (未显式 false 时为 true)
+  "fork": true, // 可选, true 复制父对话快照作为初始上下文 / false 全新对话; 缺省 true
   "model": "", // 可选, 覆盖本次运行的模型
   "run_in_background": false, // 可选, 仅对 kind="subagent" 有意义: 异步执行, 立即返回 task ID
   "worktree": false, // 可选, true 时在独立 git worktree 中运行, 编辑不与父/其他并行 agent 冲突; 缺省取定义中的 worktree 字段
@@ -68,7 +68,7 @@ export interface Tool {
 ## 角色与初始上下文: 两个独立维度
 
 - 角色由 `subagent_type` 决定 (缺省 general-purpose), 决定工具/权限/模型约束
-- 初始上下文由 `fork` 决定 (缺省取 `enable_fork` 配置, 未显式 false 时为 true): `fork: true` 复制父对话快照, `fork: false` 全新对话
+- 初始上下文由 `fork` 决定 (缺省 true): `fork: true` 复制父对话快照, `fork: false` 全新对话
 - 两者正交: `subagent_type: "plan", fork: true` 是「plan 角色 + 继承上下文」, `subagent_type: "plan", fork: false` 是「plan 角色 + 全新上下文」; 其余角色同理
 - 角色的工具限制和 max_turns 对 fork=true 和 fork=false 一视同仁
 - fork 复制的永远是主对话的当前快照, 不会「恢复」某个之前 subagent 的私有对话
@@ -227,7 +227,7 @@ subagent loop 和主 agent loop 是同一个 Agent 类, 区别在装配:
    - MAIN_AGENT_ONLY_TOOLS: Workflow (防递归编排)、ComputerUse (独占物理屏幕/键鼠)、AskUserQuestion (独占模态对话框, 并行 subagent 会互相劫持)、EnterPlanMode、ExitPlanMode (需要主线程审批对话框)、Goal (持久目标是会话级状态); 所有委派 agent (fork 和定义式) 都剥离
    - SUBAGENT_EXTRA_TOOLS: Agent (递归 spawn, 调用树在 subagent 层终止)、TeamCreate、TeamDelete (只有 leader 管理 team)、SendMessage (委派 agent 不继承 leader 的通信权限)
    - 例外: `ExitPlanMode` 在权限模式为 plan 时保留 (plan teammate 靠它提交计划), 但仍可被定义的 disallowedTools 剥掉 —— 内置 plan/explore/review 角色正是这么做的
-3. 后台异步 subagent (`isAsync`) 再过白名单 `ASYNC_AGENT_ALLOWED_TOOLS` (18 个): TodoWrite, TaskOutput, TaskStop, LSP, ReadFile, WebFetch, Grep, Glob, Bash, PowerShell, EditFile, WriteFile, LoadSkill, SyntheticOutput, ToolSearch, EnterWorktree, ExitWorktree, McpCall —— 没有交互式工具, 后台任务不能阻塞等用户; ToolSearch 只读出 schema、实际调用靠 McpCall, 两者必须成对放行
+3. 后台异步 subagent (`isAsync`) 再过白名单 `ASYNC_AGENT_ALLOWED_TOOLS` (17 个): TodoWrite, TaskOutput, TaskStop, ReadFile, WebFetch, Grep, Glob, Bash, PowerShell, EditFile, WriteFile, LoadSkill, SyntheticOutput, ToolSearch, EnterWorktree, ExitWorktree, McpCall —— 没有交互式工具, 后台任务不能阻塞等用户; ToolSearch 只读出 schema、实际调用靠 McpCall, 两者必须成对放行
 4. 定义的 disallowedTools 黑名单
 5. 定义的 tools 白名单 (`["*"]` 关闭该层)
 

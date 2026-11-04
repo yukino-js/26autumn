@@ -2,7 +2,7 @@
 title: "工具调用"
 description: "工具调用 (function calling): LLM 负责决策、CLI 负责执行 — 覆盖协议本身、Tool 接口与 ToolRegistry、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 工具调用 (function calling) 是 Agent 的核心机制: LLM 负责决策, 请求调用工具; CLI 负责执行工具调用, 把结果回传给 LLM。本页覆盖协议本身、工具接口与注册表、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线。
@@ -154,7 +154,7 @@ export interface ToolResult {
 
 ## 内置工具一览
 
-`createToolRegistry` (src/bootstrap/tool-registry.ts) 注册的基础工具, 交互式宿主 19 个, 非交互宿主 18 个 (不含 EnterPlanMode):
+`createToolRegistry` (src/bootstrap/tool-registry.ts) 注册的基础工具, 交互式宿主 18 个, 非交互宿主 17 个 (不含 EnterPlanMode):
 
 | 工具                         | 分类    | 并发               | 场景                                                                                                   |
 | ---------------------------- | ------- | ------------------ | ------------------------------------------------------------------------------------------------------ |
@@ -166,7 +166,6 @@ export interface ToolResult {
 | Glob                         | read    | 是                 | 按模式查找文件名                                                                                       |
 | Grep                         | read    | 是                 | 按正则查找文件内容                                                                                     |
 | WebFetch                     | read    | 是                 | 抓取 URL 转 Markdown                                                                                   |
-| LSP                          | read    | 是                 | 语言服务器语义查询 (见 [lsp](./lsp))                                                                   |
 | ComputerUse                  | command | 恒否               | 操作本机 GUI                                                                                           |
 | Goal                         | read    | 否                 | 持久目标的查询和进度/完成/受阻汇报 (见 [goal](./goal))                                                 |
 | TodoWrite                    | read    | 是                 | 任务板的原子增量读写 (见 [task-tracking](./task-tracking)); 有 team 时换成团队感知版 TeamTodoWriteTool |
@@ -273,7 +272,6 @@ src/tools/computer-use.ts, 操作本机 GUI: 截图、点击、输入、滚动�
 
 ### 其他基础工具
 
-- LSP (src/tools/lsp.ts): operation 取 definition、references、hover、documentSymbol、workspaceSymbol、implementation、typeDefinition、prepareCallHierarchy、incomingCalls、outgoingCalls、diagnostics; 行/列是 1-based UTF-16 输入, 返回 LSP 标准的 0-based 范围; 详见 [lsp](./lsp)
 - Goal (src/tools/goal.ts): `action` 取 get/update, update 必须带 status (in_progress/complete/blocked) 和 reason; 详见 [goal](./goal)
 - TodoWrite (src/todo/tools.ts): schema 由 zod 定义转 JSON Schema, 输出 boardId + todos + 进度标签; 详见 [task-tracking](./task-tracking)
 - TaskOutput (src/tools/task-output.ts): `task_id` 必填, `wait` 可选等待一次, `timeout_ms` 默认 30000、上限 60000; 返回 JSON 化的任务快照 (status/output/error/transcript_path 等), 不消耗完成通知; 与 TodoWrite 的任务板是两套 ID
@@ -287,7 +285,7 @@ src/tools/computer-use.ts, 操作本机 GUI: 截图、点击、输入、滚动�
 
 ## 工具注册的装配
 
-`createToolRegistry(taskList, options)` 的注册顺序: Goal、TodoWrite (有 teamManager 时换成 TeamTodoWriteTool)、TaskOutput、LSP、Bash、PowerShell、ComputerUse、EditFile、EnterPlanMode (条件注册)、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。options 包括 `enableModelPlanMode`、`interactionMode` ("interactive" / "non-interactive")、`lspServers`、`teamManager`。
+`createToolRegistry(taskList, options)` 的注册顺序: Goal、TodoWrite (有 teamManager 时换成 TeamTodoWriteTool)、TaskOutput、Bash、PowerShell、ComputerUse、EditFile、EnterPlanMode (条件注册)、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。options 包括 `enableModelPlanMode`、`interactionMode` ("interactive" / "non-interactive")、`teamManager`。
 
 宿主在基础注册之上的差异:
 

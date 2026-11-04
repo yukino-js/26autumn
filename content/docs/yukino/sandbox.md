@@ -2,7 +2,7 @@
 title: "Sandbox"
 description: "OS 级沙箱: Bash 命令放进 macOS seatbelt / Linux bubblewrap 隔离执行, 文件系统写入收敛到允许目录, 网络可整体关闭; 覆盖 sandbox 配置与 /sandbox 切换, Sandbox 接口, SBPL profile 生成与注入防护, bwrap 挂载顺序, BashTool 集成, worktree 联动与 auto_allow 免确认"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 OS 级沙箱: 把 Bash 命令放进操作系统提供的隔离环境执行, 文件系统写入被收敛到允许的目录内, 网络可以整体关闭
@@ -192,7 +192,7 @@ PermissionChecker 提供两个方法把 worktree 隔离 (见 [worktree](./worktr
 
 ## auto_allow: 沙箱换确认
 
-沙箱生效后, Bash 命令的写破坏半径已经被 OS 限制, 权限层增加一道沙箱自动放行 (`checkAction` 的 Layer 3.5, src/permissions/index.ts):
+沙箱生效后, Bash 命令的写破坏半径已经被 OS 限制, 权限层增加一道沙箱自动放行 (`checkAction`, src/permissions/index.ts):
 
 ```ts
 if (this.sandboxEnabled && this.sandboxAutoAllow && toolName === "Bash") {
@@ -204,8 +204,8 @@ if (this.sandboxEnabled && this.sandboxAutoAllow && toolName === "Bash") {
 
 - 显式规则最先评估: 命中 deny / ask 规则的命令在这一层之前就被拦下, 沙箱不能覆盖显式规则; Bash 的复合命令在规则评估阶段就按 `;`、`|`、`&`、`&&`、`||`、换行拆成子命令逐条匹配 (deny / ask 规则还额外匹配可执行名 basename 归一化的形式)
 - 安全只读命令 (`isSafeCommand`) 本来就在更前面的层放行, auto_allow 免确认的是「非只读但没有规则命中」的命令
-- 危险命令拦截、空命令 ask 也都在前面
-- `analyzeShell` 判定「不完整」的命令 (含 `$` 展开、反引号、命令替换、重定向、未闭合引号等无法按字面分解的语法) 会先落入 ask (reason: `Complex shell syntax requires approval`) — 展开后的真实效果无法靠字面授权, 沙箱模式也不例外; 因此 auto_allow 实际放行的是可字面分解的非危险命令
+- 空命令 ask 也在前面
+- `analyzeShell` 判定「不完整」的命令 (含 `$` 展开、反引号、命令替换、重定向、未闭合引号等无法按字面分解的语法) 会先落入 ask (reason: `Complex shell syntax requires approval`) — 展开后的真实效果无法靠字面授权, 沙箱模式也不例外; 因此 auto_allow 实际放行的是可字面分解的命令
 
 只有 Bash 享受这一层: PowerShell 等其他 command 工具不会被 OS 沙箱包裹, `toolName === "Bash"` 的条件把它们排除在外
 

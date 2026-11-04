@@ -2,7 +2,7 @@
 title: "Permission"
 description: "权限系统: 对每次工具调用回答 allow / ask / deny, 多层短路判定 — plan 守卫, 显式规则, 协调工具, 安全命令白名单, shell 结构分析, 路径沙箱, OS 沙箱自动放行, 模式矩阵; 覆盖规则文件语法与裁决优先级, remember scope 持久化与人在回路审批"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 LLM 生成的每一次工具调用都是一次真实世界的动作: 执行命令、改写文件、发起网络请求。权限系统回答一个问题 — 这次调用应该直接放行 (allow)、停下来问人 (ask), 还是直接拒绝 (deny)。它要同时抵御三类攻击面:
@@ -29,7 +29,7 @@ export interface Decision {
 - `reason` 是判定的可读解释, 会展示在确认对话框里, 也拼进 deny 时返回给 LLM 的工具结果
 - `rememberPatterns` 是「始终允许」时可以持久化的规则 scope 列表
 
-`category` 不是 checker 猜的, 而是每个工具注册时声明的 `ToolCategory` (src/tools/types.ts): `read` / `write` / `command` 三类。代表性归属: ReadFile / Glob / Grep / WebFetch / LSP / TaskOutput / AskUserQuestion 是 `read`; WriteFile / EditFile / InstallSkill / EnterWorktree 是 `write`; Bash / PowerShell / ComputerUse / McpCall / Workflow / Agent 是 `command`。分类决定了模式矩阵兜底时的默认行为, 也决定路径沙箱是否介入 (只对 `write` 介入)。
+`category` 不是 checker 猜的, 而是每个工具注册时声明的 `ToolCategory` (src/tools/types.ts): `read` / `write` / `command` 三类。代表性归属: ReadFile / Glob / Grep / WebFetch / TaskOutput / AskUserQuestion 是 `read`; WriteFile / EditFile / InstallSkill / EnterWorktree 是 `write`; Bash / PowerShell / ComputerUse / McpCall / Workflow / Agent 是 `command`。分类决定了模式矩阵兜底时的默认行为, 也决定路径沙箱是否介入 (只对 `write` 介入)。
 
 `check` 内部包了一层 fail-closed: 私有方法 `checkAction` 抛出任何异常 (典型是路径解析失败), `check` 捕获后返回 `deny`, reason 为 `Permission path resolution failed: ...` — 判定链路出错时宁可拒绝也不放行。
 
@@ -43,13 +43,12 @@ export interface Decision {
 4. **teammate 协调工具放行**: checker 标记 `teammate = true` 时, `TEAMMATE_COORDINATION_TOOLS` (SendMessage、TodoWrite) 直接 allow — teammate 无人值守, 没有审批通道, 不能让团队内部的消息和共享任务板落入 ask
 5. **plan 文件写例外**: plan 模式下 WriteFile / EditFile 的目标正是当前 plan 文件 (`checker.planFilePath`, 规范化后的绝对路径相等) 时直接 allow — 这是 plan 模式下唯一的写例外, 让模型可以起草和修订计划
 6. **安全只读命令放行**: `command` 类工具命中 `isSafeCommand` 时直接 allow (reason: `Safe read-only command`), 见 [安全只读命令白名单](#安全只读命令白名单)
-7. **危险命令拦截 (预留)**: `detectDangerous` 遍历 `DANGEROUS_PATTERNS`, 命中返回 deny。当前该数组**有意为空**, 这一层保持惰性直到填入具体模式
-8. **空命令拦截**: Bash / PowerShell 的命令体为空 → ask (reason: `Approval requires a non-empty Bash command or PowerShell command`)
-9. **复杂 shell 语法审批**: `analyzeShell` 判定命令 "不完整" (含变量展开、命令替换、重定向、控制结构等无法按字面分解的语法) 且非 bypassPermissions 模式 → ask (reason: `Complex shell syntax requires approval`), 见 [shell 结构分析](#shell-结构分析)
-10. **沙箱自动放行**: OS 沙箱开启 (`sandboxEnabled`) 且 `auto_allow: true` 且工具是 Bash → allow (reason: `Sandbox auto-allow: OS sandbox active`)。只有 Bash 会被 OS 沙箱包裹, PowerShell 等其他 command 工具不享受这一层
-11. **路径沙箱 (仅 write 类)**: write 类工具的路径越出允许的根目录 → ask; bypassPermissions 跳过; 显式 allow 规则可覆盖。见 [路径沙箱](#路径沙箱-仅-write)
-12. **规则再评估**: 第 2 层记录的显式 allow 在这里生效返回
-13. **权限模式矩阵兜底**: `modeDecide(mode, category)` 给出最终决策 (reason: `Mode: <mode>`), 见 [权限模式](#权限模式)
+7. **空命令拦截**: Bash / PowerShell 的命令体为空 → ask (reason: `Approval requires a non-empty Bash command or PowerShell command`)
+8. **复杂 shell 语法审批**: `analyzeShell` 判定命令 "不完整" (含变量展开、命令替换、重定向、控制结构等无法按字面分解的语法) 且非 bypassPermissions 模式 → ask (reason: `Complex shell syntax requires approval`), 见 [shell 结构分析](#shell-结构分析)
+9. **沙箱自动放行**: OS 沙箱开启 (`sandboxEnabled`) 且 `auto_allow: true` 且工具是 Bash → allow (reason: `Sandbox auto-allow: OS sandbox active`)。只有 Bash 会被 OS 沙箱包裹, PowerShell 等其他 command 工具不享受这一层
+10. **路径沙箱 (仅 write 类)**: write 类工具的路径越出允许的根目录 → ask; bypassPermissions 跳过; 显式 allow 规则可覆盖。见 [路径沙箱](#路径沙箱-仅-write)
+11. **规则再评估**: 第 2 层记录的显式 allow 在这里生效返回
+12. **权限模式矩阵兜底**: `modeDecide(mode, category)` 给出最终决策 (reason: `Mode: <mode>`), 见 [权限模式](#权限模式)
 
 在 agent loop 一侧 (src/agent/index.ts 的 `executeBatch`), 权限判定之前还有两道闸门:
 
@@ -68,7 +67,7 @@ export interface Decision {
 | bypassPermissions | Allow           | Allow          | Allow              |
 
 - plan 模式下 write / command 的 Deny 来自判定流程第 1 层的守卫, 早于矩阵本身; 同时 agent loop 每轮注入 plan 模式 system-reminder (`buildPlanModeReminder`, "# Plan mode / Do not run mutating tools, change configs, or commit."), 从提示词侧约束模型只读。plan 模式和 default 模式的差别不在 ask 的多少, 而是 plan 直接 deny 变更
-- bypassPermissions 在权限层放行一切; 对危险命令的防护来自权限规则 (deny)、pre_tool_use hook 的 reject 和 OS 沙箱, 而不是模式本身。源码中 `DANGEROUS_PATTERNS` 是有意为空的数组, 没有 `rm -rf` 之类的硬编码拦截
+- bypassPermissions 在权限层放行一切; 对危险命令的防护来自权限规则 (deny)、pre_tool_use hook 的 reject 和 OS 沙箱, 而不是模式本身。源码里没有 `rm -rf` 之类的硬编码危险命令拦截
 
 ### 模式的切换与继承
 
@@ -117,7 +116,7 @@ export function isSafeCommand(command: string): boolean {
 
 `complete = false` 的命令在两个地方起作用:
 
-1. 判定流程第 9 层: 非 bypassPermissions 模式下一律 ask, 理由 `Complex shell syntax requires approval` — 展开和重定向的真实效果无法靠字面前缀授权, 必须人工看一眼
+1. 判定流程第 8 层: 非 bypassPermissions 模式下一律 ask, 理由 `Complex shell syntax requires approval` — 展开和重定向的真实效果无法靠字面前缀授权, 必须人工看一眼
 2. 显式规则匹配: Bash / PowerShell 的规则按拆出的子命令逐条评估, 见下节
 
 ## 路径沙箱 (仅 write)
@@ -163,7 +162,7 @@ export function isSafeCommand(command: string): boolean {
 
 ### 匹配目标的提取
 
-规则匹配的内容由 `extractContent` 按工具决定 (`CONTENT_FIELDS`, src/permissions/constants.ts): Bash / PowerShell 取 `command`, ReadFile / WriteFile / EditFile / LSP 取 `file_path`, Glob / Grep 取 `pattern`, WebFetch 取 `url`, ComputerUse 取 `action` (OpenAI 的批量 `actions[]` 形式则汇总各项 type), InstallSkill 取 `source`, TaskOutput 取 `task_id`。McpCall 特殊: 匹配目标不是参数而是 `server__tool` 形式 (`mcpCallPermissionContent`), 所以 `McpCall(linear__*)` 可以按服务器或按工具整批放行/拦截。
+规则匹配的内容由 `extractContent` 按工具决定 (`CONTENT_FIELDS`, src/permissions/constants.ts): Bash / PowerShell 取 `command`, ReadFile / WriteFile / EditFile 取 `file_path`, Glob / Grep 取 `pattern`, WebFetch 取 `url`, ComputerUse 取 `action` (OpenAI 的批量 `actions[]` 形式则汇总各项 type), InstallSkill 取 `source`, TaskOutput 取 `task_id`。McpCall 特殊: 匹配目标不是参数而是 `server__tool` 形式 (`mcpCallPermissionContent`), 所以 `McpCall(linear__*)` 可以按服务器或按工具整批放行/拦截。
 
 文件类工具和 Glob 在匹配前会把路径参数和 pattern 都规范化: 相对路径按当前工作目录 resolve 成规范化的绝对路径 (`normalizePathPattern`), 所以 `EditFile(src/*)` 能匹配 `src/foo.ts` 而不管调用方写的是相对还是绝对路径; wildcard 之后不允许再出现 `..` (目录穿越), 违反即报错并 fail-closed 为 deny。
 
@@ -187,7 +186,7 @@ HITL 确认对话框的第二项是 "Yes, remember the scopes above for all agen
 
 `rememberPatterns(toolName, args)` 决定 scope 的形态:
 
-- 文件类工具 (ReadFile / WriteFile / EditFile / LSP): 目标所在目录 (目标本身是目录时就是该目录) + `/*`, 如 `WriteFile(/abs/project/src/*)`
+- 文件类工具 (ReadFile / WriteFile / EditFile): 目标所在目录 (目标本身是目录时就是该目录) + `/*`, 如 `WriteFile(/abs/project/src/*)`
 - Bash / PowerShell: 每个子命令的前两个词 + `*` (如 `Bash(git push*)`), 去重; 命令拆不完整、或前两个词含空白/通配符/反斜杠时不生成 pattern
 - McpCall (server 和 tool 都非空时)、WebFetch、InstallSkill、TaskOutput: 精确内容, 如 `WebFetch(https://example.com)`
 - 其他工具: 不生成 pattern; 此时即使收到 allowAlways 也会降级为一次性 allow (`requestToolPermission` 的兜底)
@@ -214,4 +213,4 @@ HITL 确认对话框的第二项是 "Yes, remember the scopes above for all agen
 
 ## OS 级沙箱
 
-权限系统之外, Yukino 还支持 OS 级沙箱, 把 Bash 命令放进操作系统提供的隔离环境执行 (macOS seatbelt / Linux bubblewrap), 文件系统写入被收敛到允许目录, 网络可以整体关闭。config.yaml 的 `sandbox` 段有三个键: `enabled`、`auto_allow`、`network_enabled`; 运行时也可以用 `/sandbox auto | manual | off` 切换。沙箱开启后, 判定流程第 10 层让非危险的 Bash 命令免人工确认 — 且只有当沙箱真正就绪 (seatbelt/bwrap 可用) 时 `sandboxEnabled` / `sandboxAutoAllow` 才会置位。权限层回答「要不要人确认」, 沙箱回答「命令允许碰什么」, 两者独立又协同; 沙箱内部的文件读写限制见 [sandbox](./sandbox)。
+权限系统之外, Yukino 还支持 OS 级沙箱, 把 Bash 命令放进操作系统提供的隔离环境执行 (macOS seatbelt / Linux bubblewrap), 文件系统写入被收敛到允许目录, 网络可以整体关闭。config.yaml 的 `sandbox` 段有三个键: `enabled`、`auto_allow`、`network_enabled`; 运行时也可以用 `/sandbox auto | manual | off` 切换。沙箱开启后, 判定流程第 9 层让 Bash 命令免人工确认 — 且只有当沙箱真正就绪 (seatbelt/bwrap 可用) 时 `sandboxEnabled` / `sandboxAutoAllow` 才会置位。权限层回答「要不要人确认」, 沙箱回答「命令允许碰什么」, 两者独立又协同; 沙箱内部的文件读写限制见 [sandbox](./sandbox)。

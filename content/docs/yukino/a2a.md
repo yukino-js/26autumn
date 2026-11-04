@@ -2,7 +2,7 @@
 title: "A2A"
 description: "A2A (Agent2Agent) 互通协议: `--a2a` 模式下 Yukino 作为 A2A 1.0 服务器运行 (默认监听 127.0.0.1:18890), 基于 `@a2a-js/sdk` 提供 Agent Card 发现、JSON-RPC 与 REST 双绑定、artifact 流式助手文本与 input-required 权限握手扩展, 供其他 agent 或编排器发现、派发任务并消费流式更新"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 A2A (Agent2Agent) 是一个开放的 agent 互通协议: 一个 agent 以标准化服务的形式对外暴露能力, 其他 agent 或编排器可以发现它、给它派发任务、消费它的流式状态更新
@@ -122,7 +122,7 @@ submitted ──> working ──┬──> completed        agent loop 正常结
 ```
 
 - runtime 按需惰性创建 (ensureRuntime): 只有合法且非 busy 的消息才会触发; 空消息 (既无 text 也无 permission-response data part) 直接 fail, 不会创建 session 或拉起 runtime
-- 默认工厂 createA2aRuntime 复用 remote 模式的 agent 装配 (createRemoteAgent, non-interactive): 工具注册、skills、hooks、MCP、LSP、沙箱、记忆全套; agent 的工作目录是服务器启动进程的 cwd; runtime 的权限模式取自服务器配置 `permission_mode` (缺省 `default`), 调用方无法通过消息元数据提升本地策略
+- 默认工厂 createA2aRuntime 复用 remote 模式的 agent 装配 (createRemoteAgent, non-interactive): 工具注册、skills、hooks、MCP、沙箱、记忆全套; agent 的工作目录是服务器启动进程的 cwd; runtime 的权限模式取自服务器配置 `permission_mode` (缺省 `default`), 调用方无法通过消息元数据提升本地策略
 - 用户文本经 saveMessage 写入 session transcript, 与交互式模式同一套会话存储; 上下文压缩、恢复行为一致
 - 空闲驱逐: 30 分钟无活动 (DEFAULT_IDLE_TIMEOUT_MS) 后 dispose runtime, 释放 MCP 连接和后台资源, 内存中的 contextId→sessionId 映射保留; 下一条消息按 sessionId 重建 runtime 并用 rebuildFromSession 回放 transcript, 驱逐对对话透明; 若 transcript 已不可用则报 `A2A context transcript is no longer available. Start a new context.`
 - 容量上限: 最多跟踪 256 个 context (MAX_TRACKED_SESSIONS), 超出时按 LRU 驱逐完全空闲的 session (进行中或等待权限的绝不驱逐); 被驱逐 session 的映射先以「临时文件 + rename」原子写入 `~/.yukino/projects/<sha256(cwd)>/a2a-contexts/<sha256(contextId)>` (带文件锁), 无法驱逐则报 `A2A session capacity reached; retry when an active context finishes.`

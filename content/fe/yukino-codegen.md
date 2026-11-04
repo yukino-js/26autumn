@@ -1,13 +1,13 @@
 ---
 title: "Yukino Codegen: 从自然语言需求到可运行 Web 应用"
-description: "AI 全栈代码生成平台的技术解析: 服务端用 Yukino 编码 Agent 在真实磁盘上迭代产出 Vite 工程, 浏览器用 WebContainer 完成安装与预览, 二者以服务器权威文件 + WebSocket 事件溯源 + 三方合并同步闭合生成/运行/修复回路"
+description: "AI 全栈代码生成平台的技术解析: 服务端用 Yukino 编码 Agent 在真实磁盘上迭代产出 Vite 工程, 再在 OS 沙箱内完成依赖安装与生产构建, 以能力 URL 形式的静态预览发布 dist, 经 WebSocket 事件溯源与预览桥闭合生成/运行/修复回路"
 local_path: "$HOME/github/yukino-codegen"
-local_commit: "d6eab0d01167401662344e688c54e2603423fb75"
+local_commit: "f3582b7e50664ace1536ed043fdafb1bcd5ca7d0"
 ---
 
-Yukino Codegen 是一个 AI 全栈代码生成平台: 用户用一句自然语言描述想要的应用, 平台在服务器上驱动一个真实的编码 Agent 在文件系统上迭代产出前端工程, 再把这份工程同步进浏览器的 WebContainer 里完成依赖安装与 dev server 启动, 最终在预览 iframe 中呈现一个真实可运行的 Web 应用。生成过程本身是实时可交互的: 用户可以中途 steering 纠偏、审批计划、回退对话与代码、切换模型与思考强度、上传图片与 @ 提及文件。本文讲的是这条主链路如何被工程化: 一轮生成如何被编排与准入, 服务器与浏览器各自承担什么职责, 生成产物如何挂载与预览, 生成/运行/修复循环如何闭合, 以及沙箱、密钥、文件路径等安全边界如何划定。
+Yukino Codegen 是一个 AI 全栈代码生成平台: 用户用一句自然语言描述想要的应用, 平台在服务器上驱动一个真实的编码 Agent 在文件系统上迭代产出前端工程, 再在 OS 沙箱内完成依赖安装与生产构建, 把 `dist` 产物经独立监听器发布为静态预览, 最终在预览 iframe 中呈现一个真实可运行的 Web 应用。生成过程本身是实时可交互的: 用户可以中途 steering 纠偏、审批计划、回退对话与代码、切换模型与思考强度、上传图片与 @ 提及文件。本文讲的是这条主链路如何被工程化: 一轮生成如何被编排与准入, 服务器与浏览器各自承担什么职责, 生成产物如何被构建与发布为静态预览, 生成/运行/修复循环如何闭合, 以及沙箱、密钥、文件路径等安全边界如何划定。
 
-平台是一个 pnpm workspace 单仓, 由 `client/`(React 19 + Vite 7 前端)与 `server/`(Hono 4 + Prisma 7 后端)两个包组成。后端把 `@yukino.js/yukino` 当作库复用——它不是自己实现一个 Agent, 而是通过引擎的远程入口 `Remote.Server.createRemoteAgent` 拿到一整套 Agent 句柄, 再把它接到自己的会话存储、WebSocket 协议与文件 API 上。理解平台的关键, 是先理解这条闭环两端各自的事实权威在哪里: **服务器磁盘是文件的权威源, 浏览器容器只是可丢弃的执行环境**。
+平台是一个 pnpm workspace 单仓, 由 `client/`(React 19 + Vite 7 前端)与 `server/`(Hono 4 + Prisma 7 后端)两个包组成。后端把 `@yukino.js/yukino` 当作库复用——它不是自己实现一个 Agent, 而是通过引擎的远程入口 `Remote.Server.createRemoteAgent` 拿到一整套 Agent 句柄, 再把它接到自己的会话存储、WebSocket 协议与预览构建流水线上。理解平台的关键, 是先理解这条闭环两端各自的事实权威在哪里: **服务器磁盘是文件的权威源与唯一构建场地, 浏览器只消费已发布的构建快照**。
 
 ## 一、定位: 一句话需求如何变成可运行应用
 
@@ -19,7 +19,6 @@ Yukino Codegen 是一个 AI 全栈代码生成平台: 用户用一句自然语�
 - 每个应用一个 Agent 工作区: 会话 transcript、权限模式、计划模式、MCP 服务器配置、生命周期 Hook、技能、长期记忆、子代理与团队、模型与思考强度覆盖、沙箱策略;
 - 实时交互: 流式叙述、运行中 steering、排队 follow-up、计划审批、对话回退检查点、提示词历史(最近 200 条)、历史会话恢复;
 - 输入增强: `@` 文件提及(带补全)、图片上传、`!`/`!!` 用户 shell、斜杠命令;
-- 在线 IDE: 文件树、Monaco 代码编辑器、xterm.js 终端;
 - 可视化编辑: 在实时预览里点选元素, 描述修改意图, 由 Agent 映射回源码;
 - Git 快照安全网: 每轮对话结束后对生成项目做一次提交, 可列出快照并连同对话一起回滚;
 - 工程侧能力: 应用 zip 导出、管理后台、Prometheus 指标与健康探针。
@@ -33,15 +32,15 @@ AI 生成应用的实现路线大致分三代。第一代是模板与低代码�
 本平台属于第三代, 两个结构性选择构成了与模板方案的真正分野:
 
 - **服务端跑的是一个完整的编码 Agent**, 拥有真实文件读写与命令执行工具(`ReadFile`/`WriteFile`/`EditFile`/`Glob`/`Grep`/`Bash`), 把项目真实写入服务器磁盘, 而不是在内存里拼字符串;
-- **浏览器端用 WebContainer 承载构建与运行**, 让 `npm install` 与 dev server 发生在用户自己的设备上, 服务器只负责存储文件与驱动模型。
+- **构建与预览同样收在服务器侧**: 依赖安装与生产构建在 Yukino OS 沙箱(Linux bubblewrap / macOS seatbelt)包裹的子进程里执行, 产物 `dist` 以能力 URL 的形式经独立静态监听器发布, 浏览器只渲染不构建。
 
-前者决定了生成物能达到工程化项目的复杂度, 后者决定了预览的边际成本与安全模型。两者之间的文件一致性, 则是整个平台最核心的工程难题(见第六节)。
+前者决定了生成物能达到工程化项目的复杂度, 后者决定了预览的安全模型与部署要求。浏览器不再持有文件的可写副本, 文件权威只有服务器磁盘一处(见第五节)。
 
 ### 1.3 适用场景与形态边界
 
-平台适合的需求形态是"从零到可交互原型"与"中小型 Web 应用的一次性生成": 落地页、表单与看板、数据展示类前端、带简单后端的 demo。它不适合需要长期演化、有严格合规要求、或依赖专有二进制与内核态能力的产品。预览链路钉在 npm 生态上: 浏览器侧固定执行 `npm install` 与 `npm run dev`, 一键修复的提示词也明确针对 React 应用(见 6.3); 超出这个形态的工程, 预览与修复回路不再适用。
+平台适合的需求形态是"从零到可交互原型"与"中小型 Web 应用的一次性生成": 落地页、表单与看板、数据展示类前端、带简单后端的 demo。它不适合需要长期演化、有严格合规要求、或依赖专有二进制与内核态能力的产品。预览链路钉在 npm 生态上: 服务器侧固定执行 `npm install` 与 `npm run build -- --base=./`, 要求工程提供产出 `dist/index.html` 的 Vite 兼容构建脚本, 一键修复的提示词也明确针对 React 应用(见 6.3); 超出这个形态的工程, 预览与修复回路不再适用。预览只使用完成的构建, 没有 dev server 与热更新。
 
-设计取舍上, 平台选择了"生成速度快、预览延迟低"而不是"生成即生产可用"。服务器磁盘上的项目目录是权威数据, 浏览器容器只是可丢弃的执行环境; 一旦关闭标签页, 容器内存文件系统即消失, 权威副本始终在服务器侧。这条取舍贯穿后文的同步、冲突与快照设计。
+设计取舍上, 平台选择了"生成即预览、构建集中在服务器"而不是"浏览器分散算力"。服务器磁盘上的项目目录是权威数据与唯一构建场地; 浏览器侧没有任何可执行副本, 预览 iframe 只加载已发布的静态快照, 能力 URL 随工作区回收而失效。这条取舍贯穿后文的构建、发布与快照设计。
 
 ## 二、生成流水线: 轮次编排与单轮循环
 
@@ -116,7 +115,7 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 - `/status`: 汇报上下文 token/窗口、模型、思考强度、权限模式、沙箱状态、技能/记忆/MCP/工具数量等;
 - `/memory` 列出记忆与 auto-memory 开关, `/memory clear` 清空; `/mcp` 汇报已连接服务器与工具数, `/mcp reload` 原地重连(见 6.2);
 - `/model`/`/thinking` 不带参数时广播选择器, 带参数时应用(见 6.2); `/sandbox auto|manual|off` 切换沙箱策略(见 6.2);
-- `/rewind` 不带参数广播回退选择器, 带 sha 时执行 `code_only` 回滚(见 3.6); `/worktree` 列出 worktree(见 6.7); `/goal` 驱动目标跟踪; `/workflows` 管理命名工作流;
+- `/rewind` 不带参数广播回退选择器, 带 sha 时执行 `code_only` 回滚(见 3.6); `/worktree` 列出 worktree(见 6.5); `/goal` 驱动目标跟踪; `/workflows` 管理命名工作流;
 - `/review [args]`: 用内置只读评审子代理执行, `buildReviewPrompt` 把本地 git 上下文适配进评审提示词。
 
 命令候选列表(自动补全)由 `buildCommandCandidates` 生成: 注册表中过滤掉技能派生命令、只保留可执行命令, 再补上服务端特有的 `/skill`; 兜底注册表 = 引擎默认注册表 + `Commands.Loader.loadUserCommands()` 加载的用户命令, 冲突跳过。
@@ -136,7 +135,7 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 1. `mkdir` 工作目录;
 2. 并行读取启用的 MCP 服务器行与 Hook 行;
 3. 用 `buildProviderConfig(env, workspace.modelOverride, workspace.thinkingLevel)` 组装 Provider(端点/协议/密钥/token 上限来自服务器配置, 模型与思考强度可被工作区覆盖);
-4. 调 `Remote.Server.createRemoteAgent({ askUser, cwd, enableCoordinatorMode: false, enableModelPlanMode: true, forkDisabled: false, hooks, mcpServers, memoryEnabled, provider, sandboxConfig?, onSubagentEvent })`——`askUser` 把引擎提问接到交互代理, `onSubagentEvent` 把子代理生命周期接到活动面板(见 8.3);
+4. 调 `Remote.Server.createRemoteAgent({ askUser, cwd, enableCoordinatorMode: false, enableModelPlanMode: true, hooks, mcpServers, memoryEnabled, provider, sandboxConfig?, onSubagentEvent })`——`askUser` 把引擎提问接到交互代理, `onSubagentEvent` 把子代理生命周期接到活动面板(见 8.3);
 5. `rehydrate` 把 DB 里的历史灌回句柄的会话。
 
 ### 3.3 rehydrate: 让 restoreContext 成为唯一注入点
@@ -192,7 +191,7 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 
 - `/rewind` 或 UI 触发 `rewind_list` 广播: 每个快照带 sha/消息/日期, 以及 `conversation` 布尔(该检查点是否也能回退对话);
 - 客户端回 `rewind_action { sha, action }`, `action` 三选一: `code_and_conversation`(对话与代码一起回退)、`conversation_only`(只回退对话)、`code_only`(只回退代码, `/rewind <sha>` 命令默认走这个);
-- 服务端按动作组合执行: 会话消息截断(`conv.truncateTo` 到检查点消息数)、transcript 截断并重置序列高水位(`truncateAfter` + `setSequence`)、`git rewindTo`(见 6.7), 然后向所有连接广播 `session_replaced { sessionId, highWatermark }`;
+- 服务端按动作组合执行: 会话消息截断(`conv.truncateTo` 到检查点消息数)、transcript 截断并重置序列高水位(`truncateAfter` + `setSequence`)、`git rewindTo`(见 6.5), 然后向所有连接广播 `session_replaced { sessionId, highWatermark }`;
 - 客户端收到 `session_replaced` 后把本地序列归零、递增 `resyncCounter`, 重新发 `hello` 从序列 0 拉全量, 本地 transcript 完整重建。
 
 ### 3.7 销毁: 显式排空长驻资源
@@ -205,7 +204,7 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 
 Agent 实时协议走 `GET /app/:appId/agent/ws`(WebSocket 升级)。连接按访问权限分级: owner 与管理员是**可写**连接(能 run/abort/应答交互/发命令), 其他已登录用户是**只读**连接(只能收事件与回放)。只读连接发起 `run` 或应答交互时, 服务器返回结构化的 `read_only` 错误而非静默忽略。鉴权失败的连接在 `onOpen` 时直接以 1008 关闭。每个工作区还有连接数上限 `AGENT_MAX_CONNECTIONS_PER_WORKSPACE`(默认 8), 超限的连接以 1013(服务过载)关闭。
 
-客户端消息里的 `runtime_action`(start/stop/restart/install)会被显式拒绝并返回错误"Preview runtime is controlled by the client, not the server"——预览运行时的生命周期权在浏览器, 服务器从不代管。
+协议保留 `runtime_action`(start/stop/restart/install)帧, 服务器一律显式拒绝(错误文案仍为"Preview runtime is controlled by the client, not the server"); 现行客户端已不再发送这类帧——预览构建的触发入口在 REST(见第五节)。
 
 ### 4.2 心跳与重连
 
@@ -252,34 +251,51 @@ Agent 实时协议走 `GET /app/:appId/agent/ws`(WebSocket 升级)。连接按�
 - **提示词历史**: 连接建立后随 `ready` 一并下发, 服务器从 transcript 取最近 200 条(`HISTORY_LIMIT`)用户消息, 以 `history` 帧发送(协议上限 500 条);
 - **会话恢复**: REST 列出并可恢复历史会话, `resumeAndSetCurrent` 对 `RUNNING`/`WAITING` 状态的会话返回忙错误, 防止两个客户端同时接管一个活跃会话。
 
-## 五、生成产物的挂载与预览
+## 五、服务端沙箱构建与静态预览
 
-### 5.1 文件树从服务器到浏览器
+### 5.1 WorkspaceManager: 构建编排与产物发布
 
-预览的第一步是把服务器文件树搬进容器。链路是: 前端经 REST 拉 `GET /app/files/:appId` 得到一棵 `AgentFileNode` 树(每个文件带相对路径、sha256、内联内容, utf8 或 base64; 目录带排序后的子节点), 经 `agentTreeToFileSystem` 转成 WebContainer 的 `FileSystemTree`(base64 解码成字节, 文本保持字符串), 再 `container.mount(tree)`。转换与快照都会跳过忽略段(`node_modules`/`dist`/`build`/`.git`/`.yukino`), 避免把构建产物或依赖搬进容器再搬回来。工作区没有 `package.json` 时直接跳过预览引导。
+预览构建由 `WorkspaceManager` 编排: 每个应用对应一个工作区(随机 24 字节 hex 能力 token、工作目录、构建状态、沙箱会话、产物发布表、依赖指纹)。工作目录复用 `RuntimeManager.workDirFor` 的 `tmp/code_output/{appId}/`, 即 Agent 写入的同一份工程目录。`POST /:appId/workspace/preview` 触发的构建把任务包进运行时的 `runExclusive`——与 Agent 轮次共享同一把锁, 构建与生成互不踩踏; 多标签页的并发请求在首个 await 之前就被合并进同一个构建。60 秒扫描器(已 `unref`)按 `AGENT_WORKSPACE_IDLE_MS`(默认 15 分钟, 与运行时空闲回收同阈值)回收空闲工作区; 应用删除(用户与管理员两条路径)与进程关闭也会显式 dispose, 能力 URL 随之失效。
 
-### 5.2 预览生命周期状态机
+一次构建(`runBuild`)的顺序是:
 
-预览有一个明确的状态机: `idle → booting → mounting → installing → starting → ready`(任一阶段失败转 `failed`)。`startPreview` 是入口, 它把整个流程包进一条**文件系统串行队列**(`queueFsTask`), 保证挂载、安装、保存、Agent 同步不会在容器 FS 上交错。状态推进由 `PreviewCallbacks` 回调给 UI, 每个状态对应一句人话文案(如 `installing` → "Installing dependencies in your browser...")。
+1. 没有 `package.json` 时直接置 `idle`, 不做构建;
+2. 对 7 个依赖清单文件(`package.json`/`package-lock.json`/`npm-shrinkwrap.json`/`pnpm-lock.yaml`/`yarn.lock`/`bun.lock`/`bun.lockb`)计算 sha256 指纹, 仅当指纹变化或 `node_modules` 不存在时执行 `npm install --no-audit --no-fund`;
+3. 先整体删除旧 `dist`(失败/空转的构建绝不能发布旧产物), 再执行 `npm run build -- --base=./`——Vite 的相对资产 base 让 `dist` 在任意能力 URL 前缀下可搬运;
+4. 校验 `dist` 是真实目录(非符号链接)且 `dist/index.html` 的 realpath 不逃出工程, 然后把 `dist` 拷贝进沙箱 scratch 目录下的 `preview-<n+1>`;
+5. 状态置 `ready`、`revision` 自增、新产物登记进发布表, 并只保留最近两个 revision——旧 iframe 在下一次构建期间仍能加载稳定的资产 base, 更早的产物目录被删除。
 
-几个关键的防御性设计:
+整个过程受 `WORKSPACE_BUILD_TIMEOUT_MS`(默认 5 分钟)超时中止; 构建日志环形追加, 只保留最后 64000 字符。状态机是 `idle → installing → building → ready`(任一阶段失败转 `failed`, 失败的构建保留上一次成功的预览 URL)。
 
-- **代际取消**: 每次 `startPreview` 递增一个全局 `previewGeneration` 并取消上一个 pending run; 每个异步阶段后都用 `assertPreviewRunCurrent` 检查"我还是当前这一代且未被取消且组件仍在", 否则抛 `PreviewRunCancelledError`。这让"用户快速切换应用/重新生成"不会留下交错的半成品预览;
-- **模块级单例**: `activePreview`/`pendingPreview`/`installedDependencyFingerprint`/`mountedAppId` 是模块级变量, dev server 因此能在组件重挂载后存活, 同一应用重新渲染不会重启预览;
-- **dev server 就绪竞态**: dev server 以 `npm run dev -- --host 0.0.0.0` 启动, `Promise.race` 同时等"spawn 结果 / `server-ready` 事件 / 进程退出 / 30 秒超时 / 取消"五种结果, 任一非就绪结果都会清理已 spawn 的进程, 避免泄漏;
-- **意外退出上报**: 就绪后的 dev server 进程被持续观察, 若意外退出则把 `activePreview` 清掉并向 UI 报 `failed` 与错误信息。
+### 5.2 SandboxSession: OS 沙箱与缩减环境
 
-### 5.3 依赖指纹与增量重启
+构建命令不直接跑在宿主上: `SandboxSession` 经 Yukino 引擎的 `Sandbox.createSandbox()` 创建沙箱(Linux bubblewrap、macOS seatbelt), 沙箱不可用(未装 bubblewrap 或用户命名空间未开启)时**直接抛错而不执行任何命令**——失败关闭。命令准备时只放行对工作目录与 scratch 目录的写入, 允许网络, cwd 为工作目录。
 
-不是每次同步都要重装依赖。客户端的 `dependencyFingerprintFromTree` 对一组依赖清单文件(`package.json`/`package-lock.json`/`npm-shrinkwrap.json`/`pnpm-lock.yaml`/`yarn.lock`)逐个计算 `path:length:hash` 并拼成一个指纹(hash 为 FNV-1a 32 位); 只有当"容器里没有 `node_modules`"或"指纹与上次安装时不同"才触发 `npm install`。这把"只改了源码"的常见情形降为"直接复用已装依赖 + 重启 dev server", 大幅缩短二次预览时间。对服务器快照的变更检测(`workspace-tree` 的 `dependencyFilesChanged`)覆盖更宽的 7 个文件(额外包含 `bun.lock`/`bun.lockb`), 一旦依赖文件变化, 同步逻辑会整体重启预览(重新挂载 + 视情况重装)。
+两个细节值得单独说明:
 
-安装本身有一个刻意的动作: **先删掉 `package-lock.json` 再执行 `npm install`**(`runInstall` 先 `removeIfPresent(container, "package-lock.json")` 再 `container.spawn("npm", ["install"])`)。这让 npm 按容器当前平台重新解析依赖与平台专有二进制: 别的平台解析出的 lockfile 可能漏掉当前平台的可选依赖(如 musl 平台的原生二进制包), 导致"安装成功但 dev server 起不来"。
+- **环境变量白名单**。构建子进程拿到的是显式构造的环境(只有 PATH/LANG/TERM, HOME、TMPDIR、XDG_CACHE_HOME、npm_config_cache 全部指向 scratch 目录), 不继承服务器进程的环境——数据库连接串、会话密钥、模型 API key 都不会泄漏进不可信项目的生命周期脚本, 单测专门断言了这一点;
+- **进程组回收**。子进程以 `detached` 方式 spawn, 中止、超时或退出时对整个进程组(`-pid`)发 `SIGKILL`, 连带收掉构建脚本留下的后代进程, 不留孤儿。
 
-### 5.4 WebContainer 在链路中的角色
+### 5.3 静态预览服务: 能力 URL 与路径安全
 
-WebContainer 通过一个单例 `getWebContainer()` 引导: 先检查 `crossOriginIsolated`(否则直接拒绝, 提示需要 COOP/COEP 头), 再以 `coep: "credentialless"`、`forwardPreviewErrors: true`、`workdirName: "project"` 启动。引导失败会清掉缓存的 promise 以便重试。`forwardPreviewErrors` 是预览错误回传(见 6.3)的开关。客户端 `vite.config.ts` 给 dev 与 preview 都设置了 `Cross-Origin-Embedder-Policy: credentialless` 与 `Cross-Origin-Opener-Policy: same-origin` 头, 以满足隔离要求; 开发态还把 `/api` 代理到 `http://localhost:3000`(含 WebSocket 升级)。
+产物由一个**独立的 HTTP 监听器**(`PREVIEW_PORT` 默认 3001, `PREVIEW_HOST` 默认 `0.0.0.0`)提供, 与 API 进程端口分离, 启动时先于 HTTP 服务 listen。URL 是能力式的: `/p/<48 位 hex token>/<revision>/<path>`, token 在工作区创建时随机生成, 不匹配的路径一律 404。静态监听器不读 API cookie, 安全模型是"URL 即授权", 因此能力 URL 需要保密; 部署时应把 `PREVIEW_PUBLIC_URL` 设为独立的预览 origin 并代理到该监听器(未设置时 API 用请求 URL 加 `PREVIEW_PORT` 推导)。
 
-容器还承载 Monaco 之外的另一类交互: 文件浏览器直接读容器当前工作副本(`walkContainerTree`), 因此能反映 Agent 输出之外的、终端或预览构建产生的变化; 终端(xterm.js)也在容器里跑 shell。
+服务逻辑(`servePreview`)有多层防御: 只接受 GET/HEAD(其余 405); 响应一律 `no-store`、`nosniff`、`no-referrer`; `decodeURIComponent` 失败或路径含 NUL、反斜杠直接 400; 解析前后都用 realpath 校验目标包含在产物目录内(符号链接逃逸得 403); 无扩展名且 Accept 含 `text/html` 的路径才回落 `index.html`(SPA 路由), 带扩展名的缺失资产保持 404。HTML 响应在 `<head>` 处注入 `<base href>` 与预览桥脚本。
+
+### 5.4 预览桥: 可视化编辑与错误回传
+
+每个构建出的 HTML 都被注入 `preview-bridge` 脚本, 它承担两个职责:
+
+- **可视化编辑**。父窗口发 `TOGGLE_EDIT_MODE`/`CLEAR_SELECTION`/`CLEAR_ALL_EFFECTS` 消息控制编辑模式: 编辑态下悬停高亮元素、点击选中并把 `ELEMENT_SELECTED` 回传父窗口(带标签、id、类名、文本摘录、CSS 选择器、页面路径与包围盒), 用户据此描述修改意图, 由 Agent 映射回源码;
+- **错误回传**。把 `window` 的 error、unhandledrejection 与 `console.error` 以 `PREVIEW_UNCAUGHT_EXCEPTION`/`PREVIEW_UNHANDLED_REJECTION`/`PREVIEW_CONSOLE_ERROR` 消息转发给父窗口。
+
+前端对跨窗口消息做双向校验: 发送侧优先用预览 origin(解析不到时回退 `*`); 接收侧要求 `event.source` 是预览 iframe 的 contentWindow 且 `event.origin` 等于预览 origin, 再过 zod schema 判别(见 7.5)。
+
+### 5.5 客户端预览控制器
+
+`usePreviewController` 把预览生命周期收敛成一个 hook: 进入页面、Agent 轮次结束(`agentRunning` 由 true 翻 false)、`files_changed` 帧(git 快照后的 revision 变化)与用户点击 Rebuild 都会触发重建; 构建期间每 750 毫秒轮询 `GET` 状态刷新进度与日志; Agent 运行中或构建进行中收到的新请求记为 pending, 等当前构建结束后重放, 不会并发两个构建。构建失败时错误与 ANSI 日志显示在面板里, 同时保留上一次成功的预览 URL; 预览 URL 带 `?v=<revision>` 破缓存参数, iframe 以 `sandbox` 属性(allow-scripts allow-same-origin allow-forms allow-popups allow-modals)加载。
+
+状态文案与状态机一一对应(installing → "Installing dependencies on the server...", building → "Building the app on the server...", ready → "Previewing the latest successful build.")。浏览器侧不再有文件树、代码编辑器与终端——源码修改只经 Agent, 预览是唯一的渲染面; 聊天页整屏只分两栏: 左侧 Agent 对话, 右侧实时预览。
 
 ## 六、与 Yukino 编码 Agent 的集成
 
@@ -301,7 +317,7 @@ WebContainer 通过一个单例 `getWebContainer()` 引导: 先检查 `crossOrig
 | `checker`                               | 句柄级权限检查器(与每轮检查器同步)                    |
 | `toolFilter`                            | 句柄级工具过滤, 与 coordinator 过滤叠加               |
 
-平台用 `enableCoordinatorMode: false`、`enableModelPlanMode: true`、`forkDisabled: false` 创建句柄, 即不启用 coordinator、启用模型驱动的计划模式、不禁用 fork。
+平台用 `enableCoordinatorMode: false`、`enableModelPlanMode: true` 创建句柄, 即不启用 coordinator、启用模型驱动的计划模式。
 
 ### 6.2 运行时切换: 模型、思考强度、沙箱与 MCP
 
@@ -314,30 +330,13 @@ WebContainer 通过一个单例 `getWebContainer()` 引导: 先检查 `crossOrig
 
 闭环的"报错 → 修复"一段有两条回传路径, 都复用 `run` 通道:
 
-- **预览运行时错误**: WebContainer 以 `forwardPreviewErrors` 把 iframe 里的错误经 `preview-message` 事件转发出来。前端 `usePreviewErrors` 订阅该事件, 用 zod 判别三种类型(`PREVIEW_UNCAUGHT_EXCEPTION`/`PREVIEW_UNHANDLED_REJECTION`/`PREVIEW_CONSOLE_ERROR`), 归一成 `{ message, stack? }`, 既显示在预览错误面板, 也经 `reportRuntimeIssue` 上报观测;
+- **预览运行时错误**: 构建 HTML 里注入的桥脚本把 iframe 中的错误经 `postMessage` 转发出来。前端 `usePreviewErrors` 监听窗口消息, 校验 `event.source` 与 `event.origin` 后用 zod 判别三种类型(`PREVIEW_UNCAUGHT_EXCEPTION`/`PREVIEW_UNHANDLED_REJECTION`/`PREVIEW_CONSOLE_ERROR`), 归一成 `{ message, stack? }`, 既显示在预览错误面板, 也经 `reportRuntimeIssue` 上报观测;
+- **构建失败**: 编译错误不再出现在预览 iframe 里, 而是直接表现为构建失败——状态为 `failed` 时错误文本与构建日志被归一成一条 `PreviewRuntimeError`, 与运行时错误共用同一个错误面板;
 - **一键修复**: `buildPreviewFixPrompt` 把错误拼成一段固定提示词("Fix the generated React app error below. Inspect the current project, make the smallest correct change, and keep all unrelated behavior intact.", 后接 Error 与 Stack), 作为 `previewError` 随 `run` 发给 Agent, 在 2.3 第 4 步被包进 `<preview-error>` 块。
 
-编译错误则由构建工具在预览里直接呈现, 用户同样可以复制回 Agent。这样"生成 → 浏览器运行 → 报错 → 回传 → Agent 修复 → 再同步"形成完整回路。
+这样"生成 → 服务器构建 → 静态预览运行 → 报错 → 回传 → Agent 修复 → 再构建"形成完整回路。
 
-### 6.4 双向文件同步与三方合并
-
-文件有两个写入方: Agent(经服务器磁盘)与用户(经 IDE 的 Monaco 编辑器)。同步的核心是 `useWorkspaceController` 里的 `resyncAfterAgent`, 在收到 `files_changed` 帧或 Agent 轮次结束后触发; 反方向的容器 watcher 同步(终端/构建改动回传服务器)另经 250ms 防抖(`SYNC_DEBOUNCE_MS`)。`resyncAfterAgent` 的流程:
-
-1. 拉服务器文件树, 与上一次服务器快照对比;
-2. **依赖文件变化**(`dependencyFilesChanged`, 覆盖 `package.json`/lockfile/`bun.lock`/`bun.lockb`)→ 关闭现有 watcher, 重新 `startPreview`(重新挂载 + 视情况重装 + 重启 dev server);
-3. 否则逐文件处理: 二进制文件按服务器 sha256 hash 变化覆盖; 文本文件若本地 buffer 是脏的, 就做**三方合并**(`threeWayMerge(base, local, server)`): 只有一侧偏离 base 就取那一侧, 两侧相同取其一, 否则判为冲突;
-4. 干净的合并直接写容器并更新 buffer; 冲突则把服务器版本写进容器、把 buffer 标记为冲突态(`{ base, local, server }`), 交给差异编辑器让用户裁决;
-5. 服务器删除的文件: 本地脏的转成"本地 vs 空"的冲突, 否则从容器移除。
-
-三方合并刻意做得"实用": 它不做行级 diff, 只在整文件层面判断"谁偏离了 base"。这把合并逻辑抽成了纯函数, 可以脱离 React 与容器单独测试(见 8.5)。用户保存文件时走 REST `PUT /app/files/:appId/file`, 带 `expectedHash`(sha256)做乐观锁; 服务器发现 hash 不匹配就返回 `conflict`, 前端据此提示而非静默覆盖。
-
-### 6.5 文件 REST API 与路径安全
-
-文件 API 挂在 `/app/files/:appId` 下: `GET /`(整棵树, 每文件带 sha256, 任何已认证观察者可读)、`PUT /file`、`POST /directory`、`POST /rename`、`DELETE /entry`。写操作仅 owner/管理员, 且都在 `runtime.runExclusive` 里执行——与 Agent 轮次共享同一把锁, 完成后 `notifyFilesChanged` 广播 `files_changed` 让其他连接刷新。
-
-每个路径都过 `validateRelativePath`: 拒绝空路径、反斜杠、绝对路径、`..`/`.`/空段, 以及受保护段(`.git`/`.yukino`/`.env`/`node_modules`/`dist`/`build`); 解析后做前缀校验防拼接逃逸。写入前还检查祖先目录不是符号链接(`assertNoSymlinkAncestors`), 防符号链接逃逸。写盘用临时文件 + `rename` 原子替换, 重命名与删除同样支持 `expectedHash` 乐观锁。单文件上限 5MB(`MAX_PROJECT_FILE_BYTES`), 整棵树上限 20MB(`MAX_TREE_BYTES`), 超限拒绝。
-
-### 6.6 能力 REST: 设置、会话、技能、记忆、Hook、团队与 MCP
+### 6.4 能力 REST: 设置、会话、技能、记忆、Hook、团队与 MCP
 
 每个应用工作区都能配置引擎的全套扩展能力, 经一组 REST(`/:appId/agent/*`)管理:
 
@@ -351,7 +350,7 @@ WebContainer 通过一个单例 `getWebContainer()` 引导: 先检查 `crossOrig
 
 设置的生效方式分两类: **软设置**(`permissionMode`/`sandboxEnabled`/`sandboxAutoAllow`/`memoryEnabled`)经 `applySoftSettings` 直接打到存活运行时, 下一轮即生效; **需要重建的**(`hooksEnabled`/`modelOverride`/`thinkingLevel`)则 `invalidate` 运行时, 下次访问时按新配置重建句柄。这条区分避免了"改个权限模式就要重建整个 Agent"的浪费, 同时保证真正影响 Agent 栈的配置一定走重建。
 
-### 6.7 Git 快照与 worktree
+### 6.5 Git 快照与 worktree
 
 `git-runtime` 在生成项目目录里维护一个尽力而为的 git 仓库: `ensureRepo` 首次 `git init`, 随后 `add -A` + `commit --allow-empty`(消息 `chore: initial project snapshot`)打下基线; `snapshot` 在 `end_turn` 时 `add -A`, 若 `status --porcelain` 无变更则跳过, 否则提交(消息 `agent: {turnId}`); `listSnapshots` 用 `git log -n 50 --pretty=format:%H%x1f%s%x1f%cI` 解析出 sha/消息/日期; `rewindTo` 用 `git checkout {sha} -- .` + `add -A` + 提交(`chore: rewind to {sha}`)实现回滚。所有 git 调用都带 16MB 的 `maxBuffer`, 并吞掉失败(缺 git、非仓库), 因为版本快照只是叠在引擎文件历史之上的便利层。提交者身份由 `GIT_SNAPSHOT_AUTHOR_NAME`(默认 "Yukino Agent")/`GIT_SNAPSHOT_AUTHOR_EMAIL`(默认 "agent@yukino.local")配置。
 
@@ -361,7 +360,7 @@ WebContainer 通过一个单例 `getWebContainer()` 引导: 先检查 `crossOrig
 
 ### 7.1 生成代码的执行隔离
 
-生成代码**从不在服务器进程里执行**: 服务器只把它当文件存储, 构建与运行都发生在用户浏览器的 WebContainer 沙箱里。这条隔离把"运行不可信生成物"的风险从服务器转移到了用户自己的设备。需要清醒认识的是, 浏览器沙箱保护的是服务器而非用户——容器内的代码仍能消耗用户算力、访问被容器放行的网络出口, 这是所有预览型产品的固有风险面。服务器侧对生成物的唯一"执行"是 git 命令(快照/回滚)与用户 shell, 且都在受控的工作目录内。
+生成代码**从不在服务器进程内执行**, 但会在服务器主机上执行: 依赖安装与生产构建跑在 Yukino OS 沙箱(Linux bubblewrap / macOS seatbelt)包裹的子进程里(见 5.2), 写路径被限制在工作目录与 scratch 目录, 环境变量被白名单化, 网络放行。需要清醒认识的是, OS 沙箱是写路径限制而非虚拟机或完整的多租户隔离边界——托管不可信项目时应以专用 OS 账户或容器运行服务。浏览器侧不执行任何生成代码: 预览只是独立监听器服务的静态 `dist` 产物, iframe 还带 `sandbox` 属性。服务器侧对生成物的其余"执行"只有 git 命令(快照/回滚)与用户 shell, 且都在受控的工作目录内。
 
 ### 7.2 密钥与凭据
 
@@ -371,13 +370,13 @@ MCP 服务器的 `headers` 与 `env` 以 AES-256-GCM 对称加密落库: 密钥�
 
 ### 7.3 文件路径安全
 
-6.5 已详述文件 API 的多层校验。这里强调它防御的攻击面: 路径穿越(`..`、绝对路径、反斜杠)、受保护目录访问(`.git`/`.yukino`/`.env`/`node_modules`/`dist`/`build`)、路径拼接逃逸(解析后前缀校验)、符号链接逃逸(祖先目录 `lstat` 检查)、并发覆盖(sha256 乐观锁)。Agent 自身的文件工具也受引擎的路径沙箱约束(见 [yukino-code](../docs/yukino/yukino-code)), 两层叠加。
+文件 REST API 已随在线 IDE 一并移除, 浏览器不再有任何直接写服务器文件的通道; 文件维度的攻击面收敛到静态预览服务(见 5.3): 路径穿越(`..`、绝对路径、反斜杠、NUL)、符号链接逃逸(解析前后双重 realpath 包含校验)、越权读取他人产物(随机能力 token 加按工作区隔离)与构建发布时的 `dist/index.html` 逃逸检查。Agent 自身的文件工具仍受引擎的路径沙箱约束(见 [yukino-code](../docs/yukino/yukino-code))。
 
 ### 7.4 配置 fail-fast 与传输防护
 
 平台在启动时对环境变量做结构校验(zod)与语义校验(`superRefine`)。生产环境(`NODE_ENV=production`)下, 以下任一条件都会**拒绝启动**: CORS 含通配 `*`、`PASSWORD_SALT`/`SESSION_SECRET`/`MCP_SECRET_KEY` 仍是默认值、未配置 `REDIS_URL`、`STORAGE_DRIVER` 仍是 `local`、未配置 MinIO 的 access/secret key。把部署错误暴露在启动期而非运行期, 是这套校验的核心价值。
 
-传输层防护: WebSocket 消息有大小上限(`AGENT_WS_MAX_MESSAGE_BYTES`, 默认 512KB; 图片上传帧单独放宽到 64MiB), 解析失败与 schema 校验失败返回结构化错误(`bad_json`/`bad_message`), 未鉴权连接被关闭, 只读连接不能发起运行或应答交互, 单工作区连接数超上限以 1013 关闭; HTTP 层有请求体大小限制(`REQUEST_BODY_LIMIT_BYTES`, 默认 1MB; 文件写入的 `PUT` 单独放宽到可容纳 5MB base64 的尺寸)、CORS 白名单与服务端会话(`httpOnly` cookie + 32 字节随机会话 id)。轮次执行权由 `claimTurn` 在数据库层互斥(见 4.4)。
+传输层防护: WebSocket 消息有大小上限(`AGENT_WS_MAX_MESSAGE_BYTES`, 默认 512KB; 图片上传帧单独放宽到 64MiB), 解析失败与 schema 校验失败返回结构化错误(`bad_json`/`bad_message`), 未鉴权连接被关闭, 只读连接不能发起运行或应答交互, 单工作区连接数超上限以 1013 关闭; HTTP 层有统一的请求体大小限制(`REQUEST_BODY_LIMIT_BYTES`, 默认 1MB)、CORS 白名单与服务端会话(`httpOnly` cookie + 32 字节随机会话 id)。轮次执行权由 `claimTurn` 在数据库层互斥(见 4.4)。
 
 ### 7.5 前端 XSS 与跨源消息校验
 
@@ -409,11 +408,11 @@ Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked`(g
 
 ### 8.4 优雅关闭
 
-进程收到 `SIGINT`/`SIGTERM` 后: 先 `closeServer`(停止接受新请求), 再 `runtimeManager.disposeAll()`(逐个销毁运行时: 中止在途轮次、取消待决交互、触发 shutdown Hook、经 `handle.dispose()` 停后台任务与团队成员并断开 MCP、关闭连接), 最后断开 Redis 与数据库。因为运行时是长驻的, 关闭路径必须显式处理在途轮次与后台任务, 否则会留下半写入的文件状态。`disposeAll` 会先等所有在途生命周期任务完成, 保证不销毁一个正在创建的运行时。
+进程收到 `SIGINT`/`SIGTERM` 后: 先 `workspaceManager.dispose()`(关闭预览监听器、中止在途构建、销毁沙箱会话并失效能力 URL, 幂等), 再 `closeServer`(停止接受新请求), 再 `runtimeManager.disposeAll()`(逐个销毁运行时: 中止在途轮次、取消待决交互、触发 shutdown Hook、经 `handle.dispose()` 停后台任务与团队成员并断开 MCP、关闭连接), 最后断开 Redis 与数据库。因为运行时是长驻的, 关闭路径必须显式处理在途轮次与后台任务, 否则会留下半写入的文件状态。`disposeAll` 会先等所有在途生命周期任务完成, 保证不销毁一个正在创建的运行时。
 
 ### 8.5 测试与类型纪律
 
-双端都是 TypeScript strict。测试把并发、取消、合并这类易错的**纯逻辑**从 API 副作用里抽出来单独测: 服务端有 `agent-runtime-concurrency`(轮次串行化)、`turn-gate`(准入与公平性)、`command-dispatcher`、`event-adapter`、`mcp-config`、`mcp-crypto`、`project-files`(路径安全)、`protocol`(schema)、`common` 等用例; 客户端有 `webcontainer-runtime`(代际判断、依赖指纹)、`workspace-tree`(三方合并、树转换)、`workspace-paths`、`agent-protocol`、`use-agent-transcript`、`build-error-context`、`agent-socket-url`、`ansi-log` 等。副作用集中在薄封装层, 这让浏览器运行时这类难以端到端测试的代码仍有可靠的回归保障。
+双端都是 TypeScript strict。测试把并发、取消、构建发布这类易错的**纯逻辑**从 API 副作用里抽出来单独测: 服务端有 `agent-runtime-concurrency`(轮次串行化)、`turn-gate`(准入与公平性)、`command-dispatcher`、`event-adapter`、`mcp-config`、`mcp-crypto`、`protocol`(schema)、`common`、`workspace`(沙箱构建: 并发合并、产物发布与二进制资产服务、不安全路径拒绝、失败保留旧快照、沙箱不可用拒执行、超时杀进程组、环境不继承密钥)、`workspace-routes`(预览 API 的鉴权与只读语义)等用例; 客户端有 `use-agent-transcript`、`build-error-context`、`agent-socket-url`、`ansi-log`、`agent-protocol`(schema)等。副作用集中在薄封装层, 这让沙箱构建这类难以端到端测试的代码仍有可靠的回归保障。
 
 ## 九、适用场景与边界
 
@@ -421,10 +420,10 @@ Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked`(g
 
 **边界与注意**:
 
-- 预览链路钉在 **npm 生态 + `npm run dev`** 上, 一键修复提示词面向 React 应用; 其他技术栈需要自行适配预览与修复两端;
-- 服务器**不做构建**, 预览算力全在用户浏览器, 因此依赖用户设备性能与 WebContainer 的跨源隔离要求(COOP/COEP);
-- 文件一致性靠"服务器权威 + 三方合并 + sha256 乐观锁", 但三方合并是**整文件级**的实用合并, 不做行级 diff, 两侧同时改同一文件会判冲突交人工裁决;
-- 容量与并发: 进程级 TurnGate 默认最多 4 个并发轮次(带用户公平调度), 每工作区最多 8 条 WebSocket 连接, 空闲 15 分钟回收运行时, 僵死的跨节点轮次声明 30 分钟后回收; 这些阈值分别由 `AGENT_MAX_CONCURRENT_TURNS`/`AGENT_MAX_CONNECTIONS_PER_WORKSPACE`/`AGENT_WORKSPACE_IDLE_MS`/`AGENT_TURN_CLAIM_STALE_MS` 调整;
+- 预览链路钉在 **npm 生态 + `npm run build`** 上(要求产出 `dist/index.html` 的 Vite 兼容构建脚本), 一键修复提示词面向 React 应用; 其他技术栈需要自行适配预览与修复两端; 没有 dev server 与热更新, 每次修改都要经一次完整构建;
+- 服务器**集中构建**, 预览算力全在服务器主机, 依赖 OS 沙箱可用性(Linux bubblewrap 加用户命名空间、macOS seatbelt), 沙箱不可用时构建失败关闭; OS 沙箱不是完整的多租户隔离边界, 托管不可信项目应用专用账户/容器运行服务; 浏览器侧则不再要求跨源隔离头(COOP/COEP);
+- 文件权威单一: 只有 Agent 写服务器磁盘, 浏览器没有可写副本, 不存在双向同步与合并冲突问题; 代价是用户不能手工改代码, 源码修改只能经 Agent 或 zip 导出后本地进行;
+- 容量与并发: 进程级 TurnGate 默认最多 4 个并发轮次(带用户公平调度), 每工作区最多 8 条 WebSocket 连接, 空闲 15 分钟回收运行时(预览工作区共用同一阈值), 僵死的跨节点轮次声明 30 分钟后回收, 单次构建默认 5 分钟超时; 这些阈值分别由 `AGENT_MAX_CONCURRENT_TURNS`/`AGENT_MAX_CONNECTIONS_PER_WORKSPACE`/`AGENT_WORKSPACE_IDLE_MS`/`AGENT_TURN_CLAIM_STALE_MS`/`WORKSPACE_BUILD_TIMEOUT_MS` 调整;
 - 指标采集面目前只有 token 用量, 前端监控在生产构建里实际不外发——可观测性接口已就位但尚未填满;
 - 权限默认 `bypassPermissions`(无人值守生成), 需要人工把关时应切到 `default`/`plan` 等模式, 并接受交互代理 5 分钟超时后失败关闭(拒绝)、计划审批 10 分钟过期的行为;
 - 对话回退检查点上限 50 个, 提示词历史上限 200 条, transcript 回放路径只恢复最近 200 条消息——超长会话的细粒度回退能力有明确边界。

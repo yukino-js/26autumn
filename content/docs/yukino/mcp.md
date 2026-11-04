@@ -2,7 +2,7 @@
 title: "MCP"
 description: "MCP 接入: JSON-RPC 2.0 协议与 stdio / streamable http / sse 传输, MCPClient / MCPManager 生命周期, 用户级与项目级配置与环境变量展开, mcp__ 命名与权限匹配, eager / native / dispatch 三种延迟加载模式, ToolSearch / McpCall, server instructions 公告与 remote 模式的 MCP Apps"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 MCP (Model Context Protocol) 是一个开放协议, 定义 AI 应用 (MCP Client) 与外部工具服务 (MCP Server) 之间的标准化通信方式。Yukino 的内置工具随 CLI 静态注册, 而外部工具通过 MCP 动态接入: 配置好 server, 连接建立后工具自动进入 ToolRegistry, 供 LLM 在后续轮次调用。本页覆盖协议与传输层、MCPClient / MCPManager 的实现、配置来源与校验、工具命名与权限、三种延迟加载模式 (eager / native / dispatch)、ToolSearch / McpCall、server instructions 公告, 以及 remote 模式的 MCP Apps。

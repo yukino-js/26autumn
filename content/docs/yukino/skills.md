@@ -2,7 +2,7 @@
 title: "Skill"
 description: "Skill: 写给 AI 的 SOP (SKILL.md + YAML frontmatter), inline / fork 两种执行模式; 覆盖三层目录扫描与优先级, 渐进式披露两阶段加载, LoadSkill / InstallSkill 工具, $ARGUMENTS 替换, 热加载三层机制, 自动注册为 Slash Command 与目录型 skill 资产"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 skill 是写给 AI 的 SOP (Standard Operation Procedure): 一个带 YAML frontmatter 的 SKILL.md, 描述一类任务该怎么一步步做

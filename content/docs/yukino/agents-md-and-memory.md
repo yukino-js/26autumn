@@ -2,7 +2,7 @@
 title: "AGENTS.md and Memory"
 description: "AGENTS.md 与三层记忆: 工作记忆 (上下文窗口本身)、持久化到磁盘的长期记忆 (用户/项目级指令文件 AGENTS.md、JSONL 会话日志加文件快照, 支撑恢复会话与检查点回退), 以及 Agent 在对话中自动积累经验的自动记忆"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 Yukino 的记忆分三层

@@ -2,7 +2,7 @@
 title: "DevFlow"
 description: "DevFlow 视角入门: GitHub 同步与调度、确定性优先的分析 Agent、ActionDraft 安全草稿、每仓 RAG 与答案门禁、对话 Agent 韧性与记忆系统、多 Agent workflow、代码工作区/代码图/知识图"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "789da32fc0bd86a9c512fe31d616b1d683673d70"
+local_commit: "83f7d68cc4a08084f00a4811f9702c71b4aafd81"
 ---
 
 DevFlow 是 yukino-dev-agent 的第二个产品面: 一个 GitHub 工程副驾, UI 在 `/dev-flow`, REST 在 `/api/dev-flow/*`. 它连接 GitHub 仓库, 把 issues / pull requests / CI runs 同步进 PostgreSQL, 跑「确定性优先」的 AI 分析 Agent, 维护每仓 RAG 知识库, 并提供对话、记忆、代码工作区、代码图、知识图、多 Agent workflow 编排和多仓 workspace.

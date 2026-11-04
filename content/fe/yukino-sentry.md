@@ -1,17 +1,17 @@
 ---
 title: "@yukino.js/sentry: 框架无关浏览器监控 SDK"
-description: "一个框架无关的浏览器监控与分析 SDK: 覆盖错误、HTTP、页面轨迹、性能指标、声明式点击、曝光与白屏检测与错误前录屏, 以发布订阅事件总线解耦采集与上报, 并提供批量上报、离线缓存、服务端恢复、采样过滤与 React/Vue 接入。"
+description: "一个框架无关的浏览器监控与分析 SDK: 覆盖错误、HTTP、页面轨迹、性能指标、声明式点击、曝光与白屏检测与错误前录屏, 以发布订阅事件总线解耦采集与上报, 提供批量上报、离线缓存、服务端恢复、采样过滤、手动冲刷与 React/Vue/Node.js 接入。"
 local_path: "$HOME/github/yukino-sentry/sentry"
-local_commit: "d6763a75e9e286c7ab5c09d658783a402ece1576"
+local_commit: "b2f2e70f4737c2b957aea56cc58db5ebefdb66b5"
 ---
 
-本文系统梳理一个框架无关的浏览器监控 SDK 的能力面与实现思路: 它如何把错误、HTTP 请求、页面浏览与停留、性能指标、声明式点击、元素曝光、白屏与错误前操作录屏统一采集, 如何用发布订阅总线解耦采集与上报, 以及批量上报、离线缓存、服务端恢复、采样过滤、插件体系与体积控制等工程取舍。内容面向需要在 Web 应用中接入前端可观测能力的工程师, 也适合作为设计自有监控 SDK 的参考。
+本文系统梳理一个框架无关的浏览器监控 SDK 的能力面与实现思路: 它如何把错误、HTTP 请求、页面浏览与停留、性能指标、声明式点击、元素曝光、白屏与错误前操作录屏统一采集, 如何用发布订阅总线解耦采集与上报, 以及批量上报、离线缓存、服务端恢复、采样过滤、插件体系与体积控制等工程取舍; 同一条上报管线还被复用进独立的 Node.js 入口, 为服务端进程提供异常捕获与上报。内容面向需要在 Web 应用或 Node 服务中接入前端/服务端可观测能力的工程师, 也适合作为设计自有监控 SDK 的参考。
 
 ## 定位与分层架构
 
 ### 能力边界
 
-SDK 采集的事件类型覆盖八类来源: JavaScript 运行时错误与资源加载错误、未处理的 Promise 拒绝、`console.error`; XHR 与 fetch 请求; 页面浏览与停留时长; 性能指标(Web Vitals、导航与资源计时、长任务、首屏、内存); 声明式点击; 元素曝光时长; 白屏检测; 错误触发点之前的操作录屏。此外提供手动上报错误、性能点、自定义事件与页面浏览的 API, 以及 React 与 Vue 两套框架接入。
+SDK 采集的事件类型覆盖八类来源: JavaScript 运行时错误与资源加载错误、未处理的 Promise 拒绝、`console.error`; XHR 与 fetch 请求; 页面浏览与停留时长; 性能指标(Web Vitals、导航与资源计时、长任务、首屏、内存); 声明式点击; 元素曝光时长; 白屏检测; 错误触发点之前的操作录屏。此外提供手动上报错误、性能点、自定义事件与页面浏览的 API, 手动冲刷队列的 `flush`, 以及 React、Vue 与 Node.js 三套接入。
 
 ### 分层结构
 
@@ -19,11 +19,12 @@ SDK 采集的事件类型覆盖八类来源: JavaScript 运行时错误与资源
 Public API       init / destroy / isInitialized / enablePlugin
                  traceError / tracePerformance / traceCustomEvent / tracePageView
                  reportFrameworkError / setUserId / setVisitorId / getIdentity
-                 beforeSend / beforeSendBatch / afterSend / flushOfflineCache
-Core             sdk-lifecycle / setup / bus / api / breadcrumb / options-schema
-                 decorates / decorate-http / decorate-route / handlers
+                 beforeSend / beforeSendBatch / afterSend / flush / flushOfflineCache
+Core             sdk-lifecycle(工厂) / browser-lifecycle / setup / bus / api / breadcrumb / options-schema
+                 browser-identity / decorates / decorate-http / decorate-route / handlers
                  handle-error / handle-code-error / handle-http / handle-route / handle-events
                  framework-error / error-dedup / pv-lifecycle / white-screen / identity / plugin-registry
+Node 入口        node/index(init/destroy 与手动 API) / node/setup(进程级捕获)
 Reporter         DataReporter / transports / offline-cache / server-recovery
                  flush-scheduler / send-preflight / report-data / report-data-schema
                  network-listener / timer / promise
@@ -33,7 +34,7 @@ Framework 接入   React ErrorBoundary / Vue 3 插件
 Utils            data-structures / session / uuid / throttle / click-data / dom2str / logger
                  decorate-prop / event2breadcrumb / get-base-data / get-css-selectors
                  is-excluded-api / is-ignored-error / is-type / metric2perf-data / noop
-                 sentry / server-timing / transform-http-data
+                 runtime / sentry / server-timing / stringify / transform-http-data
 ```
 
 | 模块         | 职责                                                 |
@@ -56,6 +57,7 @@ Utils            data-structures / session / uuid / throttle / click-data / dom2
 | 入口    | 内容                                                                |
 | ------- | ------------------------------------------------------------------- |
 | 核心    | SDK 本体、全部类型与枚举、插件抽象基类、全部上报钩子类型            |
+| Node    | Node.js SDK: 进程级异常/拒绝捕获、fetch 拦截与同一条上报管线        |
 | 插件    | PerformancePlugin、ScreenRecordPlugin、ExposurePlugin、录屏解压工具 |
 | React   | ReactErrorBoundary 组件                                             |
 | Vue     | Vue 3 插件                                                          |
@@ -66,6 +68,8 @@ React(`^16` 到 `^19`)、Vue(`^3`)、Vite(`^7` 或 `^8`)、webpack(`^4` 或 `^5`
 
 ## 生命周期
 
+`init`/`destroy`/`isInitialized`/`enablePlugin` 由 `createSdkLifecycle` 工厂生成: 浏览器入口注入浏览器 setup 与身份识别钩子, Node 入口注入进程级 setup(见 Node.js SDK 一节), 两者共享同一套配置校验、插件注册表与清理顺序。
+
 ### init 的执行顺序
 
 初始化入口按固定顺序完成六件事:
@@ -75,7 +79,7 @@ React(`^16` 到 `^19`)、Vue(`^3`)、Vite(`^7` 或 `^8`)、webpack(`^4` 或 `^5`
 3. 合并默认配置并做 schema 校验, 校验失败会抛出 `ZodError`。
 4. 防护检查。`disabled` 为真则直接返回但仍保留已应用的配置; `dsn` 为空则记录错误并返回。
 5. 按 `maxBreadcrumbs` 设置面包屑容量, 执行 setup。
-6. 异步启动身份识别, 不阻塞主流程。
+6. 异步启动身份识别(经生命周期工厂的 `onInitialized` 钩子), 不阻塞主流程。
 
 setup 的职责是按开关安装各事件类型的总线订阅与猴子补丁, 顺序为 XHR、fetch、Error、History、HashChange、未处理拒绝与 Click 七组, 每组都成对地"先订阅总线处理器, 再安装发布侧补丁"; 白屏检测开启时直接启动采样并把停止函数登记进清理列表; 调用 PV 初始化立即上报首次页面浏览; 并注册 `pagehide` 监听在离开时补发当前页停留时长。它返回一个清理函数, 内部收集了所有取消订阅与还原补丁的函数, 销毁时按注册的逆序一次性还原, 再重置页面浏览状态并清空全部总线订阅, 因此 SDK 可以安全地从页面中完整移除。
 
@@ -84,6 +88,8 @@ setup 的职责是按开关安装各事件类型的总线订阅与猴子补丁, 
 销毁依次完成五步: 调用所有插件的销毁方法并清空插件注册表; 逆序执行 setup 的清理(还原全部拦截、停止白屏采样、移除页面隐藏监听、重置页面浏览状态、清空总线订阅); 销毁批量错误管理器(清结算定时器、丢弃缓存的错误); 重置上报器单例(释放旧实例: 清定时器、摘除在线/离线监听、丢弃队列, 并重置服务端恢复退避); 复位会话级状态(面包屑缓冲、错误去重集合、录屏标记)。之后再次初始化会从全新状态开始, 这使它适合用于测试重置、微前端卸载或运行时动态关闭监控。
 
 `isInitialized()` 的判据是"setup 清理函数是否已登记", 在 setup 成功完成后为真, 销毁后复位为假; 因 `disabled` 或空 `dsn` 而提前返回的初始化不会让它变为真。
+
+除 `flushOfflineCache`(重放本地镜像)外, 公共 API 还提供 `flush()`: 先结算批量错误聚合窗口(`flushBatchErrors`, 提前清算 2 秒定时器), 再驱动上报器冲刷——等待异步 `beforeSend` 钩子、在途请求与全部排队批次, 直到队列为空或传输失败/SDK 已销毁为止。它是脚本结束、`SIGTERM` 处理器等主动退出场景的可靠性出口。
 
 ## 配置体系
 
@@ -174,7 +180,7 @@ schema 会额外约束: 面包屑容量、批量条数与队列长度必须为�
 | Error 实例               | 运行时错误路径 | 类型为 JS 错误, extra 为堆栈或错误对象     |
 | 其他任意值               | 未知错误路径   | 类型为 JS 错误, 名称标为 Unknown Error     |
 
-资源错误的消息按 `Failed to load 标签名: 地址` 合成; 未知错误路径对字符串取原文、其余做 JSON 序列化作为消息。手动上报接口 `traceError` 就是构造一个 `extra` 为任意值的载荷走这条通用分派, 因此任何形态的输入都能被归类处理。
+资源错误的消息按 `Failed to load 标签名: 地址` 合成; 未知错误路径对对象用循环引用与 bigint 安全的 `stringify` 序列化作为消息(拒绝理由与用户上下文可能含循环引用或 bigint, 裸 `JSON.stringify` 会直接抛错)、其余值字符串化。手动上报接口 `traceError` 就是构造一个 `extra` 为任意值的载荷走这条通用分派, 因此任何形态的输入都能被归类处理。
 
 ### 去重
 
@@ -209,7 +215,7 @@ schema 会额外约束: 面包屑容量、批量条数与队列长度必须为�
 | 计时起点 | `send` 时刷新时间戳       | 发起请求时的时间戳 |
 | 数据存放 | 挂在实例上的私有属性      | 闭包变量           |
 
-XHR 的 `open` 装饰在实例的 `__sentry__` 私有属性上初始化请求元数据(方法、地址等), `send` 装饰刷新时间戳并挂一个只执行一次的 `loadend` 监听, 在回调里先做忽略判定, 再记录状态码、解析 `server-timing` 响应头与耗时后发布。fetch 的装饰接受字符串、URL 与 Request 三种入参: 地址按"字符串原样、URL 取 href、Request 取 url"推导, 方法按"options 显式指定、Request 自带方法、默认 GET"的优先级推导; 命中忽略规则的请求在发起前就直接透传原始 fetch, 零开销。
+XHR 的 `open` 装饰在实例的 `__sentry__` 私有属性上初始化请求元数据(方法、地址等), `send` 装饰刷新时间戳并挂一个只执行一次的 `loadend` 监听, 在回调里先做忽略判定, 再记录状态码、解析 `server-timing` 响应头与耗时后发布。fetch 的装饰接受字符串、URL 与 Request 三种入参: 地址按"字符串原样、URL 取 href、Request 取 url"推导, 方法按"options 显式指定、Request 自带方法、默认 GET"的优先级推导; 命中忽略规则的请求在发起前就直接透传原始 fetch, 零开销; 全局 `fetch` 不存在时(老运行时)装饰直接退化为空操作。
 
 两者共同的要点: 请求体与响应体只在错误状态(状态码为 0 或大于等于 400)时捕获, 字符串响应截断到 8KB, 避免单个错误撑爆上报载荷; fetch 用 `clone().text()` 在后台读取, 不消费业务方的响应体, 克隆读取失败(例如流式响应)时仍照常发布事件; 网络错误以状态码 0 上报、消息取原始异常的 message(否则为 Network error), 并把原始异常继续抛出, 不吞掉业务错误。
 
@@ -231,7 +237,7 @@ HTTP 数据会被转换成一个新对象并派生状态与消息, 不改动入�
 
 ### 请求过滤
 
-请求在满足以下任一条件时被跳过: 向配置的 `dsn` 发起的 POST(避免上报请求自我采集导致死循环), 或匹配 `excludeAPIs`。这里有一个容易踩的差异: `excludeAPIs` 的字符串项是严格相等匹配, 正则项才按 `test` 匹配; 而 `ignoreErrors` 的字符串项是子串包含匹配。此外, 任何地址中含 `dsn` 的请求都不会写入面包屑, 保证 SDK 自身的流量不污染操作轨迹。
+请求在满足以下任一条件时被跳过: 向配置的 `dsn` 发起的 POST 或 HEAD(前者避免上报请求自我采集导致死循环, 后者让服务端恢复探测不被自采集), 或匹配 `excludeAPIs`。这里有一个容易踩的差异: `excludeAPIs` 的字符串项是严格相等匹配, 正则项才按 `test` 匹配; 而 `ignoreErrors` 的字符串项是子串包含匹配。此外, 任何地址中含 `dsn` 的请求都不会写入面包屑, 保证 SDK 自身的流量不污染操作轨迹。
 
 ## 页面轨迹: 浏览与停留时长
 
@@ -293,11 +299,11 @@ HTTP 数据会被转换成一个新对象并派生状态与消息, 不改动入�
 | `visitorId`   | 业务或后端设置           | 内存         | 业务侧访客标识 |
 | `userId`      | 业务设置或初始化时传入   | 内存         | 登录用户标识   |
 
-三者都会逐条附加到上报数据的外层, 查询身份接口返回它们以及两个"是否存在"的布尔值(`hasAnonymousId` 与 `hasVisitorId`, 即值不等于 unknown)。设备指纹默认关闭: 启用时先读 localStorage 缓存(键 `yukino_sentry_anonymous_id`), 未命中才动态加载指纹库生成访客 ID 并写入缓存, 加载或生成失败只记日志、不阻断初始化; 关闭时匿名标识保持 unknown。这是一个隐私合规上的自觉默认——浏览器指纹属于敏感采集, 必须由使用方主动开启。
+三者都会逐条附加到上报数据的外层, 查询身份接口返回它们以及两个"是否存在"的布尔值(`hasAnonymousId` 与 `hasVisitorId`, 即值不等于 unknown)。设备指纹是浏览器专属能力(拆在 `browser-identity` 里, 由浏览器生命周期钩子触发)且默认关闭: 启用时先读 localStorage 缓存(键 `yukino_sentry_anonymous_id`), 未命中才动态加载指纹库生成访客 ID 并写入缓存, 加载或生成失败只记日志、不阻断初始化; 关闭时匿名标识保持 unknown。这是一个隐私合规上的自觉默认——浏览器指纹属于敏感采集, 必须由使用方主动开启。
 
 ### 设备与会话标识
 
-SDK 自动生成并持久化两个标识: 设备 ID 存在 localStorage(键 `yukino_sentry_device_id`, 跨会话持久, 清缓存前不变), 会话 ID 存在 sessionStorage(键 `yukino_sentry_session_id`, 标签页会话级, 关页即失效)。两者都在首次使用时惰性生成, 保证同一设备或同一会话内所有事件携带一致的 ID; 它们随事件级载荷一起上报, 与外壳上的三层身份互补。
+SDK 自动生成并持久化两个标识: 设备 ID 存在 localStorage(键 `yukino_sentry_device_id`, 跨会话持久, 清缓存前不变), 会话 ID 存在 sessionStorage(键 `yukino_sentry_session_id`, 标签页会话级, 关页即失效)。两者都在首次使用时惰性生成, 保证同一设备或同一会话内所有事件携带一致的 ID; 它们随事件级载荷一起上报, 与外壳上的三层身份互补。非浏览器运行时(Node)下两个标识退化为进程内存级的惰性单例: 同一进程内稳定, 进程退出即消失。
 
 标识生成函数有三级降级: 优先用安全上下文才暴露的 `crypto.randomUUID`; 不可用时用 `getRandomValues` 手写 v4(让 SDK 在纯 HTTP 页面也可用); 全局随机能力完全缺失时用时间戳加随机数兜底。存储访问全部包在 try/catch 中, 隐私模式或存储被禁用时直接返回新的随机标识, 不阻塞上报。
 
@@ -327,10 +333,12 @@ SDK 自动生成并持久化两个标识: 设备 ID 存在 localStorage(键 `yuk
 1. 队列为空或已有发送在途(防并发标记)则返回。
 2. 离线则裁剪队列、写入镜像并中止本轮。
 3. 从队头切出不超过单批上限的一批, 交 `beforeSendBatch`(异步时等待); 若返回空则安排下一轮发送。
-4. 批次只序列化一次, 再按通道优先级发送。
+4. 批次只序列化一次(用循环引用与 bigint 安全的 `stringify`), 再按通道优先级发送。
 5. 传输失败时把这一批回插到队头、裁剪并持久化, 同时启动服务端恢复探测。
 6. 成功后清除已持久化的镜像(仅当此前写过), 执行 `afterSend` 钩子并记录耗时。
 7. 队列仍有数据则 100 毫秒后继续, 形成流水线。
+
+管道还有一组健壮性约束: `beforeSend`/`afterSend` 钩子抛错或 reject 只记调试日志, 不会触发递归上报也不会中断管道; 入队时队列即裁剪到 `maxQueueLength` 上限(而非只在离线时); `disabled` 为真时载荷在预检阶段直接丢弃; 上报器销毁后, 在途回调、恢复探测与定时器调度全部经 `disposed`/`isActive` 守卫短路, 不会在销毁后复活。
 
 ### 传输通道
 
@@ -339,7 +347,7 @@ SDK 自动生成并持久化两个标识: 设备 ID 存在 localStorage(键 `yuk
 | `sendBeacon` | 约 60KB  | 页面卸载时仍可靠发送, 不阻塞页面 | 仅 POST, 无法自定义头, 拿不到响应 |
 | `fetch` POST | 无硬限制 | 可自定义头, 可获取响应状态       | 页面卸载时可能被取消              |
 
-双通道的理由有三点。页面关闭场景下 `fetch` 可能被取消而浏览器会保证 beacon 发出; 载荷超过 60KB 或 beacon 入队失败时自动落到 fetch; 只有 fetch 能拿到响应状态, 非 2xx 会触发失败回插与服务端恢复探测。fetch 的条件性 `keepalive` 只在载荷不超过 60KB 时设置, 因为浏览器对 keepalive 请求有约 64KB 的在途预算, 超限会被拒绝, 而失败的请求会一直卡在队列头部。载荷字节数用 `TextEncoder` 实测而非字符串长度, 多字节字符不会被低估。
+双通道的理由有三点。页面关闭场景下 `fetch` 可能被取消而浏览器会保证 beacon 发出; 载荷超过 60KB 或 beacon 入队失败时自动落到 fetch; 只有 fetch 能拿到响应状态, 非 2xx 会触发失败回插与服务端恢复探测。`sendBeacon` 只在 `navigator.sendBeacon` 存在时可用, Node 环境自然回落到 fetch 单通道。fetch 的条件性 `keepalive` 只在载荷不超过 60KB 时设置, 因为浏览器对 keepalive 请求有约 64KB 的在途预算, 超限会被拒绝, 而失败的请求会一直卡在队列头部。载荷字节数用 `TextEncoder` 实测而非字符串长度, 多字节字符不会被低估。
 
 ### 同步快路径与定时器处理
 
@@ -378,13 +386,13 @@ SDK 自动生成并持久化两个标识: 设备 ID 存在 localStorage(键 `yuk
 
 ### 网络状态与本地镜像
 
-上报器构造时读取初始在线状态(`navigator.onLine` 不为 false 即在线)并监听在线/离线事件; 离线期间事件仍留在内存队列, 本地存储只是它的镜像, 因此恢复在线后无需重新加载即可立即发送。镜像写入时机是: 入队时发现离线、发送时发现离线、发送失败回插之后; 下次发送成功后清除镜像, 防止后续会话重放已送达的数据。队列在每次持久化前裁剪到上限, 避免撑爆本地存储; 恢复镜像装回队列时同样裁剪。
+上报器构造时读取初始在线状态(`navigator.onLine` 不为 false 即在线; `navigator` 不存在的 Node 环境恒视为在线)并监听在线/离线事件(无 `addEventListener` 时监听退化为空操作); 离线期间事件仍留在内存队列, 本地存储只是它的镜像, 因此恢复在线后无需重新加载即可立即发送。镜像的读写与清除都以浏览器运行时为前提(`isBrowserRuntime`, 即 `window` 存在), Node 环境下离线缓存整体禁用, 失败批次只留在内存队列里等待退避重试。镜像写入时机是: 入队时发现离线、发送时发现离线、发送失败回插之后; 下次发送成功后清除镜像, 防止后续会话重放已送达的数据。队列在每次持久化前裁剪到上限, 避免撑爆本地存储; 恢复镜像装回队列时同样裁剪。
 
 从本地存储加载镜像时用 schema 校验: 只有校验通过的缓存才被删除并装回队列, 不合法的缓存原样保留便于排查; 只有 JSON 解析直接抛错才删除。这体现了对"坏数据"的处理原则——宁可留证据, 也不要静默丢弃。
 
 ### 服务端恢复探测
 
-当发送失败(fetch 拒绝或非 2xx)时, 上报器进入离线态并启动恢复探测: 用 HEAD 请求探测配置的 `dsn`, 失败则指数退避重新安排(1 秒起步, 每次失败翻倍, 封顶为配置的重试间隔), 成功则重置退避、恢复在线并立即冲刷内存队列。探测定时器会取消对 Node 进程的引用。上报器还导出手动冲刷离线缓存的方法(重新装载本地镜像并立即发送), 用于需要主动重放的场景。
+当发送失败(fetch 拒绝或非 2xx)时, 上报器进入离线态并启动恢复探测: 用 HEAD 请求探测配置的 `dsn`, 失败则指数退避重新安排(1 秒起步, 每次失败翻倍, 封顶为配置的重试间隔), 成功则重置退避、恢复在线并立即冲刷内存队列。探测定时器会取消对 Node 进程的引用, 探测回调经 `isActive` 守卫——上报器销毁后不再安排后续探测。上报器还导出手动冲刷离线缓存的方法(重新装载本地镜像并立即发送), 用于需要主动重放的场景。
 
 ```text
 网络断开
@@ -472,6 +480,45 @@ SDK 自动生成并持久化两个标识: 设备 ID 存在 localStorage(键 `yuk
 
 Vue 3 插件接入时先保存原有的 `app.config.errorHandler`, 再安装新的处理器: 上报 Vue 类型的框架错误(上下文含组件实例与生命周期信息), 然后链式调用原处理器, 最后用传入的配置初始化 SDK。其他框架可以直接调用通用的框架错误上报接口, 显式指定类型为 React、Vue 或其他框架, 并提供错误对象与上下文。该接口对错误名称与消息做了多级回退: 名称按"Error 实例取 name、null/undefined 取字面量、普通对象取原型构造名(兜底 Object)、其余取 typeof"; 消息按"Error 实例取 message、字符串原样、null/undefined 取字面量、其余 JSON 序列化(失败再回退字符串化)"; 堆栈从 Error 实例或带字符串 stack 属性的对象上提取。保证任何形态的输入都能得到可读的上报。
 
+## Node.js SDK
+
+`@yukino.js/sentry/node` 是独立子路径入口, 把同一条上报管线带进 Node.js 服务(设计上参照 `@sentry/node`): `init` 自动安装进程级捕获, 手动 API 与浏览器入口对齐, 不引入任何浏览器专属依赖。构建上它是 rollup 的独立入口(`node/index`), 同样产出 ESM、CJS 与类型声明三套产物。
+
+### init 与 Node 专属选项
+
+`NodeInitOptions` 在核心 `InitOptions` 之上增加两个选项, 与核心选项一起过 zod 校验:
+
+| 选项                      | 类型                           | 默认       | 说明                                                                                             |
+| ------------------------- | ------------------------------ | ---------- | ------------------------------------------------------------------------------------------------ |
+| `exitOnUncaughtException` | `boolean`                      | `true`     | 未捕获异常上报后以退出码 1 退出进程; 置 `false` 则保活                                           |
+| `unhandledRejectionMode`  | `"strict" \| "warn" \| "none"` | `"strict"` | `strict` 冲刷报告后退出码 1(独立于 `enableError` 与上一选项); `warn` 记警告并继续; `none` 只上报 |
+
+浏览器专属开关(如 `enableClick`、`enableWhiteScreen`)在 Node 入口被忽略。`dsn` 必须是绝对 URL——Node 无法解析 `/api/log` 这类相对端点, `init` 在 dsn 非绝对 URL 时会发出警告。
+
+### 进程级捕获与崩溃路径
+
+setup 按开关订阅三类进程级事件:
+
+| 捕获                  | 开关                       | 行为                                                                                |
+| --------------------- | -------------------------- | ----------------------------------------------------------------------------------- |
+| 未捕获异常            | `enableError`              | 发布 Error 事件; 需要退出时先冲刷待发报告(最多 2 秒), 再记日志并以退出码 1 结束进程 |
+| 未处理的 Promise 拒绝 | `enableUnhandledRejection` | 发布 UnhandledRejection 事件, 再按 `unhandledRejectionMode` 处置                    |
+| 出站 `fetch`          | `enableFetch`              | 装饰全局 `fetch`(Node 18+); 状态码 ≥ 400 或网络失败的请求被上报, 全部请求成为面包屑 |
+
+崩溃路径有 `isCrashing` 防重入: 首次致命错误触发后, 后续异常不再重复处理; 冲刷以 2 秒超时为界(`CRASH_FLUSH_TIMEOUT_MS`), 不让上报把退出卡死。`destroy` 会取消待决的致命处理并丢弃在途报告, 之后重新 `init` 从全新状态开始。
+
+### 运行时适配
+
+核心与上报器为支持 Node 做了一组运行时适配, 都以能力探测而非平台判断实现:
+
+- 离线缓存、设备指纹与存储类标识以 `isBrowserRuntime`(`window` 存在)为前提, Node 下自动禁用或退化为内存单例;
+- 上报外壳的 `url` 字段取 `globalThis.location?.href`, Node 下为空串;
+- 传输通道在无 `sendBeacon` 时自然回落 fetch; 网络监听在无 `navigator`/`addEventListener` 时退化;
+- `Event`/`ErrorEvent` 的 `instanceof` 判定都先探测全局存在性, 拒绝理由与上下文的序列化用循环引用/bigint 安全的 `stringify`;
+- 类型声明不依赖 TypeScript 的 DOM lib: 性能指标类型不再引用 web-vitals 的 `Metric` 与 DOM 的 `PerformanceEntry`, 改为自有的数值与结构类型。
+
+可用 API 与浏览器入口大体对齐(`init`/`destroy`/`isInitialized`/`enablePlugin`/身份与钩子注册/`flush`/`flushOfflineCache`/`traceError`/`tracePerformance`/`traceCustomEvent`/`reportFrameworkError` 及全部共享类型), 但 `tracePageView` 是浏览器专属, 不在 Node 入口导出。包内另有 `test:package` 脚本(`node --test`), 在构建后验证 ESM/CJS 入口可加载、子进程崩溃行为与类型声明不依赖 DOM lib。
+
 ## 采样与前置过滤
 
 从事件产生到最终上报, 过滤分为多层, 越靠前的层越省成本:
@@ -529,7 +576,7 @@ SDK 自身的控制台输出默认关闭, 打开 `debug` 后可看到事件采�
 
 ## 适用场景与小结
 
-这套 SDK 适合: 需要一次性接入错误、性能、页面轨迹与行为埋点而不想引入多套前端可观测库的项目; 需要在 React 或 Vue 之外保持框架无关、或要在微前端里按需挂载卸载的场景; 需要错误现场录屏与开发期 Source Map 反解的团队; 以及希望用声明式 HTML 属性完成埋点、避免业务代码侵入的产品。
+这套 SDK 适合: 需要一次性接入错误、性能、页面轨迹与行为埋点而不想引入多套前端可观测库的项目; 需要在 React 或 Vue 之外保持框架无关、或要在微前端里按需挂载卸载的场景; 需要错误现场录屏与开发期 Source Map 反解的团队; 希望用声明式 HTML 属性完成埋点、避免业务代码侵入的产品; 以及需要让 Node.js 服务与前端共用同一条上报管线与后端的项目。
 
 不太适合: 需要全量会话回放(它只保留错误前几秒)或需要跨标签页统一会话存储的场景; 对上报体积极度敏感、无法接受校验库与 UA 解析库常驻主包的项目; 对离线队列容量有很高要求、需要突破本地存储限制的场景。
 

@@ -2,7 +2,7 @@
 title: "Yukino 源码解析: 终端 Coding Agent 的子系统机制"
 description: "按 Agent 主循环与事件流、Provider 适配与重试、工具系统与 MCP 延迟加载、上下文压缩与恢复、检查点与 fork、长期记忆、subagents 与团队、coordinator 与持久 goal、权限、Hooks 与沙箱、运行模式与遥测等子系统, 深入论述 Yukino Code 内置核的实现思路与设计取舍, 并以三十一问的设计问答篇补充边界与取舍"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 Yukino Code 是一个运行在终端里的 Coding Agent, 用 React + Ink 渲染 TUI, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环。本文以它的内置核为对象, 按子系统逐一深潜: Agent 主循环如何把一轮推理拆成可中断、可恢复、可观测的事件流, 多种协议如何在同一接口下收敛, 工具与 MCP 如何在不破坏 prompt cache 的前提下进入上下文, 上下文满了如何压缩并在恢复时找回细节, 会话如何回退与派生, 记忆如何跨会话沉淀, 多代理又如何被组织成团队和长期目标。它不是接口手册, 也不逐文件走读, 而是解释每个机制为什么这样设计、代价是什么、在什么场景下成立。适合正在构建或维护 Agent 基础设施的工程师阅读, 也适合把它当作「把 Agent 做成产品级终端应用」的工程权衡参考。本文前半按子系统论述实现思路, 后半 (设计问答篇) 以问答形式补充取舍与边界。它的官方 MCP 工具集见 [yukino-mcp](../../fe/yukino-mcp), 把它作为库复用的全栈代码生成平台见 [yukino-codegen](../../fe/yukino-codegen)。
@@ -29,7 +29,7 @@ Yukino Code 是一个运行在终端里的 Coding Agent, 用 React + Ink 渲染 
 
 每轮的 reminder 注入有固定顺序: 工具指引 → 工作目录 → 持久目标 → plan 模式 → coordinator → 延迟工具指引, 然后排空钩子通知、外部通知与技能增量, 再触发 turn_start 与 pre_send 钩子。几个细节:
 
-- 工具指引不是静态文本, 而是按当前可见工具面逐轮生成 (buildToolGuidance): 有文件工具就提示优先用文件工具而非 shell, 有 ReadFile 就提示 offset/limit 语义, 有 shell 工具、待办、目标、LSP、WebFetch、Workflow、Agent 委派时各自附上使用规则。为了让 reminder 不无限堆积, 会话管理器提供 addSystemReminderIfChanged: 只有与历史中同 marker 的最新一条内容不同才写新消息; 若工具面清空且历史里仍有旧清单, 还会补写一条「当前无可调用工具」兜底, 防止模型沿用过期工具名。
+- 工具指引不是静态文本, 而是按当前可见工具面逐轮生成 (buildToolGuidance): 有文件工具就提示优先用文件工具而非 shell, 有 ReadFile 就提示 offset/limit 语义, 有 shell 工具、待办、目标、WebFetch、Workflow、Agent 委派时各自附上使用规则。为了让 reminder 不无限堆积, 会话管理器提供 addSystemReminderIfChanged: 只有与历史中同 marker 的最新一条内容不同才写新消息; 若工具面清空且历史里仍有旧清单, 还会补写一条「当前无可调用工具」兜底, 防止模型沿用过期工具名。
 - 工作目录 reminder 用 `<working-directory>` 做 marker, 内容是当前 cwd、可选的 worktree 分支、一句「本条取代更早的工作目录信息」以及新目录下的项目指令。它只在两种情况下刷新: 会话正运行在 worktree 里, 或历史中已经出现过该 marker——普通会话的 cwd 不会中途变化, 没必要每轮重复。
 - plan 模式与 coordinator 提醒按 REMINDER_INTERVAL=5 的节奏给全文: 第 1、6、11… 轮注入完整版, 其余轮注入精简版。约束类文本每轮全文重复既烧 token 又稀释注意力, 周期性全文重述则足以对抗「长会话里初始约束被淹没」。
 
@@ -101,7 +101,7 @@ Provider 层把传输层异常归类为统一的错误类型: 网络与用户中
 
 ### 3.1 Tool 契约与注册表所有权
 
-工具统一实现一个接口: 名称、描述、类别 (read / write / command)、可选的按实参并发安全判定、可选的延迟标记、schema、execute, 以及可选的 dispose 用于释放资源 (典型是 LSP 子进程)。注册表区分两种登记方式以划分资源所有权: register 表示本注册表拥有该工具, registerBorrowed 只挂引用不接管所有权。这个区分支撑了代理派生: 子代理的克隆注册表只拥有被重新实例化的作用域工具, 继承的父级工具都是借用, 因此子代理退出时不会断开父级的 LSP 或 MCP 资源。反向的所有权转移也有显式入口: takeOwnershipFrom(source) 把源注册表里同名工具的所有权整体接过来自行管理, 供 /mcp 重载这类「新实例接管旧资源」的场景使用; unregister 会同时清掉该工具的已发现状态, 重载后模型需要重新经 ToolSearch 发现它。
+工具统一实现一个接口: 名称、描述、类别 (read / write / command)、可选的按实参并发安全判定、可选的延迟标记、schema、execute, 以及可选的 dispose 用于释放资源 (典型是 MCP 子进程)。注册表区分两种登记方式以划分资源所有权: register 表示本注册表拥有该工具, registerBorrowed 只挂引用不接管所有权。这个区分支撑了代理派生: 子代理的克隆注册表只拥有被重新实例化的作用域工具, 继承的父级工具都是借用, 因此子代理退出时不会断开父级的 MCP 资源。反向的所有权转移也有显式入口: takeOwnershipFrom(source) 把源注册表里同名工具的所有权整体接过来自行管理, 供 /mcp 重载这类「新实例接管旧资源」的场景使用; unregister 会同时清掉该工具的已发现状态, 重载后模型需要重新经 ToolSearch 发现它。
 
 dispose 是幂等的, 只对自有工具执行释放, 并把聚合失败以 AggregateError 抛出; 已注销或被替换的工具仍留在自有集合里一并清理。向已 dispose 的注册表注册工具会直接报错, 避免资源泄漏被静默吞掉。
 
@@ -241,7 +241,7 @@ fork 禁止嵌套: fork 出的子代理 (与所有子代理一样) 被全局 SUB
 
 内置角色有四个: general-purpose (研究与多步任务, 无限制)、plan (只读架构师: 调研并给实现计划, 禁 EditFile/WriteFile/ExitPlanMode, 权限模式 plan 且 readOnly)、explore (只读探索者: 找代码、追调用路径、给 file:line 证据, 限制与 plan 相同)、review (代码审查: 只禁 EditFile/WriteFile/ExitPlanMode, 不声明 readOnly 与权限模式——审查需要跑测试与命令, 只是不许改文件)。自定义角色从 ~/.yukino/agents 目录的 Markdown 文件加载并可覆盖同名内置角色, frontmatter 支持工具白名单与黑名单、系统提示词覆盖、最大轮数 max_turns、模型、后台默认、worktree 隔离等; 未写 description 时取正文前 200 字符兜底; 角色级权限模式 permission_mode 接受四种取值 (default、acceptEdits、plan、bypassPermissions), 派生时传入子代理的检查器。
 
-派生入口是 Agent 工具, 必填 description 与 prompt, 其余参数: kind (subagent 或 teammate, 默认 teammate)、team_name (要加入的团队, 多团队并存时必填)、subagent_type (默认 general-purpose)、fork (是否复制父对话, 默认取会话的 enable_fork 设置, 未设置时为 true)、model 覆盖、run_in_background (默认 false)、worktree 隔离。kind 的语义写在参数描述里: teammate 是所选团队里的持久成员 (没有团队时自动创建), 适合需要通信与后续派活的场景; subagent 是一次性任务, 结果作为工具结果返回, 不可消息、不可续用。Agent 工具的并发安全判定恒为真: 多个前台委派可在同一批里并发执行, 因为子代理各自有独立会话与注册表; 但提示词要求避免并发写同一批文件, 隔离 worktree 也不自动合并。
+派生入口是 Agent 工具, 必填 description 与 prompt, 其余参数: kind (subagent 或 teammate, 默认 teammate)、team_name (要加入的团队, 多团队并存时必填)、subagent_type (默认 general-purpose)、fork (是否复制父对话, 缺省 true)、model 覆盖、run_in_background (默认 false)、worktree 隔离。kind 的语义写在参数描述里: teammate 是所选团队里的持久成员 (没有团队时自动创建), 适合需要通信与后续派活的场景; subagent 是一次性任务, 结果作为工具结果返回, 不可消息、不可续用。Agent 工具的并发安全判定恒为真: 多个前台委派可在同一批里并发执行, 因为子代理各自有独立会话与注册表; 但提示词要求避免并发写同一批文件, 隔离 worktree 也不自动合并。
 
 ### 7.2 前台与后台
 
@@ -258,7 +258,7 @@ fork 禁止嵌套: fork 出的子代理 (与所有子代理一样) 被全局 SUB
 
 运行参数上, 模型按「调用级覆盖大于定义级大于父代理」优先; 思考强度继承父代理当前生效等级; 上下文窗口与输出上限沿用父代理同一 Provider 的配置; 系统提示词取角色覆盖或默认构建。权限上, 调用方传入父检查器时子代理经 forSubagent 派生: 派生检查器持有独立的模式状态与一条父级引用, 按 9.1 的继承规则实时解析有效模式。迭代上限取角色定义的 maxTurns, 未声明时为 0, 表示不限制——上限是角色作者的选择, 不是全局默认值。
 
-退出路径统一: 先停掉并等待该子代理自己的后台 shell 任务 (不允许后台 shell 比子代理活得久), 再释放其作用域注册表; 完成、失败、中断、迭代耗尽都走同一个 finally。fork 路径的克隆注册表由 fork 调用方释放, 且只释放自有工具, 不连累父级 LSP/MCP。
+退出路径统一: 先停掉并等待该子代理自己的后台 shell 任务 (不允许后台 shell 比子代理活得久), 再释放其作用域注册表; 完成、失败、中断、迭代耗尽都走同一个 finally。fork 路径的克隆注册表由 fork 调用方释放, 且只释放自有工具, 不连累父级 MCP。
 
 ### 7.4 团队模型与进程内 teammate
 
@@ -328,20 +328,19 @@ Coordinator 模式把 leader 的工具面收窄为纯编排白名单: Workflow�
 检查按固定层次推进, 前面的层级能短路后面的:
 
 1. plan 模式闸门: 生效时非读类别一律拒绝, 除非命中后续豁免层。
-2. 显式规则: deny 与 ask 直接短路; 显式 allow 故意不短路, 让后面的危险命令与路径检查仍有机会优先生效。
+2. 显式规则: deny 与 ask 直接短路; 显式 allow 故意不短路, 让后面的路径沙箱等机制仍有机会先介入。
 3. 计划协调工具豁免: 提问、进入/退出计划模式、委派、目标、任务追踪、TaskStop、团队创建与删除、发消息这组工具在 plan 模式下仍可用——它们是「讨论与组织计划」的一部分, 不是执行。
 4. teammate 协调豁免: 无人值守成员的 SendMessage 与 TodoWrite 直接放行。
 5. plan 模式计划文件写例外 (WriteFile 与 EditFile 指向已声明的计划文件)。
 6. 安全只读命令自动放行 (SAFE_PREFIXES 命令白名单加元字符防护——命令串里出现管道、重定向等 shell 元字符即不适用)。
-7. 危险命令拦截 (DANGEROUS_PATTERNS 当前为空集, 这一层处于休眠, 属于预留位)。
-8. 空命令询问: Bash/PowerShell 的 command 为空时返回 ask——空命令没有可供规则匹配的内容, 自动放行等于开了一个绕过口。
-9. 不完整解析询问: shell 解析器判定命令语法不完整 (如未闭合的引号) 且非全放行模式时返回 ask——解析不了的命令无法逐段核对, 交给用户裁决。
-10. 沙箱自动放行: 仅对启用了 OS 沙箱的 Bash, 且复合命令按分隔符拆开后逐段查规则, 任一段 deny 则 deny、任一段 ask 则 ask, 防命令链绕过。
-11. 路径沙箱: 只有写类工具且带路径时检查, 读类豁免; 出界询问, 但显式 allow 可覆盖。
-12. 规则引擎: 显式 allow 在此生效, 按工具名与内容 glob 匹配, deny 优先于 ask 优先于 allow。
-13. 模式矩阵: 按模式与工具类别给最终决定。
+7. 空命令询问: Bash/PowerShell 的 command 为空时返回 ask——空命令没有可供规则匹配的内容, 自动放行等于开了一个绕过口。
+8. 不完整解析询问: shell 解析器判定命令语法不完整 (如未闭合的引号) 且非全放行模式时返回 ask——解析不了的命令无法逐段核对, 交给用户裁决。
+9. 沙箱自动放行: 仅对启用了 OS 沙箱的 Bash, 且复合命令按分隔符拆开后逐段查规则, 任一段 deny 则 deny、任一段 ask 则 ask, 防命令链绕过。
+10. 路径沙箱: 只有写类工具且带路径时检查, 读类豁免; 出界询问, 但显式 allow 可覆盖。
+11. 规则引擎: 显式 allow 在此生效, 按工具名与内容 glob 匹配, deny 优先于 ask 优先于 allow。
+12. 模式矩阵: 按模式与工具类别给最终决定。
 
-这套层次把「安全默认」和「可控豁免」分开: 大多数危险路径由后面的模式矩阵兜底询问, 而少量明确安全或明确授权的情形由前层放行; 8、9 两层则体现同一个原则的反面——无法被规则理解的输入, 宁可升级为人审。
+这套层次把「安全默认」和「可控豁免」分开: 大多数危险路径由后面的模式矩阵兜底询问, 而少量明确安全或明确授权的情形由前层放行; 7、8 两层则体现同一个原则的反面——无法被规则理解的输入, 宁可升级为人审。
 
 ### 9.3 规则文件与路径沙箱
 
@@ -357,7 +356,7 @@ Coordinator 模式把 leader 的工具面收窄为纯编排白名单: Workflow�
 
 ### 9.5 OS 沙箱与安全边界
 
-OS 沙箱在 macOS 用 Seatbelt (sandbox-exec)、Linux 用 bubblewrap, 其他平台返回 null 不可用; 配置是允许写目录、拒绝写目录 (拒绝优先) 与是否放行网络。接缝统一收敛到一个配置函数 (configureBashSandbox): 给 Bash 工具装上沙箱与沙箱配置, 并同步权限检查器的 sandboxEnabled 与 sandboxAutoAllow 开关。沙箱开启时可让非危险命令免确认 (对应 9.2 第 10 层), 但复合命令仍逐段查规则。沙箱声明为必需而平台不可用时按 fail closed 处理。
+OS 沙箱在 macOS 用 Seatbelt (sandbox-exec)、Linux 用 bubblewrap, 其他平台返回 null 不可用; 配置是允许写目录、拒绝写目录 (拒绝优先) 与是否放行网络。接缝统一收敛到一个配置函数 (configureBashSandbox): 给 Bash 工具装上沙箱与沙箱配置, 并同步权限检查器的 sandboxEnabled 与 sandboxAutoAllow 开关。沙箱开启时可让 Bash 命令免确认 (对应 9.2 第 9 层), 但复合命令仍逐段查规则。沙箱声明为必需而平台不可用时按 fail closed 处理。
 
 其余安全边界包括:
 
@@ -386,7 +385,7 @@ remote 浏览器 UI 与终端 UI 对齐: 流式回复与思考块、工具卡片
 
 资源释放遵循「先排空共享工作, 再断开共享资源」: 先停后台任务与团队成员 (此时它们可能还在用注册表与 MCP), 再释放注册表与断开 MCP。注册表的所有权模型 (自有与借用) 保证子作用域释放时不会误断父级资源。
 
-崩溃路径由 recover.ts 统一接管: crash.log 记录启动、退出、崩溃与「终端已消失」四类事件。终端设备消失 (EIO、EPIPE、ERR_STREAM_DESTROYED) 走安静退出——记录一次、跑清理、退出码 0, 这不是错误而是父终端关闭的正常信号。uncaughtException 与 unhandledRejection 的处理顺序是: 记录错误、写 fatal 日志、captureTelemetryError, 然后**先同步扫一遍退出清理注册表, 再异步 flush 遥测**, 最后 exit(1)。顺序很关键: process.exit() 不会等待异步清理, 若把杀子进程的清理排在遥测 flush 之后, flush 超时或被跳过时 detached 子进程就成了孤儿。同步清理注册表 (registerExitCleanup) 的使用方包括 MCP 客户端、匿名溢出目录、Bash/PowerShell 会话、computer-use、LSP 客户端与光标恢复。
+崩溃路径由 recover.ts 统一接管: crash.log 记录启动、退出、崩溃与「终端已消失」四类事件。终端设备消失 (EIO、EPIPE、ERR_STREAM_DESTROYED) 走安静退出——记录一次、跑清理、退出码 0, 这不是错误而是父终端关闭的正常信号。uncaughtException 与 unhandledRejection 的处理顺序是: 记录错误、写 fatal 日志、captureTelemetryError, 然后**先同步扫一遍退出清理注册表, 再异步 flush 遥测**, 最后 exit(1)。顺序很关键: process.exit() 不会等待异步清理, 若把杀子进程的清理排在遥测 flush 之后, flush 超时或被跳过时 detached 子进程就成了孤儿。同步清理注册表 (registerExitCleanup) 的使用方包括 MCP 客户端、匿名溢出目录、Bash/PowerShell 会话、computer-use 与光标恢复。
 
 后台任务管理器的生命周期也被收紧: runner 结束后取消闭包换成空操作, 仍有挂起任务时清空管理器直接报错, 防止「清了管理器却留下运行中的任务」; stopAll 循环到没有新的挂起任务为止。会话级后台 shell 的看门狗与输出观察器合并到同一个 tick, 用户直发命令的实时预览与体积上限共用这条旁路。
 
@@ -443,7 +442,7 @@ yukino-code 的遥测子系统同时对接 OpenTelemetry、Sentry 与 Langfuse �
 - 人负责方向, 机器负责推进。权限默认询问、主会话计划审批阻塞等待 (teammate 计划在非 coordinator 模式下由运行时自动批准, coordinator 模式下由 leader 审核)、目标设定与替换只属于用户、预算耗尽前给一次总结轮、团队消息里的沉默不算同意——自治循环的边界由人划定。
 - 资源所有权显式建模。注册表的自有与借用、takeOwnershipFrom 的显式移交、作用域工具的重新实例化、退出时「先同步清理再异步 flush」的顺序, 让「多个代理共享一个进程」这件事不靠约定而是靠类型与生命周期保证。
 
-需要标注的边界: 本文描述的是内置核的机制, 具体阈值与上限以源码常量为准, 可能随版本调整; 目标状态与检查点依赖会话文件, 无 sessionId 的一次性调用不具备这些能力; 危险命令模式集当前为空, 那一层拦截处于休眠状态, 属于预留而非生效的防护。把内核做成「可被多种宿主、多种协议、多种协作规模复用」的形态, 代价是概念与生命周期显著增多; 本文希望呈现的正是这些代价换来的确定性。
+需要标注的边界: 本文描述的是内置核的机制, 具体阈值与上限以源码常量为准, 可能随版本调整; 目标状态与检查点依赖会话文件, 无 sessionId 的一次性调用不具备这些能力。把内核做成「可被多种宿主、多种协议、多种协作规模复用」的形态, 代价是概念与生命周期显著增多; 本文希望呈现的正是这些代价换来的确定性。
 
 以下为设计问答篇, 与前面的子系统论述互为补充: 前半按子系统顺序论述实现思路, 问答篇按主题逐条拆解设计取舍与边界, 回答"为什么这样设计、边界在哪里、怎么取舍"。涉及的文件与符号只作为设计锚点出现, 不逐文件走读。
 

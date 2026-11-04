@@ -2,7 +2,7 @@
 title: "Task Tracking"
 description: "两套同名不同义的 task 机制: TodoWrite 任务板 (私有板与团队共享板、原子增量编辑、依赖校验) 与 TaskManager 后台任务 (登记、通知、TaskOutput/TaskStop), 含多团队下的板选择语义"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "8dbf96950d45fac1c7c68451478716898b35810d"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
 任务跟踪在 Yukino 里是两套互不相干的机制, 只是碰巧都叫「task」:
