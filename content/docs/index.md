@@ -4,7 +4,7 @@ overview: true
 description: "工作实践、开源项目调研与项目源码解析: TikTok/IEG/Data 工作复盘、Docker/K8s 与 JSError 自动修复云沙箱实战、A2UI/MCP Apps 协议与方案调研、Coding Agent 调研、AI 框架与平台调研, 以及 yukino/yukino-dev-agent/yukino-ecomm-agent 三个项目专栏"
 ---
 
-本部分收录工作期间的技术复盘、开源项目调研与项目源码解析, 按主题分为五个部分, 直属页面共 12 个 (含本落地页), 三个项目专栏另含 40 个页面.
+本部分收录工作期间的技术复盘、开源项目调研与项目源码解析, 按主题分为五个部分, 直属页面共 11 个 (含本落地页), 三个项目专栏另含 40 个页面.
 
 ## 工作实践
 
@@ -27,7 +27,6 @@ description: "工作实践、开源项目调研与项目源码解析: TikTok/IEG
 
 ## AI 框架与平台调研
 
-- [insforge](insforge): 面向 Coding Agent 的开源 BaaS 平台. Express 控制面与 PostgREST 数据面架构、鉴权与安全模型、存储与 S3 协议网关、Deno 边缘函数沙箱与定时任务, 以及文档即 API、MCP 接入通道与 monorepo 工程化.
 - [langchain](langchain): LangChain.js 1.x. monorepo 包布局、langchain-core 的 Runnable 与消息/工具抽象、provider 集成模式、createAgent 与中间件体系, 以及构建、测试与发布设施.
 - [langgraph](langgraph): LangGraph.js. 从 monorepo 包分层讲到 StateGraph 到 Pregel 的超步执行循环、channels 与 reducers 的状态更新语义、节点间状态与上下文传递、上下文压缩与 Store 长期记忆、checkpointer 持久化与恢复、interrupt/resume 人机协同、流式输出模式与 SDK/前端集成.
 

@@ -29,9 +29,9 @@ study, internships, and work. It covers three broad areas:
   middleware, a generic-pool source analysis, and the Yukino Go series
   (http, rpc, orm, cache, agent proxy, infrastructure components, AI apps).
 - **Work notes & research** (`content/docs`) — TikTok/IEG/data engineering retrospectives,
-  protocol research (A2UI, A2UI Express, MCP Apps, WebContainer), coding-agent surveys
-  (CodeGraph, Claude Code, Codex, pi, OpenCodeReview), and AI framework/platform surveys
-  (insforge, LangChain.js, LangGraph.js, OpenSpec, Superpowers).
+  Docker/Kubernetes and JSError auto-fix sandbox, protocol research (A2UI, MCP Apps),
+  coding-agent surveys (Claude Code, pi), AI framework surveys (LangChain.js, LangGraph.js),
+  and the Yukino / yukino-dev-agent / yukino-ecomm-agent source-analysis columns.
 
 Every document is grounded in project facts: source-code analysis is verified against the
 actual repositories on disk, not invented from memory.
