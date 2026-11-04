@@ -1,9 +1,27 @@
 ---
 title: "LangGraph.js: Pregel 超步引擎、通道状态模型与检查点持久化"
-description: "从 monorepo 包分层讲到 StateGraph 到 Pregel 的超步执行循环、channels 与 reducers 的状态更新语义、节点间状态与上下文传递、上下文压缩与 Store 长期记忆、checkpointer 持久化与恢复、interrupt/resume 人机协同、流式输出模式与 SDK/前端集成"
+description: "从 monorepo 包分层讲到 StateGraph 到 Pregel 的超步执行循环、channels 与 reducers 的状态更新语义、节点间状态与上下文传递、上下文压缩与 Store 长期记忆、checkpointer 持久化与恢复、interrupt/resume 人机协同与严格恢复、流式输出模式与 SDK/前端集成"
 local_path: "$HOME/Downloads/langgraphjs"
-local_commit: "7ab1b8d840c068c2593fea4683899508d93e6b33"
+local_commit: "caa5c53a65b0d0cce2a597167087f1bf9b170437"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/Downloads/langgraphjs` 在 `caa5c53a65b0` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[StateGraph 定义] --> B[compile 编译为 Pregel]
+  B --> C[超步 计划阶段]
+  C --> D[超步 执行节点]
+  D --> E[写回 channels 与 reducers]
+  E --> F[checkpointer 持久化]
+  F --> G[是否完成]
+  G --> C
+  G --> H[输出最终结果]
+```
 
 LangGraph.js 是一个用 TypeScript 编写的低层 agent 编排 runtime。仓库对自身方向的表述很直接: LangGraph 是 runtime, 它负责四件事——图执行 (Pregel 超步循环)、检查点持久化 (checkpointer)、流式输出 (八种 stream mode 与协议事件流)、以及 interrupt/resume 人机协同; 而"如何搭一个好用的 agent"属于上一层的关注点。本文以仓库源码为唯一事实来源, 沿着一条主线展开: 一张 StateGraph 如何被编译成 Pregel 引擎, 状态如何以 channel + reducer 的模型在超步之间流转与落盘, 运行如何被暂停、恢复与回放, 以及这一切如何通过 SDK 暴露给前端。
 
@@ -307,7 +325,7 @@ Store 与 cache 分别以 `AsyncBatchedStore`/`AsyncBatchedCache` 包装后注�
 `interrupt(payload)` (`src/interrupt.ts`) 只能在节点/任务执行中调用, 完整流程:
 
 1. 从 AsyncLocalStorage 取当前任务 config, 取不到说明不在图运行中, 直接报错; 没有 checkpointer 时抛 `GraphValueError` (`MISSING_CHECKPOINTER`)——中断必须可持久化才有意义;
-2. interrupt id 即任务 `checkpoint_ns` (含 `:${taskId}` 后缀) 的 XXH3 哈希, 重放时稳定; 同一任务内多个 interrupt 共享该 id, 靠任务内 `interruptCounter` 递增依次消费 resume 值;
+2. interrupt id 由 `interruptId(namespace, answered)` (`libs/langgraph-core/src/interrupt.ts`) 生成: 任务的第一个 interrupt 用裸 `checkpoint_ns` 的 XXH3 哈希, 之后每次按已应答数追加 `:${answered}` 后缀再哈希, 因此同一任务内多个 interrupt 各有独立 id; 裸哈希形态与旧版本保存的 id 保持兼容。resume 序列仍由 `interruptCounter` 递增逐次消费, 且只把已消费前缀 (`slice(0, idx + 1)`) 持久化为 RESUME 写入;
 3. 检查 resume 映射 (`CONFIG_KEY_RESUME_MAP`, 以 interrupt id 为键, 在任务准备阶段并入 scratchpad 的 resume 序列): 已有值则直接返回该值 (节点重放时前面的 interrupt 就是这样"快进"的), 并把已消费前缀按 `slice(0, idx + 1)` 重新持久化为 RESUME 写入;
 4. 没有 resume 值: 构造 `Interrupt` 载荷——若调用时传了 `responseSchema` (zod), 会经 `toJsonSchema` 转换挂在 `response_schema` 字段上——然后抛 `GraphInterrupt`; runner 提交任务时把它转成 `[INTERRUPT, interrupt]` 写入落盘;
 5. `GraphInterrupt` 属于 `GraphBubbleUp` 错误家族 (同族还有 `NodeInterrupt`、`ParentCommand`、`GraphDrained`), 逐层冒泡到 loop, loop 把当前状态落成检查点后正常结束流, `StateSnapshot.next` 停在中断节点, `tasks[].interrupts` 携带载荷。
@@ -349,6 +367,18 @@ type HumanResponse = {
 ```
 
 `HumanInterrupt` 作为 `interrupt()` 的载荷, `HumanResponse` 作为 `Command({ resume })` 的值, 前端即可按 `config` 里四个开关渲染对应的操作按钮。
+
+### 8.5 严格恢复与逐次 interrupt id
+
+核心库提供可选的**严格恢复**模式: 在 config 的 `configurable` 里把私有键 `CONFIG_KEY_STRICT_RESUME = "__pregel_strict_resume"` (`libs/langgraph-core/src/constants.ts`) 设为 `true`, `PregelLoop._refuseUnmatchedResume()` (`libs/langgraph-core/src/pregel/loop.ts`) 会在写入任何内容之前校验 `Command({ resume })`, 并抛 `UnknownInterruptError` (`libs/langgraph-core/src/errors.ts`):
+
+| `reason`      | 触发条件                                                |
+| :------------ | :------------------------------------------------------ |
+| `not_pending` | resume map 里出现不在 `pendingIds` 中的 id (含重复应答) |
+| `empty_map`   | resume map 为空对象                                     |
+| `ambiguous`   | 多个 interrupt 待应答却只给了单个值                     |
+
+错误同时携带 `interruptIds` 与 `pendingIds`。未设该键时恢复行为不变; 同一超步内多个任务同时抛出 interrupt 现在会全部保留 (此前只留最后一个), `Command({ resume: false })` 等 falsy 值也能抵达 `interrupt()` 而不再触发 `EmptyInputError`。dev server (`@langchain/langgraph-api`) 默认以严格模式运行图, 上述三类 stale 应答一律以 `UnknownInterruptError` 结束 run, 线程的状态与 interrupt 列表保持不变。与逐次 interrupt id (8.1) 配合, 严格模式能拒绝"节点已问下一个问题、却重放上一个应答"的请求: 被 retry 策略重跑的节点复用本任务的应答而非重新提问, 旧版本保存的裸哈希 id 仍可应答首个问题。
 
 ## 九、流式输出
 
@@ -431,6 +461,8 @@ await workflow.invoke([1, 2, 3]); // [2, 3, 4]
 
 `@langchain/langgraph-sdk` 的 `Client` 按资源分子客户端: `assistants`、`threads`、`runs`、`crons`、`store`。状态改写如 `threads.updateState(threadId, { values, checkpoint?, checkpointId?, asNode? })`, 对应 `POST /threads/{thread_id}/state`。核心库 `"./remote"` 导出的 `RemoteGraph` (`src/pregel/remote.ts`) 则以 `{ graphId, client? | url?, apiKey?, headers?, streamResumable? }` 把一个远端部署的图包装成本地 Pregel 形态的可运行对象——实现 `PregelInterface`, 支持 invoke/stream/getState 等, 可以像本地子图一样嵌进另一张图。
 
+**SDK 侧的取消与字段选择。** `client.runs.cancel(threadId, runId, wait, action, { reason })` (`libs/sdk/src/client/runs/index.ts`) 新增 `reason` 选项: 传 `"taken"` 表示 run 的输入已被 steering 吸收, 仅对 `action: "interrupt"` 有效, 服务端记录以 `taken:` 开头的 `cancel_reason`。`Run` 类型 (`libs/sdk/src/schema.ts`) 新增 `cancel_reason?: string | null` 并进入 `RunSelectField`, 读取取消原因无需再强转。`ThreadsClient.getState` 与 `getHistory` 接受 `select?: ThreadStateSelectField[]` (如 `["values.messages"]` 只读一个状态键), 该类型与 `ThreadSelectField` 均从包根导出。
+
 ### 12.2 ThreadStream 与双传输
 
 面向 UI 的 `ThreadStream` (`src/client/stream/index.ts`) 与 `StreamController` (`src/stream/controller.ts`) 提供带中断应答能力的事件流: `hydrate()` 重连并回放既有运行的状态与事件, `respond()`/`respondAll()` 在流上直接应答 interrupt。传输层两个适配器:
@@ -439,6 +471,10 @@ await workflow.invoke([1, 2, 3]); // [2, 3, 4]
 - WebSocket: 连接 `/threads/:thread_id/stream/events`, 双向, 支持在流上发送命令 (如 `subscription.subscribe`)。断线后指数退避重连 (`maxReconnectAttempts` 上限, 超限抛 `MaxWebSocketReconnectAttemptsError`), 服务端在新连接上回放缓冲事件, SDK 按 `event_id` 去重, 重连成功后回调 `onReconnected` 重发订阅。
 
 两个传输共享同一套"可重试性"判定: HTTP 4xx (除 408/429) 视为不可重试直接以带 `status` 的错误终止; WebSocket 服务端用 4000+HTTP 状态的 close code 表达同类错误 (如 4403/4404/4422 → `status` 403/404/422), 客户端 `closeError` 还原出 status 后走同一判定。
+
+**命名空间过滤与流终止事件。** `client.runs.stream` / `joinStream` 接受 `streamNamespaces?: string[]` (`libs/sdk/src/types.ts`): 只流指定命名空间的事件, `""` 是根图且不含它启动的子 agent; 服务端在 `/info` 以 `stream_namespaces` 声明支持, 旧服务端忽略并发送全部事件。该选项经 URL 的重复 `namespace` 参数传递, 不进请求体; 重连不再叠加 `Location` 已有的查询参数。run 流以 `EndStreamEvent` (`libs/sdk/src/types.stream.ts`) 收尾: `event: "end"`, `data` 带 `run_id` 与终态 `status` (含 `"rollback"`), 或为 `null` (不发数据的服务端); `stream_mode` 过滤不会丢掉它。dev server 与实验性 embed server (`libs/langgraph-api/src/api/runs.mts`) 同样发送该事件。
+
+dev server 另有几处收紧: `GET /threads/:thread_id/runs/:run_id/stream` 只在该 run 存在且属于该线程时返回事件, 否则以 `Run not found` 结束; 每个 run 保留自己的事件日志, 各读者从各自位置读取 (`client.runs.joinStream({ lastEventId: "-1" })` 从头读), 已结束 run 的事件在内存保留两分钟以支撑 `Last-Event-ID` 重连; 协议命令改用发送该请求的 HTTP/WebSocket 连接的认证, 而非首次触碰线程时的认证。
 
 ### 12.3 React 集成
 

@@ -2,8 +2,24 @@
 title: "Claude Code 兼容实现: 构建体系、核心循环与多 Provider 兼容层"
 description: "一个终端 AI 编码助手的工程实现剖析: Bun 代码分割构建、流式 Agent 循环与工具并发调度、核心白名单加延迟发现的工具系统, 以及把异构模型协议收敛到 Anthropic 内部格式的流适配器模式"
 local_path: "$HOME/Downloads/claude-code"
-local_commit: "8d80e740f764be358e265eed4250606c78fca579"
+local_commit: "963e0013184ecc1521289a0fc7d5da4bb6e45356"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/Downloads/claude-code` 在 `963e0013184e` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[CLI 入口 main.tsx] --> B[QueryEngine 查询引擎]
+  B --> C[Agent 循环 query.ts]
+  C --> D[Tool 工具系统]
+  C --> E[Provider 流适配器]
+  E --> F[收敛为 Anthropic 内部格式]
+  D --> G[工具并发调度]
+```
 
 本文剖析一个与官方 Claude Code CLI 配置兼容的终端 AI 编码助手 (Bun 运行时, TypeScript/React monorepo) 的实现: 它如何组织构建与特性裁剪, 如何驱动"模型流式输出、工具并发执行、结果按序回吐"的核心循环, 如何设计工具注册与延迟发现, 以及如何用一层流适配器把多家模型协议收敛成同一种内部格式。适合想自建或二次开发终端编码 Agent 的工程师阅读。
 

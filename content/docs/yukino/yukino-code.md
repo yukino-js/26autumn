@@ -5,6 +5,24 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[Agent 主循环与事件流] --> B[Provider 适配与重试]
+  A --> C[工具系统与 MCP 延迟加载]
+  A --> D[上下文压缩与恢复]
+  A --> E[检查点与 fork]
+  A --> F[长期记忆]
+  A --> G[Subagents 与 Agent Team]
+  A --> H[权限 Hooks 沙箱]
+  A --> I[运行模式与遥测]
+```
+
 Yukino Code 是一个运行在终端里的 Coding Agent, 用 React + Ink 渲染 TUI, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环。本文以它的内置核为对象, 按子系统逐一深潜: Agent 主循环如何把一轮推理拆成可中断、可恢复、可观测的事件流, 多种协议如何在同一接口下收敛, 工具与 MCP 如何在不破坏 prompt cache 的前提下进入上下文, 上下文满了如何压缩并在恢复时找回细节, 会话如何回退与派生, 记忆如何跨会话沉淀, 多代理又如何被组织成团队和长期目标。它不是接口手册, 也不逐文件走读, 而是解释每个机制为什么这样设计、代价是什么、在什么场景下成立。适合正在构建或维护 Agent 基础设施的工程师阅读, 也适合把它当作「把 Agent 做成产品级终端应用」的工程权衡参考。本文前半按子系统论述实现思路, 后半 (设计问答篇) 以问答形式补充取舍与边界。它的官方 MCP 工具集见 [yukino-mcp](../../fe/yukino-mcp), 把它作为库复用的全栈代码生成平台见 [yukino-codegen](../../fe/yukino-codegen)。
 
 ## 一、Agent 主循环与事件流

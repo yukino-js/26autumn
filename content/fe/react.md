@@ -3,6 +3,10 @@ title: "React 19 核心与运行时原理"
 description: "从一次更新的完整生命周期讲到 Fiber 协调、Hooks 链表、Lanes 优先级与批处理, 并覆盖 React 19 的 Actions、use、ref 作为 prop 等新增与稳定 API, 以及性能优化的有效条件"
 ---
 
+:::note 版本基线
+文中机制与 API 以 **React 19** 为准: Actions、`use`、`ref` 作为 prop 属于当前稳定能力; <u>不引入</u> legacy 模式、旧版生命周期或已移除的 Hooks 作为现行写法。
+:::
+
 这份文档面向已经会写 React、但想搞清楚它为什么这样工作的工程师. 内容以运行时机制为主线: 一次状态更新经历了哪些阶段, Fiber 如何把递归渲染变成可中断的工作循环, Hooks 为什么必须按顺序调用, 并发特性与 Actions 建立在什么调度模型之上. 读完应当能解释"为什么这里会读到旧值""为什么 memo 没有生效""为什么这个 Suspense 没有复用旧 UI"这类问题, 并能据此做取舍, 而不是记住一批 API 用法. 需要渲染框架层面的落地实践, 见 [Next.js](next); 构建与打包见 [Vite](vite).
 
 ## 一次更新的完整生命周期

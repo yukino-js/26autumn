@@ -1,11 +1,36 @@
 ---
 title: "yukino_taskflow: 条件与定时 AI 任务的分布式执行引擎"
-description: "taskflow 单体分布式后端: cron 物化 + 分布式时间轮触发、MySQL 触发器 CDC + outbox 中继、四层幂等防线、TCC 派发事务、openai-go 工具代理与结构化报告、LSM/Raft 本地审计与 MySQL→Redis 状态同步; 并附组件教程: 从分布式难点入门, 逐一拆解 red_mq、time_wheel、redis_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft 十个本地 replace 组件的问题域、实现入口与开发坑, 给出源码阅读路线与故障实验"
+description: "taskflow 单体分布式后端: cron 物化 + 分布式时间轮触发、MySQL 触发器 CDC + outbox 中继、四层幂等防线、TCC 派发事务、openai-go 工具代理与结构化报告、LSM/Raft 本地审计与 MySQL→Redis 状态同步; 并附组件教程: 从分布式难点入门, 逐一拆解 red_mq、time_wheel、redis_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft 十个分布式组件的问题域、实现入口与开发坑, 给出源码阅读路线与故障实验"
 local_path: "$HOME/github/yukino.go/apps/task_flow"
-local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
+local_commit: "02e9621cee8763979175549903d7a67534923751"
 ---
 
-taskflow 是一个用 Go 编写的单体分布式任务执行服务, 定位是把两类 "AI 任务" 变成可重复、可审计、绝不重复触发的工程对象: 一类是按 cron 表达式周期执行的定时任务, 一类是由业务表插入事件驱动的条件任务。任务定义只包含一段提示词 (prompt) 与可选的模型名, 真正的工作交给一个基于 openai-go 的工具调用代理: 模型按预设提示词多轮调用 `mysql_tool` / `redis_tool` 采集事实数据, 最终产出一份带 YAML frontmatter 的结构化 Markdown 报告。本文分两部分: 第一部分聚焦 `apps/task_flow/server` 这个 Go 服务本身, 说明它的仓库布局、执行状态机、四层幂等防线、定时物化与分布式时间轮、事务内 CDC 捕获与 outbox 中继、TCC 派发事务、LLM 工具沙箱、报告缓存、集群单例角色协调、状态同步与本地审计账本, 以及它的能力边界; 第二部分是一份面向分布式系统新手的组件教程, 从单机并发与分布式难点讲起, 逐一拆解 `server/go.mod` 本地 `replace` 引入的十个组件 (red_mq、time_wheel、redis_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft) 的问题域、实现入口与开发坑, 并给出源码阅读路线与故障实验。前端 `client/` 是一个 Lit 3 + Tailwind CSS 4 + Vite 的工作台, 只消费本文描述的 HTTP API, 不在此展开。
+:::note 事实基线
+本文依据 `$HOME/github/yukino.go/apps/task_flow` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> reserved: TCC Try 预留
+    reserved --> queued: Confirm
+    reserved --> pending: TCC Cancel 回退
+    queued --> running: CAS 抢占
+    running --> succeeded: 执行完成
+    running --> failed: 执行失败或超时
+    pending --> cancelled: cancel API
+    reserved --> cancelled: cancel API
+    queued --> cancelled: cancel API
+    succeeded --> [*]
+    failed --> [*]
+    cancelled --> [*]
+```
+
+:::warning 幂等前提
+状态流转由**四层幂等防线**兜底: 同一 fire key 的重复触发会命中去重或被状态机拒绝, 因此 <u>触发源不可靠</u> (时钟漂移、消息重投) 不会造成重复执行。
+:::
+
+taskflow 是一个用 Go 编写的单体分布式任务执行服务, 定位是把两类 "AI 任务" 变成可重复、可审计、绝不重复触发的工程对象: 一类是按 cron 表达式周期执行的定时任务, 一类是由业务表插入事件驱动的条件任务。任务定义只包含一段提示词 (prompt) 与可选的模型名, 真正的工作交给一个基于 openai-go 的工具调用代理: 模型按预设提示词多轮调用 `mysql_tool` / `redis_tool` 采集事实数据, 最终产出一份带 YAML frontmatter 的结构化 Markdown 报告。本文分两部分: 第一部分聚焦 `apps/task_flow/server` 这个 Go 服务本身, 说明它的仓库布局、执行状态机、四层幂等防线、定时物化与分布式时间轮、事务内 CDC 捕获与 outbox 中继、TCC 派发事务、LLM 工具沙箱、报告缓存、集群单例角色协调、状态同步与本地审计账本, 以及它的能力边界; 第二部分是一份面向分布式系统新手的组件教程, 从单机并发与分布式难点讲起, 逐一拆解 `server/go.mod` 本地 `replace` 引入的组件: 十个分布式组件 (red_mq、time_wheel、redis_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft) 逐一讲解, 而 `libs/yukino_http` 作为 HTTP 框架已在第一部分覆盖, 说明它们的问题域、实现入口与开发坑, 并给出源码阅读路线与故障实验。前端 `client/` 是一个 Lit 3 + Tailwind CSS 4 + Vite 的工作台, 只消费本文描述的 HTTP API, 不在此展开。
 
 # 第一部分: 执行引擎深度解析
 
@@ -60,7 +85,7 @@ apps/task_flow/
         └── telemetry/  telemetry.go                  # OpenTelemetry 初始化
 ```
 
-`server/go.mod` (module `github.com/hangtiancheng/yukino.go/apps/task_flow/server`, go 1.26.0) 用 11 条 `replace` 把全部基础组件指向仓库内源码, 这正是第二部分教程的对象:
+`server/go.mod` (module `github.com/hangtiancheng/yukino.go/apps/task_flow/server`, go 1.26.0) 用 11 条 `replace` 把全部基础组件指向仓库内源码; 其中十个分布式组件是第二部分教程的对象, `libs/yukino_http` 作为 HTTP 框架已在第一部分覆盖:
 
 | replace 模块                  | 在 taskflow 中的角色                   |
 | ----------------------------- | -------------------------------------- |
@@ -409,7 +434,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 
 适合的场景: 内部数据巡检、按日/按事件的安全审计、把 "查数据 + 写报告" 的重复劳动自动化。不适合: 需要严格外部 exactly-once 的资金类操作、亚秒级触发的实时系统、以平台账本为业务事实来源的系统。
 
-# 第二部分: 组件教程 — 十个本地 replace 组件
+# 第二部分: 组件教程 — 十个分布式组件
 
 这一部分假设读者刚接触分布式系统。每一章先讲问题域, 再读实现入口, 最后给开发坑与动手练习。非测试 Go 代码行数 (供评估阅读成本): red_mq 902、time_wheel 657、redis_lock 596、consistent_hash 1558、consistent_cache 704、yukino_cache 2301 (不含生成的 protobuf 代码)、tcc 1567、timer 3920、lsm_tree 1748、raft 1782。
 

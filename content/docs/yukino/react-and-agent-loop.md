@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 ReAct (Reasoning + Acting) 是 Yukino agent loop 遵循的范式: 推理与行动交替进行, 每一步行动都建立在对上一步结果的观察之上。本页讲清这个范式如何落成代码 — `Agent.run()` 事件循环的每一轮做什么、何时退出、出错如何自愈, 以及工具如何分批执行。
 
 ## ReAct: 推理与行动交替
@@ -114,7 +118,7 @@ flowchart TD
 5. **LLM 请求了不存在的工具**: 返回错误结果 `Error: unknown tool '<name>'` 反馈给 LLM 自纠, agent loop 继续运行; 被 `toolFilter` 过滤的工具同理, 以 `Tool '<name>' is not available to this agent.` 错误结果反馈
 6. **ExitPlanMode / EnterPlanMode 工具执行成功**: 规划类工具成功即暂停循环等待用户, `loop_complete(end_turn)`; ExitPlanMode 成功后 UI 弹出 plan 审批对话框
 
-:::info
+:::note
 其中 **5** 属于「不退出, 把错误交给 LLM 自己修」, 循环仍然存活。
 :::
 

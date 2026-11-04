@@ -2,8 +2,24 @@
 title: "MCP 和 Skill"
 description: "MCP 和 Skill: 物流/售后两个演示 MCP 服务器 (Hono + 官方 SDK, 确定性 Mock)、主服务 mcp-client 接入与 registry 合并注册、formatResult 状态码翻译、执行引擎、写前人工确认与审计, 以及测试与验收"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
+local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  A[物流 MCP 服务器] --> C[mcp-client 接入]
+  B[售后 MCP 服务器] --> C
+  C --> D[registry 合并注册]
+  D --> E[formatResult 状态码翻译]
+  E --> F[执行引擎]
+  F --> G[写前人工确认与审计]
+```
 
 MCP (Model Context Protocol) 把工具放进独立进程, 通过标准协议暴露端点; agent 主服务用 client 连接, 动态拿到工具清单并调用. 本项目自带两个演示第三方对接的 MCP 服务器 (物流、售后), 主服务侧用统一的工具注册表 (registry) 和执行引擎 (engine) 把它们和内置工具合并成同一份工具列表, 对模型来说两者没有区别.
 
@@ -177,4 +193,4 @@ register(
 
 - `tests/mcp-servers.test.ts`: 以真实子进程拉起两个 MCP 服务器 (测试端口 18101 / 18102), 用真实 `Client` + `StreamableHTTPClientTransport` 验证 `listTools` 能列全三个工具、同一输入两次调用返回完全一致 (确定性 Mock)
 - `tests/mcp-client.test.ts`: 验证 `FORMATTERS` 的翻译映射、未知码透传、类型不匹配透传, 以及 `fetchMcpSpecs` 在服务器不可达时跳过而不抛错
-- `node main.js eval-mcp`: MCP 端到端验收评测 (工单 + 物流两条链路)
+- `node server/main.js eval-mcp`: MCP 端到端验收评测 (工单 + 物流两条链路)

@@ -6,6 +6,24 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[Yukino Code 主循环] --> B[LLM 三协议]
+  A --> C[工具与 MCP]
+  A --> D[上下文与记忆]
+  A --> E[权限沙箱 Hook]
+  A --> F[多代理协作]
+  F --> G[Subagent 与 Agent Team]
+  F --> H[Workflow 与 Goal]
+  A --> I[TUI Print Remote A2A]
+```
+
 yukino-code 仓库 `apps/yukino` (Yukino Code, npm 包 `@yukino.js/yukino`, Node >= 20) 的系统性源码笔记, 共 27 个页面 (含本落地页). CLI 用 React 19 + Ink 7 渲染单窗格终端界面, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环; 全部文档以该仓库源码为唯一事实依据. 总览篇见 [what-is-an-agent](./what-is-an-agent) 与 [yukino-code](./yukino-code), 其余页面按子系统拆分, 顺序与侧边栏一致.
 
 | 页面                                           | 内容概要                                                                                                                                                                                                                                                                                                                                   |

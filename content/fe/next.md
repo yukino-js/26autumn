@@ -3,6 +3,10 @@ title: "Next.js 16 App Router 全栈实践"
 description: "App Router 的组件边界、数据获取与请求瀑布消除、缓存与重验证模型、路由与 Metadata、流式渲染、Server Actions、图片与字体, 以及静态导出与 Next 16 的基线要点"
 ---
 
+:::note 版本基线
+文中行为以 **Next.js 16 App Router** 为准: 服务端组件为默认边界, 缓存与重验证按当前语义描述; <u>不把</u> Pages Router 或旧版数据获取 API 写成现行用法。
+:::
+
 这份文档面向准备用 Next.js 16 App Router 构建生产应用的工程师. 它以"能力 + 机制 + 适用边界"为主线: 渲染策略怎么选, 服务端组件与客户端组件的边界划在哪里, 缓存有哪几层、各自的失效方式是什么, 请求瀑布如何消除, 以及 Next 16 的基线要点有哪些. 阅读前建议先了解 [React 19](react) 的渲染阶段与 Suspense 语义, 本文不再重复; 构建与打包机制见 [Vite](vite).
 
 ## 渲染策略: CSR、SSR、SSG、ISR

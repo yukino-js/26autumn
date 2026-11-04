@@ -11,6 +11,9 @@
   --rp-font-family-mono:
     "Yukino", "Maple Mono", Menlo, "Cascadia Code", "Sarasa Gothic SC",
     "PingFang SC", "Microsoft YaHei", monospace;
+  --rp-radius-sm: 6px;
+  --rp-radius-md: 10px;
+  --rp-radius-lg: 14px;
 }
 
 .dark {
@@ -24,4 +27,190 @@
 
 html {
   scrollbar-gutter: stable;
+  scroll-behavior: smooth;
+}
+
+::selection {
+  background: var(--rp-c-brand-tint);
+  color: var(--rp-c-text-1);
+}
+
+:focus-visible {
+  outline: 2px solid var(--rp-c-brand);
+  outline-offset: 3px;
+}
+
+/* ---------- Document typography ---------- */
+
+.rspress-doc h1,
+.rspress-doc h2,
+.rspress-doc h3,
+.rspress-doc h4 {
+  scroll-margin-top: calc(var(--rp-nav-height, 64px) + 16px);
+  letter-spacing: 0.01em;
+}
+
+.rspress-doc h2 {
+  border-bottom: 1px solid var(--rp-c-divider-light);
+  padding-bottom: 0.45rem;
+}
+
+.rspress-doc a {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.rspress-doc a:hover {
+  text-decoration-color: var(--rp-c-brand);
+}
+
+.rspress-doc :not(pre) > code {
+  border: 1px solid var(--rp-c-text-code-border);
+  border-radius: var(--rp-radius-sm);
+  padding: 0.12em 0.38em;
+}
+
+.rspress-doc blockquote {
+  border-left: 3px solid var(--rp-c-brand);
+  border-radius: 0 var(--rp-radius-sm) var(--rp-radius-sm) 0;
+  background: var(--rp-c-bg-soft);
+  padding: 0.6rem 1rem;
+}
+
+.rspress-doc hr {
+  border: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--rp-c-divider),
+    transparent
+  );
+}
+
+.rspress-doc u {
+  text-decoration-color: var(--rp-c-brand);
+  text-underline-offset: 3px;
+}
+
+/* ---------- Tables ---------- */
+
+.rspress-doc .rp-table-scroll-container {
+  border: 1px solid var(--rp-c-divider-light);
+  border-radius: var(--rp-radius-md);
+  overflow: hidden;
+}
+
+.rspress-doc table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.rspress-doc thead th {
+  background: var(--rp-c-bg-soft);
+  color: var(--rp-c-text-1);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rspress-doc tbody tr:nth-child(even) {
+  background: var(--rp-c-bg-soft);
+}
+
+.rspress-doc tbody tr:hover {
+  background: var(--rp-c-brand-tint);
+}
+
+.rspress-doc th,
+.rspress-doc td {
+  border-bottom: 1px solid var(--rp-c-divider-light);
+  padding: 0.6rem 0.85rem;
+  vertical-align: top;
+}
+
+/* ---------- Callouts ---------- */
+
+.rspress-doc .rp-callout {
+  border-left: 3px solid var(--rp-c-brand);
+  border-radius: var(--rp-radius-md);
+  margin: 1.25rem 0;
+  overflow: hidden;
+}
+
+.rspress-doc .rp-callout__title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.rspress-doc .rp-callout--tip {
+  border-left-color: var(--rp-container-tip-border);
+}
+
+.rspress-doc .rp-callout--note,
+.rspress-doc .rp-callout--info {
+  border-left-color: var(--rp-container-note-border);
+}
+
+.rspress-doc .rp-callout--warning,
+.rspress-doc .rp-callout--important {
+  border-left-color: var(--rp-container-warning-border);
+}
+
+.rspress-doc .rp-callout--danger {
+  border-left-color: var(--rp-container-danger-border);
+}
+
+.rspress-doc .rp-callout__content > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- Code blocks and code groups ---------- */
+
+.rspress-doc .rp-codeblock {
+  border: 1px solid var(--rp-code-block-border);
+  border-radius: var(--rp-radius-md);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.dark .rspress-doc .rp-codeblock {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.rspress-doc .rp-codeblock + .rp-codeblock {
+  margin-top: 0.75rem;
+}
+
+/* ---------- Mermaid diagrams ---------- */
+
+.rspress-doc .mermaid,
+.rspress-doc pre.mermaid {
+  background: var(--rp-c-bg-soft);
+  border: 1px solid var(--rp-c-divider-light);
+  border-radius: var(--rp-radius-lg);
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  text-align: center;
+}
+
+.rspress-doc .mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.dark .rspress-doc .mermaid,
+.dark .rspress-doc pre.mermaid {
+  background: var(--rp-c-bg-alt);
+}
+
+/* ---------- Collapsible details ---------- */
+
+.rspress-doc details {
+  border: 1px solid var(--rp-c-divider-light);
+  border-radius: var(--rp-radius-md);
+  padding: 0.5rem 1rem;
+}
+
+.rspress-doc summary {
+  cursor: pointer;
+  font-weight: 600;
 }

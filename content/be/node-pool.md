@@ -5,6 +5,25 @@ local_path: "$HOME/Downloads/node-pool"
 local_commit: "ee5db9ddb54ce3a142fde3500116b393d4f2f755"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/Downloads/node-pool` 在 `ee5db9ddb54c` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> VALIDATION: 借出前校验
+    VALIDATION --> ALLOCATED: 通过
+    VALIDATION --> INVALID: 失败
+    ALLOCATED --> RETURNING: release
+    RETURNING --> IDLE: 归还入队
+    INVALID --> [*]
+```
+
+:::tip 读图要点
+五个状态来自 `PooledResourceStateEnum`; **Deferred** 把等待中的请求 Promise 化, 超时排队与<u>空闲驱逐</u>都围绕这套状态机展开, 理解它就能看懂借还两侧的竞态兜底。
+:::
+
 本文以 generic-pool 3.9.0 的源码为准，面向需要在 Node.js 中复用数据库连接、HTTP 客户端、浏览器实例等昂贵资源，并希望真正理解池内部行为的工程师。全文从“资源池要解决什么竞态”讲起，逐层展开借出、归还、销毁、排队、超时、驱逐与停机机制，并指出若干容易被文档表述或直觉误导的边界。读者只需要熟悉 Promise 与 Node 事件循环，不需要预先了解该库的内部实现。
 
 ## 一、资源池要解决的问题与竞态模型

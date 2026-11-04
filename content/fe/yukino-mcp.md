@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/mcp"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/mcp` 在 `1847a71e03f9` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 本文拆解 Yukino 官方 MCP 服务器(`@yukino.js/mcp`): 它把一组彼此独立的能力——本地知识库的语义检索、可交互的单文件 HTML 应用、任意 `gh` 命令、以及十一种数据/消息/可观测后端——统一封装成 MCP 工具, 通过 stdio 或 HTTP 暴露给 Yukino CLI 及任何 MCP 宿主。内容以功能、实现思路与适用场景为主线, 覆盖传输层、工具模块契约、RAG 检索链路、MCP Apps UI 生成、数据库与中间件工具面与配置体系。适合正在搭建 MCP 服务器、关心工具注册与进程内状态管理的工程师阅读。
 
 ## 定位与解决的问题
@@ -93,6 +97,28 @@ HTTP 模式用 `h3` 只暴露一种远程传输——**无状态 Streamable HTTP
 | `GET /mcp`  | 直接 405(JSON `{ error: "Method Not Allowed" }`), 无状态模式没有服务端主动通知流                                                                                                       |
 
 无状态的关键在于"每请求一对 server/transport, 用完即关": 工具模块的可共享状态都在进程级单例里, 新建实例很廉价, 无需会话簿记; `enableJsonResponse` 让响应以完整 `application/json` 返回而非 SSE 帧, 测试也验证了 `tools/list` **无需先完成 `initialize` 往返**即可直接调用。`serve(app, { hostname, port, silent: true, gracefulShutdown: false })` 关闭了 srvx 自带的优雅关闭与日志, 把关闭编排权交回 `main.ts` 的信号处理, 避免竞争; `HttpServerHandle.close()` 直接 `server.close(true)` 强制关闭监听。HTTP 端点**不做鉴权**, 默认绑定 `127.0.0.1:3300`(`HOST`/`PORT`), 只适合本机或可信网络。
+
+```mermaid
+sequenceDiagram
+    participant H as MCP 宿主
+    participant A as h3 app POST /mcp
+    participant S as McpServer 每请求新建
+    participant T as Transport 每请求新建
+    participant M as 14 个 ToolModule
+    H->>A: POST JSON-RPC 请求
+    A->>S: createServer
+    A->>T: 新建无状态传输
+    S->>M: 逐个 register 注册工具
+    M-->>S: 15 个工具就绪
+    H->>S: tools/list 或 tools/call
+    S-->>H: application/json 完整响应
+    A->>T: finally 关闭传输
+    A->>S: 关闭 server
+```
+
+:::note 无状态的含义
+每请求一对 _server 与 transport_, 用完即关; 可共享状态全部收敛到**进程级单例**, 因此 `tools/list` 无需先完成 `initialize` 往返即可调用。
+:::
 
 ## docs_tool / docs_sync: 本地 RAG 检索
 

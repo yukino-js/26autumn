@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 A2A (Agent2Agent) 是一个开放的 agent 互通协议: 一个 agent 以标准化服务的形式对外暴露能力, 其他 agent 或编排器可以发现它、给它派发任务、消费它的流式状态更新
 
 MCP 解决「agent 接入工具」, A2A 解决「agent 接入 agent」: `--a2a` 模式下 Yukino 作为 A2A 服务器运行, 任何 A2A 兼容的客户端都能把编码任务派发给它; 服务端基于 `@a2a-js/sdk` (package.json 声明 `^1.3.0`, 本机安装 1.3.0) 实现, 协议版本由 `A2A_PROTOCOL_VERSION = "1.0"` 固定, 源码集中在 src/a2a/ (card、constants、conversion、executor、prompts、request-handler、server 七个模块, index.ts 以命名空间形式聚合导出)

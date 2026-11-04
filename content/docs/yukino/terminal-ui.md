@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 交互式 TUI: React 19 + Ink 7 渲染的单窗格终端界面 (src/ui/)。入口是 `runUiMode()` (src/main.tsx): 装好终端输出层和 stdin 过滤层后, 用 Ink 的 `render()` 挂载 App 组件 (src/ui/app.tsx, `exitOnCtrlC: false`, 键盘语义全部自管)。流式回复、工具卡片、权限对话框、用户 Bash、slash 命令、Agents 列表都发生在这一屏里
 
 ## 主屏渲染: 原生滚动 + 实时帧

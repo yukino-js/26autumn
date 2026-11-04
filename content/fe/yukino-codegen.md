@@ -2,12 +2,16 @@
 title: "Yukino Codegen: 从自然语言需求到可运行 Web 应用"
 description: "AI 全栈代码生成平台的技术解析: 服务端用 Yukino 编码 Agent 在真实磁盘上迭代产出 Vite 工程, 再在 OS 沙箱内完成依赖安装与生产构建, 以能力 URL 形式的静态预览发布 dist, 经 WebSocket 事件溯源与预览桥闭合生成/运行/修复回路"
 local_path: "$HOME/github/yukino-codegen"
-local_commit: "f3582b7e50664ace1536ed043fdafb1bcd5ca7d0"
+local_commit: "1694a6b5eb0632270c2605b4738720fd11073a86"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-codegen` 在 `1694a6b5eb06` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+:::
 
 Yukino Codegen 是一个 AI 全栈代码生成平台: 用户用一句自然语言描述想要的应用, 平台在服务器上驱动一个真实的编码 Agent 在文件系统上迭代产出前端工程, 再在 OS 沙箱内完成依赖安装与生产构建, 把 `dist` 产物经独立监听器发布为静态预览, 最终在预览 iframe 中呈现一个真实可运行的 Web 应用。生成过程本身是实时可交互的: 用户可以中途 steering 纠偏、审批计划、回退对话与代码、切换模型与思考强度、上传图片与 @ 提及文件。本文讲的是这条主链路如何被工程化: 一轮生成如何被编排与准入, 服务器与浏览器各自承担什么职责, 生成产物如何被构建与发布为静态预览, 生成/运行/修复循环如何闭合, 以及沙箱、密钥、文件路径等安全边界如何划定。
 
-平台是一个 pnpm workspace 单仓, 由 `client/`(React 19 + Vite 7 前端)与 `server/`(Hono 4 + Prisma 7 后端)两个包组成。后端把 `@yukino.js/yukino` 当作库复用——它不是自己实现一个 Agent, 而是通过引擎的远程入口 `Remote.Server.createRemoteAgent` 拿到一整套 Agent 句柄, 再把它接到自己的会话存储、WebSocket 协议与预览构建流水线上。理解平台的关键, 是先理解这条闭环两端各自的事实权威在哪里: **服务器磁盘是文件的权威源与唯一构建场地, 浏览器只消费已发布的构建快照**。
+平台是一个 pnpm workspace 单仓, 由 `client/`(React 19 + Vite 7 前端)与 `server/`(Hono 4 + Prisma 7 后端)两个包组成。后端把 `@yukino.js/yukino` 当作库复用(在 `server/package.json` 中以 `latest` tag 声明)——它不是自己实现一个 Agent, 而是通过引擎的远程入口 `Remote.Server.createRemoteAgent` 拿到一整套 Agent 句柄, 再把它接到自己的会话存储、WebSocket 协议与预览构建流水线上。理解平台的关键, 是先理解这条闭环两端各自的事实权威在哪里: **服务器磁盘是文件的权威源与唯一构建场地, 浏览器只消费已发布的构建快照**。
 
 ## 一、定位: 一句话需求如何变成可运行应用
 
@@ -24,6 +28,24 @@ Yukino Codegen 是一个 AI 全栈代码生成平台: 用户用一句自然语�
 - 工程侧能力: 应用 zip 导出、管理后台、Prometheus 指标与健康探针。
 
 这些能力不是并列堆叠的, 而是围绕"生成 → 运行 → 反馈 → 再生成"这一条闭环组织的。
+
+```mermaid
+flowchart LR
+    U[用户自然语言需求] --> WS[WebSocket run 消息]
+    WS --> S[submit 按运行时状态分流]
+    S --> T[executeTurn 单轮编排]
+    T --> A[Yukino Agent 工具循环]
+    A --> D[服务器磁盘上的 Vite 工程]
+    D --> B[OS 沙箱内安装依赖与生产构建]
+    B --> P[dist 静态预览 能力 URL]
+    P --> V[浏览器 iframe 预览]
+    V --> F[反馈 纠偏 审批 修复]
+    F --> WS
+```
+
+:::tip 全文主线
+这条 **生成 → 运行 → 反馈 → 再生成** 的闭环是全文主线: 服务器磁盘是文件的*权威源与唯一构建场地*, 浏览器只消费已发布的构建快照。
+:::
 
 ### 1.2 与模板填充式生成的本质区别
 

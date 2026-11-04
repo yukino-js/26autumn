@@ -4,6 +4,25 @@ overview: true
 description: "后端栏目: Go 语言与运行时、MySQL/Redis/ClickHouse/Kafka 与后端中间件、generic-pool 源码解析与 WANProxy Go 移植笔记 (纯 JSON 配置与 JSON Schema 校验、UDP 代理、XCodec 去重), 以及 Yukino Go 系列的 HTTP/RPC/ORM/缓存、Agent 协议网关、基础设施组件、AI 运维 Agent 与任务调度引擎"
 ---
 
+```mermaid
+flowchart TB
+    A[后端技术笔记] --> B[语言基础]
+    A --> C[存储与中间件]
+    A --> D[Yukino Go 系列]
+    B --> B1[go]
+    C --> C1[mysql 与 redis]
+    C --> C2[clickhouse-kafka 与 middleware]
+    C --> C3[node-pool 与 wanproxy]
+    D --> D1[yukino-http 与 yukino-rpc]
+    D --> D2[yukino-orm 与 yukino-cache-go]
+    D --> D3[yukino-agent 与 yukino-agent-proxy]
+    D --> D4[yukino-go-components 与 yukino-task-flow]
+```
+
+:::tip 阅读建议
+**语言基础**打底, **存储与中间件**覆盖通用组件, **Yukino Go 系列**全部以对应仓库的真实源码为事实依据; 每篇开头的<u>事实基线</u>标注了所依据的检出版本, 便于按源码定位路径与常量。
+:::
+
 后端方向的系统性技术笔记, 按主题分为三部分, 共 16 个页面 (含本落地页).
 
 ## 第一部分: 语言基础

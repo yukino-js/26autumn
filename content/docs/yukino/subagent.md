@@ -5,6 +5,22 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[主 Agent 调用 Agent 工具] --> B[参数校验与角色定义]
+  B --> C[spawnSubagent 独立 loop]
+  C --> D[fork 上下文继承]
+  C --> E[五层工具过滤]
+  E --> F[后台异步任务]
+  F --> G[结果回传主 Agent]
+```
+
 一个大的重构任务中, 想插入一个小的「更新 README.md」任务: 直接在主对话里执行, 会把大量无关的工具调用和中间输出混进主 Agent 的上下文 (上下文污染)。Subagent 把这类有界子任务委派给独立的 agent loop 执行: 独立的上下文窗口、独立的工具集和权限边界, 只把一份简洁结果交回主 agent
 
 Yukino 的委派拓扑是主从 (星型) 的: 主 agent 在中心, subagent 在边缘, subagent 只对自己的任务负责, 相互之间不通信, 执行结果作为 Agent 工具的返回值进入主 agent 的上下文 —— 没有中心化的编排器, 也不会出现 agent 之间的循环等待。需要相互通信、可反复追加任务的持久成员用 agent team (见 [agent-team](./agent-team))

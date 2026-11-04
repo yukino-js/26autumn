@@ -3,6 +3,26 @@ title: "MySQL 与 InnoDB 技术手册"
 description: "以 MySQL 8.4 LTS 为基准, 覆盖连接与 SQL 执行流程、InnoDB 物理结构与索引体系、事务 MVCC 与锁、redo/undo/binlog 与崩溃恢复、主从复制、分库分表与在线 DDL、读写分离下的缓存一致性以及慢查询调优方法论"
 ---
 
+```mermaid
+flowchart LR
+    A[客户端 SQL] --> B[连接器与解析器]
+    B --> C[优化器与执行器]
+    C --> D[InnoDB Buffer Pool]
+    D --> E[undo log 记录旧值]
+    D --> F[redo log 写 WAL]
+    F --> G[两阶段提交]
+    G --> H[binlog 落盘]
+    H --> I[返回客户端]
+```
+
+:::note 版本基线
+文中行为与默认值以 **MySQL 8.4 LTS** 为准; 例如 `innodb_undo_tablespaces` 在 8.4 _已废弃_, undo 表空间<u>数量固定为 2</u>, 不再随参数变化。
+:::
+
+:::danger 崩溃恢复前提
+**两阶段提交**是 redo 与 binlog 一致的唯一保障: 只有 `innodb_flush_log_at_trx_commit=1` 且 `sync_binlog=1` 才能做到宕机不丢事务, 任何一侧放宽都会引入主从不一致窗口。
+:::
+
 这份文档面向后端工程师与 DBA, 从服务端执行流程讲到 InnoDB 的磁盘与内存结构, 再延伸到事务、锁、日志、复制与分布式数据管理, 目标是建立一套可用于排查故障与做架构决策的心智模型. 内容按"机制、现象、取舍"组织: 每一节先说明一条机制如何运作, 再说明它会产生什么可观测现象, 最后给出工程上的选择. 读者可以按章节独立查阅, 也可以顺序阅读. 文中行为与默认值以 MySQL 8.4 LTS 为准. Redis 侧的缓存与锁细节见 [Redis 技术手册](./redis), 面向数仓的消息与列存链路见 [ClickHouse 与 Kafka 技术手册](./clickhouse-kafka).
 
 ## 一、连接与 SQL 执行流程

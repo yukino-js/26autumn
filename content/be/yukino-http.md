@@ -2,8 +2,30 @@
 title: "yukino_http 技术笔记"
 description: "yukino_http Go HTTP 框架: Koa 风格洋葱模型中间件与延迟响应、TakeOver 响应接管、按段 Trie 路由、分组 Router、SSE 与 RFC 6455 WebSocket 的实现机制与适用场景"
 local_path: "$HOME/github/yukino.go/libs/yukino_http"
-local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
+local_commit: "02e9621cee8763979175549903d7a67534923751"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino.go/libs/yukino_http` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+```mermaid
+sequenceDiagram
+    participant C as 客户端
+    participant L as Logger
+    participant R as Recovery
+    participant H as Handler
+    C->>L: 请求进入
+    L->>R: next 进入
+    R->>H: next 进入
+    H-->>R: 写 Status 与 Body
+    R-->>L: 退出阶段
+    L-->>C: respond 统一写出
+```
+
+:::tip 读图要点
+**洋葱模型**的精髓是*延迟响应*: 中间件只写 `Context` 上的状态, 由最外层的 <u>respond</u> 统一序列化; 因此 `next()` 前后分别对应进入与退出两个阶段。
+:::
 
 yukino_http 是一个受 Koa.js 启发的 Go HTTP 框架。它用洋葱模型 (onion model) 组织中间件, 用延迟响应 (deferred response) 把状态码、响应体与响应头的决定权推迟到整条中间件链执行完毕, 并用一棵按路径段切分的 Trie 路由树完成请求分发。框架只依赖 Go 标准库, 内置日志与 panic 恢复中间件, 还手写实现了 Server-Sent Events 与 RFC 6455 WebSocket。本文面向需要在 Go 中构建中小型 HTTP 服务、希望理解框架内部机制或需要一个零第三方依赖 Web 框架的工程师, 依次讲解分层结构、关键机制、API 能力面、并发与容错设计、性能约束与适用边界。
 

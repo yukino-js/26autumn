@@ -2,8 +2,16 @@
 title: "Yukino Agent Proxy：单二进制双编码 Agent 的协议网关"
 description: "一个二进制以 --agent 代理 Claude Code 或 Codex，在 Anthropic Messages、OpenAI Responses、Chat Completions 三种协议之间双向桥接，并负责 provider 选择、客户端配置注入与备份、常驻进程管理、MCP 控制面、滚动发布与凭据卫生。"
 local_path: "$HOME/github/yukino.go/apps/agent_proxy"
-local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
+local_commit: "02e9621cee8763979175549903d7a67534923751"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino.go/apps/agent_proxy` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+:::note 阅读路径
+全文按**协议矩阵** → 双向桥接转换 → _启动与恢复语义_ → <u>配置注入安全约束</u> → 构建发布与测试策略展开; 定位线上问题时可直接跳到"常见故障与排查路径"。
+:::
 
 编码 Agent（Claude Code、Codex）各自只会说一种线上协议，而模型供应商可能只提供另外两种中的一种。Yukino Agent Proxy 用一个 Go 二进制、一个 `--agent=claude|codex` 开关，把「客户端协议」与「上游协议」解耦：客户端只看见自己能理解的端点，网关在请求与响应两个方向做协议翻译，并顺带完成 provider 选择、连通性预检、客户端配置备份改写、常驻进程生命周期管理与 MCP 控制面。本文讲清它的协议矩阵、桥接转换规则、启动与恢复语义、配置注入的安全约束，以及发布与回退方式，适合需要接入第三方模型、做本地推理网关或研究协议互操作实现的工程师阅读。
 

@@ -3,12 +3,28 @@ title: "电商客服 Agent"
 overview: true
 description: "yukino-ecomm-agent 栏目: Node.js/TypeScript 电商客服 Agent (Yukino Select) 的系统性技术笔记, 覆盖 Hono + LangGraph 服务端与 Lit 控制台的总体组织、会话上下文分层、LLM 接入与表设计、MCP 工具、可观测性与数据飞轮、RAG 检索、图编排 workflow 与 HTTP API"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
+local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[Hono HTTP 层] --> B[LangGraph 会话图]
+  B --> C[检索与置信度闸]
+  B --> D[LLM 接入]
+  B --> E[MCP 工具]
+  A --> F[Lit 控制台]
+  B --> G[Postgres 与 Prisma]
+```
 
 围绕 yukino-ecomm-agent 仓库的系统性技术笔记, 共 9 个页面 (含本落地页).
 
-:::info 单一事实来源 + pnpm workspace
+:::note 单一事实来源 + pnpm workspace
 仓库是一个 **pnpm workspace**: `server/` 是 **Hono** + **LangChain/LangGraph** + **Prisma/PostgreSQL** 的客服 Agent 服务端, `client/` 是 **Lit** 单页控制台; 全部文档以该仓库源码为**唯一事实依据**.
 :::
 
@@ -21,4 +37,4 @@ local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 | [observable](./observable)                 | 可观测性和数据飞轮: Langfuse 双链路 tracing 与本地 compose 部署、防劣化的离线评测流水线 (eval-rag / eval-flywheel / calibrate-confidence / cost-report) 与 job runner、阅读笔记与幻觉案例台账, 以及低置信问题池驱动的知识库写回闭环 |
 | [rag](./rag)                               | RAG 检索: Markdown 文档切割 (标题分节 / 表格按行 / 句子级 overlap)、embedding 策略、关系库与向量库双写状态位、可选 Milvus 与进程内 BM25/稠密检索, 以及召回 → RRF 粗排 → rerank 精排管线与置信度闸                                   |
 | [workflow](./workflow)                     | LangGraph 会话图编排: 12 个节点的拓扑与九意图五出口的表驱动路由、指代消解 / 意图识别 / 知识检索 / 退款确定性子流程 / ReAct 主力循环 / 确定性出口各节点实现, 以及 Postgres checkpointer、SSE 流式事件翻译与中断恢复                  |
-| [api](./api)                               | HTTP API 和管理台: API 服务拓扑与启动顺序、main.js 离线任务入口、统一错误约定, 对话 / 知识库 / 数据飞轮与评测 / 管理各端点的请求响应契约、job runner, 以及 Lit 前端控制台的路由与架构要点                                           |
+| [api](./api)                               | HTTP API 和管理台: API 服务拓扑与启动顺序、server/main.js 离线任务入口、统一错误约定, 对话 / 知识库 / 数据飞轮与评测 / 管理各端点的请求响应契约、job runner, 以及 Lit 前端控制台的路由与架构要点                                    |

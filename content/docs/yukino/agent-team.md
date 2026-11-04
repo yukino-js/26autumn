@@ -5,6 +5,26 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[leader] --> B[共享任务板 tasks.json]
+  A --> C[文件邮箱 inboxes]
+  B --> D[teammate 甲]
+  B --> E[teammate 乙]
+  C --> D
+  C --> E
+  D --> C
+  E --> C
+  D --> F[SendMessage 互通]
+  E --> F
+```
+
 ## Why
 
 ### 解决的问题: 多 agent 通信

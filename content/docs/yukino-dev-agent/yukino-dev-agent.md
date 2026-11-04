@@ -2,8 +2,12 @@
 title: "Yukino Dev Agent 技术笔记"
 description: "Next.js 16 App Router + Vercel AI SDK 的 OnCall/DevFlow 双产品面应用: Milvus 混合检索 RAG、ReAct 与 SSE 流式 Plan-Execute-Replan 编排、A2UI 交互界面、多源告警聚合、MCP 工具体系、Langfuse 可观测性与 Prometheus 指标桥"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "83f7d68cc4a08084f00a4811f9702c71b4aafd81"
+local_commit: "424a270590659dfbea804384d4fd1e14ba1111a5"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-dev-agent` 在 `424a27059065` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
 
 本文讲解 Yukino Dev Agent 这一 Node.js/TypeScript AI 应用的技术实现:它用 Next.js 16 App Router 把前端页面与后端 API 收进同一个进程,同时承载两个产品面——面向值班运维的 AI OnCall 助手(根路径),以及面向 GitHub 协作场景的 DevFlow 工程副驾(`/dev-flow`). 文档围绕产品定位、分层架构、端到端数据流、检索与编排实现、模型抽象、数据模型、前端状态、可观测性、配置体系、部署形态与性能成本取舍逐层展开,适合需要在既有 AI 应用上做二次开发,或正在设计 RAG + Agent 编排系统的工程师阅读. 所有机制描述均以当前源码为准,Milvus 是唯一向量后端. 两个产品面的入门视角另有姊妹篇 [Yukino Dev Agent](./agent) 与 [DevFlow](./dev-flow).
 
@@ -405,7 +409,7 @@ A2UI 是一套声明式 UI 协议:模型在 markdown 回答之后可选地附一
 
 纠错重试. 校验失败时把"原对话 + 无效输出 + 校验错误"回放给模型做一次无工具重试,要求只回一个修正后的协议数组;仍失败则降级为诚实的提示(流式路径下发一条 notice 事件),绝不编造界面数据.
 
-客户端把 a2ui 事件解析后追加到消息的 a2ui 字段,由本地渲染组件配合协议处理器与本地组件目录驱动;另有一个无需后端的验证页(`/gallery`),用固定消息集渲染全部扩展组件,用于回归组件目录. 动作点击的原地更新闭环见第三节. 界面动作的系统提示词有明确红线:动作回合只允许更新组件与数据模型,绝不允许 createSurface/deleteSurface——动作是对既有界面的原地修改,不是新建界面的入口. surface 动作的处理还有一条序列化回退:未提供原始动作回调时,渲染组件把动作序列化为 `[a2ui_action] <名称>` 加一行 `context: <JSON>` 的形式交给 `onAction`——`/gallery` 用的正是这条回退来展示最近一次动作,消息列表则提供原始动作回调、走原地更新闭环. 还有一处运行时约束:`next.config.ts` 显式关闭了 reactStrictMode,因为协议处理器维护有状态的组件存储,严格模式的双挂载会让流式消息处理产生副作用重放——这是以可预测性换取协议正确性的明确取舍.
+客户端把 a2ui 事件解析后追加到消息的 a2ui 字段, 由本地渲染组件 `components/a2ui-view.tsx` 配合 `MessageProcessor` 与 `shadcnCatalog` 驱动. 动作点击的原地更新闭环见第三节. 界面动作的系统提示词有明确红线:动作回合只允许更新组件与数据模型,绝不允许 createSurface/deleteSurface——动作是对既有界面的原地修改,不是新建界面的入口. surface 动作的处理还有一条回退:未提供原始动作回调 `onRawAction` 时, 渲染组件经 `buildQueryFromAction` 把动作转成 `A2UI_ACTION` (`[a2ui_action]`) 前缀的文本查询再交给 `onAction`; 消息列表提供原始动作回调、走原地更新闭环. 还有一处运行时约束:`next.config.ts` 显式关闭了 reactStrictMode,因为协议处理器维护有状态的组件存储,严格模式的双挂载会让流式消息处理产生副作用重放——这是以可预测性换取协议正确性的明确取舍.
 
 AI Ops 报告另有一处界面化后处理:收尾节点用 think 模型可选地把报告渲染成 surface,报告里没有值得可视化的结构化数据则回"NONE",块无效时经一次纠错重试,调用失败只记日志——界面是昂贵多轮运行之上的装饰,绝不允许它的失败丢弃已完成的报告.
 

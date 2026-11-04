@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 Workflow (src/workflow/) 用一段确定性的 JavaScript 脚本编排多个 subagent, 在后台并发跑完一整套「拆解 → 执行 → 验证」流程, 最终结果经任务通知回流主 agent
 
 为什么需要它: Agent 工具一次只委派一个 subagent, 主 agent 要逐个等待、逐个整合; 当任务能拆成几十上百个独立子项 (逐文件审查、批量迁移、全仓扫描) 时, 用脚本一次性编排比让主 agent 循环委派更省 token、更可控。每次启动都会落盘脚本源码和 JSON args, 已成功的 agent 调用在恢复 (resume) 时直接从 journal 回放, 流程可重放、可审计

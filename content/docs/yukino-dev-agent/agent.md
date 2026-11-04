@@ -2,8 +2,12 @@
 title: "Yukino Dev Agent"
 description: "OnCall 视角入门: 技术栈与双档模型、RAG 建库与在线问答、Milvus 混合检索流程、ReAct 对话 Agent、Plan-Execute-Replan 运维 Agent 与报告护栏、Tool/MCP、A2UI、知识库管理与自监控"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "83f7d68cc4a08084f00a4811f9702c71b4aafd81"
+local_commit: "424a270590659dfbea804384d4fd1e14ba1111a5"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-dev-agent` 在 `424a27059065` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
 
 yukino-dev-agent 是一个 AI 智能运维 (OnCall) 助手, 把两个产品面合并进单一 Next.js 16 + AI SDK 应用:
 
@@ -119,7 +123,7 @@ collection 的字段还有 `id` (主键)、`source` (来源, 最长 512)、`meta
 4. **精排 (optional)**: 设置了 `RERANK_API_KEY` 时用阿里云 DashScope text-rerank 接口重排 (`lib/ai/rerank.ts`, 默认 `qwen3-vl-rerank`, 超时 10s, 429/5xx 指数退避重试 2 次), 失败则退化为融合顺序
 5. **截断**: 取 topK (`DEFAULT_TOP_K = 5`)
 
-:::info 来源隔离: OnCall 与 DevFlow 知识互不可见
+:::note 来源隔离: OnCall 与 DevFlow 知识互不可见
 未带 `filter` 的调用是 OnCall 视角, 融合后剔除 `dev_flow:` 前缀的来源, DevFlow 的仓库知识不会泄漏进 OnCall 答案; 需要定向检索的调用方显式传 `filter`.
 :::
 
@@ -241,7 +245,7 @@ A2UI 是声明式的模型生成 UI 协议, 协议本身的机制见 [A2UI](../a
 
 - `lib/ai/a2ui/extract.ts` 的流式过滤器把块从文本流里剥离 (跨 chunk 保留未闭合的标签尾部); 校验只用 `@a2ui/web_core/v0_9` 的 `A2uiMessageListSchema`
 - 校验失败时给一次无工具的纠正重试 (`lib/ai/a2ui/correct.ts`), 仍失败则降级为诚实的 notice 提示, 绝不伪造 UI 数据
-- 组件目录 `catalog/` 注册 18 个基础组件 + 47 个 shadcn 扩展组件 (合计 65 个, 与 `lib/a2ui/prompt/schemas/catalog.json` 的 prompt 侧 schema 一一对应), 另有 25 个内置函数 (`required` / `regex` / `formatNumber` / `openUrl` 等); `/gallery` 页面无后端预览全部组件
+- 组件目录 `catalog/` 注册 18 个基础组件 (`catalog/components/`) + 47 个 shadcn 扩展组件 (`catalog/shadcn/`), 合计 65 个, 与 `lib/a2ui/prompt/schemas/catalog.json` 的 prompt 侧 schema 一一对应; 该 schema 另声明 14 个内置函数 (`required` / `regex` / `length` / `formatNumber` / `openUrl` / `and` 等)
 - 组件 action 由前端携带 `{ name, surfaceId, sourceComponentId, context }` 和当前界面消息一起 `POST /api/a2ui_action`; 服务端用 quickModel 带工具 (`isStepCount(10)`) 处理后, 只返回针对该 surface 的原地 `updateComponents` / `updateDataModel` 消息, 前端追加渲染
 
 :::danger A2UI 与应用的 zod 版本红线

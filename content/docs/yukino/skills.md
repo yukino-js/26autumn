@@ -5,6 +5,22 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[三层目录扫描] --> B[SKILL.md 与 YAML frontmatter]
+  B --> C[渐进式披露 阶段一 元数据]
+  C --> D[阶段二 按需加载正文]
+  D --> E[inline 模式]
+  D --> F[fork 模式]
+  B --> G[自动注册为 Slash Command]
+```
+
 skill 是写给 AI 的 SOP (Standard Operation Procedure): 一个带 YAML frontmatter 的 SKILL.md, 描述一类任务该怎么一步步做
 
 相比硬编码在代码里的 prompt, skill:

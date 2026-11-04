@@ -5,6 +5,21 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[工作记忆 上下文窗口] --> D[Agent 决策]
+  B[长期记忆 AGENTS.md] --> D
+  C[会话日志 JSONL 与文件快照] --> D
+  D --> E[自动记忆 经验积累]
+  E --> B
+```
+
 Yukino 的记忆分三层
 
 - 工作记忆: 上下文窗口本身

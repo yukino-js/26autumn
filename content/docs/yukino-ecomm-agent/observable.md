@@ -2,8 +2,24 @@
 title: "可观测性和数据飞轮"
 description: "从 server 源码出发, 讲清 Langfuse 双链路 tracing、防劣化的离线评测流水线与 job runner、阅读笔记、幻觉案例台账, 以及低置信问题池驱动的数据飞轮闭环"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
+local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  A[Langfuse 双链路 tracing] --> B[离线评测流水线]
+  B --> C[job runner 防劣化]
+  C --> D[低置信问题池]
+  D --> E[幻觉案例台账]
+  E --> F[数据飞轮闭环]
+  F --> A
+```
 
 一个请求对应一个 trace 树; LLM API 调用、文档检索、工具调用等, 都是 trace 树上的 span 节点. 可观测性回答「这一轮对话的钱和延迟花在哪」; 评测流水线回答「系统改动之后是变好还是变差」; 数据飞轮回答「答不上来的问题怎么变成知识库」. 本文按这三层展开.
 
@@ -11,7 +27,7 @@ local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 
 tracing 是可选的: `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` 三个都配置才启用 (`langfuseEnabled()`, `server/src/core/observability.ts`). 启用后 `startServer()` 里的 `initObservability()` 启动 OpenTelemetry `NodeSDK`, 只挂一个 `LangfuseSpanProcessor` (来自 `@langfuse/otel`, 传入三个 key), 进程退出时 `shutdownObservability()` 冲刷缓冲.
 
-本地部署由 `deploy/langfuse/docker-compose.yml` 提供, `node main.js langfuse-up` / `langfuse-down` 启停 (compose project 名 `yukino-langfuse`, 等待 `http://localhost:3000/api/public/health` 健康, 最长 4 分钟). 栈包含 `langfuse-web` (:3000)、`langfuse-worker` (:3030)、clickhouse、minio、redis、postgres 六个服务; 组织和项目通过 `LANGFUSE_INIT_*` 环境变量 headless 预置, 账号 `admin@yukino.local` / `yukino123`, 密钥固定为 `pk-lf-yukino-ecomm-agent-local` / `sk-lf-yukino-ecomm-agent-local`, 启动成功后提示写入 `server/.env`. `langfuse-down` 只停容器, 数据卷保留.
+本地部署由 `server/deploy/langfuse/docker-compose.yml` 提供, `node server/main.js langfuse-up` / `langfuse-down` 启停 (compose project 名 `yukino-langfuse`, 等待 `http://localhost:3000/api/public/health` 健康, 最长 4 分钟). 栈包含 `langfuse-web` (:3000)、`langfuse-worker` (:3030)、clickhouse、minio、redis、postgres 六个服务; 组织和项目通过 `LANGFUSE_INIT_*` 环境变量 headless 预置, 账号 `admin@yukino.local` / `yukino123`, 密钥固定为 `pk-lf-yukino-ecomm-agent-local` / `sk-lf-yukino-ecomm-agent-local`, 启动成功后提示写入 `server/.env`. `langfuse-down` 只停容器, 数据卷保留.
 
 数据进 langfuse 有两条并行链路:
 
@@ -50,7 +66,7 @@ function graphConfig(conversationId: number, userId: string) {
 
 ## 防劣化: 评测流水线
 
-trace 能看到某一条请求, 但更新知识库/prompt、更换某个节点的模型, 都可能降低某一类问题的准确率, 单条 trace 看不出来. 防劣化靠一组离线评测脚本, 全部能用 `node main.js <command>` 跑 (`server/main.js` 的命令表), 也能在管理页按「Re-run」触发.
+trace 能看到某一条请求, 但更新知识库/prompt、更换某个节点的模型, 都可能降低某一类问题的准确率, 单条 trace 看不出来. 防劣化靠一组离线评测脚本, 全部能用 `node server/main.js <command>` 跑 (`server/main.js` 的命令表), 也能在管理页按「Re-run」触发.
 
 前端和后端共用一个 job runner (`server/src/core/jobs.ts`): `JOBS` 注册表把 job 名映射到固定的 argv (13 个: `kb-preview`、`kb-build`、`kb-mine`、`kb-vectorize`、`kb-repatch`、`kb-reset`、`milvus-up`、`milvus-down`、`seed-conv`、`eval-rag`、`eval-flywheel`、`calibrate-confidence`、`cost-report`); `POST /api/jobs/:name` 先查注册表, 未注册的名字直接 404, 永远不会执行任意 shell 片段. 每个 job 以 detached 子进程启动, stdout/stderr 写入 `log/acceptance/<name>.log`; 同名 job 同时只能跑一个 (重复启动返回 409); `stop` 对进程组发 SIGTERM, 10 秒后升级为 SIGKILL; 状态机为 `idle / running / ok / failed / stopped`.
 
@@ -121,7 +137,7 @@ trace 能看到某一条请求, 但更新知识库/prompt、更换某个节点�
 
 ### 数据飞轮的处理
 
-`flywheel.processPending` (`server/src/core/flywheel.ts`) 负责把池子里的问题变成待审条目, 由离线脚本 `node main.js flywheel` 触发 (`processPending(200)`); 这一步不在 job runner 注册表里, 只能命令行跑. 每轮取最多 200 条未匹配 (`matchedReviewId` 为空) 的问题, 逐条:
+`flywheel.processPending` (`server/src/core/flywheel.ts`) 负责把池子里的问题变成待审条目, 由离线脚本 `node server/main.js flywheel` 触发 (`processPending(200)`); 这一步不在 job runner 注册表里, 只能命令行跑. 每轮取最多 200 条未匹配 (`matchedReviewId` 为空) 的问题, 逐条:
 
 1. 问题标准化 + 去重 + 参考答案, 一次 LLM 结构化调用同时产出三个字段 (`FLYWHEEL_NORMALIZE_PROMPT`):
    - `normalized_question`: 剥离情绪、口语和无关细节, 保留核心诉求, 改写成 FAQ 标准问法. 例如「上周买的鞋跑两次就开胶了, 太坑了, 能退吗」→「有质量问题 (例如开胶) 的商品能否退货」.
@@ -150,6 +166,6 @@ trace 能看到某一条请求, 但更新知识库/prompt、更换某个节点�
 
 ### 知识挖掘 (飞轮素材的另一个来源)
 
-`kb-mine` (`node main.js kb-mine`, `server/src/kb/mining.ts`): 把全部历史会话按每批 20 条交给 LLM (`MINING_PROMPT`), 提取有复用价值的问答对 (跳过闲聊和纯个案), 写入 `qa_extraction_staging` 暂存表 (batchNo 形如 `mine-20261027120000`, 初始状态 `extracted`). 随后与知识库已有问题做标准化去重: `normalizeQuestion` 小写化并去掉所有非字母数字字符, 指纹相同判为重复, 标记 `discarded`, 其余标 `kept`.
+`kb-mine` (`node server/main.js kb-mine`, `server/src/kb/mining.ts`): 把全部历史会话按每批 20 条交给 LLM (`MINING_PROMPT`), 提取有复用价值的问答对 (跳过闲聊和纯个案), 写入 `qa_extraction_staging` 暂存表 (batchNo 形如 `mine-20261027120000`, 初始状态 `extracted`). 随后与知识库已有问题做标准化去重: `normalizeQuestion` 小写化并去掉所有非字母数字字符, 指纹相同判为重复, 标记 `discarded`, 其余标 `kept`.
 
 `kept` 的条目进入 /kb 页面暂存区人工审核 (页面按 extracted / kept / discarded / approved / rejected 五种状态分组展示); 批准后经 `approvedStagingChunk` 打包成 `conversation_history` 类型的 chunk (`sectionPath=mined`, `contentType=mined`), 走与审核写回相同的双写 + 立即向量化 + 失败回滚流程.

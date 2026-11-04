@@ -1,9 +1,13 @@
 ---
 title: "HTTP API 和管理台"
-description: "HTTP API 和管理台: API 服务拓扑与启动顺序、main.js 离线任务入口、统一错误约定, 对话 / 知识库 / 数据飞轮与评测 / 管理各端点的请求响应契约、job runner, 以及 Lit 前端控制台的路由与架构要点"
+description: "HTTP API 和管理台: API 服务拓扑与启动顺序、server/main.js 离线任务入口、统一错误约定, 对话 / 知识库 / 数据飞轮与评测 / 管理各端点的请求响应契约、job runner, 以及 Lit 前端控制台的路由与架构要点"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
+local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
 
 yukino-ecomm-agent 的对外表面分三块: API 服务 (Hono)、两个 MCP 服务 (见 [MCP 和 Skill](./mcp)) 和前端控制台. API 服务是唯一连接 <u>agent 图</u>、知识库、数据飞轮和管理页面的入口, 所有路由都挂在 `server/src/server.ts` 的 `createApp()` 里.
 
@@ -15,7 +19,7 @@ Hono + hono-pino 请求日志, 默认监听 `127.0.0.1:8000` (`HOST` / `PORT` �
 
 进程入口是 `server/src/index.ts`, 启动顺序:
 
-1. `missingRuntimeConfig()` 检查 `CHAT_MODEL`、`CHAT_BASE_URL`、`CHAT_API_KEY`、`EMBED_API_KEY`、`RERANK_API_KEY` 五个必填项, 缺失直接退出 (提示填 `.env`);
+1. `missingRuntimeConfig()` 检查 `CHAT_MODEL`、`CHAT_BASE_URL`、`CHAT_API_KEY` 三个必填项, 缺失直接退出 (提示填 `.env`); `EMBED_API_KEY` 与 `RERANK_API_KEY` 是可选开关, 由 `embeddingsEnabled()` / `rerankEnabled()` 判定 (见 [RAG](./rag));
 2. `scanBuiltin()` 扫描内置工具;
 3. `assertDbReady()` 等待数据库就绪;
 4. `initObservability()` 初始化可观测性;
@@ -28,7 +32,7 @@ Hono + hono-pino 请求日志, 默认监听 `127.0.0.1:8000` (`HOST` / `PORT` �
 
 ```mermaid
 flowchart TD
-    S0[进程入口 server/src/index.ts] --> S1[missingRuntimeConfig 检查 5 必填项]
+    S0[进程入口 server/src/index.ts] --> S1[missingRuntimeConfig 检查 3 必填项]
     S1 --> S2[scanBuiltin 扫描内置工具]
     S2 --> S3[assertDbReady 等待数据库]
     S3 --> S4[initObservability]
@@ -38,9 +42,9 @@ flowchart TD
     S7 --> S8[开始监听 127.0.0.1:8000]
 ```
 
-### 任务入口 main.js
+### 任务入口 server/main.js
 
-`node server/main.js <command>` 是统一的离线任务入口, `node main.js help` 列出全部命令. 常用命令:
+`node server/main.js <command>` 是统一的离线任务入口, `node server/main.js help` 列出全部命令. 常用命令:
 
 - `dev` / `dev-down`: dev 先拉起两个 MCP 服务再 `pnpm dev` (即 `tsx watch src/index.ts`);
 - `mcp-up` / `mcp-down`, `mcp-logistics(-up/-down)` / `mcp-aftersales(-up/-down)`: MCP 服务管理 (logistics :8101、aftersales :8102);
@@ -51,7 +55,7 @@ flowchart TD
 
 ### 统一错误约定
 
-:::info 统一错误约定
+:::note 统一错误约定
 请求体 / 查询串统一经 zod 校验 (`server/src/api/http.ts` 的 `parseJsonBody` / `parseQuery` / `parseParamInt`), 非法参数返回 `400` + `{ detail }` (含字段路径); `HTTPException` 返回 `{ detail: message }` + 对应状态码; 未捕获异常返回 `500` + `{ detail: "Internal server error; please try again later" }`; 未匹配路径返回 `404` + `{ detail: "Not Found: <path>" }`.
 :::
 
@@ -158,9 +162,9 @@ flowchart TD
 - `POST /api/jobs/:name`: 启动, 已在运行时 `409`;
 - `POST /api/jobs/:name/stop`: 停止, 未在运行时 `409`.
 
-job runner 在 `server/src/core/jobs.ts`, API 与管理页的 `Re-run` 按钮共用 (注册表中 `milvus-up` / `milvus-down` 两个 job 的 argv 回调 `node main.js`):
+job runner 在 `server/src/core/jobs.ts`, API 与管理页的 `Re-run` 按钮共用 (注册表中 `milvus-up` / `milvus-down` 两个 job 的 argv 回调 `node server/main.js`):
 
-- 只接受注册过的 13 个 job 名: `kb-preview` / `kb-build` / `kb-mine` / `kb-vectorize` / `kb-repatch` / `kb-reset` / `seed-conv` / `milvus-up` / `milvus-down` / `eval-rag` / `eval-flywheel` / `calibrate-confidence` / `cost-report`. 每个 job 的 argv 是固定的 (`node scripts/<name>.ts` 或 `node main.js ...`), 永远不会执行任意 shell 片段;
+- 只接受注册过的 13 个 job 名: `kb-preview` / `kb-build` / `kb-mine` / `kb-vectorize` / `kb-repatch` / `kb-reset` / `seed-conv` / `milvus-up` / `milvus-down` / `eval-rag` / `eval-flywheel` / `calibrate-confidence` / `cost-report`. 每个 job 的 argv 是固定的 (`node scripts/<name>.ts` 或 `node server/main.js ...`; `server/src/core/jobs.ts` 的 cwd 为 `server/`, 故源码里 argv 用相对名 `main.js`), 永远不会执行任意 shell 片段;
 - job 以 detached 子进程运行 (cwd 为 server 目录), stdout / stderr 重定向到 `log/acceptance/<name>.log`, 日志文件起始写入 `$ <argv>` 和启动时间;
 - 同一 job 不能并发运行; 状态机为 `idle → running → ok / failed / stopped`, 退出码 0 记 `ok`, 被停止记 `stopped`;
 

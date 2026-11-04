@@ -3,8 +3,20 @@ title: "Docker & Kubernetes: 面试知识体系与 JSError 自动修复云沙箱
 description: "Docker 容器原理 (namespace/cgroups/UnionFS)、镜像构建、网络与存储、运行时安全, Kubernetes 架构、Pod/控制器/Service/调度/探针/资源管理/RBAC/排障的完整面试知识体系, 以及基于 K8s Job + Docker Agent 沙箱的前端 JSError 自动修复端到端实战方案"
 ---
 
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[JSError 上报富化] --> B[K8s Job 调度]
+  B --> C[Docker Agent 沙箱]
+  C --> D[浅克隆并钉死 commit]
+  D --> E[LLM 循环生成补丁]
+  E --> F[Playwright 复现验证]
+  F --> G[提交修复 PR]
+```
+
 > 定位: 第一至四部分是 Docker 与 Kubernetes 的完整面试知识体系, 每个知识点 = 一句话回答 (先背这个) + 追问展开 (应对深挖); 第五部分是把两者串起来的实战方案——前端 JSError 自动修复云沙箱, 上游衔接 [data](data) 的监控采集与静态代码图谱 (CodeGraph) 的上下文。
-> 环境现状: 本机已装 Docker 29.8.2 与 kubectl v1.33.9, 无集群 context, 如需实操可启动 Docker Desktop 并开启其内置 Kubernetes。
+> 环境现状: 本机已装 Docker 29.2.0 与 kubectl v1.34.1, 无集群 context, 如需实操可启动 Docker Desktop 并开启其内置 Kubernetes。
 
 ---
 

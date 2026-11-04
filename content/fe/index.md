@@ -6,6 +6,28 @@ description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布
 
 前端方向的系统性技术笔记, 按主题分为三部分, 共 13 个页面 (含本落地页).
 
+### 栏目地图
+
+```mermaid
+flowchart TB
+    FE[前端栏目 13 个页面]
+    FE --> P1[第一部分 语言运行时与 CSS]
+    FE --> P2[第二部分 框架与工程化]
+    FE --> P3[第三部分 Yukino 前端与 Agent]
+    P1 --> fe[fe JavaScript DOM 与网络]
+    P1 --> css[css 选择器与现代布局]
+    P2 --> react[react React 19 运行时]
+    P2 --> next[next Next.js 16]
+    P2 --> vite[vite Vite 8 构建]
+    P2 --> tanstack[tanstack Query v5]
+    P2 --> fpswr[fetchpriority-swr 资源调度与 SWR]
+    P3 --> codegen[yukino-codegen 代码生成平台]
+    P3 --> mcp[yukino-mcp 工具集合]
+    P3 --> chatbot[yukino-chatbot 全栈聊天]
+    P3 --> chat[yukino-chat 自托管 IM]
+    P3 --> sentry[yukino-sentry 监控 SDK]
+```
+
 ## 第一部分: 语言、运行时与 CSS
 
 | 页面       | 内容概要                                                                                                                    |

@@ -5,6 +5,25 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  A[对话历史] --> B[消息构建与配对修复]
+  B --> C[Anthropic 协议]
+  B --> D[OpenAI Responses]
+  B --> E[OpenAI Chat Completions]
+  C --> F[SSE 流]
+  D --> F
+  E --> F
+  F --> G[统一 StreamEvent]
+  G --> H[ConversationManager]
+```
+
 Yukino 的 LLM 层在 src/llm/: 把 ConversationManager 里的对话历史翻译成三种协议的 LLM API 请求, 把各家返回的 SSE 流统一映射成内部的 `StreamEvent` 事件流, 交给上层 [Agent Loop](./react-and-agent-loop) 消费; 同时负责思考强度、token 计费口径、prompt cache 打点、错误分类重试和模型发现
 
 ```txt

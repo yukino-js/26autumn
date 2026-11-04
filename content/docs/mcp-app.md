@@ -3,6 +3,24 @@ title: "MCP Apps: 用沙箱 iframe 把交互 UI 带进对话"
 description: "MCP Apps 扩展的协议契约、UI 资源与工具声明、宿主与 iframe 的通信与安全模型、工程实践与降级路径, 以及与 A2UI 的对比"
 ---
 
+**主线一览**
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant H as 宿主
+  participant S as MCP 服务器
+  participant I as 沙箱 iframe
+  U->>H: 发起对话
+  H->>S: 调用 create_app 工具
+  S-->>H: 返回 UI 资源与 _meta.ui
+  H->>I: 加载 srcdoc 沙箱页面
+  I-->>U: 呈现交互 UI
+  U->>I: 交互触发工具调用
+  I->>H: postMessage 转发
+  H->>S: 执行工具并返回结果
+```
+
 MCP Apps 是 MCP 协议的一个扩展: 它让 MCP 工具返回一段可交互的 HTML 应用, 由 MCP 宿主渲染在对话流内部的沙箱 iframe 中。本文讲它的协议契约(工具怎么声明 UI 资源、资源怎么被读取与协商)、宿主与 iframe 之间的通信与安全模型(CSP、sandbox、来源校验)、工程落地时的通道划分与构建实践, 并把它与 A2UI 这条"用声明式数据描述 UI"的相反路线做详细对比。适合正在为 MCP 工具补富交互界面、或需要在"执行代码"与"渲染数据"两种 UI 方案之间做选型的协议与前端工程师阅读。
 
 需要先说明一个前提: MCP Apps 的宿主支持是可选的, 协议仍在活跃演进; 本文描述的是可对照 SDK 产物核实的行为, 未核实之处会明确标注。

@@ -2,8 +2,25 @@
 title: "RAG"
 description: "RAG 检索: Markdown 文档切割 (标题分节 / 表格按行 / 句子级 overlap)、embedding 策略、关系库与向量库双写状态位、可选 Milvus 与进程内 BM25/稠密检索, 以及召回 → RRF 粗排 → rerank 精排管线与置信度闸"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
+local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  A[Markdown 文档切割] --> B[embedding 与双写状态位]
+  B --> C[关系库与向量库]
+  C --> D[混合召回]
+  D --> E[RRF 粗排]
+  E --> F[rerank 精排]
+  F --> G[置信度闸]
+  G --> H[进入上下文]
+```
 
 RAG, Retrieval-Augmented Generation 检索增强生成
 
@@ -31,7 +48,7 @@ RAG, Retrieval-Augmented Generation 检索增强生成
 本项目的实现 (`server/src/kb/chunking.ts` + `documents.ts`):
 
 1. `splitSections` 用正则 `/^(#{1,4})(?:\s+(.*))?$/` 按 h1-h4 标题把 markdown 切成小节, 维护标题栈 (进入更浅的标题时弹掉更深层级) 产出标题路径; 代码围栏 (三个反引号或 `~~~`) 整体扫描, 围栏内的 `#` 行不会被误判为标题
-2. 每个小节的正文由 `buildChunks(md, contentType, chunkSize=400, overlap=60, tableMaxRows=10)` 处理:
+2. 每个小节的正文由 `server/src/kb/documents.ts` 的 `buildChunks(md, contentType, chunkSize=400, overlap=60, tableMaxRows=10)` 处理:
    - 表格块 (`|` 表头行 + `|---|` 分隔线, `isTableBlock` 识别) 用 `splitTableRows` 按行切割, 每块都复制表头和分隔线, 每块最多 10 行数据; 数据行数不超上限时整块保留, 表格前的引导文字只跟随第一块
    - 非表格文本用 `recursiveSplit` (`@langchain/textsplitters` 的 RecursiveCharacterTextSplitter, chunkSize=400, chunkOverlap=0, keepSeparator, 分隔符依次为: 空行、换行、中文句号/叹号/问号/分号、英文叹号/问号/分号、中文逗号、空格、字符)
    - 再用 `applySentenceOverlap` 加 overlap (默认 60 字符): 从前一块末尾按完整句子截取 (句读边界为 `.。！？!?…` 和换行), 拼到后一块的开头, 不截半个句子; 单句超出预算时也至少带一句
@@ -122,7 +139,7 @@ Milvus: 支持 dense 向量, 也支持 BM25 全文检索
 3. Milvus 模式: `milvus.upsert` 批量写入 (id 直接用关系表主键, 不依赖 Milvus 自增 ID), `flush` 后 `markChunkVectorizedExternal` 写回 `vectorId=String(id)` 并标记 done, 关系表的 embedding 字段保持为空; 内置模式: `markChunkVectorized` 把向量 JSON 直接存进关系表的 embedding 字段
 4. `deleteChunks` / `rependChunks` 删除或变更 chunk 时同步删除 Milvus 中对应行; repend 会原地更新 questions / answer, 清空 embedding / vectorId, 状态重置回 pending, 配合 kb-vectorize 实现补丁式重嵌 (`scripts/kb-repatch.ts`: 按 (contentType, sectionPath) 分组对齐 md 与库内 chunk, 归一化比对正文, 变更的重置为 pending, md 新增的只报告不写入, 库内独有的行不动)
 
-离线管线的入口是 `node main.js` 的子命令: kb-preview (干跑切割预览, 不写库)、kb-build (从 data/kb 建库, 与库内完全一致的 chunk 跳过, 部分命中时报错并提示改用 kb-repatch)、kb-vectorize、kb-repatch、kb-reset (清空知识表和向量库, 但把已审核通过的飞轮答案和暂存问答保留为 pending chunk)、kb-mine (历史会话挖掘问答对). 管理台的 /api/kb/* 端点 (overview 的双写计数校验、preview、ingest 单篇录入、search 调试) 见 [HTTP API 和管理台](./api).
+离线管线的入口是 `node server/main.js` 的子命令: kb-preview (干跑切割预览, 不写库)、kb-build (从 data/kb 建库, 与库内完全一致的 chunk 跳过, 部分命中时报错并提示改用 kb-repatch)、kb-vectorize、kb-repatch、kb-reset (清空知识表和向量库, 但把已审核通过的飞轮答案和暂存问答保留为 pending chunk)、kb-mine (历史会话挖掘问答对). 管理台的 /api/kb/* 端点 (overview 的双写计数校验、preview、ingest 单篇录入、search 调试) 见 [HTTP API 和管理台](./api).
 
 ### 内置检索 (无 Milvus)
 
@@ -135,7 +152,7 @@ Milvus: 支持 dense 向量, 也支持 BM25 全文检索
 
 ### Milvus 模式
 
-配置 MILVUS_URI 后, Milvus 是权威向量库 (`server/src/kb/milvus.ts`, 官方 Node SDK @zilliz/milvus2-sdk-node 直连 gRPC :19530, 无桥接进程; 本机部署由 `node main.js milvus-up` 拉起 systemd 的 milvus.service 或 `deploy/milvus/docker-compose.yml`, 健康检查 `http://127.0.0.1:9091/healthz`). 所有请求 15s 超时, 任何一步返回错误码直接抛异常, 不静默降级回内置检索.
+配置 MILVUS_URI 后, Milvus 是权威向量库 (`server/src/kb/milvus.ts`, 官方 Node SDK @zilliz/milvus2-sdk-node 直连 gRPC :19530, 无桥接进程; 本机部署由 `node server/main.js milvus-up` 拉起 systemd 的 milvus.service 或 `server/deploy/milvus/docker-compose.yml`, 健康检查 `http://127.0.0.1:9091/healthz`). 所有请求 15s 超时, 任何一步返回错误码直接抛异常, 不静默降级回内置检索.
 
 collection 名取 MILVUS_COLLECTION (默认 knowledge), 在第一次 upsert 时懒创建, 维度从首条向量推断 (模型无关, 不硬编码), Strong 一致性 (这样管理台的双写计数校验 `stats.done == milvus.count` 是确定性的), MILVUS_TOKEN 可选:
 
@@ -214,6 +231,17 @@ Milvus SDK 的 `hybrid_search` 在一次请求里同时发出两路召回: 稀�
 4. 结果排布 `arrangeHeadTail`: 把第 2 名挪到队尾 (1, 3, 4, ..., 2), 利用首因/近因效应让模型更关注头部证据
 
 调用方有三处: 会话图 retrieve_knowledge 节点 (knowledge 路由, 见 [workflow](./workflow))、主力 agent loop 里的 query_faq 内置工具 (注册 timeout 30s、maxRetries 0, 系统提示词要求政策/规则/时效/费用类问题必须走它)、管理台的 /api/kb/search (暴露全部四种策略). 前两处都是先 `understand()` 改写, 再以 hybrid_rerank + bm25Text 调 `searchKnowledge`, 然后做证据充分性判定.
+
+:::note 可选配置缺失时的降级路径
+
+`EMBED_API_KEY` 与 `RERANK_API_KEY` 不再是启动必填项, 由 `server/src/config.ts` 的 `embeddingsEnabled()` / `rerankEnabled()` 两个开关判定:
+
+- `server/src/core/embeddings.ts` 的 `embedTexts()` 在缺 key 时直接抛错, 错误信息明确提示 `kb-vectorize` / `kb-repatch` 这类 embedding-backed job 不可用; 在线检索不直接调用它, 而是在 `retrieval.ts` 的 `searchKnowledge` 里降级.
+- `!embeddingsEnabled()`: 记录一次 warn (模块内 `warnedNoEmbeddings` 去重) 后回退 `store.bm25Search(bm25Query, k, category)`; 若策略是 `hybrid_rerank`, 再经 `scoreAsConfidence()` 把 top score 归一化成 0-1 的 `rerank_score` 交出, 让下游置信度闸仍可工作.
+- `!rerankEnabled()`: 同样只 warn 一次 (`warnedNoRerank`), 跳过 rerank 调用; `hybrid_rerank` 用上述归一化分数交出 `hits.slice(0, k)`, 其余策略直接返回 RRF 融合结果.
+- 向量块的读取统一走 `server/src/db/repository.ts` 的 `toSearchChunk(row)`: 把 `knowledgeChunk` 行映射为 `VectorizedChunk` (id、question、answer、section_path、content_type、category, embedding 经 `parseWith(numberArraySchema, ...)` 解析), `listVectorizedChunks()` (仅 `vectorizeStatus: "done"`) 与 `listChunksForSearch()` 都复用它.
+
+:::
 
 ## 置信度闸
 

@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 LLM 生成的每一次工具调用都是一次真实世界的动作: 执行命令、改写文件、发起网络请求。权限系统回答一个问题 — 这次调用应该直接放行 (allow)、停下来问人 (ask), 还是直接拒绝 (deny)。它要同时抵御三类攻击面:
 
 - prompt 注入: 被污染的文件内容诱导模型执行恶意命令

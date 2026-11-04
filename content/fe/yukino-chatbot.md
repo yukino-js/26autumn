@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-chatbot"
 local_commit: "30e9e025220039c716b37dfc8182f932f81a4481"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-chatbot` 在 `30e9e0252200` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 本文拆解一个 pnpm workspace 组织的全栈 LLM 聊天应用: 前端 React 单页应用, 后端 Koa 服务, 具备 JWT 会话、模型热切换、RAG 检索增强与 SSE 流式输出。内容以功能能力、实现思路与取舍为主线, 覆盖前后端分层、认证、AI 能力抽象、检索链路、流式渲染性能、数据与缓存, 以及水平扩展时的改造方向。适合正在做 LLM 聊天类产品、关心流式渲染与上下文管理的工程师阅读。
 
 ## 定位与技术选型
@@ -66,6 +70,27 @@ AiAgent / AiModelFactory / AiAgentManager 组成的 AI 系统独立于以上业�
 | 普通请求 | JSON over HTTP(POST/GET)                |
 | 流式响应 | Server-Sent Events, `text/event-stream` |
 | 认证     | `Authorization: Bearer <token>`         |
+
+```mermaid
+sequenceDiagram
+    participant B as 浏览器 React SPA
+    participant P as Vite 代理或反向代理
+    participant K as Koa 后端 /api/v1
+    participant A as AiAgent 与 Provider
+    participant R as RAG 检索链
+    B->>P: POST /ai/chat 携带 Bearer token
+    P->>K: 转发到 /api/v1 前缀
+    K->>R: openai-rag 时即时构建检索
+    R-->>K: 注入上下文的提示词
+    K->>A: ChatOpenAI 流式调用
+    A-->>K: 逐块 token
+    K-->>B: SSE text/event-stream 帧
+    B->>B: 打字机渲染 热路径移出 React
+```
+
+:::tip 流式渲染的热路径
+逐块 token 经 _SSE_ 到达浏览器后, 打字机渲染被刻意**移出 React 渲染树**, 避免每个 token 触发一次组件协调。
+:::
 
 ## 工程化与配置体系
 

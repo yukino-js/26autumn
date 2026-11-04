@@ -2,8 +2,12 @@
 title: "DevFlow"
 description: "DevFlow 视角入门: GitHub 同步与调度、确定性优先的分析 Agent、ActionDraft 安全草稿、每仓 RAG 与答案门禁、对话 Agent 韧性与记忆系统、多 Agent workflow、代码工作区/代码图/知识图"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "83f7d68cc4a08084f00a4811f9702c71b4aafd81"
+local_commit: "424a270590659dfbea804384d4fd1e14ba1111a5"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-dev-agent` 在 `424a27059065` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
 
 DevFlow 是 yukino-dev-agent 的第二个产品面: 一个 GitHub 工程副驾, UI 在 `/dev-flow`, REST 在 `/api/dev-flow/*`. 它连接 GitHub 仓库, 把 issues / pull requests / CI runs 同步进 PostgreSQL, 跑「确定性优先」的 AI 分析 Agent, 维护每仓 RAG 知识库, 并提供对话、记忆、代码工作区、代码图、知识图、多 Agent workflow 编排和多仓 workspace.
 
@@ -59,7 +63,7 @@ flowchart TD
 - 自动同步: `scheduler.ts` 的 `startAutoSyncLoop()` 由 `instrumentation.ts` 启动, globalThis 守卫防止重复实例; 首次运行在启动后 5s, 间隔下限 30s; 受 `DEV_FLOW_AUTO_SYNC_ENABLED` (须为 `true`) / `DEV_FLOW_AUTO_SYNC_INTERVAL_SECONDS` (默认 900) / `DEV_FLOW_AUTO_SYNC_LIMIT` (默认 30) 控制
 - GitHub webhook 入口: `POST /api/dev-flow/webhooks/github` (校验 `GITHUB_WEBHOOK_SECRET`)
 
-:::info 自动同步与启动守卫
+:::note 自动同步与启动守卫
 `scheduler.ts` 的 `startAutoSyncLoop()` 由 `instrumentation.ts` 启动, `globalThis` 守卫防止重复实例; 首次运行在启动后 5s, 间隔下限 30s; 受 `DEV_FLOW_AUTO_SYNC_ENABLED` (须为 `true`) / `DEV_FLOW_AUTO_SYNC_INTERVAL_SECONDS` (默认 900) / `DEV_FLOW_AUTO_SYNC_LIMIT` (默认 30) 控制.
 :::
 

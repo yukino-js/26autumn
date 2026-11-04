@@ -2,10 +2,30 @@
 title: "A2UI 声明式 UI 协议"
 description: "A2UI 声明式 UI 协议的机制与工程实现: 消息信封与 Catalog 契约、数据绑定与事件回传语义、v0.9.1 生产版与 v1.0 候选版的差异、basic/MCP/VegaChart 三份官方 catalog、多语言 SDK 与渲染器能力面、A2A 集成, 以及仓库内示例链路。"
 local_path: "$HOME/Downloads/a2ui"
-local_commit: "dec736f237e3c00db33b9c7078c8042d175ecfff"
+local_commit: "08f41cfbb87ea55685a3e28acd9212acec7819d9"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/Downloads/a2ui` 在 `08f41cfbb87e` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  A[Agent 生成声明式 JSON] --> B[传输层 A2A 或 AG-UI 或 MCP]
+  B --> C[MessageProcessor 校验分发]
+  C --> D[SurfaceModel 组件树与数据模型]
+  D --> E[框架适配层渲染原生组件]
+  E --> F[用户交互回传 action]
+  F --> A
+```
+
 本文讲 A2UI 协议本身: 它为什么存在、用什么样的消息与契约让模型生成 UI、渲染器如何消费并回传交互、跨语言 SDK 各自覆盖哪些能力、如何接入 A2A 与 MCP 等传输层。全部事实以仓库当前代码与规范为准 (规范目录 `specification/`、catalog 目录 `catalogs/`、各语言 SDK、`conformance/` 一致性套件与 `samples/` 示例)。读完之后应当能判断一个功能适合不适合用 A2UI 实现, 以及落地时需要补哪些工程环节。
+
+:::tip 当前检出的工程设施
+除协议规范与 SDK 外, 仓库根还提供面向贡献者的自动化设施: `.agents/skills/` 下十余个 Agent skill (`a2ui-audit`、`a2ui-doc-sync-check`、`a2ui-generate-pydantic-models`、`a2ui-release-python` 等)、`tools/` 下的 `build_catalog` / `composer` / `editor` / `inspector`、`blueprints/` 下的模块化蓝图、`conformance/` 一致性套件、`eval/` 评测 harness, 以及 `hooks.py` 与 `scripts/` 下的发布、校验脚本。当前 HEAD 为 `chore(release): a2ui_core 0.5.0`。
+:::
 
 ## 协议要解决的问题
 
@@ -358,16 +378,16 @@ Core SDK 提供协议的语言原生表示: 强类型的 Catalog 声明 (`Catalo
 落地程度各语言不一:
 
 - **Dart** 已实现蓝图全部 API。注册的 catalog 可跨版本, 每个 processor 与渲染器协商出双方共有 catalog 的最新协议版本; `resolveCatalogs` 支持无能力请求 (取 null 时激活全部注册 catalog)。v1.0 下 `createSurface` 内嵌组件与数据模型、绑定写作 `@path` / `@call`、组件与函数调用可各自点名 catalog; agent 侧会按 catalog 的 `allowedCallers` 与用户激活要求预检, 经 `a2ui_core` 的 `MessageProcessor.forAgent` (只校验不执行的专用构造) 检查, 渲染器会拒绝的调用在响应解析与流式读取 (`openStream` / `feed`) 阶段就不会发出。
-- **TypeScript** `@a2ui/agent` 支持 v1.0 / v0.9 / v0.9.1 (v0.9.1 共享 v0.9 schema), 实现 Direct JSON 与 Express; `KNOWN_GAPS.md` 记录 v0.8 与 Elemental / Atom 格式不在范围、Express 不做流式。`parseResponse` 解析失败时抛 `A2uiError` 并以 `partialResults` 返回失败块之前的部分; `RendererState` 区分 chat (每轮独立 Surface) 与 canvas (跨轮更新同一批 Surface) 两种校验模式, `validatePayload` 可独立校验单个 payload (如工具调用参数)。
+- **TypeScript** `@a2ui/agent` 支持 v1.0 / v0.9 / v0.9.1 (v0.9.1 共享 v0.9 schema), 实现 Direct JSON 与 Express; `KNOWN_GAPS.md` 记录 v0.8 与 Elemental / Atom 格式仍在范围外, 以及 Express 流式解析的已知边界: `openStream` 在 `wrapped: true` 模式下无法恢复丢失 `<a2ui>` 开标签的块, 而该块在整段 `parseResponse` 中可被识别。`parseResponse` 解析失败时抛 `A2uiError` 并以 `partialResults` 返回失败块之前的部分; `RendererState` 区分 chat (每轮独立 Surface) 与 canvas (跨轮更新同一批 Surface) 两种校验模式, `validatePayload` 可独立校验单个 payload (如工具调用参数)。
 - **Python** `a2ui_agent` 提供同款 facade (`A2uiGenerator` / `A2uiRequestProcessor`, 位于 `a2ui/processor/`), 缺省格式工厂是 `ExpressFormatFactory`; `create_processor` 要求渲染器能力 (缺能力时报 `A2uiCatalogError`), `resolve_catalogs` 按版本键读取能力对象 (v0.8 兼容裸形态), 内联 catalog 无论是否被接受都会被解析——格式非法即报错。
 
 Core 侧的关键设计:
 
-- **TypeScript Core** (`@a2ui/web_core` 0.14.0) 按版本子路径并存 (`./v0_8` / `./v0_9` / `./v1_0`), 另有 `./catalog` / `./state` / `./processing` / `./resolution` / `./validation` / `./reactivity` / `./expressions` / `./adapters` / `./rpc` / `./errors` / `./events` / `./semver` 等模块入口; `./universal` 子路径提供框架无关的 Lit custom element 渲染层 (`A2uiLitElement` / `registerUniversalElement`), 其 basic catalog 组件按每组件的 API 联合类型同时覆盖 v0.9 与 v1 catalog API (如 `ButtonSupportedApis = typeof v0_9.ButtonApi | typeof v1.ButtonApi`); `./catalogs/basic/v1` 提供 v1 basic catalog 的类型安全 API。依赖内置 zod v3 与 `@preact/signals-core`。
+- **TypeScript Core** (`@a2ui/web_core` 0.15.0) 按版本子路径并存 (`./v0_8` / `./v0_9` / `./v1_0`), 另有 `./catalog` / `./state` / `./processing` / `./resolution` / `./validation` / `./reactivity` / `./expressions` / `./adapters` / `./rpc` / `./errors` / `./events` / `./semver` 等模块入口; `./universal` 子路径提供框架无关的 Lit custom element 渲染层 (`A2uiLitElement` / `registerUniversalElement`), 其 basic catalog 组件按每组件的 API 联合类型同时覆盖 v0.9 与 v1 catalog API (如 `ButtonSupportedApis = typeof v0_9.ButtonApi | typeof v1.ButtonApi`); `./catalogs/basic/v1` 提供 v1 basic catalog 的类型安全 API。依赖内置 zod v3 与 `@preact/signals-core`。
 - **渲染器版本入口不一**: `@a2ui/react` 只开放 `./v0_8` / `./v0_9` 入口; `@a2ui/lit` 开放 `./0.8` / `./ui` / `./v0_8` / `./v0_9`, basic catalog 组件复用 web_core 的 universal 实现; `@a2ui/angular` 自带 v1.0 basic catalog 的 universal 实现 (`src/basic-catalog.ts`, 基于 `@a2ui/web_core/catalogs/basic/v1`, 缺省 `useUniversalComponents: true`), README 另文档化 `@a2ui/angular/v0_9` 入口; `@a2ui/markdown-it` 提供 Text 组件的 Markdown 渲染支持。
 - **Python Core** 用版本适配器工厂消化协议差异 (见 "版本族" 一节), 同时是 wire schema 的生成源: `a2ui.core.schema` 的 Pydantic 模型重建 specification 目录下 v0.8 / v0.9 / v0.9.1 的 `server_to_client.json` 与 v1.0 的 `agent_to_renderer.json`, conformance 套件 (`core/agent_to_renderer.yaml`) 断言各版本重建结果与已发布 spec 文件完全一致。catalog 侧由 `core/catalog.yaml` 覆盖四个入口点: `from_json` (已发布 catalog 必须与 SDK 自带 basic catalog 实现等价)、`to_json` (与已发布文件整体比对)、round-trip (往返不变)、`validation_schema` (原 `catalogSchema` 的继任者, allOf 展平、组件补 id 信封、公共类型内联)。
 - **Swift Core** 分三个 SPM target: `A2UIJSON` (JSON Schema 2020-12 数据结构与 `$ref` 解析, 支持 v0.9.1 与 v1.0 schema)、`A2UICore` (`SurfaceGroupModel`、带自动创建的 `DataModel`、双向 RPC 的 `RPCHandler`、action 分发)、`BasicCatalog` (v0.9 / v0.9.1 / v1.0 三个版本的 schema API 与 `formatString`、`@index` 等函数实现)。
-- **一致性套件** (`conformance/`) 是语言无关的 YAML 用例, 分 core / agent / extensions 三类: core 覆盖 catalog 四入口、wire schema 重建、三个版本的 validator (重复 ID、缺 root、悬空引用、环、可达性、嵌套深度上限、非法路径、多 Surface、增量更新)、数据模型指针与删除语义、节点解析、表达式解析、函数求值、`@index`、RPC 函数、多 catalog、组合约束、无障碍、保留键等; agent 按格式分目录 (direct_json 与 express 各自拥有 prompt 生成、编译、反编译、响应解析断言与 scaling 套件, direct_json 另有流式解析套件——Express 解析器整块缓冲后解析, 不做流式)。模型与 spec 文件互相钉住, 不会单边漂移。
+- **一致性套件** (`conformance/`) 是语言无关的 YAML 用例, 分 core / agent / extensions 三类: core 覆盖 catalog 四入口、wire schema 重建、三个版本的 validator (重复 ID、缺 root、悬空引用、环、可达性、嵌套深度上限、非法路径、多 Surface、增量更新)、数据模型指针与删除语义、节点解析、表达式解析、函数求值、`@index`、RPC 函数、多 catalog、组合约束、无障碍、保留键等; agent 按格式分目录 (direct_json 与 express 各自拥有 prompt 生成、编译、反编译、响应解析断言与 scaling 套件, 两种格式各有 `response_streaming.yaml` 流式解析套件, TypeScript 侧对应 `ExpressParser.openStream` 与 `express/response-stream.ts` 的 `feed`)。模型与 spec 文件互相钉住, 不会单边漂移。
 
 ## 与 A2A 的集成
 

@@ -2,8 +2,24 @@
 title: "LLM 接入、表设计与工具设计"
 description: "模型槽位如何接 OpenAI 兼容的 Chat Completions 上游, structured() 与系统提示词如何稳定产出 JSON; PostgreSQL/Prisma 的会话、业务、飞轮与审计表如何组织; 工具注册与执行引擎如何做参数校验、超时、重试与审计"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
+local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  A[OpenAI 兼容 Chat Completions] --> B[structured 结构化产出 JSON]
+  B --> C[系统提示词约束]
+  A --> D[Prisma 会话与业务表]
+  A --> E[工具注册与执行引擎]
+  E --> F[参数校验超时重试]
+  F --> G[审计日志]
+```
 
 本页讲客服 Agent 的模型层与持久层, 分三部分: LLM 接入 (OpenAI 兼容的 Chat Completions 上游、chat/intent/summary 三个模型槽位、structured() 结构化输出与系统提示词集)、表设计 (Prisma 的 12 个模型按会话、业务、数据飞轮与评测、审计四组组织) 与工具设计 (统一内置与 MCP 工具的注册表和执行引擎). 一次对话如何穿过这些层见 [workflow](./workflow), 检索见 [RAG](./rag), MCP 服务端见 [MCP 和 Skill](./mcp).
 
@@ -15,7 +31,7 @@ local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 - Anthropic: Messages 协议
 - OpenAI: Responses API 协议
 
-本项目统一接 OpenAI 兼容的 Chat Completions 端点: 所有模型调用都经过 `@langchain/openai` 的 ChatOpenAI (`server/src/core/llm.ts`), 换供应商只需要改环境变量. 必填项由 `server/src/config.ts` 的 `missingRuntimeConfig()` 启动时检查 (CHAT_MODEL / CHAT_BASE_URL / CHAT_API_KEY / EMBED_API_KEY / RERANK_API_KEY); `getChatModel` 取不到所属槽位的 API key 时直接抛错.
+本项目统一接 OpenAI 兼容的 Chat Completions 端点: 所有模型调用都经过 `@langchain/openai` 的 ChatOpenAI (`server/src/core/llm.ts`), 换供应商只需要改环境变量. 必填项由 `server/src/config.ts` 的 `missingRuntimeConfig()` 启动时检查 (CHAT_MODEL / CHAT_BASE_URL / CHAT_API_KEY 三项); EMBED_API_KEY 与 RERANK_API_KEY 是可选项, 分别由 `embeddingsEnabled()` / `rerankEnabled()` 判定 —— 缺失时检索回退 BM25、跳过精排并以 score 归一化作为置信度 (见 [RAG](./rag)). `getChatModel` 取不到所属槽位的 API key 时直接抛错.
 
 ### 模型槽位
 

@@ -2,8 +2,24 @@
 title: "LangChain.js 1.x: Monorepo、Runnable 内核与 createAgent 中间件体系"
 description: "拆解 LangChain.js 1.x 的 monorepo 包布局、langchain-core 的 Runnable 与消息/工具抽象、provider 集成模式、langchain 主包的 createAgent 与中间件体系, 以及构建、测试与发布设施。"
 local_path: "$HOME/Downloads/langchainjs"
-local_commit: "50343ba94c2388b3d3a7d4d6cd0977fa60a90294"
+local_commit: "fb6179926d70c76cc81a238aed4f2ad8c9531d4b"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/Downloads/langchainjs` 在 `fb6179926d70` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[langchain 主包 createAgent] --> B[中间件体系]
+  A --> C[langchain-core Runnable 内核]
+  C --> D[消息与工具抽象]
+  C --> E[Provider 集成模式]
+  B --> F[模型重试与回退]
+  B --> G[人在回路 HITL]
+```
 
 LangChain.js 是用于构建 LLM 应用的 TypeScript 框架, 1.x 起把抽象收敛到一套可组合的 Runnable 接口, 并在主包里引入基于 LangGraph 的 agent 运行时与中间件体系。本文面向要在 Node 或浏览器环境里搭建 LLM 应用与 Agent 的工程师, 按“核心抽象 → 消息与工具 → provider → agent 与中间件 → 工程设施”的顺序拆解其设计。阅读后应能判断哪些能力属于 core、哪些属于 provider 包、哪些属于主包与 classic 包。
 
@@ -309,11 +325,11 @@ Google 一线的统一包是 `@langchain/google`: 它不依赖 Google 官方 SDK
 
 ### 包面
 
-主包的源码结构为: `agents/` (核心, 含 middleware、nodes、transformers 子目录)、`chat_models/` (initChatModel)、`hub/` (提示词拉取, 分 base 与 node 入口)、`load/`、`prompts/`、`storage/` (内存、文件系统、编码器三种), 以及 `tools/headless.ts` 无头工具与 `browser.ts` 浏览器入口。package exports 覆盖根、`./browser`、`./chat_models/universal`、`./hub`、`./hub/node`、`./load`、`./load/serializable`、三种 storage、`./tools`。
+主包的源码结构为: `agents/` (核心, 含 middleware、nodes、transformers 子目录)、`chat_models/` (initChatModel)、`hub/` (提示词拉取, 分 base 与 node 入口)、`load/`、`prompts/`、`storage/` (内存、文件系统、编码器三种), 以及 `tools/headless.ts` 无头工具与 `browser.ts` 浏览器入口。package exports 覆盖根、`./browser`、`./chat_models/universal`、`./hub`、`./hub/node`、`./load`、`./load/serializable`、三种 storage、`./tools` 与 `./package.json`。
 
 ### ReactAgent 与三节点模型
 
-`createAgent` 有 13 个重载, 覆盖结构化输出格式的各种组合, 实现体只有一句 `return new ReactAgent(params)`。ReactAgent 的类注释描述了 ReAct 三节点模型:
+`createAgent` 有 14 个重载, 覆盖结构化输出格式的各种组合, 实现体只有一句 `return new ReactAgent(params)`。ReactAgent 的类注释描述了 ReAct 三节点模型:
 
 ```text
 model_request ──▶ 模型调用
@@ -380,7 +396,7 @@ ReactAgent 用一个类型配置包承载全部类型信息 (响应、状态、�
 | openAIModeration                              | OpenAI 内容审核                                                                  |
 | anthropicPromptCaching / bedrockPromptCaching | 提示词缓存                                                                       |
 
-另有近似 token 计数工具函数 `countTokensApproximately`。toolRetry 在重试分类之前会把 LangGraph 控制流异常 (`isGraphBubbleUp`, 含人机中断) 原样重新抛出, 保证 MCP elicitation 这类工具中断不会被当成普通工具错误吞掉。这套中间件把“生产环境常见横切关注点”从用户代码里剥离出来, 用户只需按需组合。
+provider 专属中间件 (OpenAI 内容审核、Anthropic 与 Bedrock 提示词缓存) 集中在 `agents/middleware/provider/` 下的 `openai`、`anthropic`、`aws` 三个子目录; 通用中间件平铺在 `agents/middleware/` 根。另有近似 token 计数工具函数 `countTokensApproximately` (`agents/middleware/contextEditing.ts`)。toolRetry 在重试分类之前会把 LangGraph 控制流异常 (`isGraphBubbleUp`, 含人机中断) 原样重新抛出, 保证 MCP elicitation 这类工具中断不会被当成普通工具错误吞掉。这套中间件把“生产环境常见横切关注点”从用户代码里剥离出来, 用户只需按需组合。
 
 ### HITL: batched 与 per_call 两种中断模式
 

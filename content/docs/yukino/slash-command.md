@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 Slash Command: 以 `/` 开头的输入在进入 agent loop 之前被命令系统拦截, 先解析、匹配注册表, 再按命令类型分派 —— 要么就地执行本地 UI 动作, 要么构造 prompt 发给 LLM。命令的定义、解析、注册集中在 `src/commands/`, 分派逻辑由各前端宿主 (终端 UI、remote WebSocket server 等) 各自实现
 
 ## 命令解析与注册
@@ -61,7 +65,7 @@ interface Command {
 | prompt     | 是                 | handler 构造 prompt 作为用户消息发给 LLM API; 设置 `agent` 时在指定名称的前台 subagent 里执行          |
 | skill_fork | 是 (隔离 subagent) | skill 加载后自动注册的 fork 型命令, UI 构造 fork host 在独立 subagent 中执行                           |
 
-:::info
+:::note
 **不参与 agent loop ≠ 不调用 LLM API**: `/compact` 是 `local_ui` 型, 但 `forceCompact` 会调用 LLM API 生成上下文摘要。反过来, `local` / `local_ui` 命令本身不会把用户输入送进 agent loop。
 :::
 

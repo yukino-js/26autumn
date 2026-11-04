@@ -5,6 +5,25 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+sequenceDiagram
+  participant L as LLM
+  participant C as CLI
+  participant R as ToolRegistry
+  participant T as 内置工具
+  L->>C: 输出 tool_use 与 partial_json 碎片
+  C->>R: 查表获取工具定义
+  R->>T: 分派执行
+  T-->>C: 返回 tool_result
+  C->>L: 结果拼回消息继续推理
+```
+
 工具调用 (function calling) 是 Agent 的核心机制: LLM 负责决策, 请求调用工具; CLI 负责执行工具调用, 把结果回传给 LLM。本页覆盖协议本身、工具接口与注册表、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线。
 
 ## 协议: 告诉 LLM 有哪些工具

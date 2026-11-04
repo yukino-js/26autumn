@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 持久目标 (Persistent Goal): 让 agent 跨轮次、跨用户消息地朝一个目标自动推进, 直到完成、受阻或预算耗尽
 
 没有持久目标时, agent loop 在 LLM 停止调用工具的轮次就结束; 有持久目标时, 「LLM 认为当前回合说完了」不再是终点 —— 只要目标还处于 active, 循环退出前会先问 GoalManager 要不要续跑 (见 [react-and-agent-loop](./react-and-agent-loop))
@@ -144,7 +148,7 @@ agent 用 Goal 工具汇报时, 三种 status 都要附非空 reason, 且只有 
   - 连续 3 轮同一 blocker (`>= MAX_BLOCKED_ATTEMPTS`) 才转为 blocked 停止续跑; 否则返回 `Blocked audit: N/3 consecutive turns.` + 状态报告, 循环继续
 - `complete`: 转为 complete 终态。工具描述要求「只有全部需求达成且经过验证才能标记完成」, reminder 进一步要求全部需求有验证过的证据支撑、包括测试覆盖检查、不确定的工作视为未完成
 
-:::info
+:::note
 **设计动机**: 「困难、慢、部分进展」不是受阻; 只有真正重复出现的不可逾越障碍才值得让 agent 停下来等用户, 防止它一遇挫折就放弃, 也防止它无限重试。
 :::
 

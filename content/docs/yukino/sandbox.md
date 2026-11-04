@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 OS 级沙箱: 把 Bash 命令放进操作系统提供的隔离环境执行, 文件系统写入被收敛到允许的目录内, 网络可以整体关闭
 
 权限系统 (见 [permission](./permission)) 回答「这个工具调用要不要用户确认」, 沙箱回答「这条命令允许碰什么」; 两者独立又协同: 沙箱开启后, Bash 命令的破坏半径被 OS 收敛, 权限层就可以免人工确认 (auto_allow)
@@ -231,6 +235,6 @@ if (this.sandboxEnabled && this.sandboxAutoAllow && toolName === "Bash") {
 
 两个开关标志的来源: print 模式和 remote server 由 `configureBashSandbox` 直接从配置置位; TUI 在每次 agent loop 启动前重新计算, `checker.sandboxEnabled` / `checker.sandboxAutoAllow` 还要与 `available()` 的就绪结果相与 — 沙箱不可用时不会自动放行
 
-:::info
+:::note
 **设计取舍**: 沙箱负责限制「能碰什么」, 规则负责表达「不许做什么」, `auto_allow` 把两者组合起来, 用 OS 隔离换掉大部分人工确认, 同时保留显式规则和复杂语法审批的最后否决权。
 :::

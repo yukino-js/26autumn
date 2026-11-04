@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 agent 是 LLM 在循环中根据环境反馈自主使用工具的系统。拆开这句话:
 
 - **LLM 是大脑**: 理解任务意图、拆解步骤、决定下一步调用哪个工具, 这些判断由模型完成, 不由硬编码的流程完成

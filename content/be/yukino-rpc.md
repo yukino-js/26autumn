@@ -2,8 +2,30 @@
 title: "yukino_rpc 技术笔记"
 description: "yukino_rpc 自研 Go RPC 框架: 二进制线协议、单连接多路复用、Future 异步模型、服务端流式 RPC、熔断限流负载均衡与 etcd 服务发现"
 local_path: "$HOME/github/yukino.go/libs/yukino_rpc"
-local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
+local_commit: "02e9621cee8763979175549903d7a67534923751"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino.go/libs/yukino_rpc` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+```mermaid
+sequenceDiagram
+    participant U as 调用方
+    participant C as Client
+    participant T as TCPConnection
+    participant S as Server
+    U->>C: InvokeAsync 返回 Future
+    C->>T: 写帧 RequestID 1
+    T->>S: 复用单连接发送
+    S-->>T: 响应帧 RequestID 1
+    T-->>C: 按 RequestID 唤醒 Future
+    C-->>U: Wait 或回调取结果
+```
+
+:::tip 读图要点
+**单连接多路复用**依赖 Header 里的 <u>RequestID</u> 做路由键, 响应可以乱序返回; _Future_ 把异步结果封装成可等待对象, 是治理管线与传输层之间的契约。
+:::
 
 yukino_rpc 是一个自研的 Go RPC 框架, 对外 API 对齐 grpc-go 的使用习惯, 底层使用自定义的 TCP 二进制协议。它在一条 TCP 连接上实现请求多路复用, 提供 Future 形式的异步调用、服务端流式 RPC、连接池、三态熔断、令牌桶限流、三种负载均衡策略以及基于 etcd v3 的服务注册与发现。本文面向需要理解 RPC 框架内部机制、评估自研协议取舍, 或准备在此基础上二次开发的工程师, 覆盖线协议、传输层、异步模型、服务端反射分发、治理组件与容错语义。etcd 与 gRPC 的通用机制不在本文展开, 见[中间件与可观测性](./middleware)。
 

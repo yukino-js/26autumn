@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 system prompt 是每次 LLM 请求里 system 字段携带的稳定前缀。本页讲它由哪些模块拼成、环境上下文如何探测, 以及整个 prompt 的 3 个来源字段 (system / tools / messages) 如何分工, 特别是会话过程中动态注入的 `<system-reminder>` 消息。
 
 ## System Prompt 的 8 个模块
@@ -84,7 +88,7 @@ not new user requests.
 
 只注入一次 (`longTermMemoryInjected` 标志); `reset()` (/clear)、`replaceWithCompacted()` (上下文压缩)、`truncateTo(0)` 会重置该标志, `/clear`、会话恢复、压缩丢弃原 reminder 后由 `restoreContext` 重新注入。它 `unshift` 到历史最前面, 而运行期的动态 reminder 通过 `addSystemReminder` 追加 (push) 到末尾。指令文件的发现与记忆的三层结构见 [AGENTS.md and Memory](./agents-md-and-memory), skill 列表的构造见 [Skill](./skills)。
 
-:::info
+:::note
 **system 字段的优先级最高, 为什么不都设置为 system 字段?**
 
 1. prompt cache: LLM API 支持 prompt cache, system 字段的值和上次请求完全相同时复用缓存, 降低输入计费; system prompt 内容稳定, 每次都能命中

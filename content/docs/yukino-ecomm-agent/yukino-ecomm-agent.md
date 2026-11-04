@@ -2,8 +2,26 @@
 title: "Yukino Ecomm Agent: 电商客服 Agent 的检索、编排、工具与持久化组织方式"
 description: "从 server 与 client 源码事实出发, 讲清客服 Agent 如何把 Hono HTTP 层、LangGraph 会话图、四策略检索与两道置信度门禁、可选 Milvus 向量路径、MCP 工具执行、分层记忆与上下文预算组织成一次可中断、可审计的对话"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
+local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[Hono 接收请求] --> B[zod 边界校验]
+  B --> C[LangGraph 会话图]
+  C --> D[意图确定性分流]
+  D --> E[四策略检索]
+  E --> F[两道置信度门禁]
+  F --> G[ReAct 主力循环]
+  G --> H[SSE 流式应答]
+  C --> I[Postgres checkpointer]
+```
 
 Yukino Ecomm Agent 是一个电商客服 (customer-service) Agent 的 Node.js/TypeScript 实现, 品牌为 Yukino Select, 客服人设名为 Yukino. 仓库是一个 pnpm workspace: `server/` 是 Hono + LangGraph 服务端, 把意图分类、知识库检索、ReAct 工具调用、工单与退款流程、低置信数据飞轮和运营后台放进同一个进程; `client/` 是一个 Lit 单页控制台. 各子系统另有专页展开: 图编排细节见 [workflow](./workflow), 检索细节见 [RAG](./rag), 工具与 MCP 见 [MCP 和 Skill](./mcp) 与 [LLM 接入、表设计与工具设计](./llm), 记忆与预算见 [会话上下文](./context), 端点清单见 [HTTP API 和管理台](./api), 评测与飞轮见 [可观测性和数据飞轮](./observable).
 
@@ -21,7 +39,7 @@ Yukino Ecomm Agent 是一个电商客服 (customer-service) Agent 的 Node.js/Ty
 
 外部上游通过 server/.env 配置 (server/src/config.ts 的 `settings` 对象), 分三个组: 聊天 (`CHAT_MODEL` / `CHAT_BASE_URL` / `CHAT_API_KEY`)、嵌入 (`EMBED_*`, OpenAI 兼容接口, 默认模型 `qwen3.7-text-embedding-flash`)、重排 (`RERANK_*`, 默认模型 `qwen3.7-text-rerank`, 默认协议 `jina`). 意图与摘要可以另配上游 (`INTENT_*` / `SUMMARY_*`), 留空则回落到聊天组 (server/src/core/llm.ts 的 `resolveSlot`). 存储是两套独立的 PostgreSQL: 关系数据用 `DATABASE_URL`, LangGraph 检查点用 `CHECKPOINTER_DB_URL`, 后者在首次启动时由服务端自动建库 (`ensureCheckpointerDatabase`, server/src/graph/runtime.ts). Milvus 是可选第三方, 只有设置了 `MILVUS_URI` 才启用.
 
-启动时入口先硬校验必填上游 (server/src/index.ts 调用 `missingRuntimeConfig`), 缺失 `CHAT_MODEL`、`CHAT_BASE_URL`、`CHAT_API_KEY`、`EMBED_API_KEY`、`RERANK_API_KEY` 任一项即打印清单并退出; 随后 `scanBuiltin` 导入内置工具模块自注册, 再进入 `startServer`. `startServer` 的顺序是: 数据库连通性检查 (`assertDbReady`) -> 初始化可观测 (`initObservability`) -> 上下文预算自检 (`checkContextBudget`) -> 预热 Milvus (`warmupMilvus`) -> 编译图并建 checkpointer (`initGraph`) -> 创建应用并监听端口. SIGINT/SIGTERM 走优雅关停, 依次关 HTTP server、`closeGraph` 释放 checkpointer 连接、`shutdownObservability` 冲刷追踪缓冲、`closeDb` 断开 Prisma、`flushLogs` 落盘日志后退出.
+启动时入口先硬校验必填上游 (server/src/index.ts 调用 `missingRuntimeConfig`), 缺失 `CHAT_MODEL`、`CHAT_BASE_URL`、`CHAT_API_KEY` 任一项即打印清单并退出; `EMBED_API_KEY` 与 `RERANK_API_KEY` 为可选项, 缺失时检索与精排走降级路径 (见 [RAG](./rag)); 随后 `scanBuiltin` 导入内置工具模块自注册, 再进入 `startServer`. `startServer` 的顺序是: 数据库连通性检查 (`assertDbReady`) -> 初始化可观测 (`initObservability`) -> 上下文预算自检 (`checkContextBudget`) -> 预热 Milvus (`warmupMilvus`) -> 编译图并建 checkpointer (`initGraph`) -> 创建应用并监听端口. SIGINT/SIGTERM 走优雅关停, 依次关 HTTP server、`closeGraph` 释放 checkpointer 连接、`shutdownObservability` 冲刷追踪缓冲、`closeDb` 断开 Prisma、`flushLogs` 落盘日志后退出.
 
 ### 1.2 一次对话的端到端路径
 
@@ -247,7 +265,7 @@ store.ts 的 `bm25Search`、`hybridSearch`、`denseSearch`、`count` 都在函�
 
 服务器启动时 `warmupMilvus` (server/src/server.ts) 预热: Milvus 集合 load 是异步的, 未就绪的集合搜索可能返回空, 因此循环用 `bm25Search("shipping fee", 1, null)` 探测直到有命中, 最多 15 秒, 失败只 warn 不阻塞启动. 这是 best-effort, 但它把「服务已就绪」与「向量库已就绪」两种状态解耦开.
 
-部署物料随仓库提供: main.js 的 `milvus-up` 先探测 RPM/DEB 包注册的 `milvus.service` systemd 单元 (适合生产安装), 否则走仓库内 vendored 的 Docker Compose (`server/deploy/milvus/docker-compose.yml`, etcd + MinIO + standalone), 启动后轮询健康检查直到就绪. README 给出的迁移流程是 milvus-up -> 设置 `MILVUS_URI` -> kb-vectorize 重嵌 -> smoke-milvus 冒烟 -> milvus-down.
+部署物料随仓库提供: server/main.js 的 `milvus-up` 先探测 RPM/DEB 包注册的 `milvus.service` systemd 单元 (适合生产安装), 否则走仓库内 vendored 的 Docker Compose (`server/deploy/milvus/docker-compose.yml`, etcd + MinIO + standalone), 启动后轮询健康检查直到就绪. README 给出的迁移流程是 milvus-up -> 设置 `MILVUS_URI` -> kb-vectorize 重嵌 -> smoke-milvus 冒烟 -> milvus-down.
 
 ## 六、工具系统与 MCP
 
@@ -377,7 +395,7 @@ server/prisma/schema.prisma 定义 12 个模型, 覆盖会话、消息、分段�
 
 ### 9.2 Langfuse over OTel
 
-server/src/core/observability.ts 实现可选 Langfuse 追踪, 未配置时全部退化为 no-op: 三个环境变量 (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL`) 齐全才启用; `initObservability` 用 OpenTelemetry `NodeSDK` 只挂一个 `LangfuseSpanProcessor` 启动, 失败只 warn 继续. 图级回调 `graphCallbacks` 带 sessionId、userId 与 `chat-turn` 标签, 会话 id 即 Langfuse session. 轮级记录用 `propagateAttributes` 加 `startActiveObservation` 记一条 generation (输入、输出、模型、token 用量); 意图作为 tag 与 metadata 写入活跃 trace (`tagIntent`). 所有追踪调用都吞掉异常——可观测是增强项, 绝不因追踪失败影响业务. 本地部署另有 `node main.js langfuse-up` 拉起 vendored 的 Langfuse compose 栈 (详见 [可观测性和数据飞轮](./observable)).
+server/src/core/observability.ts 实现可选 Langfuse 追踪, 未配置时全部退化为 no-op: 三个环境变量 (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL`) 齐全才启用; `initObservability` 用 OpenTelemetry `NodeSDK` 只挂一个 `LangfuseSpanProcessor` 启动, 失败只 warn 继续. 图级回调 `graphCallbacks` 带 sessionId、userId 与 `chat-turn` 标签, 会话 id 即 Langfuse session. 轮级记录用 `propagateAttributes` 加 `startActiveObservation` 记一条 generation (输入、输出、模型、token 用量); 意图作为 tag 与 metadata 写入活跃 trace (`tagIntent`). 所有追踪调用都吞掉异常——可观测是增强项, 绝不因追踪失败影响业务. 本地部署另有 `node server/main.js langfuse-up` 拉起 vendored 的 Langfuse compose 栈 (详见 [可观测性和数据飞轮](./observable)).
 
 ## 十、前端 Lit 工作台
 

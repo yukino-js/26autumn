@@ -2,8 +2,29 @@
 title: "yukino_agent: 基于 Eino 的 RAG 运维 Agent 后端"
 description: "yukino_agent Go 后端: 以 CloudWeGo Eino 编排 RAG 对话、Plan-Execute-Replan 告警分析与文档索引三条流水线, 打通 Milvus 向量知识库、MCP/Prometheus/MySQL 工具集, 并把浏览器 SDK 上报转换为 Prometheus 指标形成告警闭环"
 local_path: "$HOME/github/yukino.go/apps/agent"
-local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
+local_commit: "02e9621cee8763979175549903d7a67534923751"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino.go/apps/agent` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+```mermaid
+flowchart LR
+    A[HTTP 与 SSE 请求] --> B[RAG 对话图]
+    A --> C[Plan-Execute-Replan 告警分析]
+    A --> D[文档索引图]
+    B --> E[Eino 编排]
+    C --> E
+    D --> E
+    E --> F[Milvus 向量库]
+    E --> G[MCP 与 Prometheus 与 MySQL 工具集]
+    E --> H[Prometheus 指标闭环]
+```
+
+:::tip 读图要点
+三条流水线共享同一套 **Eino 编排**与*工具集*; 浏览器 SDK 上报经监控桥转成 <u>Prometheus 指标</u>, 使前端异常能反向触发 Agent 分析。
+:::
 
 yukino_agent 是一个用 Go 编写的 AI 运维助手后端。它把"检索增强对话 (RAG)"、"自主告警分析 (Plan-Execute-Replan)"与"文档向量化索引"三条能力, 统一构建在 CloudWeGo Eino 编排框架之上, 对外通过 yukino_http 暴露一组 HTTP/SSE 接口, 对内以 Milvus 作为向量知识库、以 MCP/Prometheus/MySQL/时间/文档检索作为工具集。除对话与运维分析外, 它还承担一个监控桥的角色: 把浏览器 SDK (`@yukino.js/sentry`) 上报的前端可观测性事件转换成 Prometheus 指标, 供告警规则消费, 从而让"前端异常"能反过来触发"Agent 分析"。本文面向需要在 Go 中落地 LLM Agent、RAG 知识库或 AIOps 流水线的工程师, 依次讲解定位、分层架构、三条流水线的实现思路、模型与工具适配、向量库引导、HTTP 契约、监控桥、并发与容错设计, 以及适用边界。
 

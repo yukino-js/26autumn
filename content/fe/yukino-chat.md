@@ -2,8 +2,12 @@
 title: "Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent"
 description: "自托管即时通讯平台的技术拆解: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级、前后端分离的 Nginx 边缘部署与移动端适配, 以及为每个用户进程内嵌入的只读 Yukino coding agent 与它的 JSON-RPC 桥。"
 local_path: "$HOME/github/yukino-chat"
-local_commit: "e8135bfd372dceca19ead4d09afcd89ea9fef6f2"
+local_commit: "891b4108fcba145b1e48c0e80b613145e7ec0d92"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-chat` 在 `891b4108fcba` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+:::
 
 本文拆解一个自托管即时通讯平台: 单聊与群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个完整的 AI coding agent 作为一等聊天参与者。内容覆盖数据模型、WebSocket 聊天枢纽、消息投递语义、通话信令、文件传输协议、缓存降级、Agent 的进程内只读运行时与 RPC 桥, 以及客户端的工程化组织与前后端分离的部署形态。适合要做自托管 IM、或在既有产品中嵌入 Agent 的工程师阅读, 也适合作为"实时系统与长生命周期 Agent 如何共处一个进程"的参考。
 
@@ -22,7 +26,7 @@ local_commit: "e8135bfd372dceca19ead4d09afcd89ea9fef6f2"
 | 缓存       | Redis(ioredis), `REDIS_URL` 为空串时降级进程内存                                                                                    |
 | 认证       | 手写 HS256 JWT + bcryptjs 口令哈希                                                                                                  |
 | 实时通道   | `@hono/node-ws` 适配器 + `ws`, 三条独立端点                                                                                         |
-| Agent      | `@yukino.js/yukino` 以库形式嵌入服务进程, 每用户一个运行时, 独立工作区, 只读工具策略                                                |
+| Agent      | `@yukino.js/yukino` 以 `latest` tag 声明于 `server/package.json`, 以库形式嵌入服务进程, 每用户一个运行时, 独立工作区, 只读工具策略  |
 | 前端       | React 19 + React Router 7 + Vite 8 + TypeScript 6 + Tailwind 4 + shadcn/ui(Base UI 原语)                                            |
 | 前端状态   | Zustand(会话、通话、Agent、主题与 UI 状态) + TanStack React Query/Form/Virtual                                                      |
 | 富文本     | TipTap 3(输入) + Streamdown(消息渲染, 含公式、mermaid 图表、代码高亮与中日韩排版插件)                                               |
@@ -76,6 +80,23 @@ local_commit: "e8135bfd372dceca19ead4d09afcd89ea9fef6f2"
 | `/dashboard/ws` | 管理员缓存看板推送       | query token 验签 + 管理员校验                            |
 
 浏览器无法在 WebSocket 升级请求上添加自定义请求头, 因此 token 只能走 query。`/wss` 额外校验客户端自报的 `client_id`: 非空时必须与 token 主体一致, 否则握手直接回 403。动机是安全——若信任客户端自报的 id, 任何知道他人 uuid 的人都能顶掉其连接并接收消息。`/agent/ws` 与 `/dashboard/ws` 只认 token, 后者再叠加一次管理员校验。经 Nginx 边缘访问时, 三条通道分别位于 `/api/wss`、`/api/agent/ws` 与 `/api/dashboard/ws`, 升级头由边缘的 `Upgrade`/`Connection` 映射透传。
+
+```mermaid
+flowchart TB
+    REQ[WS 升级请求 携带 query token] --> V{JWT 验签}
+    V --> FAIL[验签失败或 client_id 不一致 回 403]
+    V --> PASS[验签通过 建立连接]
+    PASS --> W1[聊天与通话信令通道]
+    PASS --> W2[Agent JSON-RPC 通道]
+    PASS --> W3[管理看板通道 叠加管理员校验]
+    W1 --> HUB[ChatHub 与 MessagePipeline]
+    W2 --> AM[AgentManager 与 AgentRuntime]
+    W3 --> CACHE[CacheService 快照推送]
+```
+
+:::warning 握手阶段只能走 query
+浏览器无法在 WebSocket 升级请求上添加自定义请求头, 因此 token 只能放在 _query_; `/wss` 额外校验客户端自报的 `client_id` 必须与 token 主体一致, 否则握手直接回 403。
+:::
 
 ### 中间件
 

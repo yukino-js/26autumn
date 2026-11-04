@@ -5,6 +5,10 @@ local_path: "$HOME/github/yukino-sentry/sentry"
 local_commit: "b2f2e70f4737c2b957aea56cc58db5ebefdb66b5"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-sentry/sentry` 在 `b2f2e70f4737` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
 本文系统梳理一个框架无关的浏览器监控 SDK 的能力面与实现思路: 它如何把错误、HTTP 请求、页面浏览与停留、性能指标、声明式点击、元素曝光、白屏与错误前操作录屏统一采集, 如何用发布订阅总线解耦采集与上报, 以及批量上报、离线缓存、服务端恢复、采样过滤、插件体系与体积控制等工程取舍; 同一条上报管线还被复用进独立的 Node.js 入口, 为服务端进程提供异常捕获与上报。内容面向需要在 Web 应用或 Node 服务中接入前端/服务端可观测能力的工程师, 也适合作为设计自有监控 SDK 的参考。
 
 ## 定位与分层架构
@@ -152,6 +156,22 @@ schema 会额外约束: 面包屑容量、批量条数与队列长度必须为�
 事件类型是枚举而非字符串: `XMLHttpRequest`、`fetch`、Click、`Event hashchange`、History、Resource、`Event unhandledrejection`、Error、Vue、React、OtherFrameworks、Performance、ScreenRecord、Exposure、WhiteScreen、Custom、PV。类型枚举让事件名拼写错误在编译期就能被发现。
 
 选择发布订阅而非直接在补丁里处理, 收益有六点: 采集方只管发布原始事件, 不关心后续是上报、留面包屑还是触发录屏; 一个事件可以同时驱动多个消费者; 采集层与处理层可以分别测试; 插件能在运行时订阅或取消; 单处理器异常被隔离; 每个订阅自带清理函数, 生命周期清晰。与通用事件发射器相比, 这里用集合而非数组存储处理器(天然去重、删除 O(1)), 类型被约束为事件枚举, 并且不继承任何平台自带的事件发射器, 保持零依赖与更小体积。
+
+```mermaid
+flowchart LR
+    SRC[八类采集源 错误 HTTP PV 性能 点击 曝光 白屏 录屏] --> BUS[事件总线 Map 发布订阅]
+    BUS --> HDL[handle 系列处理器与面包屑]
+    HDL --> REP[DataReporter 批量队列]
+    REP --> PRE[send-preflight 采样与前置过滤]
+    PRE --> TR[transports 上报到服务端]
+    REP --> OFF[offline-cache 离线镜像]
+    OFF --> REC[server-recovery 断点恢复]
+    REC --> TR
+```
+
+:::tip 采集与上报解耦
+发布订阅让**采集层只发布原始事件**, 而 _上报、面包屑、录屏_ 各自作为消费者接入; 单个处理器抛错被隔离, 不会中断其余消费者。
+:::
 
 ## 错误采集
 

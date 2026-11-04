@@ -2,8 +2,29 @@
 title: "yukino_cache 分布式缓存技术笔记"
 description: "yukino_cache Go 分布式缓存: groupcache 风格 read-through Group、字节预算双层 LRU、singleflight 去重、一致性哈希分片、gRPC peer 通信与 etcd 服务发现"
 local_path: "$HOME/github/yukino.go/libs/yukino_cache"
-local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
+local_commit: "02e9621cee8763979175549903d7a67534923751"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino.go/libs/yukino_cache` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+```mermaid
+flowchart TD
+    A[Get key] --> B{本地 LRU 命中}
+    B -->|是| C[返回 ByteView]
+    B -->|否| D[一致性哈希选归属节点]
+    D --> E{归属为本节点}
+    E -->|是| F[SingleFlight 合并回源]
+    E -->|否| G[gRPC 向 peer 取回]
+    F --> H[Getter 回源并回填]
+    G --> C
+    H --> C
+```
+
+:::warning 一致性边界
+**分片而非复制**: 写操作只写本地并*异步*同步给归属节点, 属于<u>最终一致</u>; 强一致读不应依赖这条路径。
+:::
 
 yukino_cache 是一个用 Go 实现的分布式缓存库, API 风格对齐 Google groupcache: 用命名 Group 组织缓存命名空间, 用 Getter 描述回源逻辑, 用一致性哈希把 key 映射到归属节点, 用 singleflight 抑制缓存击穿 (cache stampede)。在 groupcache 只读模型的基础上, 它扩展了 Set/Delete 写操作与异步写传播、etcd 服务发现、按字节预算淘汰的分桶双层 LRU 本地存储, 以及一个推送实时快照的 WebSocket 仪表盘。本文面向需要在无中心节点架构下做缓存分片与对等访问的 Go 工程师, 说明其分层结构、读写数据流、存储引擎、并发模型、容错语义与适用边界。
 

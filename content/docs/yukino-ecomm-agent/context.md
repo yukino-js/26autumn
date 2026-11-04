@@ -2,8 +2,24 @@
 title: "会话上下文"
 description: "会话上下文管理: 三层记忆结构 (层 1 原文 / 层 2 规则压缩 / 摘要层)、token 估算、上下文预算分账与启动自检、层降级与异步摘要的轮末结算, 以及模型上下文注入方式和 LangGraph state 字段清单"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
+local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
 ---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  A[层 1 原文] --> B[层 2 规则压缩]
+  B --> C[摘要层]
+  A --> D[上下文预算分账]
+  B --> D
+  C --> D
+  D --> E[注入模型上下文]
+```
 
 LLM API 是无状态的, 每个请求都要发送完整的对话历史, token 消耗随轮次线性增长, 不管控迟早撑爆模型的上下文窗口. 常见的上下文管理策略有三类:
 

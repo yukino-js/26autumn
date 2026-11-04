@@ -5,6 +5,23 @@ local_path: "$HOME/github/yukino-code/apps/yukino"
 local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 ---
 
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[工具结果进入历史] --> B[第 1 层 大结果溢出磁盘留预览]
+  A --> C[原文保留]
+  B --> D[token 用量累积]
+  C --> D
+  D --> E[越过阈值触发 Auto-Compact]
+  E --> F[LLM 生成对话摘要]
+  F --> G[近期消息逐字保留]
+```
+
 > 两层压缩: 大工具结果溢出磁盘, 对话历史压缩成摘要
 
 LLM API 是无状态的, 每个请求都要携带完整的对话历史, 包括 ReadFile 读过的每个文件、Bash 执行过的每条命令和输出, token 数量随 [Agent Loop](./react-and-agent-loop) 的轮次线性增长, 迟早撑爆上下文窗口

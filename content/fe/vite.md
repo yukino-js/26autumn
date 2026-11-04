@@ -3,6 +3,10 @@ title: "Vite 8 与现代前端构建"
 description: "Vite 8 的 dev server、依赖预构建、HMR 原理、Rolldown/Oxc/Lightning CSS 工具链、生产构建与代码分割、插件体系、环境变量与 mode、Monorepo 与库模式, 以及与 Webpack 的原理对比"
 ---
 
+:::note 版本基线
+文中机制以 **Vite 8** 及其 Rolldown / Oxc / Lightning CSS 工具链为准; 与 Webpack 的对比只解释<u>原理差异</u>, 不引入旧构建链的配置写法作为现行方案。
+:::
+
 这份文档面向负责前端工程化的工程师: 需要为自己的项目选构建工具、排查 dev 启动与 HMR 的异常、设计生产构建的代码分割与缓存策略. 内容以 Vite 8 为基准, 讲清每个机制背后的原理与边界, 而不是罗列配置项. 框架层面的渲染与数据获取见 [Next.js](next), 运行时机制见 [React](react).
 
 ## 开发态为什么快
