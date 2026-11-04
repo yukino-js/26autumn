@@ -6,71 +6,28 @@ import os from "node:os";
 import path from "node:path";
 
 const TARGET_DIR = path.join(os.homedir(), "Downloads");
-const REGISTRY = "https://registry.npmmirror.com";
 const dryRun = process.argv.includes("--dry-run");
 
 const repositories = [
-  {
-    name: "a2ui",
-    url: "git@github.com:a2ui-project/a2ui.git",
-    install: ["npm", "install", `--registry=${REGISTRY}`],
-  },
+  { name: "a2ui", url: "git@github.com:a2ui-project/a2ui.git" },
   {
     name: "claude-code",
     url: "git@github.com:claude-code-best/claude-code.git",
-    install: ["bun", "install"],
   },
-  {
-    name: "codegraph",
-    url: "git@github.com:colbymchenry/codegraph.git",
-    install: ["npm", "install", `--registry=${REGISTRY}`],
-  },
-  {
-    name: "insforge",
-    url: "git@github.com:insforge/insforge.git",
-    install: ["npm", "install", `--registry=${REGISTRY}`],
-  },
-  {
-    name: "insforge-mcp",
-    url: "git@github.com:insforge/insforge-mcp.git",
-    install: ["npm", "install", `--registry=${REGISTRY}`],
-  },
-  {
-    name: "langchainjs",
-    url: "git@github.com:langchain-ai/langchainjs.git",
-    install: ["pnpm", "install", `--registry=${REGISTRY}`],
-  },
-  {
-    name: "langgraphjs",
-    url: "git@github.com:langchain-ai/langgraphjs.git",
-    install: ["pnpm", "install", `--registry=${REGISTRY}`],
-  },
-  {
-    name: "openspec",
-    url: "git@github.com:Fission-AI/openspec.git",
-    install: ["pnpm", "install", `--registry=${REGISTRY}`],
-  },
-  {
-    name: "superpowers",
-    url: "git@github.com:obra/superpowers.git",
-    install: ["pnpm", "install", `--registry=${REGISTRY}`],
-  },
-  {
-    name: "pi",
-    url: "git@github.com:earendil-works/pi.git",
-    install: ["npm", "install", `--registry=${REGISTRY}`],
-  },
-  {
-    name: "open-code-review",
-    url: "git@github.com:alibaba/open-code-review.git",
-    install: ["go", "mod", `tidy`],
-  },
+  { name: "codegraph", url: "git@github.com:colbymchenry/codegraph.git" },
+  { name: "langchainjs", url: "git@github.com:langchain-ai/langchainjs.git" },
+  { name: "langgraphjs", url: "git@github.com:langchain-ai/langgraphjs.git" },
+  { name: "openspec", url: "git@github.com:Fission-AI/openspec.git" },
+  { name: "superpowers", url: "git@github.com:obra/superpowers.git" },
+  { name: "pi", url: "git@github.com:earendil-works/pi.git" },
   {
     name: "node-pool",
     url: "git@github.com:coopernurse/node-pool.git",
-    install: ["npm", "install", `--registry=${REGISTRY}`],
+    branch: "master",
   },
 ];
+
+const DEFAULT_BRANCH = "main";
 
 const nameWidth = Math.max(...repositories.map((repo) => repo.name.length));
 
@@ -113,24 +70,33 @@ function run(name, argv, cwd) {
   });
 }
 
-async function reindex(name, dir) {
-  const command = existsSync(path.join(dir, ".codegraph")) ? "sync" : "init";
-  await run(name, ["codegraph", command], dir);
-}
-
 async function provision(repo) {
   const dir = path.join(TARGET_DIR, repo.name);
+  const branch = repo.branch ?? DEFAULT_BRANCH;
 
   if (existsSync(path.join(dir, ".git"))) {
-    await run(repo.name, ["git", "pull"], dir);
-    await reindex(repo.name, dir);
+    await run(
+      repo.name,
+      ["git", "pull", "--depth=1", "--ff-only", "origin", branch],
+      dir,
+    );
     return;
   }
 
-  await run(repo.name, ["git", "clone", repo.url, repo.name], TARGET_DIR);
-  if (repo.install) await run(repo.name, repo.install, dir);
-  await run(repo.name, ["codegraph", "init"], dir);
-  await run(repo.name, ["codegraph", "sync"], dir);
+  await run(
+    repo.name,
+    [
+      "git",
+      "clone",
+      "--depth=1",
+      "--single-branch",
+      "--branch",
+      branch,
+      repo.url,
+      repo.name,
+    ],
+    TARGET_DIR,
+  );
 }
 
 async function main() {
