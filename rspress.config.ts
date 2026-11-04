@@ -1,9 +1,15 @@
 import path from "node:path";
-import { defineConfig } from "@rspress/core";
+import { defineConfig, RspressPlugin } from "@rspress/core";
 import { pluginSitemap } from "@rspress/plugin-sitemap";
 import mermaid from "rspress-plugin-mermaid";
+import * as yukinoSentry from "@yukino.js/sentry";
 
 const siteOrigin = "https://yukino-js.github.io";
+
+const yukinoSentryPlugin: RspressPlugin = {
+  name: "yukino-sentry",
+  globalStyles: "",
+};
 
 export default defineConfig({
   root: "content",

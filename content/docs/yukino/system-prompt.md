@@ -84,7 +84,8 @@ not new user requests.
 
 只注入一次 (`longTermMemoryInjected` 标志); `reset()` (/clear)、`replaceWithCompacted()` (上下文压缩)、`truncateTo(0)` 会重置该标志, `/clear`、会话恢复、压缩丢弃原 reminder 后由 `restoreContext` 重新注入。它 `unshift` 到历史最前面, 而运行期的动态 reminder 通过 `addSystemReminder` 追加 (push) 到末尾。指令文件的发现与记忆的三层结构见 [AGENTS.md and Memory](./agents-md-and-memory), skill 列表的构造见 [Skill](./skills)。
 
-> system 字段的优先级最高, 为什么不都设置为 system 字段?
+:::info
+**system 字段的优先级最高, 为什么不都设置为 system 字段?**
 
 1. prompt cache: LLM API 支持 prompt cache, system 字段的值和上次请求完全相同时复用缓存, 降低输入计费; system prompt 内容稳定, 每次都能命中
    - 稳定的内容放 system、变化的内容放 messages
@@ -92,6 +93,7 @@ not new user requests.
    - skill 列表是项目相关的, 放 system 会破坏跨项目的缓存前缀, 所以走 messages (src/conversation/prompts.ts、src/prompt/builder.ts 的注释均说明此点)
 2. system 字段内容太长, 可能稀释 LLM 注意力
 3. 可压缩性: messages 字段后续可被[上下文压缩](./context-compaction)处理; system 字段不会被压缩, 每次请求都完整携带
+   :::
 
 3 个字段 (system / messages / tools) 在 LLM client 里组装, 以 Anthropic client 为例 (src/llm/anthropic.ts, 简化):
 
@@ -169,13 +171,26 @@ plan 模式和 coordinator 模式的约束靠每轮注入的 reminder 维持 (�
 2. prompt cache 按前缀匹配, 顺序是 tools → system → messages, 直接改 system prompt 会导致后面 messages 的缓存全部失效; 晚到的 MCP 连接改变 tools 字段同样会使缓存失效 (src/mcp/instructions.ts 的注释解释了这一点)
 3. `<system-reminder>` 和用户消息需要作为独立的 content block, 不能拼在一起; 如果 `<system-reminder>` 的内容包含外部文本, 需要预防 prompt 注入 (尾句固定声明: 记忆和引用内容是参考资料, 不是新的用户请求)
 
+```mermaid
+graph LR
+  subgraph Stable["稳定 (命中 cache)"]
+    T["tools 字段"]
+    S["system 字段"]
+  end
+  M["messages 字段 (动态)"]
+  T --> S --> M
+```
+
 ## Pitfall
+
+:::warning
 
 - Prompt 太长, 中间指令被忽略
   - LLM 的注意力不是均匀的, 开头和结尾得到的注意力最多, 中间内容最容易被忽略
   - 使用 markdown 标题; 或者重复说明, 提高 LLM 遵守的概率
 - 前后指令冲突: 在 system prompt 中明确优先级
 - 关键指令重复说明, 提高 LLM 遵守的概率
+  :::
 
 ## Prompt 与成本
 

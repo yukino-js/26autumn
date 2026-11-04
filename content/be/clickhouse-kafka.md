@@ -83,7 +83,9 @@ granule 2:   rows 16385~24576
 | 适用场景 | 范围查询、前缀匹配              | 点查、范围查询                 |
 | 更新代价 | 合并时重建, 无在线维护开销      | 每次写入都要维护 B+ 树平衡     |
 
-关键限制: 稀疏索引要求数据物理有序 (按 ORDER BY 排列), 所以 MergeTree 写入时会排序. 如果查询条件不是 ORDER BY 的前缀, 索引无法使用, 退化为全表扫描.
+:::info{title="稀疏索引生效的前提：查询条件必须是 ORDER BY 的前缀"}
+稀疏索引要求数据**物理有序**（按 `ORDER BY` 排列），因此 MergeTree 写入时会排序。如果查询条件**不是 `ORDER BY` 的前缀**，索引无法使用，退化为全表扫描。这也是 `ORDER BY` 键设计排在性能优化第一位的根本原因。
+:::
 
 ### ReplacingMergeTree、AggregatingMergeTree 与 CollapsingMergeTree 的合并策略
 
@@ -93,7 +95,9 @@ ReplacingMergeTree(version):
 
 - 问题: 同一主键的多条记录 (如 CDC 产生的多次更新), 查询时只想看最新版本
 - 机制: 合并时按 ORDER BY 键去重, 保留 `version` 列最大的行; 若 version 相同保留最后写入的
-- 注意: 去重只发生在合并时, 合并前查询仍会看到重复行, 需配合 `FINAL` 关键字或 `argMax` 聚合
+  :::warning{title="去重只在合并时发生"}
+  `ReplacingMergeTree` 的**去重只发生在合并时**，合并前查询仍会看到重复行，必须配合 `FINAL` 关键字或 `argMax` 聚合才能得到「最新版本」。不能假设写入后即刻读到唯一行。
+  :::
 - 典型场景: 从 MySQL binlog 同步到 ClickHouse, 用 ReplacingMergeTree 实现 upsert 语义
 
 AggregatingMergeTree:
@@ -326,10 +330,9 @@ ALTER TABLE events DELETE WHERE user_id = 12345;
 
 慢的根源:
 
-- ClickHouse 的 part 是不可变的 (immutable), UPDATE/DELETE 不是原地修改
-- 实际执行: 读取包含目标行的整个 part, 重写所有列文件 (即使只改一列), 生成新 part, 旧 part 标记删除
-- 一个 part 有 1 亿行, 改其中 1 行也要重写整个 part 的全部列
-- 多个 mutation 排队串行执行, 不并发
+:::warning{title="Mutation 的代价：不可变 part 导致整块重写"}
+ClickHouse 的 part 是**不可变的（immutable）**，`UPDATE`/`DELETE` 不是原地修改。实际执行时：读取包含目标行的整个 part，重写所有列文件（即使只改一列），生成新 part，旧 part 标记删除；一个 1 亿行的 part 改其中 1 行也要重写全部列；且多个 mutation **排队串行执行，不并发**。这正是生产中应优先用 `ReplacingMergeTree`、轻量删除或分区级操作替代 `ALTER UPDATE/DELETE` 的原因。
+:::
 
 生产替代方案:
 
@@ -355,7 +358,7 @@ ALTER TABLE events DELETE WHERE user_id = 12345;
 
 但 ClickHouse 不适合:
 
-- 高并发点查 (QPS > 1000 的小查询): 每次查询都要启动多线程、读多个列文件, 延迟高
+- 高并发点查 (单服务器每秒数百次以上的小查询): 每次查询都要启动多线程、读多个列文件, 延迟高
 - 频繁单行更新/删除: 不可变 part 设计导致更新代价极高
 - 事务: 不支持 ACID 事务, 没有行锁
 
@@ -469,7 +472,7 @@ acks 参数:
 | 1    | leader 写入本地日志即确认               | leader 宕机丢 | 中等 |
 | -1   | 等待 ISR 中所有副本写入成功才确认 (all) | 最高          | 最高 |
 
-生产建议: `acks=all` + `retries=Integer.MAX_VALUE` + `enable.idempotence=true`, 在保证不丢的前提下实现 exactly-once 写入 (这三项在当前 Kafka 中均为默认值, 显式写出是为了可读性).
+生产建议: `acks=all` + `retries=Integer.MAX_VALUE` + `enable.idempotence=true` (这三项在当前 Kafka 中均为默认值, 显式写出是为了可读性). 这套配置在单分区单会话内做到不丢不重; 跨分区或 Producer 重启后的 exactly-once 仍需事务 Producer, 见下一节.
 
 ### 幂等 Producer 与事务 Producer 的实现
 
@@ -820,23 +823,18 @@ SELECT * FROM events_kafka;
 
 ### 实时数仓的分层设计与职责划分
 
-```text
-数据源 (MySQL/日志/API)
-        │
-   Kafka (原始层, ODS)
-   topic: raw_events, raw_orders, ...
-        │
-   Flink / ClickHouse 物化视图 (清洗 + 转换)
-        │
-   Kafka (明细层, DWD) 或直接写入 ClickHouse
-   topic: dwd_events, dwd_orders, ...
-        │
-   ClickHouse (汇总层, DWS / 应用层, ADS)
-   - 明细表: MergeTree, 保留全量明细
-   - 聚合表: AggregatingMergeTree / SummingMergeTree, 预计算指标
-   - 物化视图: 实时增量聚合
-        │
-   BI 报表 / API 服务 / 实时大屏
+```mermaid
+flowchart TD
+    SRC[数据源 MySQL / 日志 / API] --> ODS[Kafka 原始层 ODS<br/>topic: raw_events, raw_orders]
+    ODS --> ETL[Flink / ClickHouse 物化视图<br/>清洗 + 转换]
+    ETL --> DWD[Kafka 明细层 DWD 或直接写入 ClickHouse<br/>topic: dwd_events, dwd_orders]
+    DWD --> ADS[ClickHouse 汇总层 DWS / 应用层 ADS]
+    ADS -->|明细表| D1[MergeTree 保留全量明细]
+    ADS -->|聚合表| D2[AggregatingMergeTree / SummingMergeTree 预计算指标]
+    ADS -->|增量| D3[物化视图 实时增量聚合]
+    D1 --> OUT[BI 报表 / API 服务 / 实时大屏]
+    D2 --> OUT
+    D3 --> OUT
 ```
 
 各层职责:
@@ -853,6 +851,10 @@ SELECT * FROM events_kafka;
 - 数据回溯: Kafka 保留期内可以重置 offset 重新消费, 重建 ClickHouse 中的聚合表
 
 ### 写入性能优化与高频小批量写入的代价
+
+:::tip{title="高频小批量写入的命门：part 数量爆炸"}
+ClickHouse **每次 INSERT 都生成一个新 part**，后台合并跟不上时就会触发 `Too many parts` 错误。核心解法只有一个字——**攒批**：客户端攒够一批（如 10000~100000 行）再 INSERT，或借助 **Buffer 表引擎** / 服务端 `async_insert` 在服务端合并。每个 part 都有独立索引与标记文件，小文件随机 I/O 远慢于少量大文件的顺序 I/O。
+:::
 
 写入模型:
 
@@ -941,28 +943,20 @@ ALTER TABLE events ADD PROJECTION proj_by_type (
 
 架构设计:
 
-```text
-App SDK / 服务端埋点
-        │
-Kafka (ODS, 3 副本, 按 user_id 分 64 个 partition)
-  topic: user_events_raw
-  保留: 7 天 (支持回溯重放)
-        │
-        ├──> Flink (实时 ETL)
-        │      - 清洗: 去重 (event_id 唯一键)、补全 (IP -> 城市)
-        │      - 窗口聚合: 1 分钟滚动窗口计算 PV/UV
-        │      - 输出到 Kafka DWD topic + ClickHouse 聚合表
-        │
-        ├──> ClickHouse Kafka Engine (明细入库)
-        │      - 物化视图 -> events_detail (MergeTree, 按天分区)
-        │      - 物化视图 -> events_hourly (SummingMergeTree, 小时级聚合)
-        │
-ClickHouse 集群 (3 分片 x 2 副本)
-  - events_detail: 明细查询, 保留 90 天 (TTL)
-  - events_hourly: 实时看板, 保留 1 年
-  - events_daily: 日报/趋势, 永久保留
-        │
-Grafana / 自研 BI / API Gateway
+```mermaid
+flowchart TD
+    SDK[App SDK / 服务端埋点] --> KAFKA[(Kafka ODS<br/>3 副本, 按 user_id 分 64 partition<br/>topic: user_events_raw, 保留 7 天)]
+    KAFKA --> FLINK[Flink 实时 ETL<br/>去重 + 补全 + 1 分钟窗口 PV/UV]
+    KAFKA --> CKE[ClickHouse Kafka Engine 明细入库]
+    FLINK --> DWD_K[(Kafka DWD topic)]
+    FLINK --> AGG[ClickHouse 聚合表]
+    CKE --> DETAIL[(events_detail<br/>MergeTree 按天分区, 保留 90 天)]
+    CKE --> HOURLY[(events_hourly<br/>SummingMergeTree 小时级, 保留 1 年)]
+    DETAIL --> CH[(ClickHouse 集群 3 分片 x 2 副本)]
+    HOURLY --> CH
+    AGG --> CH
+    CH --> DAILY[(events_daily 日报/趋势 永久保留)]
+    CH --> GRAF[Grafana / 自研 BI / API Gateway]
 ```
 
 关键设计决策:

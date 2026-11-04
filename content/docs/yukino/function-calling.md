@@ -31,7 +31,7 @@ local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 }
 ```
 
-yukino 侧的 `ToolSchema` (src/tools/types.ts) 就是这个形状: `name`、`description`、`input_schema` (`type: "object"` + `properties` + 可选 `required`), 另有 `strict`、`defer_loading`、`cache_control` 等可选字段。`ToolRegistry.getAllSchemas` (src/tools/registry.ts) 按协议把它翻译成各家 API 的工具定义:
+yukino 侧的 `ToolSchema` (src/tools/types.ts) 就是这个形状: `name`、`description`、`input_schema` (`type: "object"` + `properties` + 可选 `required`), 另有 `strict`、`type` (`"function"` / `"custom"`)、`parameters`、`defer_loading`、`cache_control`、`eager_input_streaming` 等可选字段。`ToolRegistry.getAllSchemas` (src/tools/registry.ts) 按协议 (`ToolProtocol` = `anthropic` / `openai` / `openai-compat`) 把它翻译成各家 API 的工具定义:
 
 - `anthropic`: 原样展开并标注 `type: "custom"`, 延迟加载的工具附 `defer_loading: true`
 - `openai` (Responses API): `type: "function"`, `input_schema` 放进 `parameters`
@@ -146,10 +146,10 @@ export interface ToolResult {
 
 `ToolRegistry` (src/tools/registry.ts) 是工具的装配点:
 
-- `register` / `registerBorrowed` / `unregister` / `get` / `getInstanceOf` / `listTools`; `dispose` 以 `Promise.allSettled` 并发跑 cleanup 回调和自己拥有的工具的 `dispose`, 失败聚合为 AggregateError
+- `register` / `registerBorrowed` / `unregister` / `get` / `getInstanceOf` / `listTools`, 另有 `takeOwnershipFrom` / `addCleanup` / `copyLoadingStateFrom` / `getDeferredToolNames` / `isDiscovered`; `dispose` 以 `Promise.allSettled` 并发跑 cleanup 回调和 `owned` 集合里的工具 (`registerBorrowed` 注册的不算) 的 `dispose`, 失败聚合为 AggregateError
 - `getAllSchemas(protocol, filter)` 和 `listVisibleToolNames` 共用同一套可见性谓词, 保证「对外宣称可用的工具」和「实际可调用的工具」一致
-- `mcpLoadingMode` (`eager` / `native` / `dispatch`) 由 mcp/strategy 在连接 server 后写入; `exposeToolSearch` / `exposeMcpCall` 在会话开始时算定一次, 不逐轮重算 —— tools 数组渲染在 system 之后、messages 之前, 数组任何变动都会使整段历史缓存失效 (实测两万 token 历史下, 往 tools 末尾追加一个工具使命中率从 99.4% 掉到 9.5%)
-- 延迟工具 (`deferred && !discovered`) 的可见性: native 模式下留在 tools[] 里带 `defer_loading`, 由服务端决定是否展示给模型; dispatch 模式下直接从 tools[] 中隐藏, 走 McpCall; eager 模式没有延迟工具, ToolSearch / McpCall 也不暴露
+- `mcpLoadingMode` (`McpLoadingMode` = `eager` / `native` / `dispatch`, 类型定义在 src/tools/types.ts) 由 mcp/strategy 的 `applyMode` 在连接 server 后写入; `exposeToolSearch` / `exposeMcpCall` 同在会话开始时算定一次, 不逐轮重算 —— tools 数组渲染在 system 之后、messages 之前, 数组任何变动都会使整段历史缓存失效 (实测两万 token 历史下, 往 tools 末尾追加一个工具使命中率从 99.4% 掉到 9.5%)
+- 延迟工具 (`deferred && !discovered`) 的可见性: native 模式下留在 tools[] 里带 `defer_loading`, 由服务端决定是否展示给模型 —— 但 `getAllSchemas` 的 native 判定是 `mcpLoadingMode === "native" && !isOpenAI` (src/tools/registry.ts), 即只对 Anthropic 协议生效; OpenAI Responses / Chat Completions 不支持 `defer_loading` / `tool_reference`, 即使在 native 模式也退化为隐藏 deferred 工具 + McpCall。dispatch 模式下直接从 tools[] 中隐藏, 走 McpCall; eager 模式没有延迟工具, ToolSearch / McpCall 也不暴露
 - `searchDeferred(query, maxResults)` 按名称和描述子串匹配, `findDeferredByNames` 支持 `select:a,b` 直选, `markDiscovered` 把工具转正
 
 ## 内置工具一览
@@ -290,7 +290,7 @@ src/tools/computer-use.ts, 操作本机 GUI: 截图、点击、输入、滚动�
 宿主在基础注册之上的差异:
 
 - 交互式 UI (src/ui/app.tsx): + LoadSkill、InstallSkill、AskUserQuestion、Agent、Workflow、SyntheticOutput、TeamCreate、SendMessage、TeamList、TeamDelete、TaskStop; `attachBackgroundTaskManager` 把后台任务注册表共享给 Bash/PowerShell/TaskOutput, 使 run_in_background、Ctrl+B 和后台 agent 走同一个通知管道
-- remote (src/remote/server.ts): 与 UI 相同的装配, 但没有 InstallSkill; LoadSkill 额外带 fork host (fork 模式 skill 在隔离子代理中执行); AskUserQuestion 仅在提供 askUser 处理器时注册; 浏览器端的 Ctrl+B 等价能力通过同样的 backgroundAllForegroundTasks 实现
+- remote (src/remote/server.ts): 与 UI 相同的装配, 但没有 InstallSkill; `LoadSkillTool(catalog, skillHost, skillForkHost)` 额外带 `skillForkHost` (src/remote/server.ts:854) —— 这是 skill 定义里的 `mode: fork` (src/skills/catalog.ts 的 `resolveMode`, 取值 `inline` / `fork`, `context: fork` 与之等价) 在隔离子代理中执行的宿主; AskUserQuestion 仅在提供 askUser 处理器时注册; 浏览器端的 Ctrl+B 等价能力通过同样的 `backgroundAllForegroundTasks` 实现
 - print 模式 (src/print-mode.ts): + Agent、Workflow、SyntheticOutput、TeamCreate、SendMessage、TeamList、TeamDelete、TaskStop (无 skills、无 AskUserQuestion); 权限检查器固定 bypassPermissions, 没有审批通道 (见 [print-mode](./print-mode))
 - teammate / subagent: `filterToolsForAgent` / `cloneRegistryForTeammate` (src/subagent/tool-filter.ts) 分层过滤 —— MCP 工具豁免全局层, 但仍受定义级黑白名单约束; 全局禁用 SUBAGENT_DISALLOWED_TOOLS (Workflow、ComputerUse、AskUserQuestion、EnterPlanMode、ExitPlanMode、Goal、Agent、TeamCreate、TeamDelete、SendMessage —— 主线程独占设备或防递归); 后台 Agent 再过一道 ASYNC_AGENT_ALLOWED_TOOLS 白名单; 最后叠加定义级 disallowedTools 黑名单和 tools 白名单 (`"*"` 关闭白名单层); TodoWrite/ToolSearch/McpCall/LoadSkill/TaskStop 换成委派作用域的实例。详见 [subagent](./subagent)
 
@@ -327,7 +327,7 @@ content_block_stop
 agent 循环 (src/agent/index.ts, 见 [react-and-agent-loop](./react-and-agent-loop)) 把一批 tool_use 交给执行管线:
 
 1. 分批 (partitionToolCalls): 按 `tool.isConcurrencySafe(args) ?? tool.category === "read"` 判断单次调用是否可并发, 连续的可并发调用并进一个 parallel 批, 其余各自成串行批
-2. 批内逐个过检查 (executeBatch): 中断检查 → 工具过滤器检查 (委派 agent) → McpCall 参数预处理与目标解析 → hook 引擎 PreToolUse 钩子, 被拒则回 `Rejected by hook: ...` (见 [hook](./hook)) → 权限判定: McpCall 同时检查包装器和目标工具两条规则, deny 优先, ask 次之; ask 而无审批处理器直接报错不执行; ask 走 onPermissionRequest, allowAlways 时把展示过的模式持久化 (见 [permission](./permission))
+2. 批内逐个过检查 (executeBatch): 中断检查 → 工具过滤器检查 (委派 agent; 命中过滤回 `Tool '<name>' is not available to this agent.`) → McpCall 参数预处理 (`prepareArguments`) 与目标解析 (`resolveTarget`) → hook 引擎 PreToolUse 钩子 (包装器与目标工具各跑一次), 被拒则回 `Rejected by hook: ...` (见 [hook](./hook)) → 权限判定: McpCall 同时检查包装器和目标工具两条规则, `deny` 优先、`ask` 次之, 且当包装器命中显式 allow 规则而目标工具只因 mode 默认 ask 时, 用包装器的 allow 覆盖目标的 mode ask; ask 而无审批处理器直接报错不执行; ask 走 onPermissionRequest, allowAlways 时把 `rememberPatterns` 展示过的模式经 `checker.allowAlways` 持久化 (见 [permission](./permission))
 3. 执行 (StreamingExecutor, src/agent/streaming-executor.ts): 批内调用并发提交, `runPending` 谁先完成先 yield 谁的 tool_result 事件, UI 即时渲染每个工具的完成; parseError 直接变成错误结果, 未知工具名报 `Error: unknown tool '<name>'` 让模型换工具重试, 中断报 `Tool execution was cancelled before it started.`; 每次执行包一层 telemetry 观测
 4. 回写历史: 主循环一边把完成事件即时 yield 给 UI, 一边按 toolId 收集进 Map; 整批完成后按 LLM 给出的原始调用顺序重建 tool_result 块数组, 一条 user 消息写入历史 —— 完成顺序负责交互的实时性, 原始顺序负责配对和回放的稳定性
 5. 结果预算: 单条结果超 50000 字符 (MAX_OUTPUT_CHARS) 落盘换成预览 + 路径, 整批再过一遍 200000 字符的聚合预算 (MESSAGE_AGGREGATE_LIMIT), 防止并发扇出的多个「合规」结果加起来撑爆上下文; 刚从溢出文件读回的结果豁免再次落盘, 避免读回-溢出死循环

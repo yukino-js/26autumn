@@ -73,6 +73,10 @@ curl https://api.anthropic.com/v1/messages \
 - 响应的 content 字段是一个数组: LLM 的响应可能包含多种内容, 每种内容是一个独立的 content block, 类型可能是 text、thinking、redacted_thinking、tool_use 等
 - 流式响应基于 SSE (Server-Sent Events), 本质是 HTTP 长连接
 
+:::warning
+**工具结果必须作为 user 消息发送**: 工具调用 (`tool_use`) 是 assistant 消息, 其结果需作为 user 消息回灌; 若错误地将其当作 assistant 消息, 会出现连续两条 assistant 消息, API 会直接报错。
+:::
+
 Claude 的流式事件有固定顺序:
 
 ```txt
@@ -210,7 +214,7 @@ interface ThinkingLevelControl {
 
 ### Anthropic 的两种请求模式
 
-- budget (默认): `thinking: { type: "enabled", budget_tokens }`。回答空间 `answerReserve = max(1024, options.answerReserveTokens)`, 预算 `thinkingTokens = min(budget[level], maxOutputTokens - answerReserve)`, 始终给回答保留至少 1024 token; `thinkingTokens` 低于 1024 时 thinking 降级为 `{ type: "disabled" }`。请求时通过 `options.answerReserveTokens` 可以抬高保留量 (压缩摘要、记忆整理等旁路请求就是这么用的)
+- budget (默认): `thinking: { type: "enabled", budget_tokens }`。回答空间 `answerReserve = max(MIN_THINKING_ANSWER_TOKENS = 1024, options.answerReserveTokens ?? 0)`, 预算 `thinkingTokens = min(thinkingBudgetForProvider(config, level), maxOutputTokens - answerReserve)` —— 分子先经 `toReasoningEffort` 映射 (受 thinking_level_map / adaptive 影响) 再取 THINKING_BUDGETS, 不总是字面上的 `budget[level]`; 始终给回答保留至少 1024 token; `thinkingTokens < MIN_THINKING_BUDGET_TOKENS = 1024` 时 thinking 降级为 `{ type: "disabled" }`。请求时通过 `options.answerReserveTokens` 可以抬高保留量 (压缩摘要、记忆整理等旁路请求就是这么用的)
 - adaptive: `thinking: { type: "adaptive" }` + `output_config: { effort }`, 按 effort 而不是 token 预算控制
 - 级别为 off 时发 `{ type: "disabled" }`; `reasoning: false` 时 thinking 字段整个省略, 保留 provider 默认
 
@@ -242,7 +246,7 @@ Anthropic 的 cache_control 打在三个位置 (src/llm/anthropic.ts):
 
 tools 数组是缓存前缀的第一段, 数组任何变化 (增删工具、schema 变化) 会使整个后续历史缓存失效, 这是 MCP 工具延迟加载策略的动因 (见 [MCP](./mcp))
 
-此外, 只有本批工具中确有 `defer_loading` 时才发送 `anthropic-beta: advanced-tool-use-2025-11-20` 头 (needsToolSearchBeta): 不识别该 beta 的端点会直接拒绝请求
+此外, `needsToolSearchBeta` 只有在本批工具中确有 `defer_loading` 时才为真, 此时才发送 `anthropic-beta: advanced-tool-use-2025-11-20` (NATIVE_TOOL_USE_BETA, src/mcp/constants.ts): 不识别该 beta 的端点会直接拒绝请求, dispatch / eager 路径完全不带这个头
 
 ## 消息构建: 内部消息到 LLM API 消息
 
@@ -309,7 +313,7 @@ interface Message {
 - ComputerUse 工具在 Anthropic 协议下映射为原生 `computer` 工具 (名称互转); OpenAI Responses 下映射为 `computer_call` / `computer_call_output` item (providerItemId 回传), 结果里的截图以 `computer_screenshot` 输出, pending safety checks 逐条确认; 结果报错或缺图时文本内容额外作为 user 消息发送
 - Anthropic 分支原样回放 redacted_thinking 块; Chat Completions 下 thinking 块合并为非标的 `reasoning_content` 字段; Responses 下只回放 signature 以 `rs_` 开头的 thinking 块为 `reasoning` item (其余 signature 无效, 丢弃)
 - Chat Completions 下富内容 (图片/文档) 的工具结果合并为一条后置 user 消息, 以 `[Rich content returned by tool call <id>]` 文本打头; 文档源为 url 时该协议无法表达, 生成说明文本而不是静默丢弃
-- 官方 Anthropic 端点 (base_url 为空即 SDK 默认地址, 或 host 为 api.anthropic.com) 的 tool schema 带 `type: "custom"` 显式声明; 非官方端点剥掉 type 字段
+- 官方 Anthropic 端点 (由 `isOfficialAnthropicEndpoint(base_url)` 判定: base_url 为空即 SDK 默认地址, 或 host 为 api.anthropic.com) 的 tool schema 带 `type: "custom"` 显式声明 (useExplicitCustomToolType); 非官方端点 `toAnthropicToolSchema` 剥掉 type 字段
 - 空的 assistant 消息补一个空 text 块, 保证 content 数组非空; user 内容里的 tool_reference 等不支持块直接报错
 
 ## OpenAI 两种协议的流式差异
@@ -362,7 +366,7 @@ ConversationManager (src/conversation/index.ts) 是这份历史的唯一持有�
 - hasReminderContaining: 扫历史判断某 marker 是否还在, 压缩感知 —— 压缩会把 reminder 折叠进摘要, 调用方据此决定重新注入, 不必侵入压缩路径
 - injectLongTermMemory: 一次性 unshift 到历史头部 (长期记忆、skills 注入, 见 [AGENTS.md and Memory](./agents-md-and-memory))
 - appendMessages / getMessages / len / truncateTo / reset: 历史读写; reset 就地清空而不是替换实例, 因为 AgentTool 等组件持有旧实例的引用
-- fork: structuredClone 全部历史, subagent fork 用
+- `fork()`: `structuredClone` 全部历史, 同时复制 `longTermMemoryInjected` / `baselineTokens` / `_anchorCount`; Agent 工具的 `fork: true` 路径 (以及 /plan 的 `runBuiltin`) 用它生成继承父对话快照的独立 ConversationManager
 - replaceWithCompacted: 压缩后重建 (摘要 user 消息 + 原样保留的尾部消息), 见 [上下文压缩](./context-compaction)
 - recordUsageAnchor / clearUsageAnchor / usageAnchorState: token 估算锚点, 基线为 input + cache_read + cache_creation + output 四项之和
 

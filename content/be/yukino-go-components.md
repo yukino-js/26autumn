@@ -2,10 +2,10 @@
 title: "Yukino Go 分布式基础设施组件: 九个组件的设计原理、适用场景与边界"
 description: "面向 Go 后端与分布式系统读者的组件解析: 逐一讲清 redis_lock、consistent_hash、consistent_cache、red_mq、tcc、time_wheel、timer、lsm_tree、raft 九个组件解决的问题、关键数据结构与算法、设计取舍, 以及在什么场景下不该使用它们"
 local_path: "$HOME/github/yukino.go/components"
-local_commit: "9db1ad65904f6ee3b2d7c3498436fab64a6425cd"
+local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
 ---
 
-本文讨论的是一组用 Go 实现的分布式基础设施组件, 覆盖互斥、路由、缓存一致性、消息投递、分布式事务、延迟调度与共识等主题。九个组件都注册在仓库根部的 go.work 工作区中, 每个组件是独立的 Go module (各自的 go.mod, Go 1.26), 可单独引用; 其中 timer 与 raft 另含可执行示例 (cmd/timer、cmd/raftkv)。
+本文讨论的是一组用 Go 实现的分布式基础设施组件, 覆盖互斥、路由、缓存一致性、消息投递、分布式事务、延迟调度与共识等主题。九个组件都注册在仓库根部的 `go.work` 工作区中: 当前 `go.work` 声明 `go 1.26.0`, `use` 列表共 16 个模块——3 个应用 (`apps/agent/server`、`apps/agent_proxy`、`apps/task_flow/server`)、`components/` 下 9 个组件与 `libs/` 下 4 个库, 全部以相对路径纳入同一工作区。每个组件是独立的 Go module (`components/*/go.mod` 声明 `go 1.26.0`, `lsm_tree` 与 `raft` 为 `go 1.26`), 可单独引用; 其中 timer 与 raft 另含可执行示例 (cmd/timer、cmd/raftkv)。
 
 本文不以 API 手册或目录清单组织内容, 而是围绕每个组件的功能目标、实现思路、适用场景与局限展开, 重点回答三个问题: 它为什么这样设计, 边界在哪里, 什么时候不该用它。读者需要具备基本的 Go 并发编程与分布式系统背景; 对 Redis、MySQL、LSM 存储或 Raft 没有前置要求, 相关机制在正文中都会解释。
 

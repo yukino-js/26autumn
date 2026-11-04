@@ -41,6 +41,19 @@ API key 取 provider 的 `api_key` 字段, 缺省时回落到环境变量 (`anth
 
 按 src/ 目录的职责划分:
 
+```mermaid
+graph TD
+  I["交互层<br/>src/ui · src/commands · src/skills<br/>src/remote/browser · src/vscode"]
+  E["引擎层<br/>ConversationManager · Agent.run()<br/>system prompt · compact"]
+  T["工具层<br/>src/tools · src/mcp · src/hooks"]
+  M["记忆层<br/>compact · session · file-history · memory"]
+  S["安全层<br/>permissions · sandbox · HITL"]
+  I --> E --> T --> M
+  S -. 横切 .- I
+  S -. 横切 .- E
+  S -. 横切 .- T
+```
+
 1. **交互层** —— 终端 TUI (`src/ui/`, Ink 渲染、流式输出、权限对话框、快捷键)、slash 命令 (`src/commands/`, `/compact` `/review` `/rewind` `/mcp` 等内置命令加自定义 prompt 模板)、skill (`src/skills/`, 以 `SKILL.md` 声明的可移植 SOP)、浏览器前端 (`src/remote/browser/`, React 实现)、IDE 集成 (`src/vscode/`, 连接 VS Code 扩展内嵌的 MCP 服务, 把 `@` 提及的文件引用插入输入框)
 2. **引擎层** —— 对话管理 (`src/conversation/` 的 `ConversationManager`)、agent loop (`src/agent/` 的 `Agent.run()`)、system prompt 组装 (`src/prompt/`)、上下文压缩 (`src/compact/`)
 3. **工具层** —— 内置工具 (`src/tools/`, 在 `src/bootstrap/tool-registry.ts` 统一注册)、MCP 动态工具 (`src/mcp/`, 工具名带 `mcp__` 前缀)、hook 生命周期 (`src/hooks/`, `session_start` / `turn_start` / `pre_tool_use` / `post_tool_use` 等 9 个事件)
@@ -57,6 +70,10 @@ API key 取 provider 的 `api_key` 字段, 缺省时回落到环境变量 (`anth
 | print  | `-p <prompt>`     | 非交互一次执行, 结果打印到 stdout; `--output-format` 取 `text` (默认) 或 `stream-json`, 适合脚本和 CI  |
 | remote | `--remote [addr]` | Express HTTP + WebSocket 服务器 (默认 `127.0.0.1:18888`), 托管浏览器聊天 UI                            |
 | A2A    | `--a2a [addr]`    | Agent2Agent Protocol 服务器 (默认 `127.0.0.1:18890`), 供 agent 互通                                    |
+
+:::warning
+四种运行模式**互斥**: 同时指定多个模式 (例如既 `--remote` 又 `-p`) 会直接报用法错误, 不会 fallback 到某个模式。teammate 不是独立 CLI 模式, 它经 `Agent` 工具的 `kind: "teammate"` 在同一进程内派生。
+:::
 
 `-h` / `--help`、`-v` / `--version` 和 `yukino update [--tag <tag>]` 是维护命令, 不加载运行时。agent team 的 teammate 不是独立的 CLI 模式: 它经 `Agent` 工具的 `kind: "teammate"` (也是默认值) 在同一进程内派生, 没有 `--teammate` 旗标, 见 [agent-team](./agent-team)。
 

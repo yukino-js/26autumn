@@ -1,5 +1,5 @@
 ---
-title: "Yukino Agent"
+title: "Yukino Dev Agent"
 description: "OnCall 视角入门: 技术栈与双档模型、RAG 建库与在线问答、Milvus 混合检索流程、ReAct 对话 Agent、Plan-Execute-Replan 运维 Agent 与报告护栏、Tool/MCP、A2UI、知识库管理与自监控"
 local_path: "$HOME/github/yukino-dev-agent"
 local_commit: "83f7d68cc4a08084f00a4811f9702c71b4aafd81"
@@ -10,7 +10,9 @@ yukino-dev-agent 是一个 AI 智能运维 (OnCall) 助手, 把两个产品面�
 - **OnCall** (`/`): 基于 RAG 的运维问答, LLM 生成 A2UI 交互界面, LangGraph Plan-Execute-Replan 运维 Agent 把 Prometheus / Alertmanager 告警转成排查报告
 - **DevFlow** (`/dev-flow`): GitHub 工程副驾, 见 [DevFlow](./dev-flow)
 
+:::warning 管理面写操作一律 fail-closed
 两个面都公开、无登录. 正因为无登录, 所有管理面写操作 (知识库重索引/删除、自定义提示词、技能、MCP 连接) 一律由 `ONCALL_ADMIN_TOKEN` 门控 (`lib/ai/admin.ts` 的 `requireOncallAdmin`): Bearer token 或 `x-admin-token` 请求头, 常量时间比较, token 未配置时直接拒绝 (fail-closed). 代码仓库 `~/github/yukino-dev-agent`.
+:::
 
 ## 技术栈
 
@@ -81,6 +83,15 @@ OnCall 的知识库由 `FILE_DIR` (默认 `./data/docs`) 支撑:
 3. **重排**: 拼接问题和召回的 chunk 原文, 输入 rerank 模型 (cross-encoder 交叉编码), 输出相关性得分, 取最相关的 topK
 4. **精排** (optional): 把命中的参考资料拼进提示词
 
+```mermaid
+flowchart LR
+    Q[用户问题] --> E[embedding: query 向量]
+    E --> R[召回: 向量库相似度 topK]
+    R --> RR[重排: cross-encoder 相关性得分]
+    RR --> F[精排 optional: 拼进提示词]
+    F --> A[LLM 生成答案]
+```
+
 ```md
 请根据以下参考资料回答用户问题
 
@@ -108,11 +119,15 @@ collection 的字段还有 `id` (主键)、`source` (来源, 最长 512)、`meta
 4. **精排 (optional)**: 设置了 `RERANK_API_KEY` 时用阿里云 DashScope text-rerank 接口重排 (`lib/ai/rerank.ts`, 默认 `qwen3-vl-rerank`, 超时 10s, 429/5xx 指数退避重试 2 次), 失败则退化为融合顺序
 5. **截断**: 取 topK (`DEFAULT_TOP_K = 5`)
 
+:::info 来源隔离: OnCall 与 DevFlow 知识互不可见
+未带 `filter` 的调用是 OnCall 视角, 融合后剔除 `dev_flow:` 前缀的来源, DevFlow 的仓库知识不会泄漏进 OnCall 答案; 需要定向检索的调用方显式传 `filter`.
+:::
+
 每条结果带 `stages` (vector / BM25 / rerank 三阶段的排名和分数), 一路传到前端引用芯片上. RRF 分数只反映排名 (向量余弦 `[-1,1]` 和 BM25 分数量纲不同, 只有排名可比), 需要绝对分数阈值时用仅 COSINE 的 `retrieveDense()`; `retrieveRaw()` 支持 `hybrid` / `dense` / `bm25` 三种方式裸查, 供知识库检索测试使用.
 
 ## 对话 Agent (ReAct)
 
-ReAct: Reasoning -> Acting -> Observation, 模型边推理边调用工具, 观察工具结果后继续.
+<u>ReAct</u>: Reasoning -> Acting -> Observation, 模型边推理边调用工具, 观察工具结果后继续.
 
 对话管线在 `lib/ai/pipelines/chat.ts`: 系统提示词注入当前日期、RAG 召回的文档、技能目录 (`getSkillCatalogPrompt`)、管理员配置的自定义提示 (`ChatPrompt` 表) 和滚动对话摘要, 用 `quickModel` + `streamText` 流式输出, 工具循环上限 `isStepCount(25)`. `chatStream()` 产出 `ChatStreamEvent` (`text` / `a2ui` / `notice` / `references` / `reasoning` / `tool`), `POST /api/chat_stream` 以 SSE 逐帧推给前端 (事件名 `connected` / `message` / `a2ui` / `references` / `reasoning` / `tool` / `done` / `error`); 非流式的 `chat()` 由 `POST /api/chat` 提供. `references` 携带知识库来源 (标题/来源/分数/摘要/`knowledgeType`) 和各检索阶段排名, 在回复下方渲染成引用芯片.
 
@@ -123,7 +138,7 @@ ReAct: Reasoning -> Acting -> Observation, 模型边推理边调用工具, 观�
 
 ## 运维 Agent (Plan-Execute-Replan)
 
-Plan-Execute-Replan 是一种多 Agent 协作的任务执行模式, 核心是先拆分步骤, 再按计划执行, 动态调整.
+<u>Plan-Execute-Replan</u> 是一种多 Agent 协作的任务执行模式, 核心是先拆分步骤, 再按计划执行, 动态调整.
 
 | 角色       | 对应节点    | 做什么                             |
 | ---------- | ----------- | ---------------------------------- |
@@ -136,6 +151,18 @@ Plan-Execute-Replan 是一种多 Agent 协作的任务执行模式, 核心是先
 - **Planner**: thinkModel + 结构化输出 (`planSchema`) 生成 `{ steps: string[] }`; 空计划直接走 `exhausted`
 - **Executor**: 每次节点运行执行一步, 把步骤文本直接作为 prompt, 带全部工具调 quickModel (`stopWhen: isStepCount(10)`); 护栏: 步骤文本引用了未被发现的工具名时, 该步标记 `[skipped]` 并列出当前可用工具, 不做幻觉调用
 - **Replanner**: 整轮步骤跑完后介入, thinkModel + `replanSchema` 输出 `{ done, remaining, summary }` — `done` 为真则进入 `uiify` 收尾; 否则 `remaining` 成为新计划、`stepIndex` 归零继续执行; `iteration` 达到 `MAX_ITERATIONS = 20` 或剩余计划为空则走 `exhausted`. `RECURSION_LIMIT = 525` (20 * 25 + 25) 只是 LangGraph 层面的安全网, 真正的循环闸门是迭代预算
+
+```mermaid
+flowchart TD
+    Start([目标 / 告警]) --> Planner[planner: 拆解为 steps]
+    Planner -->|空计划| Exhausted([exhausted])
+    Planner --> Executor[executor: 执行一步]
+    Executor --> Replanner[replanner: 审查整轮]
+    Replanner -->|done = true| Uiify[uiify: 校验 / 回退 / A2UI]
+    Replanner -->|done = false| Executor
+    Replanner -->|iteration >= MAX_ITERATIONS 或 剩余为空| Exhausted
+    Uiify --> End([最终报告])
+```
 
 节点通过 `getWriter()` 往 `custom` stream 发布 `PlanExecuteEvent` (`plan_created` / `step_start` / `step_done` / `replan` / `done` / `error`, zod 判别联合), `index.ts` 的 `runPlanExecuteReplan()` 对每一帧再做一次 schema 校验后才 yield, 非法帧被丢弃.
 
@@ -217,7 +244,9 @@ A2UI 是声明式的模型生成 UI 协议, 协议本身的机制见 [A2UI](../a
 - 组件目录 `catalog/` 注册 18 个基础组件 + 47 个 shadcn 扩展组件 (合计 65 个, 与 `lib/a2ui/prompt/schemas/catalog.json` 的 prompt 侧 schema 一一对应), 另有 25 个内置函数 (`required` / `regex` / `formatNumber` / `openUrl` 等); `/gallery` 页面无后端预览全部组件
 - 组件 action 由前端携带 `{ name, surfaceId, sourceComponentId, context }` 和当前界面消息一起 `POST /api/a2ui_action`; 服务端用 quickModel 带工具 (`isStepCount(10)`) 处理后, 只返回针对该 surface 的原地 `updateComponents` / `updateDataModel` 消息, 前端追加渲染
 
+:::danger A2UI 与应用的 zod 版本红线
 红线: `@a2ui/web_core` 自带 zod v3, 不能把它的 schema 组合进应用的 `zod/v4` combinator; 应用边界一律用 `unknown[]` 承载 A2UI payload, 按 payload 直接调用 web_core 的 schema 校验.
+:::
 
 ## 知识库管理与反馈
 
@@ -230,7 +259,9 @@ A2UI 是声明式的模型生成 UI 协议, 协议本身的机制见 [A2UI](../a
 - **Langfuse** (`lib/observability.ts`): OTEL `NodeSDK` + `LangfuseSpanProcessor`, 从 `instrumentation.ts` 启动; 仅当 `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` + `LANGFUSE_BASE_URL` 都配置时启用, 否则全部降级为 no-op. 运维图运行时挂 `CallbackHandler` trace (tags `ai-ops`), 每次 AI SDK 调用经 `observeGeneration()` 记成 generation
 - **自监控**: `prom-client` 注册表 (`lib/metrics.ts`, 缓存在 `globalThis`) 由 `POST /api/log` (yukino-sentry 浏览器 SDK 上报批次) 喂数据, `GET /api/metrics` 暴露给 Prometheus; 覆盖除录屏 (ScreenRecord) 外的所有上报类型 (HTTP / 错误 / 资源 / Web Vitals / 导航与资源 timing / 长任务 / 内存 / 点击 / 曝光 / 白屏 / PV / 自定义事件), 加上 prom-client 默认缺的 Node/V8 指标 (进程与 V8 堆内存、堆使用率、detached context、event loop utilization 等); 浏览器标签值每个维度上限 50 种, 溢出归并为 `other`
 - 告警规则在 `prometheus.rules.yml`; 告警名是契约, 每条规则都要在 `data/docs/alert-handling-guide.md` 有对应标题 (运维 Agent 按告警名解析 runbook)
-- 改 `lib/metrics.ts` 的指标集必须 bump `METRICS_VERSION` 并重启 dev server, 否则 `globalThis` 里的旧注册表会让新增指标的 `.inc()` 抛 TypeError
+  :::warning 改指标集必须 bump 版本并重启 dev server
+  改 `lib/metrics.ts` 的指标集必须 bump `METRICS_VERSION` 并重启 dev server, 否则 `globalThis` 里的旧注册表会让新增指标的 `.inc()` 抛 TypeError.
+  :::
 
 ## 配置与启动
 

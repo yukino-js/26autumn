@@ -38,7 +38,7 @@ prompt 先经过与交互模式同一套的命令解析器 `parseCommand()` (以
 - `/goal ...`: 交给 `GoalManager` 本地处理, 支持 status (缺省)、clear、pause、complete、resume、continue、`replace <objective>` 和 `--budget <tokens>` 设置目标。纯查询/状态操作不启动 LLM: 打印状态消息后直接退出 (出错时退出码 1); set 与 resume/continue 会生成续跑 prompt, 继续走正常的 agent run。stream-json 下先输出一行 `{ "type": "goal", "message": ..., "goal": ... }` 事件
 - `/ultracode <task>`: prompt 被替换为内置的 ULTRACODE_PROMPT 加 `Task: <args>`, 引导主 agent 用 Workflow 工具编排多 agent (见 [workflow](./workflow))
 - 命名 workflow: 命令名命中 `<cwd>/.yukino/workflows/` 下的 `.ts` / `.js` / `.mjs` 脚本时, prompt 被替换为「调用 Workflow 工具执行该命名 workflow」的引导语, 用户参数原样附带
-- `/workflows [list|stop <run_id>|resume <run_id>|<run_id>]`: 完全不调 LLM, 由 `WorkflowService.command()` 直接列出、查询、停止或恢复 workflow run; text 模式打印返回消息, stream-json 把消息放进最终 result 行
+- `/workflows [list|stop <run_id>|resume <run_id>|<run_id>]`: 完全不调 LLM, 由 `attachWorkflow()` 返回的 `WorkflowService.command()` (src/workflow/service.ts) 直接列出、查询、停止或恢复 workflow run; text 模式打印返回消息, stream-json 把消息放进最终 result 行
 
 其余输入 (包括 `/help` 这类 print 模式不认识、或交互模式才有的命令) 不做拦截, 原样作为普通 prompt 交给模型
 
@@ -53,6 +53,10 @@ prompt 先经过与交互模式同一套的命令解析器 `parseCommand()` (以
 - 支持持久目标: `GoalManager` 挂在本次 sessionId 上, 单次非交互执行内 active 的目标会自动续跑, 直到 complete / blocked / 预算耗尽或 150 轮上限 (见 [goal](./goal))
 - 遥测正常初始化, mode 为 `print`
 
+:::warning
+print 模式固定 `bypassPermissions`, **有意绕过所有权限提示**; 只应在可信的 prompt 上运行 —— CI 里跑不可信输入等于任意代码执行。
+:::
+
 ## 工具集
 
 基座是 `createToolRegistry(taskList, { interactionMode: "non-interactive", teamManager })` 的 17 个内置工具: Goal、TodoWrite、TaskOutput、Bash、PowerShell、ComputerUse、EditFile、EnterWorktree、ExitPlanMode、ExitWorktree、ReadFile、ToolSearch、McpCall、WriteFile、Glob、Grep、WebFetch。与交互注册的唯一差别是 EnterPlanMode 不注册 —— 计划模式需要用户审批出口, 非交互场景没有意义
@@ -61,7 +65,7 @@ prompt 先经过与交互模式同一套的命令解析器 `parseCommand()` (以
 
 - 团队工具: TeamCreate、SendMessage、TeamDelete、TeamList、TaskStop。单次非交互执行内 leader 仍然可以组建 team 委派任务 (见 [agent-team](./agent-team)); 团队不从磁盘恢复 —— print 模式只管理自己创建的 team 运行时, 避免退出清理时误杀交互会话留下的外部 teammate
 - SyntheticOutput: 结构化交付通道 (见下文)
-- Agent: subagent 委派工具, fork 缺省 true (复制父对话快照), teammate 路径纯前台运行 (见 [subagent](./subagent))
+- Agent: subagent 委派工具, 其 `fork` 参数缺省 true (AgentTool schema 中 `default: true`, 复制父对话快照); teammate 路径经 `teamRunAgentFactory` 传 `backgroundTasks: false`, 纯前台运行 (见 [subagent](./subagent))
 - Workflow: `attachWorkflow()` 注册的编排工具, 与后台 TaskManager 共享
 - 传入 teamManager 时 TodoWrite 实际是 TeamTodoWriteTool (工具名不变), 任务板与团队共享 (见 [task-tracking](./task-tracking))
 
@@ -113,7 +117,7 @@ Agent 循环封装: run() 是一个 AsyncGenerator...
 { "type": "task_notification", "notification": "<task-notification ...>" }
 ```
 
-`thinking_complete` 与 `permission_request` 事件不输出 (前者含签名细节, 后者在 bypassPermissions 下没有消费方)。
+`emitStreamJson` 的 `default` 分支丢弃所有未列举事件 —— 包括 `thinking_complete` (含签名细节) 与 `permission_request` (bypassPermissions 下没有消费方), 以及其它内部事件。
 
 结束时的最后一行永远是汇总:
 
@@ -142,6 +146,14 @@ Agent 循环封装: run() 是一个 AsyncGenerator...
 - 信号处理: SIGINT 置退出码 130, SIGTERM 置 143, 同时 abort 主循环并停掉所有在跑的后台任务; 监听器在 finally 里移除, 不泄漏到宿主进程
 - 退出码: 正常结束 0; `error` 事件或 `loop_complete` 的 stopReason 为 interrupted 且非本次 abort 引起时置 1; 信号终止为 130/143
 - finally 清理顺序: 停后台任务 (`stopAll`) 与团队 (`teamManager.dispose()`, 内部 stopAll 所有 team) 并行 → 释放工具注册表 (`registry.dispose()`) → 断开 MCP 子进程 (`disconnectAll`)。清理失败被吞掉, 不掩盖执行本身的错误、不改变已打印的结果; 会话文件与产物目录保留
+
+```mermaid
+flowchart TD
+  A["finally 清理"] --> B["并行: stopAll 后台任务 + teamManager.dispose()"]
+  B --> C["registry.dispose() 释放工具注册表"]
+  C --> D["disconnectAll 断开 MCP 子进程"]
+  D --> E["会话文件与产物目录保留"]
+```
 
 ## 结构化交付: SyntheticOutput
 

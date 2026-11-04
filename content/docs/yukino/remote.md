@@ -30,25 +30,23 @@ src/websocket-security.ts:
 - 每个 `RemoteServer` 实例构造时生成一次性访问 token: `randomBytes(32)` 编码为 base64url; 升级请求必须在 `?token=` 查询参数里携带, 用 `timingSafeEqual` 做时序安全比较, 不匹配返回 401
 - 升级路径必须是 `/ws` (否则 404); `Origin` 头存在时必须与 `Host` 同源且协议为 `http:`, 防浏览器跨站 WebSocket 劫持, 违反返回 403; 不带 Origin 的非浏览器客户端不受此限
 - token 只经 stderr/URL fragment 本地分发: 前端从 `location.hash` 读出后存入 `sessionStorage` 并把 fragment 从地址栏抹掉, 之后连接 `ws(s)://<host>/ws?token=...`; 页面收到新的 `#token=...` 导航 (服务器重启换新 token) 会自动采纳并重连
-- HTTP 层没有任何账号体系, 暴露到公网必须自己套反向代理 + 认证
+  :::warning
+  HTTP 层**没有任何账号体系**, 暴露到公网必须自己套反向代理 + 认证。
+  :::
 
 ## 架构
 
-```txt
-浏览器 (React 前端)
-   |  WebSocket (JSON 帧, 双向 zod 校验)
-   v
-RemoteServer (Express + ws)
-   |  bridgeEvent: AgentEvent -> WS 消息
-   v
-RemoteAgentHandle (封装全部 agent 状态)
-   ├── LLMClient (模型 / provider 运行时可切换)
-   ├── ToolRegistry (18 个基础工具 + LoadSkill + teams + Agent + Workflow + MCP)
-   ├── ConversationManager + 会话持久化 (session JSONL)
-   ├── FileHistory (rewind 快照) + TaskList (共享任务板)
-   ├── PermissionChecker (权限请求转发到浏览器)
-   ├── HookEngine / SkillCatalog / MemoryManager (后台提取 + 整理)
-   └── TeamManager + TaskManager (teammate 与后台任务)
+```mermaid
+graph TD
+  B["浏览器 (React 前端)"] -->|WebSocket JSON 帧, 双向 zod 校验| RS["RemoteServer (Express + ws)"]
+  RS -->|bridgeEvent: AgentEvent to WS| RA["RemoteAgentHandle (封装全部 agent 状态)"]
+  RA --> LLM["LLMClient (模型/provider 运行时可切换)"]
+  RA --> TR["ToolRegistry (18 基础工具 + LoadSkill + teams + Agent + Workflow + MCP)"]
+  RA --> CM["ConversationManager + 会话持久化 (session JSONL)"]
+  RA --> FH["FileHistory (rewind 快照) + TaskList (共享任务板)"]
+  RA --> PC["PermissionChecker (权限请求转发浏览器)"]
+  RA --> HM["HookEngine / SkillCatalog / MemoryManager"]
+  RA --> TM["TeamManager + TaskManager (teammate 与后台任务)"]
 ```
 
 - agent 装配有懒创建兜底: `run()` 启动时先尝试 `createRemoteAgent`, 失败 (例如 provider 未配置) 只记一条警告, 推迟到第一条消息经 `ensureAgent()` 重试, 初始化去重靠共享的 init Promise, 失败会给所有客户端广播 `error`
@@ -134,3 +132,18 @@ hooks: use-web-socket (连接与重连)、use-chat (消息 reducer, `ChatItem` �
 2. 停掉心跳/teammate 轮询/空闲唤醒三个定时器并中止在途的 model-list 请求, 关闭所有 WS 客户端, 依次关闭 WebSocketServer 与 HTTP 服务器
 3. 等待 `RemoteAgentHandle` 处置完成: 停后台记忆任务、杀掉 detached 的后台 shell 和 teammate 进程、断开 MCP 子进程、处置工具注册表与 OS sandbox
 4. 解除 `run()` 的阻塞, 记录真实退出码, 等遥测 flush 完成后以该退出码结束进程
+
+```mermaid
+sequenceDiagram
+  participant Sig as SIGINT/SIGTERM
+  participant RS as RemoteServer.stop()
+  participant WS as WS 客户端/服务器
+  participant RA as RemoteAgentHandle
+  Sig->>RS: 触发优雅关闭
+  RS->>RS: 置 stopping, cancelActiveRun, 清 followups
+  RS->>WS: 停定时器, 关闭 WS + HTTP
+  RS->>RA: 等待处置
+  RA->>RA: 停记忆任务, 杀 shell/teammate, 断 MCP
+  RA-->>RS: 处置完成
+  RS->>RS: 记录退出码, 等遥测 flush
+```

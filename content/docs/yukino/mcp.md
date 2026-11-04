@@ -80,7 +80,7 @@ tools/list 返回的工具定义形如:
 
 ### 完整会话 (以 stdio 为例)
 
-1. 初始化握手: MCPClient 启动子进程后发送 `initialize` 请求, 声明协议版本、能力和身份信息 (clientInfo 为 `{ name: "yukino", version }`, version 是 Yukino 自身版本); Server 响应自己的版本、能力和 instructions。SDK 当前支持的最新协议版本是 `2025-11-25`
+1. 初始化握手: MCPClient 启动子进程后发送 `initialize` 请求, 声明协议版本、能力和身份信息 (clientInfo 为 `{ name: "yukino", version }`, version 是 Yukino 自身版本); Server 响应自己的版本、能力和 instructions。协议原语来自 `@modelcontextprotocol/sdk` (package.json 声明 `^1.32.1`, 本机安装 1.32.2), 其 `LATEST_PROTOCOL_VERSION` 是 `2025-11-25`, `SUPPORTED_PROTOCOL_VERSIONS` 还含 `2025-06-18` / `2025-03-26` / `2024-11-05` / `2024-10-07`
 2. Client 发送 `notifications/initialized` 通知
 3. Client 发送 `tools/list` 请求, 拉取全部工具定义并注册进 ToolRegistry, LLM 下一轮即可见
 4. LLM 决定调用时, Client 发送 `tools/call`, 可重复 N 次
@@ -101,7 +101,7 @@ type MCPTransport =
 - 配置了 `command` 时启用: Client 将 Server 作为子进程启动, 通过 stdin/stdout 管道通信; 不需要监听端口、服务发现或身份认证
 - env 合并: `{ ...process.env }` 再叠加配置的 `env` (同名覆盖), undefined 值补空串
 - stderr 配置为 `"ignore"`: Yukino 直接丢弃子进程的 stderr, 不参与协议
-- 消息是按换行符分隔的 UTF-8 JSON-RPC: 写端 `JSON.stringify(message) + '\n'`, 读端按 `\n` 切分
+- 消息是按换行符分隔的 UTF-8 JSON-RPC: 写端 `JSON.stringify(message) + '\n'`, 读端按 `\n` 切分 (由 SDK 的 StdioClientTransport 实现, Yukino 只负责构造 transport 参数)
 - 退出清理: process.exit / 未捕获异常路径不会 await 异步断开, stdio 子进程会变成孤儿; 因此连接建立时向 exit-cleanup 注册一个同步钩子, 直接 SIGKILL 子进程 PID, 正常 disconnect 时解绑
 
 ### streamable http (url 默认)
@@ -259,7 +259,7 @@ MCPToolWrapper (src/mcp/tool-wrapper.ts) 把 MCPTool 适配成 Yukino 内部的 
 
 权限规则形如 `Tool(pattern)`: 括号左侧的工具名做精确匹配 (或全局 `*`), 括号内的 pattern 对该工具的 "匹配内容" 做 glob (`*` 匹配任意字符、`?` 匹配单字符)。两种调用路径的匹配内容不同:
 
-- dispatch 模式经 McpCall 调用: 工具名固定是 `McpCall`, 匹配内容由 mcpCallPermissionContent 规范化为 `server__tool` (不带 `mcp__` 前缀)。模型无论传短名还是全名, 都得到一致内容, 因此规则 `McpCall(linear__*)` 可按 server 放行/拒绝整组工具, `McpCall(linear__create_issue)` 精确到单个工具
+- dispatch 模式经 McpCall 调用: 工具名固定是 `McpCall`, 匹配内容由 `mcpCallPermissionContent` (src/tools/mcp-call.ts, 权限层在 src/permissions/index.ts 调用) 规范化为 `server__tool` (MCP_NAME_SEP = `__`, 不带 `mcp__` 前缀); 全名直接去掉 `mcp__` 前缀, 短名则对 server / tool 两段各做 sanitizeSegment, 两种写法结果一致。因此规则 `McpCall(linear__*)` 可按 server 放行/拒绝整组工具, `McpCall(linear__create_issue)` 精确到单个工具
 - eager / native 模式模型按全名 `mcp__server__tool` 直接调用: 此时工具名就是全名, 匹配内容为空, 规则要写完整工具名 (如 `mcp__github__search_issues()`)。工具名段是精确匹配, 不能用 `mcp__github__*` 这种前缀通配
 - agent loop 执行 McpCall 时做双重检查: 先查 McpCall 本体 (内容 `server__tool`), 再查解析出的目标工具 (内层参数一并传入); pre-tool hooks 和权限 checker 都跑两遍, 任一 deny 即拒绝。特例: 若外层 McpCall 命中规则 allow, 而内层目标工具只是模式级 ask (reason 以 Mode: 开头), 则内层沿用外层的 allow, 避免重复询问
 - 规则语法与决策层次见 [permission](./permission)
@@ -345,7 +345,7 @@ McpCall (src/tools/mcp-call.ts) 是 dispatch 模式的唯一调用通道, schema
 MCP Server 可以在 initialize 响应中携带 instructions (使用说明), 这是模型无法从工具 schema 推断的指引, 必须进入对话。Yukino 以增量方式公告 (src/mcp/instructions.ts):
 
 - 不进 system prompt: MCP 连接晚于首轮请求, 动 system prompt 会破坏整段缓存前缀; 公告走 system-reminder
-- marker 是 `# MCP Server Instructions`; syncMcpInstructions 计算增量: 新增 = 已连接且未公告的 server (按名称排序), 撤回 = 已公告但不再连接的 server; 无增量则不发任何消息
+- marker 是 `MCP_INSTRUCTIONS_MARKER = "# MCP Server Instructions"`; `syncMcpInstructions` 计算增量: 新增 = 已连接且未公告的 server (按 serverName 排序), 撤回 = 已公告但不再连接的 server (排序); 无增量则不发任何消息。消息由 `formatMcpInstructionsDelta` 拼装: 有新增时才带 marker 标题与 `## <serverName>\n<instructions>` 分块, 纯撤回消息不带该标题, 只列出断开的 server 名
 - 历史是公告状态的唯一事实来源: `/clear`、`/resume`、上下文压缩都会丢掉 reminder, marker 一旦从历史中消失就清空已公告集合并全量重发
 - retractMcpInstructions 用空连接源调用 sync, 用于 `/mcp reload` 重建连接前撤回旧公告
 

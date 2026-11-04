@@ -46,6 +46,17 @@ InputBox (src/ui/input.tsx) 是主输入:
 - 占位符按整体移动/删除 (`inputBoundary` 让光标和退格跳过整个标记), 提交时 `expandPastes` 一次还原, 标记内部的类标记文本不会被二次展开
 - **补全菜单**: 单行 `/` 开头弹出 slash 命令菜单 —— 先精确、再前缀、再 Fuse.js 模糊; 空查询把最近使用的 5 个命令排在 RECENTLY USED 区; 输入行尾部显示 ghost 补全文本; `/think`/`/thinking` 后接 thinking 级别候选。`@` 弹出文件菜单 (`scanCwdFiles` 扫描 cwd 相对路径, 跳过隐藏文件和依赖目录; 结果缓存 30 s, 文件写入或 agent 轮次结束通过 fileFactsVersion 立即失效), 对光标所在行的 `@` 前缀匹配。slash 菜单只在单行时出现; `@` 菜单在 `/` 开头和 `!`/`!!` 输入下禁用
 - **提交路由** (src/ui/app.tsx): `!`/`!!` 前缀先走用户 Bash (不经模型); `/` 走 [slash-command](./slash-command); 模型流式期间的普通文本 steering 进运行中的轮次 (在下一个轮次边界注入, status 区显示 `Steering:` 行), 其余情况进 follow-up 队列, 空闲时按序发送 (显示 `Follow-up:` 行); 空输入按 ↑ 把最近一条队列消息弹回编辑器
+
+```mermaid
+flowchart TD
+  A["用户提交输入"] --> B{"前缀?"}
+  B -->|"! / !!"| C["用户 Bash (不经模型)"]
+  B -->|"/"| D["slash command 分派"]
+  B -->|"普通文本"| E{"模型流式期间?"}
+  E -->|是| F["steering, 下一轮边界注入"]
+  E -->|否| G["follow-up 队列, 空闲时发送"]
+```
+
 - 草稿由 InteractionDock 的 `draftRef` 持有: 权限对话框、Agents 列表等接管输入位时 InputBox 卸载, 未发送的文本、光标和粘贴占位符原样保留
 
 ## 快捷键
@@ -69,6 +80,10 @@ InputBox (src/ui/input.tsx) 是主输入:
 ## 用户 Bash: ! 和 !!
 
 主输入以 `!` 或 `!!` 开头时直接执行 Bash, 不经模型: 命令由用户显式输入, 不受 agent 权限模式 (含 plan) 约束 ([permission](./permission)); 已开启的 OS [sandbox](./sandbox) 仍然生效, 沙箱不可用时命令失败关闭、不执行。解析和执行逻辑与 remote server 共享 (src/conversation/user-bash.ts):
+
+:::warning
+用户 Bash (`!` / `!!`) 不经模型、**不受权限模式 (含 plan) 约束**; 已开启的 OS 沙箱仍然生效, 沙箱不可用时命令直接失败、不执行。
+:::
 
 - `! git status`: 命令和结果**进入**下一次模型上下文 (以 `User executed Bash (<status>):` + 命令 + 输出的形式)
 - `!! pnpm test`: **不进入**模型上下文, 重建上下文时也被排除; 卡片进度行分别标注 `User command · included/excluded in next model context`

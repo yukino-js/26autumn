@@ -34,11 +34,11 @@ AI 生成应用的实现路线大致分三代。第一代是模板与低代码�
 - **服务端跑的是一个完整的编码 Agent**, 拥有真实文件读写与命令执行工具(`ReadFile`/`WriteFile`/`EditFile`/`Glob`/`Grep`/`Bash`), 把项目真实写入服务器磁盘, 而不是在内存里拼字符串;
 - **构建与预览同样收在服务器侧**: 依赖安装与生产构建在 Yukino OS 沙箱(Linux bubblewrap / macOS seatbelt)包裹的子进程里执行, 产物 `dist` 以能力 URL 的形式经独立静态监听器发布, 浏览器只渲染不构建。
 
-前者决定了生成物能达到工程化项目的复杂度, 后者决定了预览的安全模型与部署要求。浏览器不再持有文件的可写副本, 文件权威只有服务器磁盘一处(见第五节)。
+前者决定了生成物能达到工程化项目的复杂度, 后者决定了预览的安全模型与部署要求。浏览器不持有文件的可写副本, 文件权威只有服务器磁盘一处(见第五节)。
 
 ### 1.3 适用场景与形态边界
 
-平台适合的需求形态是"从零到可交互原型"与"中小型 Web 应用的一次性生成": 落地页、表单与看板、数据展示类前端、带简单后端的 demo。它不适合需要长期演化、有严格合规要求、或依赖专有二进制与内核态能力的产品。预览链路钉在 npm 生态上: 服务器侧固定执行 `npm install` 与 `npm run build -- --base=./`, 要求工程提供产出 `dist/index.html` 的 Vite 兼容构建脚本, 一键修复的提示词也明确针对 React 应用(见 6.3); 超出这个形态的工程, 预览与修复回路不再适用。预览只使用完成的构建, 没有 dev server 与热更新。
+平台适合的需求形态是"从零到可交互原型"与"中小型 Web 应用的一次性生成": 落地页、表单与看板、数据展示类前端、带简单后端的 demo。它不适合需要长期演化、有严格合规要求、或依赖专有二进制与内核态能力的产品。预览链路钉在 npm 生态上: 服务器侧固定执行 `npm install` 与 `npm run build -- --base=./`, 要求工程提供产出 `dist/index.html` 的 Vite 兼容构建脚本, 一键修复的提示词也明确针对 React 应用(见 6.3); 超出这个形态的工程, 预览与修复回路不适用。预览只使用完成的构建, 没有 dev server 与热更新。
 
 设计取舍上, 平台选择了"生成即预览、构建集中在服务器"而不是"浏览器分散算力"。服务器磁盘上的项目目录是权威数据与唯一构建场地; 浏览器侧没有任何可执行副本, 预览 iframe 只加载已发布的静态快照, 能力 URL 随工作区回收而失效。这条取舍贯穿后文的构建、发布与快照设计。
 
@@ -204,7 +204,7 @@ WebSocket 的 `run` 消息统一进入 `submit()`, 由它按运行时状态分�
 
 Agent 实时协议走 `GET /app/:appId/agent/ws`(WebSocket 升级)。连接按访问权限分级: owner 与管理员是**可写**连接(能 run/abort/应答交互/发命令), 其他已登录用户是**只读**连接(只能收事件与回放)。只读连接发起 `run` 或应答交互时, 服务器返回结构化的 `read_only` 错误而非静默忽略。鉴权失败的连接在 `onOpen` 时直接以 1008 关闭。每个工作区还有连接数上限 `AGENT_MAX_CONNECTIONS_PER_WORKSPACE`(默认 8), 超限的连接以 1013(服务过载)关闭。
 
-协议保留 `runtime_action`(start/stop/restart/install)帧, 服务器一律显式拒绝(错误文案仍为"Preview runtime is controlled by the client, not the server"); 现行客户端已不再发送这类帧——预览构建的触发入口在 REST(见第五节)。
+协议保留 `runtime_action`(start/stop/restart/install)帧, 服务器一律显式拒绝(错误文案为"Preview runtime is controlled by the client, not the server"); 预览构建的触发入口在 REST(见第五节)。
 
 ### 4.2 心跳与重连
 
@@ -295,7 +295,7 @@ Agent 实时协议走 `GET /app/:appId/agent/ws`(WebSocket 升级)。连接按�
 
 `usePreviewController` 把预览生命周期收敛成一个 hook: 进入页面、Agent 轮次结束(`agentRunning` 由 true 翻 false)、`files_changed` 帧(git 快照后的 revision 变化)与用户点击 Rebuild 都会触发重建; 构建期间每 750 毫秒轮询 `GET` 状态刷新进度与日志; Agent 运行中或构建进行中收到的新请求记为 pending, 等当前构建结束后重放, 不会并发两个构建。构建失败时错误与 ANSI 日志显示在面板里, 同时保留上一次成功的预览 URL; 预览 URL 带 `?v=<revision>` 破缓存参数, iframe 以 `sandbox` 属性(allow-scripts allow-same-origin allow-forms allow-popups allow-modals)加载。
 
-状态文案与状态机一一对应(installing → "Installing dependencies on the server...", building → "Building the app on the server...", ready → "Previewing the latest successful build.")。浏览器侧不再有文件树、代码编辑器与终端——源码修改只经 Agent, 预览是唯一的渲染面; 聊天页整屏只分两栏: 左侧 Agent 对话, 右侧实时预览。
+状态文案与状态机一一对应(installing → "Installing dependencies on the server...", building → "Building the app on the server...", ready → "Previewing the latest successful build.")。浏览器侧以预览为唯一渲染面, 源码修改只经 Agent; 聊天页整屏只分两栏: 左侧 Agent 对话, 右侧实时预览。
 
 ## 六、与 Yukino 编码 Agent 的集成
 
@@ -331,7 +331,7 @@ Agent 实时协议走 `GET /app/:appId/agent/ws`(WebSocket 升级)。连接按�
 闭环的"报错 → 修复"一段有两条回传路径, 都复用 `run` 通道:
 
 - **预览运行时错误**: 构建 HTML 里注入的桥脚本把 iframe 中的错误经 `postMessage` 转发出来。前端 `usePreviewErrors` 监听窗口消息, 校验 `event.source` 与 `event.origin` 后用 zod 判别三种类型(`PREVIEW_UNCAUGHT_EXCEPTION`/`PREVIEW_UNHANDLED_REJECTION`/`PREVIEW_CONSOLE_ERROR`), 归一成 `{ message, stack? }`, 既显示在预览错误面板, 也经 `reportRuntimeIssue` 上报观测;
-- **构建失败**: 编译错误不再出现在预览 iframe 里, 而是直接表现为构建失败——状态为 `failed` 时错误文本与构建日志被归一成一条 `PreviewRuntimeError`, 与运行时错误共用同一个错误面板;
+- **构建失败**: 编译错误直接表现为构建失败——状态为 `failed` 时错误文本与构建日志被归一成一条 `PreviewRuntimeError`, 与运行时错误共用同一个错误面板;
 - **一键修复**: `buildPreviewFixPrompt` 把错误拼成一段固定提示词("Fix the generated React app error below. Inspect the current project, make the smallest correct change, and keep all unrelated behavior intact.", 后接 Error 与 Stack), 作为 `previewError` 随 `run` 发给 Agent, 在 2.3 第 4 步被包进 `<preview-error>` 块。
 
 这样"生成 → 服务器构建 → 静态预览运行 → 报错 → 回传 → Agent 修复 → 再构建"形成完整回路。
@@ -370,7 +370,7 @@ MCP 服务器的 `headers` 与 `env` 以 AES-256-GCM 对称加密落库: 密钥�
 
 ### 7.3 文件路径安全
 
-文件 REST API 已随在线 IDE 一并移除, 浏览器不再有任何直接写服务器文件的通道; 文件维度的攻击面收敛到静态预览服务(见 5.3): 路径穿越(`..`、绝对路径、反斜杠、NUL)、符号链接逃逸(解析前后双重 realpath 包含校验)、越权读取他人产物(随机能力 token 加按工作区隔离)与构建发布时的 `dist/index.html` 逃逸检查。Agent 自身的文件工具仍受引擎的路径沙箱约束(见 [yukino-code](../docs/yukino/yukino-code))。
+浏览器没有任何直接写服务器文件的通道; 文件维度的攻击面收敛到静态预览服务(见 5.3): 路径穿越(`..`、绝对路径、反斜杠、NUL)、符号链接逃逸(解析前后双重 realpath 包含校验)、越权读取他人产物(随机能力 token 加按工作区隔离)与构建发布时的 `dist/index.html` 逃逸检查。Agent 自身的文件工具仍受引擎的路径沙箱约束(见 [yukino-code](../docs/yukino/yukino-code))。
 
 ### 7.4 配置 fail-fast 与传输防护
 
@@ -416,13 +416,13 @@ Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked`(g
 
 ## 九、适用场景与边界
 
-**适合**: 在既有产品里加入"AI 生成可交互 Web 应用"能力; 需要"描述即预览"的低延迟原型生成; 希望复用一套成熟编码 Agent 引擎(而非自研循环)去驱动全栈生成的团队; 需要把生成/运行/修复闭环、文件双向同步、git 快照、计划审批与权限交互一并产品化的场景。
+**适合**: 在既有产品里加入"AI 生成可交互 Web 应用"能力; 需要"描述即预览"的低延迟原型生成; 希望复用一套成熟编码 Agent 引擎(而非自研循环)去驱动全栈生成的团队; 需要把生成/运行/修复闭环、git 快照、计划审批与权限交互一并产品化的场景。
 
 **边界与注意**:
 
 - 预览链路钉在 **npm 生态 + `npm run build`** 上(要求产出 `dist/index.html` 的 Vite 兼容构建脚本), 一键修复提示词面向 React 应用; 其他技术栈需要自行适配预览与修复两端; 没有 dev server 与热更新, 每次修改都要经一次完整构建;
-- 服务器**集中构建**, 预览算力全在服务器主机, 依赖 OS 沙箱可用性(Linux bubblewrap 加用户命名空间、macOS seatbelt), 沙箱不可用时构建失败关闭; OS 沙箱不是完整的多租户隔离边界, 托管不可信项目应用专用账户/容器运行服务; 浏览器侧则不再要求跨源隔离头(COOP/COEP);
-- 文件权威单一: 只有 Agent 写服务器磁盘, 浏览器没有可写副本, 不存在双向同步与合并冲突问题; 代价是用户不能手工改代码, 源码修改只能经 Agent 或 zip 导出后本地进行;
+- 服务器**集中构建**, 预览算力全在服务器主机, 依赖 OS 沙箱可用性(Linux bubblewrap 加用户命名空间、macOS seatbelt), 沙箱不可用时构建失败关闭; OS 沙箱不是完整的多租户隔离边界, 托管不可信项目应用专用账户/容器运行服务;
+- 文件权威单一: 只有 Agent 写服务器磁盘, 浏览器没有可写副本, 不存在文件同步与合并冲突; 代价是用户不能手工改代码, 源码修改只能经 Agent 或 zip 导出后本地进行;
 - 容量与并发: 进程级 TurnGate 默认最多 4 个并发轮次(带用户公平调度), 每工作区最多 8 条 WebSocket 连接, 空闲 15 分钟回收运行时(预览工作区共用同一阈值), 僵死的跨节点轮次声明 30 分钟后回收, 单次构建默认 5 分钟超时; 这些阈值分别由 `AGENT_MAX_CONCURRENT_TURNS`/`AGENT_MAX_CONNECTIONS_PER_WORKSPACE`/`AGENT_WORKSPACE_IDLE_MS`/`AGENT_TURN_CLAIM_STALE_MS`/`WORKSPACE_BUILD_TIMEOUT_MS` 调整;
 - 指标采集面目前只有 token 用量, 前端监控在生产构建里实际不外发——可观测性接口已就位但尚未填满;
 - 权限默认 `bypassPermissions`(无人值守生成), 需要人工把关时应切到 `default`/`plan` 等模式, 并接受交互代理 5 分钟超时后失败关闭(拒绝)、计划审批 10 分钟过期的行为;

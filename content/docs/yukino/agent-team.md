@@ -76,10 +76,10 @@ config.json (TeamFile) 字段: `name`, `description?`, `createdAt` (unix 秒), `
 - 显式给出 team_name: 按名字查 team, 不存在直接报 `Team '<name>' not found.` (buildTeamNotFoundError); 带成员名解析时 (SendMessage / TaskStop 传 memberName), 该成员不在这个 team 里视为未命中
 - 省略 team_name: 按成员归属过滤 (teammate 只能命中自己所在的 team); 命中多个 team 报 `Multiple teams match. Specify team_name; use TeamList to see available teams.` (AMBIGUOUS_TEAM_ERROR); 一个都没有时, Agent 自动创建 team, SendMessage 报 `No active team found for this sender.`, TeamList / TeamDelete 返回 `No active team.`, TodoWrite 回落私有任务板
 
-四个顶层工具:
+团队生命周期相关的四个顶层工具 (通信与调度工具 SendMessage / TodoWrite / TaskStop 见后文各自章节):
 
 - TeamCreate 工具: 可选参数 `name` 和 `description`; 省略 name 时团队名自动生成 `team-<uuid>`, 给出 name 时 sanitize 后作为目录 slug; 重名直接拒绝 —— 内存 slug 已存在, 或磁盘 team 目录已存在 (目录用非递归 mkdir 独占创建, EEXIST 即重名), 报 `Team '<name>' already exists. Choose a different name, or target the existing team with team_name='<name>'.` (buildTeamExistsError); 成功时创建 TeamFile、初始化空 tasks.json; 返回消息提示后续操作带上 team_name (`Team '<name>' created. Use Agent with kind="teammate" and team_name="<name>" to add teammates.`)
-- Agent 工具: `kind` 默认就是 `"teammate"`, 向选中的 team spawn 一个 teammate; 没有 team 时自动创建, 只有一个 team 时复用, 多 team 时必须传 team_name (否则报歧义错误); teammate 名字从 description 自动生成 (小写、空白转连字符、sanitize、截断 30 字符, 冲突追加 `-2` / `-3` 后缀)
+- Agent 工具: `kind` 默认就是 `"teammate"` (DEFAULT_AGENT_KIND), 向选中的 team spawn 一个 teammate; 没有 team 时自动创建, 只有一个 team 时复用, 多 team 时必须传 team_name (否则报歧义错误); teammate 名字从 description 自动生成 (小写、空白转连字符、sanitize、截断 30 字符 = MAX_TEAMMATE_NAME_CHARS, 冲突追加 `-2` / `-3` 后缀)
 - TeamList 工具: 无参数, 列出所有 team, 每个 team 一行 `<team名>: name1 (active), name2`; 没有 team 时返回 `No active team.`
 - TeamDelete 工具: 可选 `team_name`, 停止并删除选中的 team (注销成员名字、停止全部成员、删除该 team 目录), 其他 team 不受影响; 省略时经 resolveTeam 选择, 多 team 命中同样报歧义错误
 
@@ -130,7 +130,7 @@ while member.active:
 finally:
   active = false, NameRegistry 注销名字
   releaseOwner 释放未完成任务 -> [tasks-released] 通知 leader
-  发送终态 [idle] 消息 (stopped / failed: <错误>)
+  发送终态 [idle] 消息 ([idle] <name> (reason: stopped) 或 [idle] <name> (reason: failed): <错误>)
   persist() + pruneTerminatedMembers (终止成员最多保留 MAX_RETAINED_TERMINATED_MEMBERS = 200)
 ```
 
@@ -140,7 +140,7 @@ buildTeammatePrompt 把任务包在 `<assignment>` 标签里, 附带团队协议
 
 - leader 的 agent loop 配置了 notificationFn, 每轮迭代开始时 (模型调用前) drain: teamManager.drainLeaderMailbox() 读出每个 team 的 leader 邮箱未读消息, 与后台任务通知一起注入
 - drainLeaderMailbox 把消息包裹为 `<task-notification team="<team名>">`, 每条消息一行 `<message from="..." type="..." requestId="..." approve="...">text</message>` (属性经 XML 转义), 作为 system-reminder 注入 leader 上下文 (见 [system-prompt](./system-prompt))
-- `[idle]` 前缀的消息 (`[idle] jane (reason: available)` / `stopped` / `failed: <错误>`) 只是通知; 成员状态变更 (active = false、注销名字、释放任务) 由 teammate 运行时在退出时自动完成, 不靠 leader 解析消息
+- `[idle]` 前缀的消息 (`[idle] <name> (reason: available)`、`[idle] <name> (reason: stopped)`、`[idle] <name> (reason: failed): <错误>`) 只是通知; 成员状态变更 (active = false、注销名字、释放任务) 由 teammate 运行时在退出时自动完成, 不靠 leader 解析消息
 
 ```txt
 1. teammate 完成任务 -> 向 leader 邮箱发送 [idle] jane (reason: available)
@@ -207,11 +207,11 @@ SharedTaskStore (src/teams/shared-task.ts):
 1. teammate 分析任务, 把执行计划写入 plan 文件 (`~/.yukino/plans/<slug>.md`, 由 plan-file 模块分配)
 2. 提交有两条路径: teammate 调用 ExitPlanMode 工具 (plan 模式下保留, 内部调 team.submitPlan, 返回 requestId 并提示结束回合); 即使没调用, 回合结束时运行时发现它仍在 plan 模式, 会读取 plan 文件 (为空则取最终响应, 再为空记 "(The teammate returned no plan.)") 自动提交
 3. submitPlan 把 plan 全文包为 plan_approval_request (附新生成的 requestId) 发到 leader 邮箱, teammate 进入等待
-4. coordinator 模式下 requiresLeaderPlanApproval 为 true: teammate 每 500ms 轮询自己的邮箱, 只消费 shutdown_request 和 requestId 匹配的 plan_approval_response (要求来自 leader、approve 是布尔值、反馈非空); 等待期间到达的其他文本消息保持未读, 恢复执行时随审批结果一起拼进 prompt (buildPlanReviewResumePrompt)
+4. coordinator 模式下 requiresLeaderPlanApproval 为 true: teammate 每 500ms 用 `receiveMatchingSync` 按类型筛选邮箱 (只取 shutdown_request 与 plan_approval_response), 再从筛出的响应里挑出来自 leader、requestId 与当前请求匹配、approve 是布尔值且反馈非空的那一条; 等待期间到达的其他文本消息保持未读, 恢复执行时随审批结果一起拼进 prompt (buildPlanReviewResumePrompt)
    - approve: true + 审查反馈: teammate 的权限模式就地切换为 leader 当前模式 (leader 仍是 plan 时写 default), 开始执行; 批准不授权后续工具调用, 每次写操作仍按权限检查
    - approve: false + 审查反馈: teammate 留在 plan 模式, prompt 携带反馈, 要求修订计划重新提交
    - 期间收到 leader 的 shutdown_request: 回 shutdown_response 后退出
-5. 非 coordinator 模式下自动批准: 运行时向 leader 邮箱投递一条 "Plan automatically approved" 通知, 然后切换权限模式、恢复执行
+5. 非 coordinator 模式下自动批准: 运行时向 leader 邮箱投递 `Plan automatically approved; tool permissions remain active.` (PLAN_AUTO_APPROVED_ACK_MESSAGE) 通知, 把 teammate 的权限模式就地切为 leader 当前模式 (leader 仍是 plan 时写 default), 并以 `Your plan was automatically approved...` 提示恢复执行; 批准本身不授权后续工具调用
 
 权限检查器对「等待审批的 teammate」有专门保护: teammate && requiresLeaderPlanApproval && 自身处于 plan 时, mode 固定返回 plan, 不会因 leader 退出 plan 模式而被带出
 
@@ -249,7 +249,7 @@ leader 的任务拆解直接决定 team 的效率: 拆得太粗, 子任务工作
 
 场景: 任务复杂、teammates 数量较多时, 如果不约束 leader, 它 spawn 完所有 teammates 后可能自己写代码、自己执行命令 (leader 有完整的工具集)
 
-回顾 Plan Mode: 用 prompt 约束 LLM「只规划不做事」。Coordinator Mode 同理, 用「限制工具集 + prompt 注入」约束 leader「只调度不做事」: 纯配置项 `enable_coordinator_mode` (默认 false), 独立于当前是否存在 team, 整个会话生效 —— 会话中途切模式会留下无法撤回的陈旧指令, 配置从第一轮到最后一轮都是权威 (src/teams/coordinator.ts)
+回顾 Plan Mode: 用 prompt 约束 LLM「只规划不做事」。Coordinator Mode 同理, 用「限制工具集 + prompt 注入」约束 leader「只调度不做事」: 纯配置项 `enable_coordinator_mode` (src/config/index.ts 中为可选布尔 `z.boolean().optional()`, UI / remote / A2A / print 各装配点均以 `?? false` 回退, 默认 false), 独立于当前是否存在 team, 整个会话生效 —— 会话中途切模式会留下无法撤回的陈旧指令, 配置从第一轮到最后一轮都是权威 (src/teams/coordinator.ts 的 coordinatorToolFilter / coordinatorActive)
 
 > 对于复杂任务, 推荐配合使用 Agent Team 和 Coordinator Mode
 
@@ -279,7 +279,7 @@ const COORDINATOR_ALLOWED_TOOLS = new Set([
 
 coordinator 模式激活时, leader 每轮迭代注入 coordinator reminder (以 system-reminder 注入而不是改 system prompt: system prompt 是缓存前缀, 改动会使整个缓存失效, 见 [system-prompt](./system-prompt)):
 
-- 第 1 轮和每 5 轮 (REMINDER_INTERVAL = 5) 注入全文 coordinatorPrompt: 工具用法、委派纪律、结果审查、验证要求
+- 第 1 轮和每 5 轮 (REMINDER_INTERVAL = 5, src/prompt/constants.ts; 由 src/prompt/coordinator.ts 的 coordinatorReminder 按 `iteration <= 1 || (iteration - 1) % 5 === 0` 判定) 注入全文 coordinatorPrompt: 工具用法、委派纪律、结果审查、验证要求
 - 其余轮次注入精简版 coordinatorSparseReminder, 只保留最容易被模型遗忘的硬约束
 
 plan 审批闸门随 coordinator 模式一起打开 (Team.requiresLeaderPlanApproval = coordinatorMode): leader 必须审查每个 plan_approval_request 并用 `type: "plan_approval_response"` 响应; 非 coordinator 模式下 plan 由运行时自动批准。SendMessage 的 type 枚举反映这一点: 只有 coordinator 模式才包含 plan_approval_response

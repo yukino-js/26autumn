@@ -7,11 +7,15 @@ local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 
 遥测回答的问题: 每个 agent 会话消耗了多少 token? 哪些工具调用最慢? 首 token 延迟是多少? 哪些请求失败了、为什么失败?
 
-Yukino 的遥测默认关闭, 只通过环境变量配置, 不落配置文件 (避免密钥进入版本库); 支持三个后端, 可以叠加:
+Yukino 的遥测默认关闭, 支持三个后端, 可以叠加:
 
 - OpenTelemetry: traces / logs / metrics 三路信号, 标准 OTLP 导出
 - Langfuse: LLM 可观测平台, 与 OpenTelemetry 共享同一棵 trace 树
 - Sentry: 进程级错误上报, 性能追踪仍由 OpenTelemetry 负责
+
+:::tip
+遥测**只通过环境变量配置, 不落配置文件**, 避免密钥进入版本库; 默认关闭, 显式设置后才启用。
+:::
 
 所有遥测 SDK (`@opentelemetry/*`、`@langfuse/*`、`@sentry/node`) 都声明在 optionalDependencies 里; `initializeTelemetry()` 判定需要开启后才动态 `import("./providers.js")` 装配运行时, 导入或装配失败则静默回退到 noop 运行时。providers.ts 静态引入 `@langfuse/*` 与 `@opentelemetry/*` 核心包, OTLP / Prometheus exporter 和 `@sentry/node` 在其内部按配置动态 import; 入口 `src/telemetry/index.ts` 刻意不静态再导出 providers.js — 它静态引入这些 optionalDependencies, 静态再导出会让库入口在可选依赖缺失时无法加载, 并与受保护的动态 import + noop 回退相矛盾, 因此 provider 模块只经由 `initializeTelemetry()` 的动态 import 进入运行时
 
@@ -73,10 +77,10 @@ meter 和 logger 的 instrumentation scope 是 `@yukino.js/yukino` + 当前版�
 
 trace 树和 agent 的执行结构同构 (源码: src/telemetry/instrumentation.ts):
 
-```txt
-yukino.agent.run (一次 agent loop, kind=agent)
-├── yukino.llm.generate (每轮 LLM API 流式请求, kind=generation)
-└── yukino.tool.execute (每次工具调用, kind=tool, 并发批内并行)
+```mermaid
+graph TD
+  RUN["yukino.agent.run (一次 agent loop, kind=agent)"] --> LLM["yukino.llm.generate (每轮 LLM 流式请求, kind=generation)"]
+  RUN --> TOOL["yukino.tool.execute (每次工具调用, kind=tool, 并发批内并行)"]
 ```
 
 | 观测点                | 类型         | 内容                                                                                                                                                                                                                                                                                                                                            |
@@ -90,7 +94,9 @@ histogram 单位统一为 `ms`。属性维度: `protocol` (anthropic / openai / 
 
 ## 隐私保证
 
-不上报: prompts、模型输出、thinking 内容、工具参数、工具结果、文件路径、API key、原始 session id
+:::warning
+**不上报**: prompts、模型输出、thinking 内容、工具参数、工具结果、文件路径、API key、原始 session id。
+:::
 
 - session id 经 sha256 哈希后取前 16 位十六进制作为 `session.hash`, 可关联同一会话的观测数据但不可逆推
 - 错误观测只写 `error.type` (Error 的 name 或 typeof), 日志只带类型与 context, 不携带内容载荷

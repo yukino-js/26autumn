@@ -24,7 +24,7 @@ LLM API 是无状态的, 每个请求都要携带完整的对话历史, 包括 R
 
 ### 单个工具结果的溢出阈值
 
-agent loop (src/agent/index.ts) 在工具结果进入对话历史前做逐个检查: content 超过 `MAX_OUTPUT_CHARS = 50000` 字符 (约 12.5k tokens, src/agent/constants.ts) 时, persistLargeResult (src/tool-result/index.ts) 把完整内容写入磁盘, replaceToolResultContent 把历史中的文本 (含富文本块里的 text) 替换成 `<persisted-output>` 标签包裹的预览: 文件大小、磁盘路径和前 2000 字符 (`TOOL_RESULT_PREVIEW_CHARS`)
+agent loop (src/agent/index.ts) 在工具结果进入对话历史前做逐个检查: content 超过 `MAX_OUTPUT_CHARS = 50000` 字符 (约 12.5k tokens, src/agent/constants.ts) 时, persistLargeResult (src/tool-result/index.ts) 把完整内容写入磁盘, replaceToolResultContent 把历史中的文本 (含富文本块里的 text) 替换成 `<persisted-output>` 标签包裹的预览 (buildSpillPreview): 原始内容的字符数、磁盘路径和前 2000 字符 (`TOOL_RESULT_PREVIEW_CHARS`)
 
 溢出路径由 sessionId 和 toolUseId 决定:
 
@@ -32,7 +32,8 @@ agent loop (src/agent/index.ts) 在工具结果进入对话历史前做逐个检
 ~/.yukino/sessions/artifacts/{sessionId}/tool-results/{toolUseId}.txt
 ```
 
-- 写入用排他创建模式 (flag "wx"), EEXIST 时直接复用已有文件: tool_use_id 每次调用唯一且内容确定, 无需重写
+- `resultPath` 对 toolUseId 做 `encodeURIComponent` 并把 `*` 替换为 `%2A` (src/tool-result/index.ts), 保证 provider 的不透明调用 ID 永远被当作文件名数据而不是路径
+- 写入用排他创建模式 (flag "wx"), EEXIST 时直接复用已有文件并对已有文件补做私有权限收敛 (protectPrivateFileSync): tool_use_id 每次调用唯一且内容确定, 无需重写
 - 用私有权限写入 (文件 0600, 目录 0700, src/storage/private.ts); 溢出文件随过期会话 (30 天, `SESSION_EXPIRY_DAYS`) 的 artifacts 目录一起清理
 - 预览文本由 buildSpillPreview (src/tool-result/prompts.ts) 生成, 相同输入产生逐字节相同的替换文本, 进入历史后永不修改, Prompt Cache 前缀天然稳定
 
@@ -71,7 +72,7 @@ Preview (first 2000 characters):
 
 ### token 用量估算: usage anchor
 
-本地估算基于字符数 (estimateMessages, src/compact/compact.ts): 对消息文本、工具调用参数、工具结果、thinking 块的字符数求和, 除以 `CHARS_PER_TOKEN = 3.5`; 图片块按 `IMAGE_CHAR_EQUIV = 7000` 字符 (约 2000 tokens, Anthropic 单图 token 成本的量级) 的固定当量计入, 避免图片密集的对话被系统性低估、压缩触发太晚
+本地估算基于字符数 (estimateMessages, src/compact/compact.ts): 对消息文本、工具调用参数 (`JSON.stringify(toolUses)`)、工具结果、thinking 块的字符数求和, 除以 `CHARS_PER_TOKEN = 3.5` 并向上取整; 富文本块按类型分别计字符 (text 取文本长度, image / base64 document 按 `IMAGE_CHAR_EQUIV = 7000` 字符 ≈ 2000 tokens 的固定当量, tool_reference / search_result / url|text document 取相应字段长度), 工具结果同时有 `content` 与 `contentBlocks` 时取两者 text 部分的较大者再叠加富文本当量, 避免图片密集的对话被系统性低估、压缩触发太晚
 
 每轮都全量按字符重估既贵又不准, Yukino 用 usage anchor 校准:
 
@@ -152,7 +153,7 @@ ratio cap 是为小窗口准备的: 固定 margin 假设窗口很大, 小窗口�
 
 提取 (formatCompactSummary): 优先取 `<summary>` 标签内的内容; 没有 `<summary>` 标签时, 剥掉 LLM 自发输出的 `<analysis>` 块, 回退到剩余文本
 
-瞬态错误 (NetworkError / RateLimitError / ServerError) 由 collectSummary 按指数退避重试 (llmRetryDelay, src/llm/retry.ts, 上限 `MAX_RETRIES = 3`), 和主对话共用同一套 LLM 重试工具
+瞬态错误 (NetworkError / RateLimitError / ServerError) 由 collectSummary 按指数退避重试 (`llmRetryDelay`, src/llm/retry.ts; `attempt >= MAX_RETRIES = 3` (src/llm/constants.ts) 时停止), 和主对话共用同一套 LLM 重试工具
 
 ### PTL 重试: prompt too long
 
@@ -226,7 +227,7 @@ Everything above the divider is reconstructed context. For exact code, error str
 
 ### 持久化: compact_boundary
 
-压缩成功后, 会话文件追加一条 `type: "compact_boundary"` 记录 (saveTranscriptCompactBoundary, src/session/index.ts), content 是 JSON 序列化的 payload `{ summary, keep }`:
+压缩成功后, 会话文件追加一条 `type: "compact_boundary"` (COMPACT_BOUNDARY) 记录: agent loop 用 `saveTranscriptCompactBoundary(sessionFilePath, payload)` 按文件路径写, UI / remote 用 `saveCompactBoundary(cwd, sessionId, payload)` (两者都在 src/session/index.ts), content 是 JSON 序列化的 payload `{ summary, keep }`:
 
 - summary: 摘要文本 + 会话记录路径提示, 不含恢复附件 — 附件按进程重建, 持久化了下次 resume 就是旧的; 会话文件比进程活得久, 路径提示必须保留
 - keep: 逐字保留的近期消息 (messageToKeptRecord, 含 tool_use/tool_result/thinking 块), 保证恢复会话时调用链完整; 既无文本也无工具块的消息被过滤
@@ -247,7 +248,7 @@ AutoCompactTrackingState 记录连续失败次数 (生命周期跟随 Agent 实�
 两条路径, 以 200k 窗口为例:
 
 1. 用量涨到 167k 触发自动压缩 → 连续失败 3 次熔断停止重试 → 用量继续涨到 177k (effective - 3000) → manageContext 无视熔断器强制压缩
-2. LLM API 直接报错 prompt too long (Anthropic / OpenAI 客户端把它映射为 ContextTooLongError, src/llm/anthropic.ts, src/llm/openai.ts): agent loop 自愈 — forceCompact → 清空 usage anchor → restoreContext → 持久化 boundary → continue 回到循环顶部重新发起本轮请求, 报错的这次调用不算完成一轮; forceCompact 没有实际压缩 (例如触发退化保护) 时上报原始错误
+2. LLM API 直接报错 prompt too long (Anthropic / OpenAI 客户端把它映射为 ContextTooLongError, src/llm/anthropic.ts, src/llm/openai.ts): 在非 goal 摘要轮 (`!summarizingGoal`) agent loop 自愈 — forceCompact → 清空 usage anchor → restoreContext → `saveTranscriptCompactBoundary` 持久化 boundary → yield `compact` 事件 → continue 回到循环顶部重新发起本轮请求, 报错的这次调用不算完成一轮; forceCompact 没有实际压缩 (例如触发退化保护) 时 yield 原始 `error` 事件并终止本轮
 
 ## 手动 /compact
 

@@ -137,7 +137,9 @@ seatbelt 是 macOS 内核级的沙箱机制, 通过一个 SBPL (Sandbox Profile 
 - allowWrite 和 denyWrite 的每个路径都经 `pathVariants` 展开: 原形式 + `realpathSync` 结果 (macOS 的 `/tmp` → `/private/tmp`、`/var/folders/...` → `/private/var/folders/...` 这类符号链接); 路径尚不存在时 realpath 抛错被吞掉, 只发原形式
 - denyWrite 的每个变体同时发 literal 和 subpath 两条 — 覆盖「路径本身」和「路径的所有后代」, 且不依赖生成时的文件存在性检查 (检查结果到启动时可能已经过期)
 
-注入防护 (有专门的测试覆盖): 路径写入 profile 前经 `quoteProfileString` 转义反斜杠和双引号; 含 NUL、CR、LF 的路径直接抛错 `Seatbelt paths cannot contain NUL or newline characters` — 防止配置里的恶意路径拼出额外的 profile 行
+:::warning
+**注入防护** (有专门的测试覆盖): 路径写入 profile 前经 `quoteProfileString` 转义反斜杠和双引号; 含 NUL、CR、LF 的路径直接抛错 `Seatbelt paths cannot contain NUL or newline characters` — 防止配置里的恶意路径拼出额外的 profile 行。
+:::
 
 ## Linux: bubblewrap
 
@@ -179,7 +181,25 @@ BashTool (src/tools/bash.ts) 上的三个注入字段: `sandbox: Sandbox | null`
    - `checker.sandboxTempDirectory()` 有值时 (隔离 worktree 场景), prepared.env 追加 `TMPDIR` / `TMP` / `TEMP` 指向 worktree 专属临时目录
 5. prepare 抛错 (如 seatbelt 的路径注入检查): 返回 `Error preparing sandbox: ...`, 命令不执行
 
+```mermaid
+flowchart TD
+  A["Bash 执行"] --> B{"sandboxRequired 且 sandbox 都为真?"}
+  B -->|否| C["默认 bash -c, 直接执行"]
+  B -->|是| D{"sandbox 为 null?"}
+  D -->|是| E["报错: sandbox enabled but unavailable"]
+  D -->|否| F{"available() 为 false?"}
+  F -->|是| G["报错: seatbelt/bwrap unavailable"]
+  F -->|否| H["prepare: 组装 allowWrite + 输出目录 + TMPDIR"]
+  H --> I{"prepare 抛错?"}
+  I -->|是| J["报错: Error preparing sandbox"]
+  I -->|否| K["spawn 执行, cleanup / annotateStderr 参与生命周期"]
+```
+
 spawn 之后, `PreparedSandboxCommand` 的扩展点参与命令生命周期: 前台命令 settle 或后台任务结束时调用 `prepared.cleanup?.()`, cleanup 失败会在工具结果后追加 `Error cleaning up sandbox: ...`; `prepared.annotateStderr` 传给 `buildShellResult`, 用于给 stderr 附加沙箱违规说明。`BashTool.dispose()` 会调用 `sandbox.dispose?.()` 并置空引用
+
+:::warning
+沙箱启用但平台不支持 (`createSandbox()` 返回 null) 或 `available()` 为 false 时, **每条 Bash 命令都会直接报错**、不执行 —— Windows 上配置 `sandbox.enabled: true` 即为此后果;`prepare` 抛错 (如路径注入检查) 同样不执行命令。
+:::
 
 ## 与 worktree 隔离的联动
 
@@ -211,4 +231,6 @@ if (this.sandboxEnabled && this.sandboxAutoAllow && toolName === "Bash") {
 
 两个开关标志的来源: print 模式和 remote server 由 `configureBashSandbox` 直接从配置置位; TUI 在每次 agent loop 启动前重新计算, `checker.sandboxEnabled` / `checker.sandboxAutoAllow` 还要与 `available()` 的就绪结果相与 — 沙箱不可用时不会自动放行
 
-设计取舍: 沙箱负责限制「能碰什么」, 规则负责表达「不许做什么」, auto_allow 把两者组合起来, 用 OS 隔离换掉大部分人工确认, 同时保留显式规则和复杂语法审批的最后否决权
+:::info
+**设计取舍**: 沙箱负责限制「能碰什么」, 规则负责表达「不许做什么」, `auto_allow` 把两者组合起来, 用 OS 隔离换掉大部分人工确认, 同时保留显式规则和复杂语法审批的最后否决权。
+:::

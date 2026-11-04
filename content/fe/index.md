@@ -1,7 +1,7 @@
 ---
 title: "前端"
 overview: true
-description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布局, React/Next.js/Vite/TanStack/Priority Hints 工程实践, 以及 Yukino 前端与 Agent 系列"
+description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布局, React 19/Next.js 16/Vite 8/TanStack Query v5 的运行时原理与工程化机制, Priority Hints 与 SWR 的资源调度和缓存语义, 以及 Yukino 前端与 Agent 系列"
 ---
 
 前端方向的系统性技术笔记, 按主题分为三部分, 共 13 个页面 (含本落地页).
@@ -25,7 +25,9 @@ description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布
 
 ## 第三部分: Yukino 前端与 Agent 系列
 
-以下文档均以对应仓库的真实源码为事实依据.
+:::info
+以下文档均以对应仓库的**真实源码**为事实依据, 而非官方文档或二手资料. 技术断言、文件名、命令、常量、版本号均已在编写时逐条核对.
+:::
 
 | 页面                             | 内容概要                                                                                                                                                                                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -34,3 +36,7 @@ description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布
 | [yukino-chatbot](yukino-chatbot) | pnpm 全栈 LLM 聊天应用: Koa 3 后端的 JWT 会话、Provider 热切换、即时构建的 RAG 检索与 SSE 流式输出, React 19 前端以 Jotai 加 React Query 分层状态, 流式渲染热路径移出 React                                                                       |
 | [yukino-chat](yukino-chat)       | 自托管 IM 平台: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级、前后端分离的 Nginx 边缘部署与移动端适配, 以及为每个用户进程内嵌入的只读 coding agent 与其 JSON-RPC 桥                                 |
 | [yukino-sentry](yukino-sentry)   | @yukino.js/sentry 浏览器监控 SDK: 错误/HTTP/页面轨迹/性能/声明式点击/曝光/白屏/错误前录屏采集, 发布订阅事件总线解耦、批量上报、离线缓存、服务端恢复、采样过滤、手动冲刷与 React/Vue/Node.js 接入                                                  |
+
+:::tip
+按主题选读即可, 三大部分相互独立: 想夯实基础从**第一部分**的语言与 CSS 入手, 做框架原理与工程化看**第二部分**, 了解 Yukino 系列的真实架构则直接跳到**第三部分**.
+:::

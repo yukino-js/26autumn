@@ -108,18 +108,18 @@ max_turns: 20
 
 frontmatter 用 YAML + zod (`looseObject`, 未知键忽略) 解析, 支持的字段:
 
-| 字段               | 含义                                                                     |
-| ------------------ | ------------------------------------------------------------------------ |
-| `name`             | 必填, 非空字符串, 即 subagent_type 的枚举值                              |
-| `description`      | 何时使用该角色; 缺省取 body 前 200 字 (`MAX_FALLBACK_DESCRIPTION_CHARS`) |
-| `tools`            | 工具白名单 (`["*"]` 关闭该层过滤)                                        |
-| `disallowed_tools` | 工具黑名单                                                               |
-| `system_prompt`    | 覆盖默认 system prompt                                                   |
-| `max_turns`        | 正整数, agent loop 轮数上限                                              |
-| `model`            | 覆盖模型                                                                 |
-| `permission_mode`  | 枚举校验 (default / acceptEdits / plan / bypassPermissions)              |
-| `background`       | 布尔, 缺省即后台异步运行                                                 |
-| `worktree`         | 布尔, 缺省即 git worktree 隔离                                           |
+| 字段               | 含义                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `name`             | 必填, 非空字符串, 即 subagent_type 的枚举值                                        |
+| `description`      | 何时使用该角色; 缺省取 body 前 200 字 (`MAX_FALLBACK_DESCRIPTION_CHARS`)           |
+| `tools`            | 工具白名单 (`["*"]` 关闭该层过滤)                                                  |
+| `disallowed_tools` | 工具黑名单                                                                         |
+| `system_prompt`    | 覆盖默认 system prompt                                                             |
+| `max_turns`        | 正整数, agent loop 轮数上限                                                        |
+| `model`            | 覆盖模型                                                                           |
+| `permission_mode`  | 枚举校验 (default / acceptEdits / plan / bypassPermissions)                        |
+| `background`       | 布尔, 作为 `run_in_background` 的缺省来源 (true 后台异步, 参数/定义均缺省时 false) |
+| `worktree`         | 布尔, 作为 `worktree` 的缺省来源 (true 隔离, 参数/定义均缺省时 false)              |
 
 markdown body 映射为 `initialPrompt`, 作为子代理指令的一部分注入。任一字段校验失败 (如 permission_mode 拼错) 时, 该文件整体跳过并记录日志, 不影响其他文件; 没有 frontmatter 块的文件直接忽略
 

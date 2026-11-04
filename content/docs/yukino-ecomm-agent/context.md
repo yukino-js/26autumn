@@ -73,7 +73,9 @@ turns   = floor(sliding / 稳态每轮)
 
 健康判定: `window - fixed - peak <= 0`, 或者切出来的 `sliding` 装不满一轮稳态消耗 (`turns < 1`) 时 `healthy = false`. `limited_by` 记录滑动窗口是被轮数 (`turns`) 还是窗口 (`window`) 卡住的.
 
+:::warning 上下文预算不足要调参
 服务启动时 `server.ts` 的 `checkContextBudget()` 输出一条预算报告, 格式为 `window=… fixed=… turn_peak=… sliding=… turns=… (steady_per_turn=…) limited_by=… healthy=yes/no`; 健康时记 info (`context budget ok`), 否则记 error 并提示调大 `MODEL_CONTEXT_WINDOW` 或调小 `MAX_AGENT_STEPS` / `TOOL_RESULT_MAX_TOKENS` / `MAX_OUTPUT_TOKENS` / `RERANK_TOP_K`.
+:::
 
 以上数字都可用环境变量调整 (`server/src/config.ts`):
 

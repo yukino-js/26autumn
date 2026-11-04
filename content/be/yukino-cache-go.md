@@ -2,7 +2,7 @@
 title: "yukino_cache 分布式缓存技术笔记"
 description: "yukino_cache Go 分布式缓存: groupcache 风格 read-through Group、字节预算双层 LRU、singleflight 去重、一致性哈希分片、gRPC peer 通信与 etcd 服务发现"
 local_path: "$HOME/github/yukino.go/libs/yukino_cache"
-local_commit: "9db1ad65904f6ee3b2d7c3498436fab64a6425cd"
+local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
 ---
 
 yukino_cache 是一个用 Go 实现的分布式缓存库, API 风格对齐 Google groupcache: 用命名 Group 组织缓存命名空间, 用 Getter 描述回源逻辑, 用一致性哈希把 key 映射到归属节点, 用 singleflight 抑制缓存击穿 (cache stampede)。在 groupcache 只读模型的基础上, 它扩展了 Set/Delete 写操作与异步写传播、etcd 服务发现、按字节预算淘汰的分桶双层 LRU 本地存储, 以及一个推送实时快照的 WebSocket 仪表盘。本文面向需要在无中心节点架构下做缓存分片与对等访问的 Go 工程师, 说明其分层结构、读写数据流、存储引擎、并发模型、容错语义与适用边界。
@@ -23,24 +23,24 @@ yukino_cache 是一个用 Go 实现的分布式缓存库, API 风格对齐 Googl
      |
      v
 +-------------------------------------------------------------+
-| Group   命名空间隔离 + read-through + singleflight 去重      |
+| Group   命名空间隔离 + read-through + singleflight 去重     |
 +-------------------------------------------------------------+
      |  未命中
      v
 +-------------------------------------------------------------+
-| Cache -> lruStore   分桶双层 LRU, 字节预算 + TTL 淘汰        |
+| Cache -> lruStore   分桶双层 LRU, 字节预算 + TTL 淘汰       |
 +-------------------------------------------------------------+
      |  本地未命中
      v
 +-------------------------------------------------------------+
-| ClientPicker + ConsistentHashMap   一致性哈希选归属节点      |
-| etcd Watch 动态维护 peer 列表                                |
+| ClientPicker + ConsistentHashMap   一致性哈希选归属节点     |
+| etcd Watch 动态维护 peer 列表                               |
 +-------------------------------------------------------------+
      |  归属远端
      v
-+-------------------------------------------------------------+
++-------------------------------------------------------------------+
 | Server / Client   gRPC 对等通信 (每个节点既是 Server 也是 Client) |
-+-------------------------------------------------------------+
++-------------------------------------------------------------------+
 ```
 
 关键架构决策:
@@ -130,8 +130,8 @@ bucket index = HashBKRD(key) & mask          mask = 桶数 - 1 (2 的幂 - 1)
 +-------------------- bucket i --------------------+
 |  L1 (cap = CapPerBucket, 默认 512)               |  新写入落在这里
 |  L2 (cap = Level2Cap,   默认 256)                |  L1 命中后提升到这里
-|  bytes / nevict  按桶统计的存活字节与淘汰次数     |
-+---------------------------------------------------+
+|  bytes / nevict  按桶统计的存活字节与淘汰次数    |
++--------------------------------------------------+
 全局: maxBucketBytes = MaxBytes / 桶数 (MaxBytes > 0 时, 结果不足 1 则取 1)
 ```
 

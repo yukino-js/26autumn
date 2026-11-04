@@ -296,7 +296,7 @@ frontmatter 支持 `name`、`description`、`type` 三个字段, 嵌套的 `meta
 - [validate-runtime-data-with-zod](../../../memory/validate-runtime-data-with-zod.md) — 运行时数据用 Zod 校验
 ```
 
-索引有 200 行或 25KB 的上限 (先到为准, 超过截断); 内容没变化时跳过写入, 写入在文件锁内用临时文件 + rename 原子完成
+索引有 200 行 (MAX_ENTRYPOINT_LINES) 或 25KB (MAX_ENTRYPOINT_BYTES = 25000) 的上限 (先到为准, 超过截断); 内容没变化时跳过写入, 写入在文件锁内用临时文件 + rename 原子完成
 
 注入到 messages 字段的记忆索引由 `buildSystemReminder` 从同一次扫描现场渲染 (不是读 MEMORY.md 文件), 每条一行 `- [name] (type): description`, 头部是 `Active memories:`, 同样受 200 行 / 25KB 上限约束; 截断时字节切口落在最后一个换行处 (UTF-8 多字节字符不会被劈开), 并在末尾附加一条部分索引警告, 防止模型以为某条记忆不存在而重复创建
 
@@ -318,7 +318,7 @@ recall 请求与主 LLM 请求并行 (prefetch promise), 不阻塞对话: agent 
 
 ### 开关
 
-`~/.yukino/config.yaml` 的 `enable_memory: false` 关闭整个记忆管线: 不创建 MemoryManager, 索引注入、recall、后台记忆提取和记忆整理全部停止; `/memory` 命令报告记忆数量或关闭状态
+`~/.yukino/config.yaml` 的 `enable_memory` 是可选布尔 (`z.boolean().optional()`, src/config/index.ts), `memoryEnabled(config)` 判定为 `cfg.enable_memory !== false`, 即缺省启用; 设为 false 关闭整个记忆管线: 不创建 MemoryManager, 索引注入、recall、后台记忆提取和记忆整理全部停止; `/memory` 命令报告记忆数量或关闭状态
 
 ## 记忆提取
 
@@ -331,30 +331,30 @@ recall 请求与主 LLM 请求并行 (prefetch promise), 不阻塞对话: agent 
 
 ### 提取的实现: 带工具的小 subagent
 
-`MemoryExtractor` (src/memory/extractor.ts) 不是裸 LLM 调用, 而是一个带工具的小 subagent (ReadFile / WriteFile / EditFile / Glob / Grep), 至多跑 5 轮迭代:
+`MemoryExtractor` (src/memory/extractor.ts) 不是裸 LLM 调用, 而是一个带工具的小 subagent (ReadFile / WriteFile / EditFile / Glob / Grep), `maxIterations = EXTRACTION_MAX_ITERATIONS = 5`:
 
 - 去重: 提取前扫描两个记忆目录生成 manifest (`- [type] 文件名: description`), 随 prompt 发给 LLM, 要求更新已有主题而不是新建重复记忆; prompt 同时要求不保存代码可推导的模式、架构、文件路径、Git 历史、AGENTS.md 内容和一次性请求
 - 权限: `MemoryPermissionChecker` (src/memory/permissions.ts) 收窄整个工具面 —— 只允许这 5 个文件工具 (command 类一律拒绝, 没有 shell), 写只允许两个记忆目录内的 `.md` 文件, 读默认只允许记忆目录; Glob 模式做逃逸检查: 反斜杠、`..` 段、跨目录的花括号/圆括号段直接拒绝, 模式的字面量前缀必须落在可读根内
 - 并发合并: `inProgress` + `pendingContext` 队列, 提取进行中时新请求只覆盖待跑摘要, 至多排队一个且只跑最新排队的; dispose 时 abort 进行中的提取并等待落定, 后台任务不能活得比宿主长
-- 结果认定: `extractWrittenPaths` 只统计工具结果成功的 WriteFile/EditFile 调用的 `file_path` (排除 MEMORY.md), 模型口头说写了不算
+- 结果认定: `extractWrittenPaths` 只统计工具结果成功的 WriteFile/EditFile 调用的 `file_path`, 模型口头说写了不算; 调用处 (`doExtract` / 整理的 `execute`) 再按 basename 过滤掉 MEMORY.md 索引文件, 只有真正写出的主题记忆才算 saved
 - 回退: subagent 没有经工具写出任何记忆文件时, 解析其流式文本中的结构化记忆块落盘 —— 块以独立 `---` 行分隔, 每块四行协议 `MEMORY_NAME` / `MEMORY_TYPE` / `MEMORY_DESC` / `MEMORY_BODY` (BODY 支持多行), 整体输出 `NONE` 表示没有值得保存的; 落盘在文件锁内用 `wx` 临时文件 + rename 原子写入, 同名记忆已存在且内容不同时拒绝覆盖 (记警告), 不做静默合并
 
-提取按类型路由: `user` / `feedback` 写入 `~/.yukino/memory`, 其余 (含缺省 `reference`) 写入项目记忆目录; 有新记忆落盘后自动调用 `rebuildIndex` 重建 MEMORY.md, 交互式 UI 中显示一条 `Memory saved: <名字列表>` 系统消息
+prompt 按类型约定归属: `user` / `feedback` 写入 `~/.yukino/memory`, `project` / `reference` (缺省类型 `DEFAULT_MEMORY_TYPE = "reference"`) 写入项目记忆目录; 文本回退路径由 `dirForMemoryType` 按同一规则选目录; 有新记忆落盘后自动调用 `rebuildIndex` 重建 MEMORY.md, 交互式 UI 中显示一条 `Memory saved: <名字列表>` 系统消息
 
 ## 记忆整理
 
-Yukino 后台定期执行「记忆整理」(`MemoryConsolidator`, src/memory/consolidation.ts), fork 一个 subagent, 用 Glob/Grep/ReadFile 检索最近的会话日志 (交互式 UI 和 remote 模式都会运行)
+Yukino 后台定期执行「记忆整理」(`MemoryConsolidator`, src/memory/consolidation.ts): 用全新的 `ConversationManager` 和只含 Glob/Grep/ReadFile/WriteFile/EditFile 的 `ToolRegistry` 构造一个独立 `Agent` 实例 (全新上下文, `maxIterations = CONSOLIDATION_MAX_ITERATIONS = 15`, 带 AbortController), 用 Glob/Grep/ReadFile 检索最近的会话日志取证; 交互式 UI 和 remote 模式都会运行
 
 - 把新的持久证据合并进已有记忆
 - 删除过时记忆, 修复冲突记忆 (仅凭年龄不足以推翻一条记忆, 需要反证)
-- 维护索引文件: MEMORY.md 保持在 200 行和约 25KB 以内, 每条指针一行约 150 字符, 细节移入主题文件
+- 维护索引文件: MEMORY.md 保持在 200 行 (MAX_ENTRYPOINT_LINES) 和约 25KB (MAX_ENTRYPOINT_BYTES) 以内, 每条指针一行约 150 字符, 细节移入主题文件
 
 整理 subagent 的约束 (在提取 subagent 的基础上放宽读取)
 
 - 没有 shell 工具 (Bash 不可用)
 - WriteFile/EditFile 只允许修改记忆目录中的 Markdown 文件, 修改前必须先读取现有文件
 - 额外允许读项目目录和会话日志目录 (整理需要 grep 会话日志取证; 会话日志很大, prompt 要求窄搜索而不是整读)
-- 至多 15 轮迭代
+- `maxIterations = CONSOLIDATION_MAX_ITERATIONS = 15`
 
 ### 触发门槛
 

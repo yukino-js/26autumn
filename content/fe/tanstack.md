@@ -61,7 +61,11 @@ const queryClient = new QueryClient({
 | `['todos', status, page]` 与 `['todos', page, status]`         | 不同 (数组顺序即语义)     |
 | `['todo', 5]` 与 `['todos', 5]`                                | 不同                      |
 
-这带来两条实践规则。其一, 把描述数据的参数写进 key 的对应层级, 数组顺序用于表达层级语义。其二, key 中不要出现随机值、时间戳或每次渲染都新建的对象 `Date` 等不可稳定序列化的值, 否则每次都会命中新缓存。key 中出现的对象按内容哈希, 因此每次渲染新建同内容对象本身无害。
+这带来两条实践规则。其一, 把描述数据的参数写进 key 的对应层级, 数组顺序用于表达层级语义。其二, key 中不要出现随机值、时间戳、`Date` 实例或每次渲染内容都变化的对象等不可稳定序列化的值, 否则每次都会命中新缓存。key 中出现的对象按内容哈希, 因此每次渲染新建同内容对象本身无害。
+
+:::warning
+**queryKey 里绝不能放"每次都变"的值.** 随机值、时间戳、`Date` 实例、每次渲染新建且内容会变的对象, 都会让哈希结果每次不同, 每次渲染命中全新缓存——数据永远不共享、请求永远不去重. 数组顺序有语义 (层级), 对象键顺序无关 (自动排序), `undefined` 键会被忽略. 约束手段是集中的 **key 工厂**: 所有 key 由同一份工厂生成, 既防漂移又让失效范围可控.
+:::
 
 QueryCache 保证相同 queryHash 复用同一个 Query 实例: 多个组件挂同一个 key 时, 共享同一份数据与同一次在途请求, 这就是请求去重的底层机制。
 
@@ -92,6 +96,10 @@ QueryCache 保证相同 queryHash 复用同一个 Query 实例: 多个组件挂�
 因此 `'static'` 适合"应用运行期间不会变化"的数据, 例如启动时拉取的特性开关、登录后加载的权限、静态参照表; 如果仍希望手动失效生效, 用 `Infinity`。
 
 一条数据可以同时"已过期"和"仍在缓存中": 此时组件挂载会先用旧数据渲染, 同时在后台重取, 重取完成后原地替换。这是 TanStack Query 默认的"缓存优先、后台刷新"策略。
+
+:::tip
+**`staleTime` 管"过期", `gcTime` 管"回收", 两者无关.** `staleTime` 决定数据多久算过期 (过期只是允许后台重取, 不立即请求); `gcTime` 决定无人观察后多久从内存删除 (只影响回收, 不影响过期). 调大 `gcTime` 不会减少任何请求, 只会多占内存; 想要"切回标签页不刷屏"得关 `refetchOnWindowFocus`, 而不是改 `gcTime`. 默认 `staleTime: 0` 意味着拿到即过期, 挂载/聚焦都会触发后台重取.
+:::
 
 ### 2.4 失效语义: invalidateQueries
 
@@ -156,7 +164,7 @@ MutationCache 收集 `useMutation` 产生的变更实例, 它与查询缓存的�
 
 ### 3.3 React 绑定层
 
-React 绑定层很薄: `useBaseQuery` 用 QueryObserver 订阅核心缓存, 通过 `useSyncExternalStore` 接入 React 18+ 的并发渲染, 并对结果对象做属性访问追踪, 以减少不必要的重渲染。因此升级到并发渲染后, 查询状态的读取是安全的。
+React 绑定层很薄: `useBaseQuery` 用 QueryObserver 订阅核心缓存, 通过 `useSyncExternalStore` 接入 React 的并发渲染, 并对结果对象做属性访问追踪, 以减少不必要的重渲染。因此在并发渲染下, 查询状态的读取是安全的。
 
 ## 四、queryKey 的分层设计
 
@@ -206,6 +214,16 @@ onMutate (MutationCache 级 -> 选项级)
 ```
 
 全局级回调可在创建 QueryClient 时通过 mutationCache 配置, 适合统一的错误上报。局部错误处理通常放在调用 `mutate` 时传入的第二个参数里。需要注意 mutation 的重试默认值是 0, 与查询的重试默认值 (客户端 3) 分开——写操作重试可能造成重复提交, 保持默认或显式设为 0 更安全。
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> pending: mutate() 触发
+    pending --> success: mutationFn 成功
+    pending --> error: mutationFn 失败
+    success --> idle: 重置
+    error --> idle: 重置
+```
 
 ### 5.2 三种写后策略
 
@@ -268,6 +286,10 @@ useMutation({
 - `onSettled` 的失效是最终一致性兜底。若业务能接受"服务端永远成功", 也可以只在 `onError` 中处理。
 
 对低频、响应快的管理类写操作, 乐观更新带来的复杂度往往不划算, 写后失效更简单可靠; 对高频、交互手感要求高的操作 (勾选、拖拽、即时编辑), 乐观更新收益明显。
+
+:::warning
+**乐观更新的四条硬约束, 漏一条就出 bug.** ① 写入的 key 必须与查询侧由同一份 key 工厂生成, 否则"写了等于没写"; ② `cancelQueries` 不能省略, 否则在途旧请求后到会覆盖乐观值, 界面闪回旧数据; ③ 回滚只能靠 `onMutate` 里保存的快照, 库不提供自动回滚; ④ `onSettled` 的失效是最终一致性兜底. 对低频管理类写操作, 写后失效 (`invalidateQueries`) 反而比乐观更新更简单可靠.
+:::
 
 ### 5.4 命令式读取变更状态
 

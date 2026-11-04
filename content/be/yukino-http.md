@@ -2,7 +2,7 @@
 title: "yukino_http 技术笔记"
 description: "yukino_http Go HTTP 框架: Koa 风格洋葱模型中间件与延迟响应、TakeOver 响应接管、按段 Trie 路由、分组 Router、SSE 与 RFC 6455 WebSocket 的实现机制与适用场景"
 local_path: "$HOME/github/yukino.go/libs/yukino_http"
-local_commit: "9db1ad65904f6ee3b2d7c3498436fab64a6425cd"
+local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
 ---
 
 yukino_http 是一个受 Koa.js 启发的 Go HTTP 框架。它用洋葱模型 (onion model) 组织中间件, 用延迟响应 (deferred response) 把状态码、响应体与响应头的决定权推迟到整条中间件链执行完毕, 并用一棵按路径段切分的 Trie 路由树完成请求分发。框架只依赖 Go 标准库, 内置日志与 panic 恢复中间件, 还手写实现了 Server-Sent Events 与 RFC 6455 WebSocket。本文面向需要在 Go 中构建中小型 HTTP 服务、希望理解框架内部机制或需要一个零第三方依赖 Web 框架的工程师, 依次讲解分层结构、关键机制、API 能力面、并发与容错设计、性能约束与适用边界。
@@ -21,7 +21,7 @@ yukino_http 是一个受 Koa.js 启发的 Go HTTP 框架。它用洋葱模型 (o
 
 ## 模块结构与架构分层
 
-模块路径为 `github.com/hangtiancheng/yukino.go/libs/yukino_http`, `go.mod` 声明 Go 1.26, 没有任何 `require` 条目, 全部 import 都来自标准库。源码按职责切分为十个文件:
+模块路径为 `github.com/hangtiancheng/yukino.go/libs/yukino_http`, `go.mod` 声明 `go 1.26.0`, 没有任何 `require` 条目 (只有指向同仓库 libs 模块的 `replace`, 属于 go.work 工作区惯例), 全部 import 都来自标准库。源码按职责切分为十个文件:
 
 ```text
 yukino.go      Application、compose()、ServeHTTP

@@ -2,7 +2,7 @@
 title: "yukino_taskflow: 条件与定时 AI 任务的分布式执行引擎"
 description: "taskflow 单体分布式后端: cron 物化 + 分布式时间轮触发、MySQL 触发器 CDC + outbox 中继、四层幂等防线、TCC 派发事务、openai-go 工具代理与结构化报告、LSM/Raft 本地审计与 MySQL→Redis 状态同步; 并附组件教程: 从分布式难点入门, 逐一拆解 red_mq、time_wheel、redis_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft 十个本地 replace 组件的问题域、实现入口与开发坑, 给出源码阅读路线与故障实验"
 local_path: "$HOME/github/yukino.go/apps/task_flow"
-local_commit: "9db1ad65904f6ee3b2d7c3498436fab64a6425cd"
+local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
 ---
 
 taskflow 是一个用 Go 编写的单体分布式任务执行服务, 定位是把两类 "AI 任务" 变成可重复、可审计、绝不重复触发的工程对象: 一类是按 cron 表达式周期执行的定时任务, 一类是由业务表插入事件驱动的条件任务。任务定义只包含一段提示词 (prompt) 与可选的模型名, 真正的工作交给一个基于 openai-go 的工具调用代理: 模型按预设提示词多轮调用 `mysql_tool` / `redis_tool` 采集事实数据, 最终产出一份带 YAML frontmatter 的结构化 Markdown 报告。本文分两部分: 第一部分聚焦 `apps/task_flow/server` 这个 Go 服务本身, 说明它的仓库布局、执行状态机、四层幂等防线、定时物化与分布式时间轮、事务内 CDC 捕获与 outbox 中继、TCC 派发事务、LLM 工具沙箱、报告缓存、集群单例角色协调、状态同步与本地审计账本, 以及它的能力边界; 第二部分是一份面向分布式系统新手的组件教程, 从单机并发与分布式难点讲起, 逐一拆解 `server/go.mod` 本地 `replace` 引入的十个组件 (red_mq、time_wheel、redis_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft) 的问题域、实现入口与开发坑, 并给出源码阅读路线与故障实验。前端 `client/` 是一个 Lit 3 + Tailwind CSS 4 + Vite 的工作台, 只消费本文描述的 HTTP API, 不在此展开。
@@ -345,21 +345,21 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 
 认证: `/api/v1` 配置了 `api_token_env` 时要求 `Authorization: Bearer {token}`, 校验方式是把 "Bearer " + 配置 token 整体做 SHA256 后与请求头常量时间比较; 免认证路径只有 `/health`、`/ready`、`/telemetry/log`。未配置 token 时 API 全开。`/internal/v1` 配置了 `internal_token_env` 时同样走 token 校验, 未配置时要求请求来自 loopback。
 
-| 方法与路径                                         | 说明                                                                                         |
+| 方法与路径 | 说明 |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----- | ------------ | --------- | ------- | ------ | -------- | ----------------------------------------- |
-| `GET /api/v1/health` / `ready` / `overview`        | 存活 / 就绪 / 总览 (统计+任务+近期执行+节点)                                                 |
-| `GET/POST /api/v1/scheduled-tasks`                 | 列表 (name/cron/prompt 必填, 时区默认 Asia/Shanghai, 计算 next_fire_at, 重名 409)            |
-| `GET/PATCH/DELETE /api/v1/scheduled-tasks/:id`     | 更新走指针字段合并 + 重算 next_fire_at + 定义缓存更新                                        |
-| `POST /api/v1/scheduled-tasks/:id/trigger`         | 手动触发 (见上文 fire key 协议)                                                              |
-| `GET/POST /api/v1/condition-tasks`                 | 创建时校验 `ValidWatchTable` 并 `EnsureCapture`, event_type 固定 `mysql_insert`              |
-| `GET/PATCH/DELETE /api/v1/condition-tasks/:id`     | 定义维护                                                                                     |
-| `POST /api/v1/condition-tasks/:id/test`            | 仅 `risk_records`, 测试入口                                                                  |
-| `GET /api/v1/executions` / `:id` / `:id/report`    | 列表 (页大小默认 20 上限 200, id DESC); report 返回 `text/markdown; charset=utf-8`, 空则 404 |
-| `POST /api/v1/executions/:id/cancel`               | 仅 pending/reserved/queued, 否则 409                                                         |
-| `GET/POST /api/v1/risk-records`                    | 演示业务表; 创建返回 `event_delivery: "durable"` (依赖触发器捕获)                            |
+| `GET /api/v1/health` / `ready` / `overview` | 存活 / 就绪 / 总览 (统计+任务+近期执行+节点) |
+| `GET/POST /api/v1/scheduled-tasks` | 列表 (name/cron/prompt 必填, 时区默认 Asia/Shanghai, 计算 next_fire_at, 重名 409) |
+| `GET/PATCH/DELETE /api/v1/scheduled-tasks/:id` | 更新走指针字段合并 + 重算 next_fire_at + 定义缓存更新 |
+| `POST /api/v1/scheduled-tasks/:id/trigger` | 手动触发 (见上文 fire key 协议) |
+| `GET/POST /api/v1/condition-tasks` | 创建时校验 `ValidWatchTable` 并 `EnsureCapture`, event_type 固定 `mysql_insert` |
+| `GET/PATCH/DELETE /api/v1/condition-tasks/:id` | 定义维护 |
+| `POST /api/v1/condition-tasks/:id/test` | 仅 `risk_records`, 测试入口 |
+| `GET /api/v1/executions` / `:id` / `:id/report` | 列表 (页大小默认 20 上限 200, id DESC); report 返回 `text/markdown; charset=utf-8`, 空则 404 |
+| `POST /api/v1/executions/:id/cancel` | 仅 pending/reserved/queued, 否则 409 |
+| `GET/POST /api/v1/risk-records` | 演示业务表; 创建返回 `event_delivery: "durable"` (依赖触发器捕获) |
 | `GET /api/v1/monitor/nodes                         | stats                                                                                        | cache | dead-letters | consensus | journal | mirror | storage` | 诊断面 (journal 查询要求 `fire_key` 参数) |
-| `POST /api/v1/telemetry/log`                       | 前端事件落 JSONL                                                                             |
-| `POST /internal/v1/fire` / `GET /internal/v1/ping` | 时间轮回调 / 内部探活                                                                        |
+| `POST /api/v1/telemetry/log` | 前端事件落 JSONL |
+| `POST /internal/v1/fire` / `GET /internal/v1/ping` | 时间轮回调 / 内部探活 |
 
 ## 配置与部署形态
 

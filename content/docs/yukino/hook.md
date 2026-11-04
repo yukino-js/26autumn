@@ -30,22 +30,22 @@ hooks:
 - 条件: tool === "WriteFile"
 - 动作: 执行 `prettier -w` 格式化刚写入的文件
 
-一个事件有多个 hook 时, 按 yaml 数组中的顺序逐个执行 (`HookEngine.fire` 顺序遍历, 源码: src/hooks/index.ts)
+一个事件有多个 hook 时, 按 yaml 数组中的顺序逐个执行 (`HookEngine.fire` 顺序遍历, 源码: src/hooks/index.ts): 逐个跳过 event 不匹配、condition 求值为 false、once 已触发的 hook, 并在 `abortSignal` 已中断时立即结束遍历
 
 ## 配置结构
 
 单个 hook 的字段 (HookConfigSchema, src/config/index.ts):
 
-| 字段        | 类型          | 说明                                                    |
-| ----------- | ------------- | ------------------------------------------------------- |
-| `id`        | string, 可选  | hook 标识, 用作 once 槽位 key 和校验错误的定位信息      |
-| `event`     | string        | 事件名, 必须是 9 个事件之一                             |
-| `condition` | string, 可选  | JS 表达式, 省略则无条件触发                             |
-| `action`    | object        | 动作: `type` 加类型特有字段 (command/url/method/prompt) |
-| `reject`    | boolean, 可选 | 拒绝工具调用, 只对 pre_tool_use 有拦截语义              |
-| `once`      | boolean, 可选 | 每个会话只执行一次                                      |
-| `async`     | boolean, 可选 | 后台执行, 不阻塞主流程                                  |
-| `on_error`  | string, 可选  | 执行失败时的行为: ignore (默认) / fail / reject         |
+| 字段        | 类型          | 说明                                                                                        |
+| ----------- | ------------- | ------------------------------------------------------------------------------------------- |
+| `id`        | string, 可选  | hook 标识, 用作 once 槽位 key 和校验错误的定位信息                                          |
+| `event`     | string        | 事件名, 必须是 9 个事件之一                                                                 |
+| `condition` | string, 可选  | JS 表达式, 省略则无条件触发                                                                 |
+| `action`    | object        | 动作: `type` 加类型特有字段 (command/url/method/prompt)                                     |
+| `reject`    | boolean, 可选 | 拒绝工具调用, 只对 pre_tool_use 有拦截语义                                                  |
+| `once`      | boolean, 可选 | 每个会话只执行一次                                                                          |
+| `async`     | boolean, 可选 | 后台执行, 不阻塞主流程                                                                      |
+| `on_error`  | string, 可选  | 执行失败时的行为: ignore (默认) / fail / reject; schema 只要求是字符串, 其他取值等同 ignore |
 
 ## 事件
 
@@ -164,7 +164,7 @@ action:
   prompt: "review 刚刚写入的文件是否有安全漏洞"
 ```
 
-保留给未来的 hook runner: HookEngine 上有可注入的 agentRunner 扩展点, 但没有任何宿主注册它, 配置校验直接报错 `action.type "agent" is not supported yet — use "command" or "prompt" instead`, 该类型当前不可用
+保留给未来的 hook runner: HookEngine 上有可注入的 `agentRunner` 扩展点, 但没有任何宿主注册它, 配置校验 (`validate`) 直接报错 `action.type "agent" is not supported yet — use "command" or "prompt" instead`, 该类型当前不可用; 即便绕过校验, `executeAction` 的 agent 分支也会因缺少 runner 抛 `agent-type hook configured but no AgentRunner registered`
 
 ## pre_tool_use 拦截
 
@@ -180,7 +180,7 @@ hooks:
 
 - reject: true 且动作执行成功时, 工具调用被拒绝, 不执行; hook 的输出作为拒绝理由, Agent 将其包装为工具调用结果 `Rejected by hook: <reason>` (isError: true) 返回给 LLM, LLM 在下一轮调整策略
 - 拦截发生在权限检查之前 (见 [permission](./permission)): 被 hook 拒绝的调用不会再进入权限弹窗
-- 某个 hook 拒绝后, 该事件的后续 hook 不再执行 (fire 循环 break)
+- 在 pre_tool_use 上, 某个 hook 的 `reject` 生效后, `fire` 循环 break, 该事件的后续 hook 不再执行; 其他事件即使配了 reject 也不会中断循环, 输出照常进入通知队列
 - reject 只对 pre_tool_use 有拦截语义; 其他事件的 hook 配置 reject 会被忽略, 输出仍然作为通知注入
 - pre_tool_use 的动作默认同步执行 (async 缺省或 false), 阻塞等待返回值, 检查是否拒绝
 - on_error: "reject" 时, 动作执行失败也视为拒绝 (同样只在 pre_tool_use 拦截)

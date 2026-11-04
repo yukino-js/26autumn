@@ -12,6 +12,26 @@ local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 
 为什么需要任务板: LLM 在长对话里容易忘记做过什么、漏掉子任务; 把「要做什么」外化成一块可读写的板子, 模型每轮都能刷新它、按依赖推进它。两者共享 `Task*` 工具命名空间但语义完全不同: 任务板跟踪计划, TaskManager 跟踪执行。
 
+:::tip
+两个机制共享 `Task*` 工具命名空间, 但语义完全独立: **任务板** (`TodoWrite`) 把「要做什么」外化成可读写的板子, 是模型自己维护的外部记忆; **TaskManager** (`TaskOutput` / `TaskStop`) 登记「现在后台跑什么」, 是运行时登记表。
+:::
+
+```mermaid
+flowchart LR
+  subgraph Board["任务板 Task Board"]
+    direction TB
+    TB1[TodoWrite 工具] --> TB2[TaskList / TeamTodoWriteTool]
+    TB2 --> TB3[tasks.json 持久化]
+  end
+  subgraph TM["后台任务 TaskManager"]
+    direction TB
+    TM1[agent- / bash- / ps- / workflow-] --> TM2[TaskManager 登记]
+    TM2 --> TM3[TaskOutput / TaskStop]
+  end
+  Board -. 计划 .- TM
+  TM -. 执行回流 .- Board
+```
+
 ## 私有任务板
 
 每个会话一块私有任务板, 由 `TaskList` (src/todo/index.ts) 在内存里持有, 通过 `TaskStore` (src/todo/store.ts) 持久化到会话产物目录:

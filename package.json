@@ -30,6 +30,7 @@
   "dependencies": {
     "@rspress/core": "^2.0.23",
     "@rspress/plugin-sitemap": "^2.0.23",
+    "@yukino.js/sentry": "^0.0.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "rspress-plugin-mermaid": "^1.0.3"

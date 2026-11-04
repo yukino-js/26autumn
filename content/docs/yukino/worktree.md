@@ -7,6 +7,18 @@ local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 
 worktree 子系统 (src/worktree/) 用 git worktree 给每个并发工作单元一份独立的检出: 独立的目录、独立的分支, 并发的文件修改互不覆盖, 产出落在各自的分支上, 是否合并由主 agent 决定
 
+```mermaid
+flowchart LR
+  A[EnterWorktree / worktree:true / isolation] --> B[createAgentWorktree]
+  B --> C[performPostCreationSetup]
+  C --> D[enterWorktree<br/>记录 worktreeSession]
+  D --> E[工具 cwd 覆盖为 worktree 路径]
+  E --> F{ExitWorktree}
+  F -->|keep| G[保留分支与目录]
+  F -->|remove| H[变更检测 + 删除安全闸]
+  H --> I[git worktree remove + branch -d]
+```
+
 三个入口共用同一套机制:
 
 - 主会话直接调用 EnterWorktree / ExitWorktree 工具, 进出一次性的 worktree 会话
@@ -126,7 +138,9 @@ git worktree remove --force -- <path>
 git branch -D -- <branch>
 ```
 
+:::warning
 即便走到删除, 仍有一层身份校验: worktree 的 gitdir、commondir、gitdir 里的 gitdir 反向指针 (必须指回 `<path>/.git`)、主仓库的 commondir、当前分支, 都要与创建时的记录一致; 任何一项被外部改动过就拒绝清理 (`Worktree Git identity changed` / `Worktree registration or branch changed`), 防止误删不属于自己的 worktree。
+:::
 
 ## 所有权记录
 

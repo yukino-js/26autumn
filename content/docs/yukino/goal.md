@@ -17,7 +17,9 @@ local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 | /goal 命令                      | 用户   | 设置/替换/暂停/恢复/继续/完成/清空目标 (见 [slash-command](./slash-command))                                 |
 | Goal 工具 (src/tools/goal.ts)   | agent  | 只读查询 `action: get` 和汇报 `action: update` (status: `in_progress` / `complete` / `blocked`, 必附 reason) |
 
-权限边界是单向的: 只有用户可以设置、替换、暂停、恢复、清空目标; agent 不能修改目标本身, 只能查询状态和汇报进展/完成/受阻 —— 这防止 agent 为了「完成」而悄悄降低或改写目标。Goal 是主会话专属工具, 列在 `MAIN_AGENT_ONLY_TOOLS` 里 (src/subagent/constants.ts), subagent 和 teammate 的工具注册表在过滤时直接剔除它; 即使绕过过滤调用, 缺少 goalManager 的上下文也会得到 `Goals belong to the main session and are unavailable to delegated agents.` 错误 (见 [subagent](./subagent))
+:::warning
+**权限边界是单向的**: 只有用户可以设置、替换、暂停、恢复、清空目标; agent 不能修改目标本身, 只能查询状态和汇报进展/完成/受阻 —— 这防止 agent 为了「完成」而悄悄降低或改写目标。`Goal` 是主会话专属工具, 列在 `MAIN_AGENT_ONLY_TOOLS` 里 (src/subagent/constants.ts), subagent 和 teammate 的工具注册表在过滤时直接剔除它; 即使绕过过滤调用, 缺少 `goalManager` 的上下文也会得到 `Goals belong to the main session and are unavailable to delegated agents.` 错误 (见 [subagent](./subagent))。
+:::
 
 ## 数据模型
 
@@ -49,7 +51,7 @@ GoalSchema = {
 
 ## 持久化: goal_state 记录
 
-每次状态变化, GoalManager 向会话 jsonl 追加一条 `role: "system"`、`type: "goal_state"` 的记录, content 是当前 GoalState 的 JSON; `clear()` 写入 JSON `null` 作为墓碑
+每次状态变化, `persist()` 向会话 jsonl 追加一条 `role: "system"`、`type: "goal_state"` (GOAL_RECORD) 的记录, content 是当前 GoalState 的 JSON; `clear()` 写入 JSON `null` 作为墓碑。`get()` 返回的 `activeMs` 是 `state.activeMs` 加上 `activeSince` 至今的实时累计值
 
 恢复逻辑: 构造 `GoalManager(cwd, sessionId)` 时用 `loadSession` 扫描整份会话日志, 取最后一条能解析的 `goal_state` 记录作为当前状态, `null` 墓碑表示已清空。这带来三个性质:
 
@@ -59,25 +61,39 @@ GoalSchema = {
 
 ## 状态转换
 
-```txt
-/goal <obj> 或 /goal replace <obj>  ──> active
-active   --/goal pause----------------> paused    --/goal resume--> active
-active   --连续 3 轮同一 blocker------> blocked   --/goal resume--> active
-active   --Goal update complete-------> complete  (终态)
-任意存在状态 --/goal complete---------> complete  (终态)
-active   --tokensUsed >= tokenBudget--> budget_limited
-active   --turnsExecuted >= 150------> max_turns --/goal continue--> active (turnsExecuted 清零)
-任意状态 --/goal clear----------------> (删除, 写入 null 墓碑)
+```mermaid
+stateDiagram-v2
+  [*] --> active : /goal <obj> / replace <obj>
+  active --> paused : /goal pause
+  paused --> active : /goal resume
+  active --> blocked : 连续 3 轮同一 blocker
+  blocked --> active : /goal resume
+  active --> complete : Goal update complete
+  active --> budget_limited : tokensUsed >= tokenBudget
+  active --> max_turns : turnsExecuted >= 150
+  max_turns --> active : /goal continue (轮次清零)
+  complete --> [*]
+  %% /goal clear 可从任意存在状态触发, 写入 null 墓碑
+  active --> cleared : /goal clear
+  paused --> cleared : /goal clear
+  blocked --> cleared : /goal clear
+  complete --> cleared : /goal clear
+  budget_limited --> cleared : /goal clear
+  max_turns --> cleared : /goal clear
+  cleared --> [*]
 ```
 
-- 已有未完成目标时, `/goal <objective>` 报 `An unfinished goal already exists.`, 必须显式 `/goal replace <objective>`; 上一个目标已 complete 时可以直接设置新目标
+:::tip
+已有未完成目标时, `/goal <objective>` 报 `An unfinished goal already exists.`, 必须显式 `/goal replace <objective>`; 上一个目标已 `complete` 时可以直接设置新目标。
+:::
+
 - budget_limited 目标 resume/continue 会被状态检查拒绝 (报 `Only a paused, blocked, or turn-limited goal can resume.`); `The token budget is exhausted; replace the goal with an explicit new budget.` 只在 paused / blocked / max_turns 目标的 tokensUsed 已达预算时出现 —— 两种情况的唯一出路都是 replace 并给出新预算
 - pause 只作用于 active; resume 只作用于 paused / blocked / max_turns 三种状态, 且会重置受阻计数; max_turns 必须用 continue (普通 resume 报 `Use /goal continue to reset the continuation limit.`), continue 又只认 max_turns, 用错状态会互相指路
 - `/goal complete` 不要求 active, 用户对任何存在的目标都有最终确认权
 
 ## 命令处理: 谁返回 prompt, 谁立即起跑
 
-`handleGoalCommand(manager, args)` 是所有宿主共用的分发器, 返回 `{ message, prompt?, isError? }`。message 永远有 (成功时是 `formatGoalStatus` 的状态报告, 失败时是 `Error: ...`); 关键在于 prompt —— 带 prompt 的命令会让宿主把 prompt 作为 user 消息注入对话并立即启动 agent loop:
+`handleGoalCommand(manager, args)` (src/goal/index.ts) 是所有宿主共用的分发器, 返回 `{ message, prompt?, isError? }`。message 永远有: `status` / `pause` / `complete` / `resume` / `continue` / 设置类成功时是 `formatGoalStatus` 的状态报告, `clear` 是 `Goal cleared.` (GOAL_CLEARED_MESSAGE), 失败时是 `Error: ...`; 关键在于 prompt —— 带 prompt 的命令会让宿主把 prompt 作为 user 消息注入对话并立即启动 agent loop:
 
 | 命令                               | prompt                                     |
 | ---------------------------------- | ------------------------------------------ |
@@ -85,7 +101,7 @@ active   --turnsExecuted >= 150------> max_turns --/goal continue--> active (tur
 | `/goal resume`、`/goal continue`   | 续跑 prompt (目标 active 且未达轮次上限时) |
 | status / pause / complete / clear  | 无, 只改状态不出声                         |
 
-预算参数可以和子命令组合: `BUDGET_ARG_PATTERN` 解析 `--budget <正整数>`, 位置在 objective 之前, 例如 `/goal replace --budget 500000 <obj>`; 参数形状不匹配 (如缺 objective) 时返回 usage 提示 `Usage: /goal [replace] [--budget <positive integer>] <objective>`, 数值不满足 GoalSchema 校验 (如 0) 时返回 Error
+预算参数可以和 replace 组合: 分发器先剥离开头的 `replace ` 前缀, 再要求剩余串以 `--budget ` 开头, 由 `BUDGET_ARG_PATTERN = /^--budget\s+(\d+)\s+([\s\S]+)$/u` (src/goal/constants.ts) 解析出预算与 objective, 例如 `/goal replace --budget 500000 <obj>` (写成 `/goal --budget 500000 replace <obj>` 不会按预算处理); 参数形状不匹配 (如缺 objective) 时返回 usage 提示 `Usage: /goal [replace] [--budget <positive integer>] <objective>` (GOAL_USAGE), 数值不满足 GoalSchema 的 `tokenBudget` 正整数校验 (如 0) 时返回 Error
 
 三个宿主的行为:
 
@@ -107,7 +123,7 @@ agent loop 本来要在「无 tool_use + 无 steering」时退出, 目标改变�
 ## token 预算与最终总结
 
 - `/goal --budget <tokens> <obj>` 设置预算 (正整数, 省略则只有 150 轮上限兜底); `tokensUsed >= tokenBudget` 的瞬间自动转为 budget_limited, 同时置 `budgetSummaryPending = true`
-- 预算耗尽的那一轮响应里, 所有 tool call 直接打上 `Goal token budget reached; no further tools will be executed. Report existing progress.` 的错误标记, 不执行 —— 包括 agent 试图提交的 `Goal complete`
+- 预算耗尽的那一轮响应里, 所有 tool call 直接打上 `Goal token budget reached; no further tools will be executed. Report existing progress.` (GOAL_BUDGET_LIMITED_NOTICE, src/agent/prompts.ts) 的 parseError 标记, 由 StreamingExecutor 转成错误 tool_result, 不执行 —— 包括 agent 试图提交的 `Goal complete`
 
 下一轮循环顶部是预算闸门 (`goalManager.get()?.status === "budget_limited"`):
 
@@ -128,13 +144,15 @@ agent 用 Goal 工具汇报时, 三种 status 都要附非空 reason, 且只有 
   - 连续 3 轮同一 blocker (`>= MAX_BLOCKED_ATTEMPTS`) 才转为 blocked 停止续跑; 否则返回 `Blocked audit: N/3 consecutive turns.` + 状态报告, 循环继续
 - `complete`: 转为 complete 终态。工具描述要求「只有全部需求达成且经过验证才能标记完成」, reminder 进一步要求全部需求有验证过的证据支撑、包括测试覆盖检查、不确定的工作视为未完成
 
-设计动机: 「困难、慢、部分进展」不是受阻; 只有真正重复出现的不可逾越障碍才值得让 agent 停下来等用户, 防止它一遇挫折就放弃, 也防止它无限重试
+:::info
+**设计动机**: 「困难、慢、部分进展」不是受阻; 只有真正重复出现的不可逾越障碍才值得让 agent 停下来等用户, 防止它一遇挫折就放弃, 也防止它无限重试。
+:::
 
 ## 每轮 reminder
 
 目标存在时, 每轮循环开始向历史注入 `<persistent-goal>` system-reminder (经 `addSystemReminderIfChanged`, 内容不变不重复注入), 结构是: 状态报告 (Goal / Status / `Tokens: used / budget` / `Active time: Ns` / `Continuation turns: N / 150` / 最新 Blocker) + `REMINDER_INSTRUCTION` 硬约束 (只有用户能设置/替换/暂停/恢复; in_progress 汇报进展并重置受阻审计; 完成需要全部需求验证; 同一 blocker 每轮只记一次; 尊重 paused 和终态、用户 steering、权限与审批)
 
-目标被 clear 后, 若历史里还留着旧的 `<persistent-goal>` reminder, 会注入一条 `No persistent goal is set. Follow the current user request.` 把它盖掉, 防止模型按已删除的目标继续行动
+目标被 clear 后, 若历史里还留着旧的 `<persistent-goal>` reminder, 会注入 `NO_PERSISTENT_GOAL_REMINDER` (= `<persistent-goal>\nNo persistent goal is set. Follow the current user request.\n</persistent-goal>`, src/agent/prompts.ts) 把它盖掉, 防止模型按已删除的目标继续行动
 
 ## 使用
 

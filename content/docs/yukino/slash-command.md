@@ -61,11 +61,28 @@ interface Command {
 | prompt     | 是                 | handler 构造 prompt 作为用户消息发给 LLM API; 设置 `agent` 时在指定名称的前台 subagent 里执行          |
 | skill_fork | 是 (隔离 subagent) | skill 加载后自动注册的 fork 型命令, UI 构造 fork host 在独立 subagent 中执行                           |
 
-> 不参与 agent loop ≠ 不调用 LLM API。`/compact` 是 local_ui 型, 但 `forceCompact` 会调用 LLM API 生成上下文摘要。反过来, local / local_ui 命令本身不会把用户输入送进 agent loop
+:::info
+**不参与 agent loop ≠ 不调用 LLM API**: `/compact` 是 `local_ui` 型, 但 `forceCompact` 会调用 LLM API 生成上下文摘要。反过来, `local` / `local_ui` 命令本身不会把用户输入送进 agent loop。
+:::
 
 ## 分派流程 (终端 UI)
 
 提交入口 `processSubmission` (src/ui/app.tsx): 先 `refreshSkillsIfNeeded` (skill 目录有变动时热重载并重接命令), 再判断输入是否以 `/` 开头; 是则走 `handleSlashCommand`, 否则作为普通用户消息进入 agent loop
+
+```mermaid
+flowchart TD
+  A["用户输入 / 开头"] --> B{"resolve 返回 null?"}
+  B -->|是| Z["交回普通用户消息"]
+  B -->|否| C{"/mcp 拦截?"}
+  C -->|是| M["reload / connect / list"]
+  C -->|否| D{"注册表查不到?"}
+  D -->|是| U["Unknown command"]
+  D -->|否| E{"/goal 拦截?"}
+  E -->|是| G["handleGoalCommand 本地处理"]
+  E -->|否| F{"/status / /memory 拦截?"}
+  F -->|是| S["实时状态渲染"]
+  F -->|否| T["按类型分派: local_ui / local / prompt(agent) / skill_fork"]
+```
 
 `runSlashCommand` 的判定顺序:
 
@@ -151,6 +168,10 @@ $ARGUMENTS
 - `${1:-main}`、`${@:-fallback}`、`${ARGUMENTS:-fallback}`: 缺省值, 取值为空时用 fallback
 - `${@:2:3}`: 位置参数切片 (从第 2 个起取 3 个, 省略长度取到末尾)
 - 替换只做一遍, 参数值和 fallback 里的占位符文本保持字面, 不递归展开; 模板没有任何占位符且用户给了参数时, 参数追加到正文末尾
+
+:::tip
+参数替换**只做一遍**: 参数值和 fallback 里的占位符文本保持字面, 不递归展开。编写模板时不要在 fallback 里再写占位符指望二次替换。
+:::
 
 ## 命名 workflow 命令
 

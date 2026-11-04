@@ -212,6 +212,10 @@ export default async function Page() {
 
 正确做法是把请求相关的数据通过 props 或 `React.cache()` 传递, 永远不要依赖可变的模块级状态.
 
+:::warning
+**服务端组件里写模块级可变状态 = 跨请求数据泄漏.** 服务端进程并发处理多个请求, 模块级变量是进程共享、不隔离请求的. 在模块顶层用 `let currentUser` 之类的可变状态, 会让请求 A 的渲染读到请求 B 的数据——这既是逻辑 bug, 也是严重的安全漏洞. 请求相关数据一律走 props 或 `React.cache()`, 绝不碰可变的模块级状态.
+:::
+
 ## 缓存与重验证
 
 ### 四个缓存层级
@@ -267,6 +271,17 @@ Cache Components 模型下, 缓存的生命周期由 `cacheLife` 配置, 提供�
 `revalidateTag` 的第二个参数 (`cacheLife` 档位名或 `{ expire }` 对象) 决定旧数据还能被提供多久, 推荐传 `max` 获得最长的陈旧窗口; 需要写后立即读到自己的变更时改用 `updateTag`. 标签必须先被赋给缓存数据——用 `fetch` 的 `next.tags`, 或在 `use cache` 作用域内调用 `cacheTag`.
 
 一个容易误解的点: 重验证由请求触发, 而不是由 `revalidateTag` 调用触发. 打了标签的页面在下次被访问时才刷新, 不会在调用的一瞬间全部更新. 客户端侧还有 `router.refresh()` 用于清除当前路由的客户端缓存并重新请求, 它不失效服务端缓存; Next 16 另有同名的服务端 `refresh()` (`next/cache`, 仅限 Server Action), 不碰缓存, 只重新执行未缓存的数据读取, 二者互补.
+
+```mermaid
+flowchart TD
+    A[请求带 tag 的数据] --> B{缓存是否过期?}
+    B -->|未过期| C[直接返回缓存]
+    B -->|已 stale| D{用哪个 API 失效?}
+    D -->|revalidateTag| E[先返回旧数据\n后台刷新 SWR]
+    D -->|updateTag| F[立即过期\n等待新数据 read-your-writes]
+    E --> G[后续请求命中新数据]
+    F --> G
+```
 
 ### Cache Components 与 use cache
 
@@ -406,6 +421,10 @@ Actions 的 pending 与返回值由 React 的表单 Hook 消费:
 
 Server Action 本质上是公开的 HTTP 端点, 客户端可以构造任意参数调用它. 因此每个 Action 内部都必须独立完成验证、认证与授权, 不能依赖调用方是"自己人".
 
+:::danger
+**Server Action 就是公开端点, 不要当内部函数用.** 客户端拿到的只是加密后的函数标识, 任何人都可以用任意参数直接调用它, 不存在"只有我的页面会调"这回事. 每个 Action 内部必须独立完成**校验 (zod 等)、认证 (verifySession)、授权 (权限判断)** 三步, 绝不依赖调用方的"善意". 需要给第三方用的接口应该用 Route Handler, 而不是把 Action 当通用 API.
+:::
+
 ```ts
 "use server";
 
@@ -536,3 +555,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
 | 强交互且不需要 SEO 的模块  | 客户端组件 + 客户端数据获取库, 见 [TanStack Query](tanstack) |
 
 最后一条经验值得强调: 缓存策略是产品语义问题, 不是纯技术问题. "数据可以旧多久"应当由业务决定, 再翻译成缓存档位与失效方式; 反过来从 API 出发去猜语义, 很容易做出用户看到过期价格或永远刷不新的页面这类问题.
+
+:::tip
+**缓存策略是产品语义, 不是纯技术.** "数据可以旧多久"先由业务拍板——商品目录允许短暂陈旧就用 `revalidateTag(tag, "max")` 换更快响应, 写后必须立即读到自己的变更就用 `updateTag`. 先问"旧多久能接受", 再翻译成缓存档位与失效 API; 反过来从 `cacheLife` 的数字去猜业务含义, 只会做出过期价格或永远刷不新的页面.
+:::

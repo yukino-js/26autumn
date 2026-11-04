@@ -7,7 +7,9 @@ local_commit: "83f7d68cc4a08084f00a4811f9702c71b4aafd81"
 
 DevFlow 是 yukino-dev-agent 的第二个产品面: 一个 GitHub 工程副驾, UI 在 `/dev-flow`, REST 在 `/api/dev-flow/*`. 它连接 GitHub 仓库, 把 issues / pull requests / CI runs 同步进 PostgreSQL, 跑「确定性优先」的 AI 分析 Agent, 维护每仓 RAG 知识库, 并提供对话、记忆、代码工作区、代码图、知识图、多 Agent workflow 编排和多仓 workspace.
 
-核心安全原则: **Agent 从不直接写 GitHub**, 所有写操作只生成草稿, 需人工确认才执行.
+:::warning 核心安全原则
+**Agent 从不直接写 GitHub**, 所有写操作只生成草稿, 需人工确认才执行.
+:::
 
 ## 核心能力
 
@@ -33,6 +35,21 @@ POST /api/dev-flow/repos
        workflow runs (+ jobs; 失败的 run 还抓每个失败 job 的日志)
 ```
 
+```mermaid
+flowchart TD
+    A[POST /api/dev-flow/repos] --> B[GitHub API 校验仓库 fetchRepoMeta]
+    B --> C[加密可选 token AES-256-GCM]
+    C --> D[sync.ts 同步]
+    D --> E[issues]
+    D --> F[pull requests + files + review comments]
+    D --> G[workflow runs + jobs]
+    G -->|失败 run| H[抓取失败 job 日志 脱敏 + 截断]
+    E --> U[幂等 upsert 入 PostgreSQL]
+    F --> U
+    G --> U
+    H --> U
+```
+
 - 所有实体以复合唯一键幂等 upsert: `repoId_githubIssueId` / `repoId_githubPrId` / `repoId_githubRunId`
 - 同步条数 `limit` 夹在 1–100 (默认 30); provider 目前只接受 `github` / `github_compatible`
 - token 加密细节 (`lib/dev-flow/crypto.ts`): AES-256-GCM, 密钥为 `scryptSync(DEV_FLOW_SECRET, "dev-flow-token-v1", 32)`, 密文为 base64 的 `iv.tag.cipher` 用 `.` 拼接
@@ -41,6 +58,10 @@ POST /api/dev-flow/repos
 - 每次同步结束 fire-and-forget 重建知识图 (`rebuildGraph`), 并更新 `lastSyncAt` / `lastSyncError`
 - 自动同步: `scheduler.ts` 的 `startAutoSyncLoop()` 由 `instrumentation.ts` 启动, globalThis 守卫防止重复实例; 首次运行在启动后 5s, 间隔下限 30s; 受 `DEV_FLOW_AUTO_SYNC_ENABLED` (须为 `true`) / `DEV_FLOW_AUTO_SYNC_INTERVAL_SECONDS` (默认 900) / `DEV_FLOW_AUTO_SYNC_LIMIT` (默认 30) 控制
 - GitHub webhook 入口: `POST /api/dev-flow/webhooks/github` (校验 `GITHUB_WEBHOOK_SECRET`)
+
+:::info 自动同步与启动守卫
+`scheduler.ts` 的 `startAutoSyncLoop()` 由 `instrumentation.ts` 启动, `globalThis` 守卫防止重复实例; 首次运行在启动后 5s, 间隔下限 30s; 受 `DEV_FLOW_AUTO_SYNC_ENABLED` (须为 `true`) / `DEV_FLOW_AUTO_SYNC_INTERVAL_SECONDS` (默认 900) / `DEV_FLOW_AUTO_SYNC_LIMIT` (默认 30) 控制.
+:::
 
 ## 分析 Agent (确定性优先)
 
@@ -56,6 +77,20 @@ POST /api/dev-flow/repos
 2. LLM 输出叠加在基线之上 (`mergeIssueAnalysis` / `mergePrReview` / `mergeCiDebug`)
 3. LLM 完全失败时, 持久化确定性结果并标 `generationMode: "deterministic"`, **绝不返回 500**
 4. 结果经 `saveAnalysis` 落 `AnalysisResult` 表
+
+:::warning 确定性兜底: LLM 失败也绝不返回 500
+LLM 完全失败时, 持久化确定性结果并标 `generationMode: "deterministic"`, 绝不返回 500.
+:::
+
+```mermaid
+flowchart TD
+    Q[输入: issue / PR / CI] --> R[规则引擎: 计算确定性基线]
+    R --> L[LLM 输出叠加在基线之上]
+    L -->|LLM 成功| S[saveAnalysis 落 AnalysisResult]
+    L -->|LLM 完全失败| D[持久化确定性结果 generationMode=deterministic]
+    S --> Done([完成, 绝不返回 500])
+    D --> Done
+```
 
 `generateStructured()` 在首次响应未通过 schema 校验时, 会用更严格的「只输出 JSON」提醒重试一次 (部分 OpenAI 兼容网关会把 JSON 包在散文里).
 

@@ -71,6 +71,10 @@ CSS 选择器可分为几类: 类型选择器 (`div`)、类选择器 (`.btn`)、
 
 工程建议是避免 `!important` 与行内样式, 通过合理的类名组织 (BEM、CSS Modules) 或 `@layer`/`:where()` 控制权重冲突; 引入第三方库时用 `@import "lib.css" layer(vendor)` 把整库降到一个低优先级层, 这样业务样式无需提高权重即可覆盖它。
 
+:::tip
+**层叠层的排序心法。** 想让"默认样式容易被覆盖", 把它放进最靠前的层; 想让"工具类永远能赢", 把它放进最后的层。配合 `:where()` 的零特异性做基础样式, 再用 `@import "lib.css" layer(vendor)` 把第三方库整体压到低优先级层, 业务代码无需堆权重即可覆盖。权重战争的正解从来不是叠加选择器, 而是用层与 `:where()` 重新排序。
+:::
+
 ### 继承与全局关键字
 
 继承指子元素未显式声明某属性时取父元素的计算值, 且继承来的值优先级最低 (任意一条命中该元素的声明都能覆盖它)。规律是: 与文字排版相关的属性通常可继承, 如 `font-*`、`color`、`line-height`、`text-align`、`text-indent`、`letter-spacing`、`white-space`、`direction`、`visibility`、`cursor`、`list-style`、`quotes` 等; 盒模型 (`width`/`height`/`margin`/`padding`/`border`)、定位 (`position`/`top`/`z-index`)、`background`、`display`、`float`、`overflow`、`transform` 等不可继承。经典疑问"为什么 `a` 不继承父元素颜色"的答案是 UA 默认样式表直接给 `a` 设了颜色, 直接命中高于继承, 想继承需显式写 `a { color: inherit; }`。
@@ -129,6 +133,10 @@ margin 合并指垂直方向上两个 margin 相遇时不叠加而合并为较�
 层叠上下文是三维渲染分组的抽象: 同一上下文内按规则决定谁盖谁; 不同上下文之间只比较两个上下文根元素的层级, 内部元素无法"越狱"。常见创建条件包括: 根元素; `position` 为 absolute/relative 且 `z-index` 非 auto; `position: fixed`/`sticky`; flex/grid 容器的子项且 `z-index` 非 auto; `opacity` 小于 1; `transform`/`filter`/`perspective`/`backdrop-filter` 非 none; `mix-blend-mode` 非 normal; `isolation: isolate`; `will-change` 指向上述属性; `contain: layout`/`paint`/`content`/`strict`。同一上下文内的绘制顺序从下到上为: 根元素的背景与边框, 负 `z-index` 的定位元素, 普通流中的块级盒子, 浮动元素, 普通流中的行内盒子, `z-index` 为 0/auto 的定位元素, 正 `z-index` 的定位元素。
 
 `z-index` "失效"的三类原因: 元素是 `static` 定位 (对非定位元素与未设置 z-index 的 flex/grid 子项无效); 祖先创建了低层级的层叠上下文, 子元素 `z-index: 9999` 也翻不出父级的"天花板", 被其他分支盖住; 同级元素都未设置 z-index, 此时按绘制顺序后者覆盖前者, 看起来像失效。工程解法是全局规划层级区间 (基础、吸顶、抽屉、弹窗、toast 各占一段), 弹窗类组件用 portal 挂到 `body` 下避开祖先层叠上下文, 或直接用原生 `<dialog>` 与 popover —— 它们进入浏览器的 top layer, 渲染在所有常规内容之上, 天然不被任何 `z-index` 遮挡, 也不受祖先层叠上下文约束。
+
+:::tip
+**`z-index` 失效的本质是"天花板"问题。** 子元素的 `z-index` 再大也翻不出父级层叠上下文的边界, 因此弹窗"跑不过"兄弟分支, 十有八九是某个祖先悄悄建了层叠上下文 (`transform`、`opacity<1`、`will-change`、`isolation` 等)。现代正解: 弹窗用 **portal 挂到 `body`** 或用原生 `<dialog>`/popover 进入 **top layer**, 从根上避开祖先层叠上下文的约束。
+:::
 
 ## 布局
 
@@ -404,9 +412,25 @@ CSSOM 未就绪 → 后面的 <script> 无法执行 → HTML 解析暂停 → DO
 
 渲染页面的完整管线是: 解析 HTML 得 DOM, 解析 CSS 得 CSSOM, 合并为只含可见节点的渲染树, 布局计算几何, 绘制生成指令并分块光栅化, 合成线程按 `transform`/`opacity`/层序合成最终帧。关键渲染路径的优化都围绕这条链: 减少关键资源数量与体积、缩短关键路径长度、减少重排重绘。
 
+```mermaid
+flowchart LR
+    A[HTML 解析] --> B[DOM]
+    C[CSS 解析] --> D[CSSOM]
+    B --> E[渲染树 仅可见节点]
+    D --> E
+    E --> F[布局 几何计算]
+    F --> G[绘制 绘制指令]
+    G --> H[光栅化 分块]
+    H --> I[合成 transform/opacity/层序]
+```
+
 ### 重排重绘与 contain
 
 重排 (reflow/layout) 由几何变化触发, 重绘 (repaint) 只重跑绘制阶段, `transform`/`opacity` 则可能只需合成。关系是重排必然引发重绘与合成, 重绘必然引发合成。强制同步布局 (layout thrashing) 是最典型的性能杀手: 写入使布局失效后立刻读取 `offsetWidth`、`getBoundingClientRect()` 等几何属性, 浏览器被迫立即同步布局才能返回正确值, 循环中交替读写会把一次布局放大成多次。优化手段包括批量修改、读写分离、动画只用 `transform`/`opacity`、用绝对或固定定位缩小重排范围、用 `requestAnimationFrame` 合并每帧的写操作。
+
+:::warning
+**强制同步布局是性能杀手。** 写入样式使布局失效后, 立刻读取 `offsetTop`、`offsetWidth`、`getBoundingClientRect()` 等几何属性, 会迫使浏览器立即同步完成一次完整布局才能返回正确值。在循环里"写一点、读一点"会把一次布局放大成 N 次, 页面直接卡死。解法只有一条: **读写分离**——先在循环外一次性读完需要的几何值缓存到变量, 再统一写样式, 或用 `requestAnimationFrame` 合并每帧写操作。
+:::
 
 `contain` 与 `content-visibility` 属于 CSS Containment 体系, 核心思想是开发者向浏览器承诺"某子树与外界互不影响", 浏览器据此跳过子树的样式计算、布局与绘制。`contain` 的取值: `layout` 表示内部布局独立, 内部变化不引发外部重排, 反之亦然; `paint` 表示后代不绘制到元素边界外; `size` 表示元素尺寸不依赖内容 (需要开发者给出确定的尺寸, 否则会塌陷); `style` 表示计数器等样式影响不逸出子树; 组合值 `strict` 等于 layout 加 paint 加 size 加 style, `content` 等于 layout 加 paint 加 style。
 

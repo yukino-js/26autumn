@@ -2,7 +2,7 @@
 title: "yukino_orm 技术笔记"
 description: "yukino_orm 是构建在 MongoDB 官方驱动之上的 Knex 风格链式 Go ORM: 引擎与连接管理、链式查询构建、聚合分组、流式查询、事务与自增序列"
 local_path: "$HOME/github/yukino.go/libs/yukino_orm"
-local_commit: "9db1ad65904f6ee3b2d7c3498436fab64a6425cd"
+local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
 ---
 
 yukino_orm 是一个面向 MongoDB 的 Go ORM, 设计主旨是把 Knex.js 的链式 (chainable) 查询体验带到 Go: 用 `Where` 系列方法累积条件, 用 `OrderBy`/`Limit`/`Offset`/`Select` 累积排序、分页与投影, 只在调用终结方法时才真正访问数据库。它在官方驱动 `go.mongodb.org/mongo-driver/v2` 之上做薄封装, 因此保留驱动的全部能力, 同时补上集合名反射推导、`$set` 自动包装、聚合与分组、流式游标、事务会话绑定与自增序列等常用能力。本文面向已经熟悉 MongoDB 文档模型、希望在 Go 中用一套统一的链式 API 组织查询的工程师, 说明其抽象模型、查询构建规则、执行语义与适用边界。
@@ -18,7 +18,7 @@ yukino_orm 是一个面向 MongoDB 的 Go ORM, 设计主旨是把 Knex.js 的链
 | 贴近 Knex 的写语义     | 普通文档自动包 `$set`, `Update` 返回匹配数, `Insert` 接受切片, `Increment`/`Decrement` 直接可用                  |
 | 薄封装                 | 以 `$` 开头的未识别操作符原样透传, 原始驱动错误原样返回                                                          |
 
-该库是仓库 `libs/` 下的独立 Go 模块 (`github.com/hangtiancheng/yukino.go/libs/yukino_orm`), 依赖 `go.mongodb.org/mongo-driver/v2 v2.9.1`。模块内为扁平结构, 没有子包: `engine.go` (连接、事务、序列)、`query.go` (链式构建)、`filter.go` (条件解析与过滤文档生成)、`query_exec.go` (增删改查执行)、`query_aggregate.go` (单值聚合、Distinct、Pluck)、`query_group.go` (分组聚合)、`query_stream.go` (游标)、`naming.go` (集合命名)、`log.go` (日志器)。
+该库是仓库 `libs/` 下的独立 Go 模块 (`github.com/hangtiancheng/yukino.go/libs/yukino_orm`), 依赖 `go.mongodb.org/mongo-driver/v2 v2.9.1`。模块内为扁平结构, 没有子包: `engine.go` (连接、事务、序列)、`query.go` (链式构建)、`filter.go` (条件解析与过滤文档生成)、`query_exec.go` (增删改查执行)、`query_aggregate.go` (单值聚合、Distinct、Pluck)、`query_group.go` (分组聚合)、`query_stream.go` (游标)、`naming.go` (集合命名)、`log.go` (日志器); 另有一个仅含 `package yukino_orm` 包声明的 `yukino_orm.go`。
 
 ## 核心抽象
 

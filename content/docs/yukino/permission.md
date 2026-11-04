@@ -33,9 +33,13 @@ export interface Decision {
 
 `check` 内部包了一层 fail-closed: 私有方法 `checkAction` 抛出任何异常 (典型是路径解析失败), `check` 捕获后返回 `deny`, reason 为 `Permission path resolution failed: ...` — 判定链路出错时宁可拒绝也不放行。
 
+:::warning
+**fail-closed**: 判定链路出错 (典型是路径解析失败) 时 `check` 捕获异常返回 `deny` (`Permission path resolution failed: ...`), 宁可拒绝也不放行。
+:::
+
 ## 判定流程: 逐层短路
 
-`checkAction` 按以下顺序逐层判定, 前面的层命中即短路返回 (源码注释里的 Layer 编号保留在代码中):
+`checkAction` 按以下顺序逐层判定, 前面的层命中即短路返回。下面的 1–12 是本文按判定顺序编排的序号; 源码注释里的 `Layer` 标签是另一套非连续编号 (`Layer 0` / `1.5` / `2` / `4` / `5` / `6`): 第 4 层对应 Layer 1.5、第 5 层对应 Layer 0、第 6 层对应 Layer 2、第 10 层对应 Layer 4、第 11 层对应 Layer 5、第 12 层对应 Layer 6, 其余各层在源码里没有 Layer 标签:
 
 1. **plan 模式守卫 (deny)**: `mode === "plan"` 且 `category` 不是 `read` 时, 除四类例外一律返回 `deny` (reason: `Plan mode forbids mutations`)。四类例外: teammate 协调工具、plan 协调工具、写 plan 文件、安全只读命令。这个守卫位于显式规则之前, 意味着 plan 模式下即使有显式 allow 规则也打不开写操作
 2. **显式规则 (deny / ask 短路)**: 规则文件 (见 [权限规则](#权限规则)) 命中的 `deny` 或 `ask` 立即返回; 显式 `allow` 故意不在这里短路, 只记录 effect 放到后面的层, 让路径沙箱等机制可以先介入
@@ -54,6 +58,31 @@ export interface Decision {
 
 - **pre_tool_use hook**: 先于权限判定触发, hook 返回 reject 时直接产出 `Rejected by hook: <reason>` 的错误结果, 不再走权限 (见 [hook](./hook))
 - **McpCall 双重判定**: McpCall 会被判两次 — 外层的 McpCall 本体和解析出的目标 MCP 工具各检查一遍。特例: 外层命中显式 allow 规则、而内层只是被模式矩阵判成 ask 时, 内层继承外层的 allow (否则 `McpCall(server__*)` 这类规则会被内层的 ask 架空)。合并决策按 `deny > ask > 第一个` 取最严
+
+```mermaid
+flowchart TD
+  START["check(toolName, category, args)"] --> P1{"plan 守卫?<br/>非 read 类"}
+  P1 -->|是| DENY["deny: Plan mode forbids mutations"]
+  P1 -->|否| P2{"显式 deny / ask 命中?"}
+  P2 -->|deny| DENY
+  P2 -->|ask| ASK["ask (HITL)"]
+  P2 -->|否| P3{"plan/teammate 协调工具?<br/>plan 文件写? 安全只读?"}
+  P3 -->|是| ALLOW["allow"]
+  P3 -->|否| P4{"空命令?"}
+  P4 -->|是| ASK
+  P4 -->|否| P5{"复杂 shell 语法?"}
+  P5 -->|是| ASK
+  P5 -->|否| P6{"沙箱 auto_allow 且 Bash?"}
+  P6 -->|是| ALLOW
+  P6 -->|否| P7{"路径沙箱越界 (write)?"}
+  P7 -->|是| ASK
+  P7 -->|否| P8{"显式 allow 命中?"}
+  P8 -->|是| ALLOW
+  P8 -->|否| P9["modeDecide(mode, category) 兜底"]
+  P9 --> ALLOW
+  P9 --> ASK
+  P9 --> DENY
+```
 
 ## 权限模式
 
@@ -99,9 +128,11 @@ export function isSafeCommand(command: string): boolean {
 两个要点:
 
 - **元字符拒绝集**: CR、LF、`&`、`|`、`;`、`<`、`>`、反引号、`(`、`)`、`{`、`}`、`[`、`]`, 命中任意一个即判不安全 — 防止 `cat a | rm -rf b` 这类把安全前缀当作管道/链式/重定向/命令替换入口的绕过
-- **白名单内容** (`SAFE_PREFIXES`, src/permissions/constants.ts): 约 50 个字符串前缀加一条正则。字符串前缀是无危险参数的只读工具 — 查看类 (cat、head、tail、wc、stat、strings、hexdump、od、nl、diff、cmp、comm)、文本处理类 (cut、paste、tr、column、tac、rev、fold、expand、unexpand、fmt、numfmt、seq、tsort、pr)、系统信息类 (id、uname、free、df、du、locale、groups、nproc、cal、uptime)、路径类 (basename、dirname、realpath、readlink、which、type)、其他 (echo、printf、grep、expr、test、getconf、true、false、sleep); 唯一的正则覆盖 `docker ps` / `docker images` 这两个只读子命令
+- **白名单内容** (`SAFE_PREFIXES`, src/permissions/constants.ts): 51 个字符串前缀加一条正则。字符串前缀是无危险参数的只读工具 — 查看类 (cat、head、tail、wc、stat、strings、hexdump、od、nl、diff、cmp、comm)、文本处理类 (cut、paste、tr、column、tac、rev、fold、expand、unexpand、fmt、numfmt、seq、tsort、pr)、系统信息类 (id、uname、free、df、du、locale、groups、nproc、cal、uptime)、路径类 (basename、dirname、realpath、readlink、which、type)、其他 (echo、printf、grep、expr、test、getconf、true、false、sleep); 唯一的正则覆盖 `docker ps` / `docker images` 这两个只读子命令
 
-注意白名单刻意收得很窄: `git`、`npm`、`kubectl` 等都不在列 (会落入模式矩阵的 ask 或被显式规则覆盖), `find` 则被列入下文的 `COMPLEX_COMMANDS`, 永远要求审批。命中白名单的命令直接 allow, 不需要确认; Bash 工具的并发安全判定复用同一个函数 — `isConcurrencySafe(args)` 即 `isSafeCommand(command)`, 只有白名单命令才允许和其他工具并发执行。
+:::tip
+白名单**刻意收得很窄**: `git` / `npm` / `kubectl` 等都不在列 (落入模式矩阵 ask 或被显式规则覆盖), `find` 列入 `COMPLEX_COMMANDS` 永远要求审批。只有命中白名单的命令才直接 `allow`, 也才允许与其他工具并发执行 (`isConcurrencySafe` 即 `isSafeCommand`)。
+:::
 
 ## shell 结构分析
 
@@ -125,7 +156,7 @@ export function isSafeCommand(command: string): boolean {
 
 - **允许的根目录**默认两个: 项目根目录 (构造时传入的工作目录) 和系统临时目录 (`os.tmpdir()`, macOS 上是 `/var/folders/...` 而不是 `/tmp`, Linux 是 `/tmp`)
 - **运行时追加**: `allowExtraRoot(path)` 追加可写根 — 典型场景是注册 worktree 时把 worktree 目录加进来 (见 [worktree](./worktree))。派生 checker 时 extraRoots 按快照拷贝, 而 worktree 登记簿 (`worktrees`) 跨派生共享; OS 沙箱的写根 (`sandboxWriteRoots`) 合并 extraRoots 与共享登记簿, 主 agent 和委派 agent 口径统一
-- **检查流程**: `resolveToolPath` 展开 `~` 并相对项目目录 resolve → `canonicalPath` 解析符号链接 (尾部文件甚至父目录不存在时逐级向上回退再拼接, 最大深度受 `MAX_SYMLINK_DEPTH` 限制) → `isPathWithin` 用 `path.relative` 判断是否落在某个根内
+- **检查流程**: `resolveToolPath` 展开 `~` 并相对项目目录 resolve → `canonicalPath` 解析符号链接 (尾部文件甚至父目录不存在时逐级向上回退再拼接, 最大深度 `MAX_SYMLINK_DEPTH = 40`, src/utils/constants.ts) → `isPathWithin` 用 `path.relative` 判断是否落在某个根内
 - **越界处理**: `PathSandbox.check` 返回 `Path <filePath> is outside allowed directories`, 判定流程把它包装成 **ask** 而不是 deny — 用户可能确实需要写外部路径, deny 太激进。ask 之前会重查一次显式规则, 显式 allow 可以覆盖沙箱决策
 - **worktree 隔离**: 经 `forWorktree` 派生的隔离 agent 会把沙箱根切换为 worktree 目录本身 (`isolatedRoot`), 且不再包含系统临时目录
 
@@ -178,7 +209,11 @@ export function isSafeCommand(command: string): boolean {
 ### 加载与缓存
 
 - 每个规则文件按 `mtimeNs + size` 缓存解析结果 (stat 的 bigint 精度), 文件未变直接复用, 变了下次判定自动生效; 同一次判定内的多次评估 (如复合命令) 共享同一份快照
-- 单条格式非法 (effect 不在枚举内、rule 不匹配 `RULE_RE`) 的条目被跳过, 不中断加载; 但整个文件的 YAML 解析失败会抛 `Cannot parse permission rules`, 被 `checkExplicitRules` 捕获后按 deny 处理 — 规则文件写坏了的结果是更严格, 不是更宽松
+- 单条格式非法 (effect 不在枚举内、rule 不匹配 `RULE_RE`) 的条目被跳过, 不中断加载
+
+:::tip
+整个文件的 YAML 解析失败会抛 `Cannot parse permission rules`, 被 `checkExplicitRules` 捕获后按 **deny** 处理 —— 规则文件写坏了的结果是**更严格, 不是更宽松**。
+:::
 
 ## 「始终允许」
 

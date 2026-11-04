@@ -6,7 +6,11 @@ local_path: "$HOME/github/yukino-ecomm-agent"
 local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 ---
 
-围绕 yukino-ecomm-agent 仓库的系统性技术笔记, 共 9 个页面 (含本落地页). 仓库是一个 pnpm workspace: `server/` 是 Hono + LangChain/LangGraph + Prisma/PostgreSQL 的客服 Agent 服务端, `client/` 是 Lit 单页控制台; 全部文档以该仓库源码为唯一事实依据.
+围绕 yukino-ecomm-agent 仓库的系统性技术笔记, 共 9 个页面 (含本落地页).
+
+:::info 单一事实来源 + pnpm workspace
+仓库是一个 **pnpm workspace**: `server/` 是 **Hono** + **LangChain/LangGraph** + **Prisma/PostgreSQL** 的客服 Agent 服务端, `client/` 是 **Lit** 单页控制台; 全部文档以该仓库源码为**唯一事实依据**.
+:::
 
 | 页面                                       | 内容概要                                                                                                                                                                                                                            |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

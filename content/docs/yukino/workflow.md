@@ -9,6 +9,20 @@ Workflow (src/workflow/) 用一段确定性的 JavaScript 脚本编排多个 sub
 
 为什么需要它: Agent 工具一次只委派一个 subagent, 主 agent 要逐个等待、逐个整合; 当任务能拆成几十上百个独立子项 (逐文件审查、批量迁移、全仓扫描) 时, 用脚本一次性编排比让主 agent 循环委派更省 token、更可控。每次启动都会落盘脚本源码和 JSON args, 已成功的 agent 调用在恢复 (resume) 时直接从 journal 回放, 流程可重放、可审计
 
+```mermaid
+flowchart TD
+  L[WorkflowService.launch] --> P[saveRequest 落盘 script.js / request.json]
+  P --> T[TaskManager 建后台任务 立即返回 runId]
+  T --> R[runner: runWorkflow]
+  R --> S[解析脚本 + 建引擎上下文]
+  S --> A{agent 调用}
+  A -->|并行| SEM[Semaphore 限流]
+  SEM --> B[yukino 后端 spawnSubagent]
+  B --> J[写 journal.jsonl]
+  J --> N[通知 drain 回流主 agent]
+  R --> D[run_done / state.json]
+```
+
 ## 三个入口
 
 | 入口                | 形态                                                                                         |
@@ -54,6 +68,10 @@ You will receive the result as a task notification. Use /workflows to view progr
 - `Date()` 调用、无参 `new Date()`、`Date.now()`、`Math.random()` 一律抛 NonDeterministicError —— 时间和随机性必须经 args 传入, 否则恢复重放不可复现; 带参的 `new Date(arg)` 合法
 - TypeScript 语法不转译: `.ts` 扩展名的命名工作流同样按 JavaScript 解析
 - 脚本在宿主进程内执行, 不是隔离沙箱; 沙箱只保证封死「显式逃生门」(import / 动态 import / 其他 export), 不承诺安全边界
+
+:::warning
+**确定性是重放的前提**: `Date()`、无参 `new Date()`、`Date.now()`、`Math.random()` 一律抛 `NonDeterministicError`, 时间和随机性必须经 `args` 传入; 普通 JavaScript 语句在重放时照常再跑一遍, 所以副作用必须放进 `agent()` 调用里。
+:::
 
 ```js
 export const meta = {

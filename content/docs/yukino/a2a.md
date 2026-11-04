@@ -7,7 +7,7 @@ local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
 
 A2A (Agent2Agent) 是一个开放的 agent 互通协议: 一个 agent 以标准化服务的形式对外暴露能力, 其他 agent 或编排器可以发现它、给它派发任务、消费它的流式状态更新
 
-MCP 解决「agent 接入工具」, A2A 解决「agent 接入 agent」: `--a2a` 模式下 Yukino 作为 A2A 服务器运行, 任何 A2A 兼容的客户端都能把编码任务派发给它; 服务端基于 `@a2a-js/sdk` 实现, 源码集中在 src/a2a/ (card、constants、conversion、executor、prompts、request-handler、server 七个模块, index.ts 以命名空间形式聚合导出)
+MCP 解决「agent 接入工具」, A2A 解决「agent 接入 agent」: `--a2a` 模式下 Yukino 作为 A2A 服务器运行, 任何 A2A 兼容的客户端都能把编码任务派发给它; 服务端基于 `@a2a-js/sdk` (package.json 声明 `^1.3.0`, 本机安装 1.3.0) 实现, 协议版本由 `A2A_PROTOCOL_VERSION = "1.0"` 固定, 源码集中在 src/a2a/ (card、constants、conversion、executor、prompts、request-handler、server 七个模块, index.ts 以命名空间形式聚合导出)
 
 ## 启动
 
@@ -18,7 +18,11 @@ yukino --a2a 0          # 端口 0 由 OS 分配, 实际地址启动后打印
 ```
 
 - `--a2a` 是服务器模式旗标, 与 `--remote` 互斥, 也不能与 `-p` / `--resume` / `--output-format` 组合
-- 只允许绑定 loopback 地址 (127.0.0.1 / ::1 / localhost), 非 loopback 地址直接抛错 `A2A server must listen on a loopback address.`; 服务器没有内置鉴权 (SDK 侧挂的是 `UserBuilder.noAuthentication`, card 的 `securitySchemes` 为空), 暴露到网络上等于把代码执行能力暴露到网络上
+
+:::warning
+只允许绑定 **loopback** 地址 (`127.0.0.1` / `::1` / `localhost`), 非 loopback 地址直接抛错 `A2A server must listen on a loopback address.`。服务器**没有内置鉴权** (SDK 侧挂的是 `UserBuilder.noAuthentication`, card 的 `securitySchemes` 为空), 暴露到网络上等于把代码执行能力暴露到网络上。
+:::
+
 - 服务器先绑定端口, 再用实际绑定地址生成 Agent Card 中的 URL, 所以端口 0 也能对外公布可达地址 (IPv6 地址会带 `[]` 包裹)
 - 启动成功后向 stderr 打印 `A2A server listening at <url>` 和 `Agent card at <cardUrl>`, 随后阻塞直到 SIGINT/SIGTERM; 退出时关闭 HTTP 服务器并 dispose 所有 agent runtime (src/a2a/server.ts 的 runA2aServer)
 
@@ -36,7 +40,7 @@ JSON-RPC 方法白名单 (src/a2a/constants.ts 的 A2A_METHODS) 共 11 个: `Sen
 
 - 协议请求 (`/` 与 `/v1/...`) 必须带 `A2A-Version: 1.0` 头, 由服务器自己的中间件在 SDK handler 之前校验 (Agent Card 端点不受限制): 缺失报 `Missing A2A-Version header; send A2A-Version: 1.0.`, 取值不符报 `Unsupported A2A-Version "<值>"; this server requires A2A-Version: 1.0.`, 未知方法报 `Unknown method "<方法>". Supported methods: <白名单列表>.`
 - body 解析失败同样返回结构化错误: 超过 100 KiB 报 `Request body exceeds the 102400 byte limit.`, 非法 JSON 报 `Request body must contain valid JSON.`
-- 协议错误在两种绑定上形状不同: JSON-RPC 侧返回 `{ jsonrpc, id, error: { code, message, data } }` 信封, REST 侧返回 `{ error: { code: <HTTP 状态码>, message, status, details } }`; `data`/`details` 都携带 `google.rpc.ErrorInfo` 条目 (`reason` + `domain: "a2a-protocol.org"`)
+- 协议错误在两种绑定上形状不同: JSON-RPC 侧返回 `{ jsonrpc, id, error: { code, message, data } }` 信封 (id 取请求体 `id`, 缺省 null), REST 侧返回 `{ error: { code: <HTTP 状态码>, message, status, details } }`, 其中 `status` 在 `VERSION_NOT_SUPPORTED` 时为 `FAILED_PRECONDITION`, 其余为 `INVALID_ARGUMENT`; `data`/`details` 都携带 `google.rpc.ErrorInfo` 条目 (`reason` + `domain: "a2a-protocol.org"`)
 
 | 错误                     | HTTP (`/`) | HTTP (`/v1/...`) | JSON-RPC code | ErrorInfo reason      |
 | ------------------------ | ---------- | ---------------- | ------------- | --------------------- |
@@ -106,19 +110,24 @@ Agent Card 是 A2A 的服务发现文档, 描述这个 agent 是谁、能做什�
 }
 ```
 
-`streaming: true` 对应 SSE 状态与 artifact 流; `pushNotifications: false` 表示不支持 webhook 推送, 客户端需要自己订阅流或轮询 task; `extensions[0]` 把 Yukino 权限握手声明为非必需扩展 (PERMISSION_EXTENSION_URI 在 src/a2a/constants.ts, PERMISSION_EXTENSION_DESCRIPTION 在 src/a2a/prompts.ts), `params` 携带决策枚举、版本头约定与请求/响应 JSON Schema, 客户端无需读文档即可程序化理解权限语义
+`streaming: true` 对应 SSE 状态与 artifact 流; `pushNotifications: false` 表示不支持 webhook 推送, 客户端需要自己订阅流或轮询 task; card 还带 `securitySchemes: {}` / `securityRequirements: []` (对应 SDK 侧 `UserBuilder.noAuthentication`, 无鉴权)、两个 interface 的 `tenant: ""`、`provider: undefined` 与 `signatures: []`; `extensions[0]` 把 Yukino 权限握手声明为非必需扩展 (PERMISSION_EXTENSION_URI 在 src/a2a/constants.ts, PERMISSION_EXTENSION_DESCRIPTION 在 src/a2a/prompts.ts), `params` 携带决策枚举、版本头约定与请求/响应 JSON Schema (由 `z.toJSONSchema` 从 zod schema 转换), 客户端无需读文档即可程序化理解权限语义
 
 ## 任务模型: context 到 session 的映射
 
 A2A 的核心对象是 Task: 客户端发消息 (SendMessage 或流式 SendStreamingMessage), 服务器创建或续跑一个 Task, 以状态更新流式回推进度; Yukino 侧的执行器是 YukinoA2aExecutor (src/a2a/executor.ts), 一个 A2A contextId 对应一个 Yukino session
 
-```txt
-submitted ──> working ──┬──> completed        agent loop 正常结束
-                        ├──> failed           error 事件 / 运行异常 / 请求被拒
-                        ├──> canceled         CancelTask, 或 stopReason 为 cancelled/interrupted
-                        └──> input-required   工具权限等待调用方审批
-                                 │  permission-response 回发
-                                 └────────> working
+```mermaid
+stateDiagram-v2
+  [*] --> submitted
+  submitted --> working
+  working --> completed : agent loop 正常结束
+  working --> failed : error 事件 / 运行异常 / 请求被拒
+  working --> canceled : CancelTask / stopReason cancelled/interrupted
+  working --> input_required : 工具权限等待调用方审批
+  input_required --> working : permission-response 回发
+  completed --> [*]
+  failed --> [*]
+  canceled --> [*]
 ```
 
 - runtime 按需惰性创建 (ensureRuntime): 只有合法且非 busy 的消息才会触发; 空消息 (既无 text 也无 permission-response data part) 直接 fail, 不会创建 session 或拉起 runtime
@@ -126,8 +135,11 @@ submitted ──> working ──┬──> completed        agent loop 正常结
 - 用户文本经 saveMessage 写入 session transcript, 与交互式模式同一套会话存储; 上下文压缩、恢复行为一致
 - 空闲驱逐: 30 分钟无活动 (DEFAULT_IDLE_TIMEOUT_MS) 后 dispose runtime, 释放 MCP 连接和后台资源, 内存中的 contextId→sessionId 映射保留; 下一条消息按 sessionId 重建 runtime 并用 rebuildFromSession 回放 transcript, 驱逐对对话透明; 若 transcript 已不可用则报 `A2A context transcript is no longer available. Start a new context.`
 - 容量上限: 最多跟踪 256 个 context (MAX_TRACKED_SESSIONS), 超出时按 LRU 驱逐完全空闲的 session (进行中或等待权限的绝不驱逐); 被驱逐 session 的映射先以「临时文件 + rename」原子写入 `~/.yukino/projects/<sha256(cwd)>/a2a-contexts/<sha256(contextId)>` (带文件锁), 无法驱逐则报 `A2A session capacity reached; retry when an active context finishes.`
-- 单并发: 同一 context 同时只允许一个 run, busy 期间的新消息被拒绝: `Context <contextId> is busy with task <taskId>. Cancel it or wait for it to finish before sending a new message.`
-- 取消: CancelTask 把所有 pending 权限自动 resolve 为 deny, abort runtime, task 进入 canceled 并携带文本 `Task canceled by user request.`
+  :::warning
+  **单并发约束**: 同一 `context` 同时只允许一个 run, busy 期间的新消息被拒绝: `Context <contextId> is busy with task <taskId>. Cancel it or wait for it to finish before sending a new message.`
+  :::
+
+- 取消: `cancelTask` 把所有 pending 权限 resolve 为 deny、清空待决表并 abort runtime, `finishRun` 因 `run.canceled` 把终态置为 canceled, 终态消息取 `flushAnswer` 留下的最后一条完整回答 (若运行以 error 结束则为错误文本); 仅当没有 live run 可取消时 (例如事件总线先于消费者结束), `cancelTask` 才直接发布 canceled 状态并携带文本 `Task canceled by user request.` (TASK_CANCELED_TEXT)
 
 ## 事件转换
 
@@ -152,21 +164,28 @@ Yukino 的 AgentEvent 由 YukinoA2aExecutor 转换为两类 A2A 事件 (载荷�
 
 工具权限请求走 A2A 的 input-required 状态, 把决策权交回调用方 agent; 该握手在 Agent Card 中声明为扩展 (见上节):
 
-```txt
-1. 权限层返回 ask -> executor 生成 permissionId (perm-<自增计数>-<8 位随机>),
-   task 进入 input-required, 消息携带当前全部待决的 data part:
-   { yukino: "permission-request", permissionId, toolCallId, toolName, reason, args, source? }
-2. 客户端在同一个 task 上回发 data part (taskId 必须与当前 run 一致):
-   { yukino: "permission-response", permissionId, decision }
-   decision 枚举: allow | deny | allowAlways
-3. executor 应用决策, task 回到 working, agent loop 继续
+```mermaid
+sequenceDiagram
+  participant Perm as 权限层
+  participant Exec as executor
+  participant Client as 客户端
+  Perm->>Exec: 返回 ask
+  Exec->>Exec: 生成 permissionId (perm-<计数>-<8位随机>)
+  Exec->>Client: task 进入 input-required, 携带 permission-request data part
+  Client->>Exec: 回发 permission-response (decision: allow/deny/allowAlways)
+  Exec->>Exec: 应用决策
+  Exec->>Client: task 回到 working, agent loop 继续
 ```
 
 - reason 只包含权限层给出的理由; 请求来自子 agent 时另有可选的 source 字段 (`{ agentName, cwd }`) 标明来源, 不再把来源拼进 reason 文本
 - allowAlways 为后续调用持久化匹配的项目规则, 但不绕过显式 deny 规则; 服务器同时应用本地 `permission_mode` 配置与项目权限规则
-- 一条消息只处理一个待决权限: 只有消息中的第一个 permission-response 被应用, 其余 pending 权限重新发 input-required, 客户端需要逐个应答
+
+:::tip
+**一条消息只处理一个待决权限**: 只有消息中的第一个 `permission-response` 被应用, 其余 pending 权限重新发 `input-required`, 客户端需要逐个应答。
+:::
+
 - 各类错误都以拒绝消息返回: taskId 不匹配、permissionId 未知或已解决、run 已结束 (`No active run is awaiting a permission response.`); run 进行中时拒绝以独立 Message 发布, 不扰动进行中 task 的持久化状态, 否则把本次请求的 task 置为 failed
-- CancelTask、服务器 dispose、子 agent 的 abort signal 都会把 pending 权限自动 resolve 为 deny; 之后若还有剩余待决权限则重新推 input-required, 否则回到 working
+- CancelTask、服务器 dispose、子 agent 的 abort signal 都会把 pending 权限自动 resolve 为 deny; 其中子 agent 的 abort signal 只移除对应的那一条权限, 若仍有剩余待决权限则重新推 input-required, 否则推一条 working status-update 回到 working; CancelTask 与 dispose 是一次性清空整个待决表
 
 ## 使用场景
 

@@ -5,7 +5,7 @@ local_path: "$HOME/github/yukino-ecomm-agent"
 local_commit: "fa5a5090930436aca0dcfb824d948036132697ef"
 ---
 
-yukino-ecomm-agent 的对外表面分三块: API 服务 (Hono)、两个 MCP 服务 (见 [MCP 和 Skill](./mcp)) 和前端控制台. API 服务是唯一连接 agent 图、知识库、数据飞轮和管理页面的入口, 所有路由都挂在 `server/src/server.ts` 的 `createApp()` 里.
+yukino-ecomm-agent 的对外表面分三块: API 服务 (Hono)、两个 MCP 服务 (见 [MCP 和 Skill](./mcp)) 和前端控制台. API 服务是唯一连接 <u>agent 图</u>、知识库、数据飞轮和管理页面的入口, 所有路由都挂在 `server/src/server.ts` 的 `createApp()` 里.
 
 ## 服务拓扑与启动
 
@@ -26,6 +26,18 @@ Hono + hono-pino 请求日志, 默认监听 `127.0.0.1:8000` (`HOST` / `PORT` �
 
 `SIGINT` / `SIGTERM` 触发优雅退出: 关闭 HTTP 服务 → `closeGraph()` → `shutdownObservability()` → `closeDb()` → `flushLogs()` → 进程退出.
 
+```mermaid
+flowchart TD
+    S0[进程入口 server/src/index.ts] --> S1[missingRuntimeConfig 检查 5 必填项]
+    S1 --> S2[scanBuiltin 扫描内置工具]
+    S2 --> S3[assertDbReady 等待数据库]
+    S3 --> S4[initObservability]
+    S4 --> S5[上下文预算检查]
+    S5 --> S6[Milvus 预热 仅配置 URI 时]
+    S6 --> S7[runtime.initGraph 建 checkpointer + 编译图]
+    S7 --> S8[开始监听 127.0.0.1:8000]
+```
+
 ### 任务入口 main.js
 
 `node server/main.js <command>` 是统一的离线任务入口, `node main.js help` 列出全部命令. 常用命令:
@@ -39,7 +51,9 @@ Hono + hono-pino 请求日志, 默认监听 `127.0.0.1:8000` (`HOST` / `PORT` �
 
 ### 统一错误约定
 
+:::info 统一错误约定
 请求体 / 查询串统一经 zod 校验 (`server/src/api/http.ts` 的 `parseJsonBody` / `parseQuery` / `parseParamInt`), 非法参数返回 `400` + `{ detail }` (含字段路径); `HTTPException` 返回 `{ detail: message }` + 对应状态码; 未捕获异常返回 `500` + `{ detail: "Internal server error; please try again later" }`; 未匹配路径返回 `404` + `{ detail: "Not Found: <path>" }`.
+:::
 
 ## 对话 API
 
@@ -50,7 +64,7 @@ Hono + hono-pino 请求日志, 默认监听 `127.0.0.1:8000` (`HOST` / `PORT` �
 - 消息长度校验: 按 `EN_CHARS_PER_TOKEN` (默认 4) 估算 token 并加固定开销, 超过 `MAX_USER_INPUT_TOKENS` (默认 2000) 直接 `400`, 报错文案给出约 8000 字符的上限;
 - `conversation_id` 为空时创建新会话; 会话不存在时以 SSE error 帧返回 "Conversation not found".
 
-SSE 事件流 (一帧一行 `data:`, 见 `chatRouter`):
+<u>SSE</u> 事件流 (一帧一行 `data:`, 见 `chatRouter`):
 
 | 事件      | 负载                                                               | 含义                                                                                                                                         |
 | --------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -121,6 +135,10 @@ SSE 事件流 (一帧一行 `data:`, 见 `chatRouter`):
 - `POST /api/kb/staging/approve` `{ ids: [...] }`: 仅 `kept` 状态的行可审 (无匹配 `409`); 通过后作为 `mined` 类型 chunk 写入知识库并向量化, 失败时回滚已写 chunk、返回 `502`, 状态保持 `kept` 可重试;
 - `POST /api/kb/staging/reject` `{ ids: [...] }`: 同样仅针对 `kept` 行, 置为 `rejected`.
 
+:::tip 向量化失败可补录
+`POST /api/kb/ingest` 非重复部分以 pending 状态双写, `vectorize` (默认 `true`) 时立即向量化; 向量化失败返回 `502` 但 chunk 仍保留 pending, 修好 embedding 上游后重新向量化即可, 无需重录.
+:::
+
 ## 数据飞轮与评测 API
 
 - `GET /api/review/queue?status=`: 待审队列 `{ items: [{ id, normalized_question, ai_suggested_answer, occurrence_count, review_status, created_at }] }`;
@@ -145,8 +163,25 @@ job runner 在 `server/src/core/jobs.ts`, API 与管理页的 `Re-run` 按钮共
 - 只接受注册过的 13 个 job 名: `kb-preview` / `kb-build` / `kb-mine` / `kb-vectorize` / `kb-repatch` / `kb-reset` / `seed-conv` / `milvus-up` / `milvus-down` / `eval-rag` / `eval-flywheel` / `calibrate-confidence` / `cost-report`. 每个 job 的 argv 是固定的 (`node scripts/<name>.ts` 或 `node main.js ...`), 永远不会执行任意 shell 片段;
 - job 以 detached 子进程运行 (cwd 为 server 目录), stdout / stderr 重定向到 `log/acceptance/<name>.log`, 日志文件起始写入 `$ <argv>` 和启动时间;
 - 同一 job 不能并发运行; 状态机为 `idle → running → ok / failed / stopped`, 退出码 0 记 `ok`, 被停止记 `stopped`;
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> running: 启动
+    running --> ok: 退出码 0
+    running --> failed: 非 0 退出
+    running --> stopped: 收到 SIGTERM / SIGKILL
+    ok --> [*]
+    failed --> [*]
+    stopped --> [*]
+```
+
 - 停止时向整个进程组发 `SIGTERM`, 10 秒未退出升级为 `SIGKILL`;
 - 状态视图含 `name` / `title` / `cmd` / `needs` / `heavy` / `status` / `pid` / `started_at` / `finished_at` / `returncode` / `log_mtime` (以及可选的 `log`).
+
+:::warning Job runner 安全: 不执行任意 shell
+只接受注册过的 13 个固定 `argv` 的 job 名 (`kb-preview` / `kb-build` / `kb-mine` / `kb-vectorize` / `kb-repatch` / `kb-reset` / `seed-conv` / `milvus-up` / `milvus-down` / `eval-rag` / `eval-flywheel` / `calibrate-confidence` / `cost-report`), 永远不会执行任意 shell 片段; 同一 job 不能并发运行.
+:::
 
 ## 前端控制台
 

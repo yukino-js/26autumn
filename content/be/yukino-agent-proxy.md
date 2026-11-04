@@ -2,7 +2,7 @@
 title: "Yukino Agent Proxy：单二进制双编码 Agent 的协议网关"
 description: "一个二进制以 --agent 代理 Claude Code 或 Codex，在 Anthropic Messages、OpenAI Responses、Chat Completions 三种协议之间双向桥接，并负责 provider 选择、客户端配置注入与备份、常驻进程管理、MCP 控制面、滚动发布与凭据卫生。"
 local_path: "$HOME/github/yukino.go/apps/agent_proxy"
-local_commit: "9db1ad65904f6ee3b2d7c3498436fab64a6425cd"
+local_commit: "522ce776b40d21dcb8806151d5d85b39f55cb2c3"
 ---
 
 编码 Agent（Claude Code、Codex）各自只会说一种线上协议，而模型供应商可能只提供另外两种中的一种。Yukino Agent Proxy 用一个 Go 二进制、一个 `--agent=claude|codex` 开关，把「客户端协议」与「上游协议」解耦：客户端只看见自己能理解的端点，网关在请求与响应两个方向做协议翻译，并顺带完成 provider 选择、连通性预检、客户端配置备份改写、常驻进程生命周期管理与 MCP 控制面。本文讲清它的协议矩阵、桥接转换规则、启动与恢复语义、配置注入的安全约束，以及发布与回退方式，适合需要接入第三方模型、做本地推理网关或研究协议互操作实现的工程师阅读。
@@ -19,44 +19,38 @@ local_commit: "9db1ad65904f6ee3b2d7c3498436fab64a6425cd"
 选择 anthropic 协议且代理 Claude Code 时，网关不参与推理流量：它把客户端配置直接指向真实上游地址（direct 模式），本地服务只承担管控与状态职责。其余组合都会把流量引到本地回环端点，由桥接层双向翻译；Codex 恒为 proxy 模式，每个请求都经过本地网关。
 
 ```text
-Claude Code ──Messages──► yukino-agent-proxy ──┬─► Anthropic Messages  (direct: 仅本地管控)
-                                                ├─► OpenAI Responses     (本地双向翻译)
-                                                └─► Chat Completions    (本地双向翻译)
+Claude Code ──Messages──> yukino-agent-proxy ──┬─> Anthropic Messages  (direct: 仅本地管控)
+                                               ├─> OpenAI Responses     (本地双向翻译)
+                                               └─> Chat Completions    (本地双向翻译)
 
-Codex CLI ──Responses──► yukino-agent-proxy ───┬─► OpenAI Responses     (本地转发, 校验终态)
-                                                ├─► Chat Completions    (本地双向翻译)
-                                                └─► Anthropic Messages  (本地双向翻译)
+Codex CLI ──Responses──> yukino-agent-proxy ───┬─> OpenAI Responses     (本地转发, 校验终态)
+                                               ├─> Chat Completions    (本地双向翻译)
+                                               └─> Anthropic Messages  (本地双向翻译)
 ```
 
 除协议翻译外，网关承担四类职责：从统一的 provider 配置文件选择上游并做连通性预检；备份并改写客户端配置，把 base URL、模型别名、上下文窗口注入进去；以守护进程方式常驻并暴露带鉴权的本地控制面；提供 stdio 或 HTTP 传输的 MCP 工具，让其他 Agent 能启动、查看、停止代理。HTTP 服务面复用了同仓库的 [yukino-http](./yukino-http) 应用框架（`New()` 加 `Recovery()` 中间件）。整个网关是一个独立的 Go module（模块路径 `github.com/hangtiancheng/yukino.go/apps/agent/server_proxy`，`go.mod` 声明 `go 1.26.0`，经相对路径 `replace` 引用 `libs/yukino_http`），直接依赖只有八个：`anthropic-sdk-go` v1.84.0、`openai-go` v1.12.0、`modelcontextprotocol/go-sdk` v1.8.0、`klauspost/compress` v1.20.1（zstd 请求体解码）、`pelletier/go-toml/v2` v2.4.3（Codex config.toml）、`goccy/go-yaml` v1.19.2（provider 配置）、`golang.org/x/sys` v0.49.0（Windows 进程与文件锁）与 `yukino_http`。代码按包分层：`cmd/agent_proxy` 是 CLI 入口，`internal/agent` 是注册表，`internal/config` 是 provider 选择，`internal/claude` 与 `internal/codex` 各自包含 settings 注入、bridge 翻译、proxy 服务面与 check 预检，`internal/daemon` 管进程生命周期，`internal/mcpserver` 是 MCP 工具，`internal/upstream` 是共享传输层，`internal/private` 是原子私有写盘。
 
 一次代理请求的完整链路如下，转换与转发共享同一条流水线，协议选择只改变其中的翻译环节：
 
-```text
-客户端 (Claude Code / Codex)
-  │  原始请求 JSON (≤32 MiB)
-  ▼
-服务面 (yukino_http)
-  │  校验形状与 stream 类型 → 读 body (Codex 侧先解 gzip/zstd)
-  ▼
-请求桥 (bridge.Request)
-  │  校验角色/参数 → 替换模型别名 → 按上游协议转换
-  │  · anthropic:  原样透传 (Claude 侧) / Responses 转 Messages (Codex 侧)
-  │  · openai:     构造 Responses input / instructions / tools
-  │  · openai-compat: 构造 Chat messages / tools / 推理力度
-  ▼
-传输层 (upstream.Client)
-  │  低层 Post, 关闭重试, 强制 identity 编码
-  ▼
-上游供应商
-  │  非流式 JSON 或 SSE 事件流
-  ▼
-响应桥 (bridge.Response / bridge.Stream)
-  │  · 非流式: 归一为客户端协议的形状
-  │  · 流式:   经 SSE 事件生成器逐块翻译
-  │  · 探测到 JSON/SSE 与请求不符: 走四象限容错
-  ▼
-客户端 (SSE 心跳每 15s, 失败发 error 事件, 不伪造成功终态)
+```mermaid
+flowchart TD
+    C[客户端 Claude Code / Codex<br/>原始请求 JSON ≤32 MiB] --> S
+    S[服务面 yukino_http<br/>校验形状与 stream 类型<br/>读 body, Codex 侧先解 gzip/zstd] --> RB
+    RB[请求桥 bridge.Request<br/>校验角色/参数 → 替换模型别名 → 按上游协议转换]
+    RB -->|anthropic| T1[原样透传 Claude 侧 / Responses 转 Messages Codex 侧]
+    RB -->|openai| T2[构造 Responses input / instructions / tools]
+    RB -->|openai-compat| T3[构造 Chat messages / tools / 推理力度]
+    T1 --> U
+    T2 --> U
+    T3 --> U
+    U[传输层 upstream.Client<br/>低层 Post, 关闭重试, 强制 identity 编码] --> P[上游供应商<br/>非流式 JSON 或 SSE 事件流]
+    P --> RSP[响应桥 bridge.Response / bridge.Stream]
+    RSP -->|非流式| R1[归一为客户端协议的形状]
+    RSP -->|流式| R2[经 SSE 事件生成器逐块翻译]
+    RSP -->|JSON/SSE 与请求不符| R3[走四象限容错]
+    R1 --> CL[客户端 SSE 心跳每 15s<br/>失败发 error 事件, 不伪造成功终态]
+    R2 --> CL
+    R3 --> CL
 ```
 
 ## 配置模型与 provider 选择
@@ -86,6 +80,10 @@ Codex CLI ──Responses──► yukino-agent-proxy ───┬─► OpenAI 
 `default_provider` 必须是 YAML 裸整数：反序列化时遍历映射节点、检查该项的值类型是否为整数字面量，拒绝小数、引号字符串、布尔、null 与列表。校验采用「首个匹配项非法即整体失败」原则，绝不跳过非法项去选下一个，避免静默使用意料之外的供应商。
 
 校验阶段还有几处值得注意的细节。`thinking` 统一转小写，`enabled` 与 `adaptive` 归一为 `high`。`api_key` 先做环境变量展开，仍为空则按协议回退：anthropic 读 `ANTHROPIC_API_KEY`，openai 与 openai-compat 读 `OPENAI_API_KEY`；两者都空则失败。YAML 解析错误刻意不回显原文，因为原文里可能包含 api_key。这两点合起来保证了一件事：凭据既不会因为配置校验失败而泄漏到错误输出，也不会静默缺失。
+
+:::info{title="凭据卫生的两条防线"}
+一是 **`api_key` 的 JSON 序列化被标记为永不输出**，且 **YAML 解析错误刻意不回显原文**（原文可能含 key）；二是预检失败只报**固定文案**、不带上游响应体。两者合起来保证：无论校验为何失败，敏感凭据都不会出现在错误输出里。
+:::
 
 ## Agent 抽象与注册表
 
@@ -164,7 +162,9 @@ Claude Code 的配置是一个 JSON 对象。注入流程为：
 4. 模型别名：`ANTHROPIC_MODEL`、`ANTHROPIC_SMALL_FAST_MODEL` 与 Haiku/Sonnet/Opus 三个默认模型环境变量统一设为选中模型。
 5. 上下文窗口：`context_window` 大于 0 时写入 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，让 Claude Code 对自定义模型 ID 按声明窗口做主动压缩；字段缺省或为 0 时先无条件删除旧值，清除上一个 provider 的覆盖。
 
-注意 direct 与 proxy 模式的凭据去向差异：只有 anthropic 直连会把真实 key 写进客户端配置，其余模式写占位符，真实 key 只存在于网关进程内存与 provider 配置文件中。settings.json 非法（不是 JSON 对象）时直接报错，不产生备份也不覆写。
+:::warning{title="direct 与 proxy 模式的凭据去向"}
+只有 **anthropic 直连**会把真实 key 写进客户端配置；其余模式只写占位符 **`YUKINO_PROXY_MANAGED`**，真实 key 仅存在于网关进程内存与 provider 配置文件。另外，**settings.json 非法**（不是 JSON 对象）时直接报错，不产生备份也不覆写——避免在错误配置下覆盖用户文件。
+:::
 
 ### Codex：config.toml 与模型目录
 
@@ -334,6 +334,10 @@ Responses 协议支持用 `previous_response_id` 续接，但转换后的上游�
 
 ## 安全模型与凭据卫生
 
+:::tip{title="安全模型的基石：只绑回环"}
+推理路由**不做 key 校验**，因为安全完全建立在「监听地址必须是回环 IP」之上；MCP HTTP 监听同样强制回环。客户端配置里的 token 只是占位符，**真实凭据不出网**。任何把监听地址绑到非回环 IP 的启动都会被拒绝。
+:::
+
 - 只绑回环：监听地址非回环 IP 直接拒绝启动，MCP HTTP 监听同样强制回环；推理路由因此不做 key 校验，客户端配置里的 token 只是占位符。
 - 管理面隔离：控制端点要求 Bearer 控制 token，用常数时间比较；token 在启动时用加密随机数生成（`control_` 前缀加 12 字节十六进制）、只存于 0600 状态文件；CLI 的控制调用 1 秒超时、显式禁用代理与重定向、响应体限 1 MiB。
 - 凭据不落错误输出：`api_key` 的 JSON 序列化被标记为永不输出；YAML 解析错误不含原文；错误文本统一做 key 脱敏；预检失败只报固定文案；anthropic 路径转发上游时删除下游 Authorization 头，openai 路径不转发下游头，占位 token 不出网；状态文件只存 provider 指纹（密钥参与哈希但不存储原文）。
@@ -346,7 +350,9 @@ Responses 协议支持用 `previous_response_id` 续接，但转换后的上游�
 
 发布采用「滚动发布」而非语义化版本：tag、release 标题与六个资产名全部固定为二进制名 `yukino-agent-proxy`，不带版本号或时间戳。每次发布把同名 tag 指向当前提交、整组替换同名资产，下载者始终从固定 URL 取得最新构建。流程的健壮性约束包括：发布前要求 HEAD 已推送到远端且现有 release 非 immutable；先把全部目标构建完并验证六个资产存在且非空，构建后再次确认提交未变，任何构建失败都使远端零改动；探测现有 release 与 tag 时只在收到明确的 404 时视为不存在，认证、网络或服务端错误一律中止；写操作通过强制更新 tag 引用（`force=true`）与覆盖资产（`--clobber`）完成；`--dry-run` 构建并探测后只打印计划中的写操作。
 
-需要明确的是，这套机制没有灰度或分阶段放量：固定资产名意味着「最新即全部」。运行期的灰度维度在 provider 选择层——通过 `--protocol`/`--name` 切换到不同上游，连通性预检通过后才改写客户端配置，切换失败时旧服务的行为由启动时序保护。回退是手工的：备份文件保留原始配置，`shutdown` 不自动恢复，避免在用户不知情时改动其环境。
+:::warning{title="滚动发布：最新即全部，回退靠手工"}
+这套机制**没有灰度或分阶段放量**：固定资产名意味着「最新即全部」。运行期的灰度维度只在 **provider 选择层**——通过 `--protocol`/`--name` 切换到不同上游，连通性预检通过后才改写客户端配置，切换失败时旧服务的行为由启动时序保护。回退是**手工**的：`shutdown` 不自动恢复配置，备份文件保留原始配置，避免在用户不知情时改动其环境。
+:::
 
 ## 常见故障与排查路径
 

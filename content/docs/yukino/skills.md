@@ -34,7 +34,7 @@ SOP 正文
 - frontmatter 用 Zod schema 校验: name 必须是非空字符串, mode / fork_context 是枚举, 其余字段宽松保留
 - `---` 分隔符必须独占一行 (FRONTMATTER_BLOCK_RE), 文件开头的 BOM 会先被去除
 - frontmatter 缺失、YAML 解析失败或 schema 校验失败, 整个 skill 被跳过
-- 兼容写法: mode 缺省时检查 `context: fork`, 等价于 `mode: fork` (兼容其他 agent 生态的隔离执行语义)
+- 归一化写法: mode 缺省时检查 `context: fork`, 归一化为 `mode: fork` (与其他 agent 生态的隔离执行语义等价, 外部来源的 skill 无需改写即可加载; 见 catalog.ts 的 `resolveMode`)
 
 ## skills 目录与优先级
 

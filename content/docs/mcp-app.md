@@ -401,7 +401,7 @@ Agent 产出声明式 JSON 消息流
 
 7. 可移植性。iframe 决定了 MCP Apps 只存在于 Web 宿主; A2UI 的一份 JSON 可以同时驱动 Web、桌面与移动端渲染器。
 
-8. 协议耦合与生态位。MCP Apps 天然被"MCP 宿主是否实现了这个扩展"卡住; A2UI 传输无关。两者还可以互相嵌套: A2UI 仓库给出了可核对的参考实现, 用"同源外层代理 iframe + 受限内层 iframe"的双 iframe 隔离运行不受信的第三方内容(外层维持与宿主的结构化通道, 内层固定授予 allow-scripts allow-forms allow-popups allow-modals, 刻意不含 allow-same-origin 与 allow-top-navigation 一族; 因此内层源序列化为 null, postMessage 只能以通配 origin 为目标), 并复用了 MCP Apps 的 sandbox-proxy-ready / sandbox-resource-ready 通知。需要说明: 双 iframe 承载属于示例中的实现选择, 不是 A2UI 规范本身的要求——在 A2UI 的世界观里, MCP App 是一种"需要双 iframe 隔离的富组件", 两者互补而非互斥。反向嵌套(在 MCP Apps 里嵌入 A2UI 渲染器)同样可行。
+8. 协议耦合与生态位。MCP Apps 天然被"MCP 宿主是否实现了这个扩展"卡住; A2UI 传输无关。两者还可以互相嵌套: A2UI 仓库给出了可核对的参考实现, 用"同源外层代理 iframe + 受限内层 iframe"的双 iframe 隔离运行不受信的第三方内容(外层维持与宿主的结构化通道, 内层固定授予 allow-scripts allow-forms allow-modals, 刻意不含 allow-same-origin、allow-popups 与 allow-top-navigation 一族; 因此内层源序列化为 null, postMessage 只能以通配 origin 为目标), 并复用了 MCP Apps 的 sandbox-proxy-ready / sandbox-resource-ready 通知。需要说明: 双 iframe 承载属于示例中的实现选择, 不是 A2UI 规范本身的要求——在 A2UI 的世界观里, MCP App 是一种"需要双 iframe 隔离的富组件", 两者互补而非互斥。反向嵌套(在 MCP Apps 里嵌入 A2UI 渲染器)同样可行。
 
 9. 上下文经济学: 同一笔账, 四种费率。两个协议的 UI 描述都"进上下文一次", 没有谁天然更省。分野在完整生命周期的四笔账:
 

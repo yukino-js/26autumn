@@ -84,7 +84,24 @@ async function* agentLoop(
 12. **有 tool_use**: 分批执行工具 (`StreamingExecutor`, 见下文) → 大结果溢出磁盘的预算处理 → tool_result 消息入历史并持久化 → (若预取的记忆 recall 已就绪, 注入 reminder) → yield `turn_complete` → 投递 steering
 13. **无 tool_use**: yield `turn_complete`, 投递 steering; 有 steering 则继续循环; 否则问持久目标是否续跑 — 有续跑 prompt 就注入为 user 消息继续循环; 都没有则做文件快照, `loop_complete`, fire-and-forget 触发 `onLoopComplete` (如后台记忆提取)
 
-`finally` 块负责收尾: `turn_end`、`session_end` hook、恢复被升级的 maxOutput、结束遥测 (`endAgentTelemetry`)。
+```mermaid
+flowchart TD
+  START["Agent.run() 新一轮"] --> ABORT{"abort?"}
+  ABORT -->|是| EXIT1["loop_complete(interrupted)"]
+  ABORT -->|否| BUDGET["预算 / maxIterations 检查"]
+  BUDGET --> ASSEMBLE["组装工具集 + 注入 reminder"]
+  ASSEMBLE --> COMPACT["自动上下文压缩"]
+  COMPACT --> STREAM["client.stream() 消费 LLM 流"]
+  STREAM --> TOOL{"有 tool_use?"}
+  TOOL -->|是| EXEC["StreamingExecutor 分批执行<br/>tool_result 入历史"]
+  EXEC --> TOOL
+  TOOL -->|否| STEER{"steering 或 goal 续跑?"}
+  STEER -->|是| CONT["注入 user 消息, 回到新一轮"]
+  CONT --> START
+  STEER -->|否| EXIT2["loop_complete, 退出"]
+```
+
+`finally` 块负责收尾: `goalManager.endRun()`、每轮的 `turn_end` hook、`session_end` hook、把升级过的 `maxOutput` 还原成 `initialMaxOutput`、`endAgentTelemetry(telemetry, aborted ? "interrupted" : outcome)`; hook 抛错会把 outcome 置为 error 并重新抛出。
 
 ## 退出 Agent Loop
 
@@ -97,7 +114,9 @@ async function* agentLoop(
 5. **LLM 请求了不存在的工具**: 返回错误结果 `Error: unknown tool '<name>'` 反馈给 LLM 自纠, agent loop 继续运行; 被 `toolFilter` 过滤的工具同理, 以 `Tool '<name>' is not available to this agent.` 错误结果反馈
 6. **ExitPlanMode / EnterPlanMode 工具执行成功**: 规划类工具成功即暂停循环等待用户, `loop_complete(end_turn)`; ExitPlanMode 成功后 UI 弹出 plan 审批对话框
 
-其中 5 属于「不退出, 把错误交给 LLM 自己修」, 循环仍然存活。
+:::info
+其中 **5** 属于「不退出, 把错误交给 LLM 自己修」, 循环仍然存活。
+:::
 
 ## 错误自愈
 
@@ -108,7 +127,10 @@ async function* agentLoop(
   - 等待时间: `RateLimitError` / `ServerError` 优先解析 `retry-after` 响应头 (支持秒数和 HTTP date 两种格式), 缺省时指数退避 (限流 5s 起步即 `RATE_LIMIT_BASE_DELAY_MS`, 其他 1s 起步即 `BACKOFF_BASE_DELAY_MS`), 上限 `MAX_DELAY_MS = 60s`
   - 等待是可中断的 `interruptibleSleep`, abortSignal 触发可提前唤醒
   - 每次重试发 `retry` 事件, reason 为 `rate limited` 或 `temporary provider failure`
-  - **只在还没有可见输出时重试** (没有流式文本、没有 thinking、没有 tool_use): 有些 transport 无法撤回已流出的 chunk, 重放会产生重复内容; 已有可见输出时直接持久化已流出部分并报错
+    :::warning
+    **只在还没有可见输出时重试** (没有流式文本、没有 thinking、没有 tool_use): 有些 transport 无法撤回已流出的 chunk, 重放会产生重复内容; 已有可见输出时直接持久化已流出部分并报错。
+    :::
+
   - 成功一轮后重试计数 `transientRetries` 归零
 - **其他错误**: 持久化已流出的部分文本后, yield `error` 事件, 退出循环
 
@@ -116,7 +138,7 @@ async function* agentLoop(
 
 LLM 输出被 max_output_tokens 截断 (stopReason = `max_tokens`) 且本轮没有 tool_use 时, 进入恢复流程:
 
-1. **上限升级 (只做一次)**: 把 output 上限升到 `min(MAX_TOKENS_CEILING = 64000, contextWindow)`, 持久化部分输出并记录 usage anchor, 追加一条 user 消息 `MAX_TOKENS_RESUME_PROMPT`「Output token limit hit. Resume directly from where you stopped. Do not apologize or repeat previous content. Pick up mid-thought if needed.」, yield `retry("max_tokens escalation")`, `continue`
+1. **上限升级 (只做一次)**: 把 output 上限升到 `min(MAX_TOKENS_CEILING = 64000, contextWindow)` (`MAX_TOKENS_CEILING` / `MAX_TOKENS_RECOVERIES = 3` 在 src/agent/constants.ts), 持久化部分输出并记录 usage anchor, 追加一条 user 消息 `MAX_TOKENS_RESUME_PROMPT`「Output token limit hit. Resume directly from where you stopped. Do not apologize or repeat previous content. Pick up mid-thought if needed.」, yield `retry("max_tokens escalation")`, `continue`
 2. **多轮恢复**: 之后每次再命中 max_tokens, 追加恢复消息 `MAX_TOKENS_RECOVERY_PROMPT`「...Break remaining work into smaller pieces.」, yield `retry("max_tokens recovery N/3")`, 最多 `MAX_TOKENS_RECOVERIES = 3` 轮
 3. **零输出轮原样重放**: 没有产出任何文本或 thinking 时不追加 user 消息, 直接重放 (避免破坏 user/assistant 角色交替)
 4. **恢复耗尽后降级为正常结束**; 非 max_tokens 的轮次把恢复计数 `outputRecoveries` 归零
@@ -223,7 +245,7 @@ plan mode 通过每轮注入的 `buildPlanModeReminder` 约束 LLM 行为。它�
 
 ### 提醒策略
 
-第 1 轮和之后每 5 轮 (`REMINDER_INTERVAL = 5`) 注入全文提醒 (只读约束、探索建议、plan 文件写法、审批规则), 其余轮次注入单行稀疏版「Plan mode still active.」; plan 文件已存在时提示先读再用 EditFile 增量编辑, 不存在时提示用 WriteFile 创建。
+第 1 轮和之后每 5 轮 (`REMINDER_INTERVAL = 5`, src/prompt/constants.ts; `buildPlanModeReminder` 按 `iteration > 1 && (iteration - 1) % 5 !== 0` 判定) 注入分节的全文提醒 (只读约束、探索建议、plan 文件写法、审批规则), 其余轮次注入不分节的精简版 —— 以 `PLAN_MODE_STILL_ACTIVE = "Plan mode still active."` 开头, 仍附带当前约束、plan 文件路径、澄清与审批提示; plan 文件已存在时提示先读再用 EditFile 增量编辑, 不存在时提示用 WriteFile 创建。
 
 ### 唯一出口: ExitPlanMode
 

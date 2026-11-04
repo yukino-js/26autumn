@@ -1,7 +1,7 @@
 ---
 title: "后端"
 overview: true
-description: "后端栏目: Go 语言与运行时、MySQL/Redis/ClickHouse/Kafka 与后端中间件、generic-pool 源码解析与 WANProxy Go 移植笔记, 以及 Yukino Go 系列的 HTTP/RPC/ORM/缓存、Agent 协议网关、基础设施组件、AI 运维 Agent 与任务调度引擎"
+description: "后端栏目: Go 语言与运行时、MySQL/Redis/ClickHouse/Kafka 与后端中间件、generic-pool 源码解析与 WANProxy Go 移植笔记 (纯 JSON 配置与 JSON Schema 校验、UDP 代理、XCodec 去重), 以及 Yukino Go 系列的 HTTP/RPC/ORM/缓存、Agent 协议网关、基础设施组件、AI 运维 Agent 与任务调度引擎"
 ---
 
 后端方向的系统性技术笔记, 按主题分为三部分, 共 16 个页面 (含本落地页).
@@ -14,14 +14,14 @@ description: "后端栏目: Go 语言与运行时、MySQL/Redis/ClickHouse/Kafka
 
 ## 第二部分: 存储与中间件
 
-| 页面                                   | 内容概要                                                                                                                                                                                                                                          |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [mysql](./mysql)                       | MySQL 与 InnoDB 技术手册: 以 MySQL 8.4 LTS 为基准, 覆盖连接与 SQL 执行流程、InnoDB 物理结构与索引体系、事务 MVCC 与锁、redo/undo/binlog 与崩溃恢复、主从复制、分库分表与在线 DDL、读写分离下的缓存一致性与慢查询调优方法论                        |
-| [redis](./redis)                       | Redis 7.x 技术手册: 数据结构与底层编码、单线程与 IO 多线程模型、RDB/AOF/混合持久化、过期与淘汰、主从哨兵与 Cluster、缓存设计、分布式锁与 Redlock 争议、限流与延时队列、大 key/热 key 治理                                                         |
-| [clickhouse-kafka](./clickhouse-kafka) | ClickHouse 列式存储、MergeTree 家族、分布式架构与查询优化, Kafka 存储模型、消息语义、高可用与调优, 以及两者的联合实时数仓架构与综合方案设计, 行为以 ClickHouse 25.x 与 Kafka 4.x 为基准                                                           |
-| [middleware](./middleware)             | etcd、Kafka、groupcache、gRPC、Prometheus、Grafana、OpenTelemetry 的关键机制、生产注意事项与选型建议                                                                                                                                              |
-| [node-pool](./node-pool)               | generic-pool 3.9.0 源码级解析: 从资源池要解决的竞态出发, 逐层拆解借还生命周期、工厂契约、超时排队、双向链表与优先级队列、空闲驱逐、配置默认值与停机语义, 并给出连接池场景的实践建议                                                               |
-| [wanproxy](./wanproxy)                 | WANProxy Go 移植工作区: XCodec 2048 字节段去重编解码与滚动哈希、HELLO/FRAME/ASK/LEARN/ADVANCE/EOS 管道协议会话、XCDFS 磁盘缓存、SSH-2 传输、TCP/SOCKS/SSH-SSH 代理中继与字节计数器, 以及 srv.go 演示服务端、A/B 实验编排与 React 仪表盘的实现机制 |
+| 页面                                   | 内容概要                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [mysql](./mysql)                       | MySQL 与 InnoDB 技术手册: 以 MySQL 8.4 LTS 为基准, 覆盖连接与 SQL 执行流程、InnoDB 物理结构与索引体系、事务 MVCC 与锁、redo/undo/binlog 与崩溃恢复、主从复制、分库分表与在线 DDL、读写分离下的缓存一致性与慢查询调优方法论                                                                                                                                                                  |
+| [redis](./redis)                       | Redis 7.x 技术手册: 数据结构与底层编码、单线程与 IO 多线程模型、RDB/AOF/混合持久化、过期与淘汰、主从哨兵与 Cluster、缓存设计、分布式锁与 Redlock 争议、限流与延时队列、大 key/热 key 治理                                                                                                                                                                                                   |
+| [clickhouse-kafka](./clickhouse-kafka) | ClickHouse 列式存储、MergeTree 家族、分布式架构与查询优化, Kafka 存储模型、消息语义、高可用与调优, 以及两者的联合实时数仓架构与综合方案设计, 行为以 ClickHouse 25.x 与 Kafka 4.x 为基准                                                                                                                                                                                                     |
+| [middleware](./middleware)             | etcd、Kafka、groupcache、gRPC、Prometheus、Grafana、OpenTelemetry 的关键机制、生产注意事项与选型建议                                                                                                                                                                                                                                                                                        |
+| [node-pool](./node-pool)               | generic-pool 3.9.0 源码级解析: 从资源池要解决的竞态出发, 逐层拆解借还生命周期、工厂契约、超时排队、双向链表与优先级队列、空闲驱逐、配置默认值与停机语义, 并给出连接池场景的实践建议                                                                                                                                                                                                         |
+| [wanproxy](./wanproxy)                 | WANProxy Go 移植工作区: XCodec 2048 字节段滚动哈希去重、HELLO/FRAME/ASK/LEARN/ADVANCE/EOS 管道协议会话、XCDFS 磁盘缓存、SSH-2 传输、TCP/UDP/SOCKS/SSH 代理中继与字节计数器; 配置仅接受纯 JSON (无格式探测、无指令式语法、无 .conf 模板) 并由 Draft 2020-12 JSON Schema 与合法/非法夹具校验, 新增 UDP 会话转发与 fleet/status; 以及 srv.go 演示服务端、A/B 实验编排与 React 仪表盘的实现机制 |
 
 ## 第三部分: Yukino Go 系列
 

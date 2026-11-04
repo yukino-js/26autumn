@@ -35,6 +35,6 @@ description: "工作实践、开源项目调研与项目源码解析: TikTok/IEG
 
 三个项目专栏, 均以对应仓库源码为唯一事实依据:
 
-- [yukino](yukino/index): 终端 Coding Agent Yukino Code (`@yukino.js/yukino`) 的引擎源码解析, 共 27 个页面 (含落地页). 覆盖 ReAct 主循环与事件流、LLM 三协议接入、工具调用与 MCP、system prompt 与上下文压缩、权限/沙箱/Hook、AGENTS.md 与三层记忆、Skill 与 Slash Command、Subagent/Agent Team/Workflow/Worktree/Goal 多代理协作、TUI/Print/Remote/A2A/ACP 宿主形态, 以及遥测、任务跟踪与代码评审.
+- [yukino](yukino/index): 终端 Coding Agent Yukino Code (`@yukino.js/yukino`) 的引擎源码解析, 共 27 个页面 (含落地页). 覆盖 ReAct 主循环与事件流、LLM 三协议接入、工具调用与 MCP、system prompt 与上下文压缩、权限/沙箱/Hook、AGENTS.md 与三层记忆、Skill 与 Slash Command、Subagent/Agent Team/Workflow/Worktree/Goal 多代理协作、TUI/Print/Remote/A2A 宿主形态, 以及遥测、任务跟踪与代码评审.
 - [yukino-dev-agent](yukino-dev-agent/index): Next.js 16 + AI SDK 全栈 AI 应用, 共 4 个页面 (含落地页). OnCall 值班助手与 DevFlow 工程副驾双产品面: Milvus 混合检索 RAG、ReAct 与 Plan-Execute-Replan 编排、A2UI 交互界面、MCP 工具体系、Langfuse/Prometheus 可观测性.
 - [yukino-ecomm-agent](yukino-ecomm-agent/index): 电商客服 Agent (Yukino Select), 共 9 个页面 (含落地页). Hono + LangGraph 服务端与 Lit 控制台的总体组织、会话上下文分层、LLM 接入与表设计、MCP 工具、RAG 检索、图编排 workflow、HTTP API、可观测性与数据飞轮.

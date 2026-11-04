@@ -1,11 +1,11 @@
 ---
-title: "Yukino Agent 技术笔记"
+title: "Yukino Dev Agent 技术笔记"
 description: "Next.js 16 App Router + Vercel AI SDK 的 OnCall/DevFlow 双产品面应用: Milvus 混合检索 RAG、ReAct 与 SSE 流式 Plan-Execute-Replan 编排、A2UI 交互界面、多源告警聚合、MCP 工具体系、Langfuse 可观测性与 Prometheus 指标桥"
 local_path: "$HOME/github/yukino-dev-agent"
 local_commit: "83f7d68cc4a08084f00a4811f9702c71b4aafd81"
 ---
 
-本文讲解 Yukino Agent 这一 Node.js/TypeScript AI 应用的技术实现:它用 Next.js 16 App Router 把前端页面与后端 API 收进同一个进程,同时承载两个产品面——面向值班运维的 AI OnCall 助手(根路径),以及面向 GitHub 协作场景的 DevFlow 工程副驾(`/dev-flow`). 文档围绕产品定位、分层架构、端到端数据流、检索与编排实现、模型抽象、数据模型、前端状态、可观测性、配置体系、部署形态与性能成本取舍逐层展开,适合需要在既有 AI 应用上做二次开发,或正在设计 RAG + Agent 编排系统的工程师阅读. 所有机制描述均以当前源码为准,Milvus 是唯一向量后端. 两个产品面的入门视角另有姊妹篇 [Yukino Agent](./agent) 与 [DevFlow](./dev-flow).
+本文讲解 Yukino Dev Agent 这一 Node.js/TypeScript AI 应用的技术实现:它用 Next.js 16 App Router 把前端页面与后端 API 收进同一个进程,同时承载两个产品面——面向值班运维的 AI OnCall 助手(根路径),以及面向 GitHub 协作场景的 DevFlow 工程副驾(`/dev-flow`). 文档围绕产品定位、分层架构、端到端数据流、检索与编排实现、模型抽象、数据模型、前端状态、可观测性、配置体系、部署形态与性能成本取舍逐层展开,适合需要在既有 AI 应用上做二次开发,或正在设计 RAG + Agent 编排系统的工程师阅读. 所有机制描述均以当前源码为准,Milvus 是唯一向量后端. 两个产品面的入门视角另有姊妹篇 [Yukino Dev Agent](./agent) 与 [DevFlow](./dev-flow).
 
 ## 一、产品定位与核心用例
 
@@ -98,6 +98,18 @@ DevFlow 表面(`/dev-flow` 页面组,`/api/dev-flow/*` 接口组)把同一个技
 
 一次 `POST /api/chat` 的处理链:请求体过 zod(session id + question)→ 读取会话记忆窗口 → 用问题做一次混合检索 → 把检索文档、记忆摘要、技能目录、自定义指令注入 system prompt → 用 quick 模型执行 `generateText` + 工具 + 步数上限 → 抽取 A2UI 块(失败则一次纠错重试)→ 回写记忆并触发异步摘要 → 返回 `{ message, data }`. 响应 data 里除 answer 外还可能带 `a2ui`、`references`(引用来源,含标题、来源、分数、摘要、知识分类与各检索阶段的名次)与 `reasoning`(模型推理文本). 非流式路径同时从完成的步骤里聚合工具调用,逐条写审计.
 
+```mermaid
+flowchart TD
+    A[POST /api/chat] --> B[zod 校验 session + question]
+    B --> C[读取会话记忆窗口]
+    C --> D[混合检索]
+    D --> E[组装 system prompt: 检索 / 摘要 / 技能 / 指令]
+    E --> F[quick 模型 generateText + 工具 + 步数上限]
+    F --> G[抽取 A2UI 块 失败重试一次]
+    G --> H[回写记忆 + 异步摘要]
+    H --> I[返回 message,data 信封]
+```
+
 ### 流式对话
 
 `POST /api/chat_stream` 复用同一管线的流式版本. 服务端把 AI SDK 的流部件映射为应用自己的事件类型,再编码为 SSE 帧. 事件清单:
@@ -183,6 +195,18 @@ pdf/docx 的文本抽取有完整护栏:PDF 限制文件字节数(12MB)、页数
 
 检索器为每次调用并行发出三路查询——混合、纯稠密、纯 BM25——并把后两路的名次信息附在命中文档的 stages 字段里(`vectorRank` / `vectorScore` / `bm25Rank` / `bm25Score`,精排后再补 `rerankRank` / `rerankScore`). 这份"每个阶段各排第几"的观测数据随引用一起下发,是诊断"为什么这条文档排上来/掉下去"的直接依据. 检索器还暴露了原始候选入口(不精排、不截断,可选稠密/稀疏/混合三路),供 DevFlow 自己的去重、精排与扩展链使用,以及纯稠密入口专供需要绝对分数阈值的场景.
 
+```mermaid
+flowchart LR
+    Q[query 向量 + 原始文本] --> H[hybridSearch 稠密 + BM25 双路 ANN]
+    Q --> D[纯稠密 search]
+    Q --> B[纯 BM25 search]
+    H --> R[RRF k=60 服务端融合]
+    D --> R
+    B --> R
+    R --> RK[可选 rerank DashScope]
+    RK --> T[截断 topK 默认 5]
+```
+
 ### Milvus 集合设计
 
 一个集合同时承载两条检索路径,这是选型的核心收益:
@@ -202,11 +226,15 @@ pdf/docx 的文本抽取有完整护栏:PDF 限制文件字节数(12MB)、页数
 
 ### 分数语义与维度自检
 
+:::warning 分数语义: 排名分 ≠ 相似度
 返回的 `score` 语义随路径而变,调用方必须先分清手里是哪种分数:纯稠密是 COSINE 相似度([0,1] 的绝对量,可做阈值过滤),混合路径是 RRF 融合分(只取决于两路名次,是排名导向的量,不能与固定阈值比较),精排后是 [0,1] 的相关性分. 把排名分当相似度用是 RAG 系统最常见的分数误用,因此检索器把纯稠密入口单列出来,专供需要绝对分数阈值的场景.
+:::
 
 维度管理是另一处易错点. 向量维度是集合的物理属性,换用输出维度不同的 Embedding 模型后,旧集合与新向量根本不兼容;若不自检,表现是"静默失败"(检索全错或直接拒绝). 客户端把防御做在启动路径上:写入前读回既有集合的维度比对,不一致则告警并整体 drop 重建,而启动时的目录重建会把数据重新填满. 维度从不静态配置,以实际模型输出为权威来源——"换模型 = 知识库静默失效"于是变成"换模型 = 集合自动重建". 客户端的懒加载单例也做了针对性处理:构造是同步的,消除了异步单例的检查-赋值竞态;SDK 在构造时后台发起的连接请求若失败,其 rejection 会被显式接住,避免 Node 把它当致命错误,而真正被 await 的调用会通过自己的 promise 把同一个错误抛给调用方.
 
+:::danger 最危险的静默失败
 "集合存在但为空"与"Milvus 不可用"是两种不同故障:前者读操作返回空结果,后者一律抛错. SDK 把逻辑失败报告在响应体内(错误码字段),客户端对所有非成功状态一律抛出,保证调用方永远不会把错误响应当成"空结果"——这是检索系统最危险的静默失败.
+:::
 
 ### 上下文装配与间接注入防御
 
@@ -230,7 +258,7 @@ system prompt 里还有两段"可选注入":启用中的技能目录(只有名�
 
 与教科书 ReAct 的差异在于:这里没有显式的"思考/动作/观察"文本协议,而是利用 function calling 的结构化 ReAct——推理在模型侧(Anthropic 路径甚至是加密的思考块),动作是 schema 化的工具调用,工程上远比自由文本协议可靠.
 
-为什么两条管线并存:对话用 ReAct(灵活、开销低),运维分析用 Plan-Execute-Replan(可控、覆盖全). 选型的本质判断是"当任务有确定性 SOP 时,把流程控制权从模型手里收回一部分,只把局部决策留给模型". 对 OnCall 这种"漏掉一个告警就是事故"的场景,可控性和覆盖率比灵活性重要;反过来闲聊与开放问答场景,规划的额外强模型调用纯属浪费.
+为什么两条管线并存:对话用 <u>ReAct</u>(灵活、开销低),运维分析用 <u>Plan-Execute-Replan</u>(可控、覆盖全). 选型的本质判断是"当任务有确定性 SOP 时,把流程控制权从模型手里收回一部分,只把局部决策留给模型". 对 OnCall 这种"漏掉一个告警就是事故"的场景,可控性和覆盖率比灵活性重要;反过来闲聊与开放问答场景,规划的额外强模型调用纯属浪费.
 
 ### Plan-Execute-Replan 图拓扑
 
@@ -357,7 +385,9 @@ schema 适配是接入 MCP 的关键点:服务端返回的是普通 JSON Schema,
 
 ### 管理门禁
 
+:::warning 管理门禁 fail-closed
 OnCall 的产品定位是公开无登录,但有一类接口会改变服务端配置或暴露审计数据:管理 MCP 连接、维护技能与提示词、知识库删除与重索引、读取工具调用审计. 这些操作要求管理 Token(`ONCALL_ADMIN_TOKEN`,Bearer 或 `x-admin-token` 请求头),Token 用常量时间比较避免时序侧信道;未配置 Token 时受保护的写操作直接拒绝(fail-closed),而不是放行——公开产品不能把"决定服务端出站连接"的能力默认开放. 只读接口保持公开.
+:::
 
 ### 工具调用审计
 
@@ -547,7 +577,9 @@ LLM 调用的错误与传统 API 不同:错误信息常常不在 `message` 里,�
 | 观测          | Langfuse 三变量                                                                                                                              | 全设才启用                                        |
 | DevFlow       | GitHub Token/API 基址/Webhook 密钥、令牌加密密钥、自动同步开关与周期与上限、反馈通知地址与回溯基址、托管检出目录、git 超时、单文件与扫描上限 | 自动同步默认关闭,检出目录默认 `./data/workspaces` |
 
+:::warning 密钥陷阱: 避开 `NEXT_PUBLIC_` 前缀
 `NEXT_PUBLIC_` 前缀是一个必须避开的陷阱:该前缀的环境变量会被内联进客户端产物,把密钥放进这类变量等于发给所有访客. 本项目的密钥命名都无前缀,是正确的做法. 更稳的加固是把配置拆分并用服务端专用标记,一旦被客户端模块引入即构建报错.
+:::
 
 一个特别之处:向量维度不做静态配置. 维度是集合的物理属性,由实际模型输出决定,启动时从首个向量推断并与既有集合比对,不一致即重建,因此无需配置项. 可用配置自检接口一次性查看所有关键项的状态.
 
@@ -610,4 +642,4 @@ zod 边界:凡数据跨越信任边界(HTTP 请求体、API 响应、localStorag
 
 扩展建议按性价比排序. 第一,补认证与 CORS 收敛,这是从"内部演示"走向"可信服务"的门槛;同时给高风险工具加人工确认与审计. 第二,补齐对话路径的 token 计量与检索命中率、分数分布等输出侧监控——检索阶段名次已经下发到引用里,缺的是把这些数据汇总成可查询的质量报表. 第三,把记忆与知识库文件外置到共享存储与对象存储,打通水平扩展;把索引操作从同步改为任务队列,使上传与重建不阻塞请求. 第四,针对 OnCall 报告做程序化的引用核查——报告中提到的告警名是否都在工具真实返回里、时间是否与时间工具一致,不符则标注警告,把幻觉防线从提示词推进到结构性校验,并把三层评估(检索、生成、端到端)纳入持续集成. 第五,把 SOP 本身存入知识库,按告警类型动态装配根指令,替代当前硬编码的单一指令. 第六,给流式路由补上取消语义:把请求中止信号透传到管线消费循环与模型调用,客户端断开即停止计费.
 
-相关阅读:姊妹项目 [Yukino Agent2](../yukino-ecomm-agent/yukino-ecomm-agent) 是同一技术路线的电商客服 Agent,用 Hono + LangGraph + Prisma 实现,可作为向量检索、数据飞轮与 LangGraph 会话图的实现对照;本仓库的两篇分册见 [Yukino Agent](./agent)(OnCall 视角)与 [DevFlow](./dev-flow)(工程副驾视角);编排与协议专题见 [LangGraph](../langgraph)、[A2UI](../a2ui) 与 [MCP Apps](../mcp-app);框架层特性见 [Next.js](../../fe/next)、[React](../../fe/react)、[Vite](../../fe/vite) 与 [TanStack Query](../../fe/tanstack);观测与中间件参见 [中间件与可观测性](../../be/middleware).
+相关阅读:姊妹项目 [Yukino Dev Agent2](../yukino-ecomm-agent/yukino-ecomm-agent) 是同一技术路线的电商客服 Agent,用 Hono + LangGraph + Prisma 实现,可作为向量检索、数据飞轮与 LangGraph 会话图的实现对照;本仓库的两篇分册见 [Yukino Dev Agent](./agent)(OnCall 视角)与 [DevFlow](./dev-flow)(工程副驾视角);编排与协议专题见 [LangGraph](../langgraph)、[A2UI](../a2ui) 与 [MCP Apps](../mcp-app);框架层特性见 [Next.js](../../fe/next)、[React](../../fe/react)、[Vite](../../fe/vite) 与 [TanStack Query](../../fe/tanstack);观测与中间件参见 [中间件与可观测性](../../be/middleware).
