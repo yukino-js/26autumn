@@ -60,7 +60,7 @@ apps/task_flow/
         └── telemetry/  telemetry.go                  # OpenTelemetry 初始化
 ```
 
-`server/go.mod` (module `github.com/hangtiancheng/yukino.go/apps/task_flow/server`, go 1.26.4) 用 11 条 `replace` 把全部基础组件指向仓库内源码, 这正是第二部分教程的对象:
+`server/go.mod` (module `github.com/hangtiancheng/yukino.go/apps/task_flow/server`, go 1.26.0) 用 11 条 `replace` 把全部基础组件指向仓库内源码, 这正是第二部分教程的对象:
 
 | replace 模块                  | 在 taskflow 中的角色                   |
 | ----------------------------- | -------------------------------------- |
@@ -322,7 +322,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 - 每个条目用 Lua 写入: 先 `HGET` 旧值, 旧 `updated_at` 比新值大就拒绝, 防止乱序同步造成状态倒退; 管道末尾给整个 Hash `EXPIRE` 7 天。
 - 超过 7 天的终态行在扫描时跳过写入 (但游标照常推进); 另有 prune 步骤用 `HSCAN` (每轮 200, 游标持久化) 对 Hash 里的终态过期条目做 compare-and-HDEL (值相同才删)。
 
-**存储面诊断** (`storage.Fleet`): `/monitor/storage` 汇总 pending_changes / pending_outbox 计数、`information_schema.triggers` 里 `task_flow_capture_v1_` 前缀触发器覆盖的表、各 MySQL 副本的 `SHOW REPLICA STATUS` (Replica_IO_Running / Replica_SQL_Running / Seconds_Behind_Source / 错误字段, 副本连接池很小: MaxOpen 2 / MaxIdle 1)、Redis `INFO replication` 解析。
+**存储面诊断** (`storage.Fleet`): `/monitor/storage` 汇总 pending*changes / pending_outbox 计数、`information_schema.triggers` 里 `task_flow_capture_v1*`前缀触发器覆盖的表、各 MySQL 副本的`SHOW REPLICA STATUS`(Replica_IO_Running / Replica_SQL_Running / Seconds_Behind_Source / 错误字段, 副本连接池很小: MaxOpen 2 / MaxIdle 1)、Redis`INFO replication` 解析。
 
 ## 节点本地审计: LSM journal 与 Raft ledger
 
@@ -346,7 +346,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 认证: `/api/v1` 配置了 `api_token_env` 时要求 `Authorization: Bearer {token}`, 校验方式是把 "Bearer " + 配置 token 整体做 SHA256 后与请求头常量时间比较; 免认证路径只有 `/health`、`/ready`、`/telemetry/log`。未配置 token 时 API 全开。`/internal/v1` 配置了 `internal_token_env` 时同样走 token 校验, 未配置时要求请求来自 loopback。
 
 | 方法与路径                                         | 说明                                                                                         |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----- | ------------ | --------- | ------- | ------ | -------- | ----------------------------------------- |
 | `GET /api/v1/health` / `ready` / `overview`        | 存活 / 就绪 / 总览 (统计+任务+近期执行+节点)                                                 |
 | `GET/POST /api/v1/scheduled-tasks`                 | 列表 (name/cron/prompt 必填, 时区默认 Asia/Shanghai, 计算 next_fire_at, 重名 409)            |
 | `GET/PATCH/DELETE /api/v1/scheduled-tasks/:id`     | 更新走指针字段合并 + 重算 next_fire_at + 定义缓存更新                                        |

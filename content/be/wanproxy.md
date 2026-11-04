@@ -9,7 +9,7 @@ WANProxy 是一个 TCP WAN 优化代理的 Go 移植工作区, 移植对象是�
 
 ## 工作区布局与构建
 
-仓库是一个 Go workspace, `go.work` 声明 `go 1.26.5` 并 `use` 两个模块 (`./srv.go` 与 `./wanproxy.go`)。根 Makefile 的所有目标都转发给跨平台编排器 `go run ./srv.go/cmd/stack`, 端口用变量注入 (`SRV_PORT=3101`、`WEB_PORT=5173`、`MONITOR_PORT=9901`、`SSH_ECHO_PORT=8349`):
+仓库是一个 Go workspace, `go.work` 声明 `go 1.26.0` 并 `use` 两个模块 (`./srv.go` 与 `./wanproxy.go`)。根 Makefile 的所有目标都转发给跨平台编排器 `go run ./srv.go/cmd/stack`, 端口用变量注入 (`SRV_PORT=3101`、`WEB_PORT=5173`、`MONITOR_PORT=9901`、`SSH_ECHO_PORT=8349`):
 
 | 目标                                                  | 作用                                       |
 | ----------------------------------------------------- | ------------------------------------------ |
