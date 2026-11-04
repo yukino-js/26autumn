@@ -186,3 +186,6 @@ doc_build/
 .rspress/
 
 .claude/
+
+# workspace-local agent memory (never published)
+.workbuddy/
