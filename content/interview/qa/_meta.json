@@ -1,0 +1,43 @@
+[
+  {
+    "type": "section-header",
+    "label": "LLM 与 Agent"
+  },
+  "llm-fundamentals",
+  "agent-loop-and-tools",
+  "mcp-and-agent-security",
+  "electron-agent-app",
+  "go-agent-engineering",
+  {
+    "type": "section-header",
+    "label": "RAG 与评测"
+  },
+  "rag-and-retrieval",
+  "agent-frameworks",
+  "llm-eval-observability",
+  "fullstack-ai-app",
+  {
+    "type": "section-header",
+    "label": "Go 后端"
+  },
+  "go-language-runtime",
+  "http-framework-gateway",
+  "rpc-and-network",
+  "cache-storage-orm",
+  {
+    "type": "section-header",
+    "label": "分布式与架构"
+  },
+  "distributed-components",
+  "service-architecture",
+  {
+    "type": "section-header",
+    "label": "前端与全栈"
+  },
+  "js-ts-language",
+  "react-and-browser",
+  "ai-streaming-ui",
+  "frontend-observability",
+  "frontend-engineering",
+  "web-security-auth"
+]

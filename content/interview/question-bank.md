@@ -1,9 +1,9 @@
 ---
 title: "全量题库"
-description: "AI 全栈 / Agent 工程方向 134 道自检题目, 按 RAG、Agent 与 MCP、Go 网关、前端、存储与一致性、OS 网络、安全可观测、算法手撕、项目真实性九个主题归类"
+description: "AI 全栈 / Agent 工程方向 134 道自检题目, 按 RAG、Agent 与 MCP、Go 网关、前端、存储与一致性、OS 网络、安全可观测、算法手撕、项目真实性九个主题归类, 并映射到 21 篇专题题库的 1344 道带权威解答深挖题"
 ---
 
-按知识域归类的 134 道自检题目。**逐条脱稿口述**，卡住的主题回到该节标注的专题卡；能讲清机制、取舍、边界与量化口径才算通过。
+按知识域归类的 134 道自检题目。**逐条脱稿口述**，卡住的主题回到该节标注的专题卡；能讲清机制、取舍、边界与量化口径才算通过。每题的深挖版（带权威解答与源码佐证）见文末[专题题库映射](#专题题库映射带权威解答)。
 
 | 标记   | 含义                             |
 | ------ | -------------------------------- |
@@ -207,6 +207,22 @@ description: "AI 全栈 / Agent 工程方向 134 道自检题目, 按 RAG、Agen
 | 132 | 全栈是牺牲深度扩展广度，如何平衡                                                           | `基础` |
 | 133 | 设计一个 AI 系统评估竞技游戏中英雄的强弱 / 设计扣款系统（低 QPS 下游）                     | `深挖` |
 | 134 | 线上事故处理流程 / Git 分支管理与冲突解决                                                  | `基础` |
+
+## 专题题库映射（带权威解答）
+
+134 道自检题是索引；每题对应的完整解答、源码佐证与采分点，在 `qa/` 的 21 篇专题题库（1344 题）中按主题展开：
+
+| 自检主题                                  | 对应专题题库                                                                                                                                                                                                                       |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RAG / 检索 / 上下文 / Agent（1–33）       | [RAG 与检索深挖](/interview/qa/rag-and-retrieval) · [LLM 与推理基础](/interview/qa/llm-fundamentals) · [Agent 执行循环与工具体系](/interview/qa/agent-loop-and-tools)                                                              |
+| MCP / 工具 / Skills / Agent 安全（34–50） | [MCP 协议与 Agent 安全](/interview/qa/mcp-and-agent-security) · [Agent 框架与架构对比](/interview/qa/agent-frameworks)                                                                                                             |
+| Go / 网关 / 并发（51–60）                 | [Go 语言与运行时](/interview/qa/go-language-runtime) · [HTTP 框架与网关工程](/interview/qa/http-framework-gateway) · [RPC 与网络编程](/interview/qa/rpc-and-network) · [Go 实现 AI Agent 工程](/interview/qa/go-agent-engineering) |
+| 前端（61–73）                             | [JavaScript 与 TypeScript](/interview/qa/js-ts-language) · [React 与浏览器](/interview/qa/react-and-browser) · [AI 流式前端专题](/interview/qa/ai-streaming-ui)                                                                    |
+| 数据库 / Redis / MQ / 一致性（74–96）     | [缓存、存储与 ORM](/interview/qa/cache-storage-orm) · [分布式组件与一致性](/interview/qa/distributed-components) · [服务架构与任务系统](/interview/qa/service-architecture)                                                        |
+| OS / 网络 / C++（97–112）                 | [RPC 与网络编程](/interview/qa/rpc-and-network) · [Go 语言与运行时](/interview/qa/go-language-runtime)                                                                                                                             |
+| 安全 / 云 / 可观测（113–119）             | [Web 安全与认证](/interview/qa/web-security-auth) · [前端监控与可观测性](/interview/qa/frontend-observability) · [LLM 评测与可观测性](/interview/qa/llm-eval-observability)                                                        |
+| 算法手撕（120–126）                       | [JS 手写限流器](/interview/code/rate-limiter) · [Promise 并发池](/interview/code/promise-concurrency) · [SSE 客户端与重连退避](/interview/code/sse-retry) · [Go singleflight 与两级 LRU](/interview/code/go-singleflight)          |
+| 项目真实性 / 量化 / 开放题（127–134）     | [AI 全栈应用架构](/interview/qa/fullstack-ai-app) · [Electron 桌面 Agent 应用](/interview/qa/electron-agent-app) · [前端工程化](/interview/qa/frontend-engineering)                                                                |
 
 ## 优先级建议
 

@@ -18,6 +18,15 @@
   },
   {
     "type": "section-header",
+    "label": "专题题库"
+  },
+  {
+    "type": "dir",
+    "name": "qa",
+    "label": "海量真题与权威解答"
+  },
+  {
+    "type": "section-header",
     "label": "示范答案"
   },
   {

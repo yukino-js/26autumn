@@ -1,23 +1,28 @@
 ---
 title: "面试备考"
 overview: true
-description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能力矩阵、评分量表、八张专题知识卡、七份项目与系统设计示范答案、代码题与全量题库"
+description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能力矩阵、评分量表、八张专题知识卡、21 篇专题题库 1344 题带权威解答、七份项目与系统设计示范答案、四道可运行代码题与全量题库"
 ---
 
-面向 **AI 全栈 / Agent 工程** 岗位的系统化备考资料。按知识域组织，给出可复述的机制、工程取舍与边界；所有结论都可回填到本仓库的源码笔记中核对。
+面向 **AI 全栈 / Agent 工程** 岗位的系统化备考资料。按知识域组织，给出可复述的机制、工程取舍与边界；所有结论都可回填到本仓库的源码笔记与本机仓库源码中核对。
 
 ```mermaid
 flowchart TB
     A[面试备考] --> B[知识体系]
+    A --> E[专题题库 1344 题]
     A --> C[示范答案]
     A --> D[自检工具]
     B --> B1[Agent 与 MCP]
     B --> B2[RAG 全链路]
     B --> B3[Go 网关 / 存储 / OS 网络]
     B --> B4[前端 / 安全 / 算法]
+    E --> E1[LLM / Agent / MCP / Electron]
+    E --> E2[RAG / 框架 / 评测 / 全栈应用]
+    E --> E3[Go / 分布式 / 服务架构]
+    E --> E4[JS-TS / React / 流式 UI / 安全]
     C --> C1[项目深挖]
     C --> C2[系统设计与协议辨析]
-    C --> C3[可运行代码题]
+    C --> C3[可运行代码题 ×4]
     D --> D1[题库]
     D --> D2[易错点]
     D --> D3[指标口径]
@@ -38,25 +43,42 @@ flowchart TB
 2. **量化结论先给口径**。任何「提升 X%」「QPS 是多少」都要能答出 baseline、分子分母、采集位置、样本量与验证方式。
 3. **先澄清再作答**。格式陷阱、语义歧义、概念误用（如「cookie 的 same origin」）先拆解，本身就是采分点。
 
+:::note 专题题库的佐证口径
+`qa/` 与 `code/` 下所有「项目里/源码里」的陈述均实读**本机仓库当前 HEAD** 后写出（各篇文首给出证据锚点表与短哈希）；`content/` 笔记 frontmatter 的 `local_commit` 落后于本机 HEAD 时，以磁盘代码为准并如实标注差异。
+:::
+
 ## 能力矩阵
 
-| 维度   | 覆盖范围                                    | 主卡片                                                                                                                | 示范答案                                                                       |
-| ------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| **D1** | LLM 基础、prompt / tool calling、上下文工程 | [Agent 执行链路与 MCP](/interview/fundamentals/agent-and-mcp)                                                         | [Agent 链路、网关与流式前端](/interview/answers/agent-loop-gateway-streaming)  |
-| **D2** | Agent 执行链路、MCP、权限与恢复、Harness    | [Agent 执行链路与 MCP](/interview/fundamentals/agent-and-mcp)                                                         | [Coding Agent 记忆与基线](/interview/answers/coding-agent-memory)              |
-| **D3** | RAG、检索评估、幻觉治理、切分与上下文预算   | [RAG 全链路](/interview/fundamentals/rag-pipeline)                                                                    | [RAG 项目深挖](/interview/answers/rag-deep-dive)                               |
-| **D4** | 后端服务：流式、并发、限流、幂等、存储      | [Go 与网关](/interview/fundamentals/backend-go-gateway)、[存储一致性](/interview/fundamentals/storage-consistency)    | [大 Body 与并发容量](/interview/answers/large-payload-capacity)                |
-| **D5** | 前端：流式渲染、状态分层、取消与恢复        | [浏览器与 React](/interview/fundamentals/frontend-browser)                                                            | [续传、虚拟滚动与告警治理](/interview/answers/upload-scroll-alerting-deadlock) |
-| **D6** | 系统设计、可观测性、成本与评测              | [Web 安全与可观测性](/interview/fundamentals/security-observability)                                                  | [CSRF 与 SameSite](/interview/answers/csrf-and-samesite)                       |
-| **D7** | Web 安全与协议基础、OS / 网络               | [Web 安全与可观测性](/interview/fundamentals/security-observability)、[OS 与网络](/interview/fundamentals/os-network) | [CSRF 与 SameSite](/interview/answers/csrf-and-samesite)                       |
+| 维度   | 覆盖范围                                    | 主卡片                                                                                                                | 专题题库                                                                                                                                                                | 示范答案                                                                       |
+| ------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **D1** | LLM 基础、prompt / tool calling、上下文工程 | [Agent 执行链路与 MCP](/interview/fundamentals/agent-and-mcp)                                                         | [LLM 与推理基础](/interview/qa/llm-fundamentals)                                                                                                                        | [Agent 链路、网关与流式前端](/interview/answers/agent-loop-gateway-streaming)  |
+| **D2** | Agent 执行链路、MCP、权限与恢复、Harness    | [Agent 执行链路与 MCP](/interview/fundamentals/agent-and-mcp)                                                         | [Agent 执行循环与工具体系](/interview/qa/agent-loop-and-tools)、[MCP 协议与 Agent 安全](/interview/qa/mcp-and-agent-security)                                           | [Coding Agent 记忆与基线](/interview/answers/coding-agent-memory)              |
+| **D3** | RAG、检索评估、幻觉治理、切分与上下文预算   | [RAG 全链路](/interview/fundamentals/rag-pipeline)                                                                    | [RAG 与检索深挖](/interview/qa/rag-and-retrieval)、[LLM 评测与可观测性](/interview/qa/llm-eval-observability)                                                           | [RAG 项目深挖](/interview/answers/rag-deep-dive)                               |
+| **D4** | 后端服务：流式、并发、限流、幂等、存储      | [Go 与网关](/interview/fundamentals/backend-go-gateway)、[存储一致性](/interview/fundamentals/storage-consistency)    | [Go 语言与运行时](/interview/qa/go-language-runtime)、[HTTP 框架与网关工程](/interview/qa/http-framework-gateway)、[缓存、存储与 ORM](/interview/qa/cache-storage-orm)  | [大 Body 与并发容量](/interview/answers/large-payload-capacity)                |
+| **D5** | 前端：流式渲染、状态分层、取消与恢复        | [浏览器与 React](/interview/fundamentals/frontend-browser)                                                            | [React 与浏览器](/interview/qa/react-and-browser)、[AI 流式前端专题](/interview/qa/ai-streaming-ui)                                                                     | [续传、虚拟滚动与告警治理](/interview/answers/upload-scroll-alerting-deadlock) |
+| **D6** | 系统设计、可观测性、成本与评测              | [Web 安全与可观测性](/interview/fundamentals/security-observability)                                                  | [服务架构与任务系统](/interview/qa/service-architecture)、[AI 全栈应用架构](/interview/qa/fullstack-ai-app)、[前端监控与可观测性](/interview/qa/frontend-observability) | [CSRF 与 SameSite](/interview/answers/csrf-and-samesite)                       |
+| **D7** | Web 安全与协议基础、OS / 网络               | [Web 安全与可观测性](/interview/fundamentals/security-observability)、[OS 与网络](/interview/fundamentals/os-network) | [Web 安全与认证](/interview/qa/web-security-auth)、[RPC 与网络编程](/interview/qa/rpc-and-network)                                                                      | [CSRF 与 SameSite](/interview/answers/csrf-and-samesite)                       |
+
+## 专题题库总览
+
+**21 篇 / 1344 题**，每题带权威解答：按「机制 → 源码佐证 → 工程取舍 → 边界」展开，深挖题附采分点；所有项目事实均实读本机仓库源码核验（各篇文首给出证据锚点与 HEAD 短哈希）。
+
+| 分组             | 文档（题数）                                                                                                                                                                                                                                                                                                                                                       | 小计    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| **LLM 与 Agent** | [LLM 与推理基础](/interview/qa/llm-fundamentals)（85）· [Agent 执行循环与工具体系](/interview/qa/agent-loop-and-tools)（88）· [MCP 协议与 Agent 安全](/interview/qa/mcp-and-agent-security)（68）· [Electron 桌面 Agent 应用](/interview/qa/electron-agent-app)（60）· [Go 实现 AI Agent 工程](/interview/qa/go-agent-engineering)（56）                           | **357** |
+| **RAG 与评测**   | [RAG 与检索深挖](/interview/qa/rag-and-retrieval)（72）· [Agent 框架与架构对比](/interview/qa/agent-frameworks)（80）· [LLM 评测与可观测性](/interview/qa/llm-eval-observability)（60）· [AI 全栈应用架构](/interview/qa/fullstack-ai-app)（60）                                                                                                                   | **272** |
+| **Go 后端**      | [Go 语言与运行时](/interview/qa/go-language-runtime)（68）· [HTTP 框架与网关工程](/interview/qa/http-framework-gateway)（53）· [RPC 与网络编程](/interview/qa/rpc-and-network)（52）· [缓存、存储与 ORM](/interview/qa/cache-storage-orm)（59）                                                                                                                    | **232** |
+| **分布式与架构** | [分布式组件与一致性](/interview/qa/distributed-components)（57）· [服务架构与任务系统](/interview/qa/service-architecture)（45）                                                                                                                                                                                                                                   | **102** |
+| **前端与全栈**   | [JavaScript 与 TypeScript](/interview/qa/js-ts-language)（71）· [React 与浏览器](/interview/qa/react-and-browser)（65）· [AI 流式前端专题](/interview/qa/ai-streaming-ui)（72）· [前端监控与可观测性](/interview/qa/frontend-observability)（59）· [前端工程化](/interview/qa/frontend-engineering)（61）· [Web 安全与认证](/interview/qa/web-security-auth)（53） | **381** |
 
 ## 内容地图
 
 | 分类                       | 文档                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | 用途                                         |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
 | **专题知识卡**             | [Agent 与 MCP](/interview/fundamentals/agent-and-mcp)、[RAG 全链路](/interview/fundamentals/rag-pipeline)、[Go 网关](/interview/fundamentals/backend-go-gateway)、[存储一致性](/interview/fundamentals/storage-consistency)、[浏览器与 React](/interview/fundamentals/frontend-browser)、[OS 与网络](/interview/fundamentals/os-network)、[安全与可观测性](/interview/fundamentals/security-observability)、[算法手撕](/interview/fundamentals/algorithms)               | 按知识域建立机制级理解，含取舍、边界与采分点 |
+| **专题题库**               | 21 篇 / 1344 题带权威解答，见上方[专题题库总览](#专题题库总览)                                                                                                                                                                                                                                                                                                                                                                                                           | 海量刷题：机制、源码佐证、取舍与采分点       |
 | **项目与系统设计示范答案** | [Agent 链路、网关与流式前端](/interview/answers/agent-loop-gateway-streaming)、[大 Body 与并发容量](/interview/answers/large-payload-capacity)、[CSRF 与 SameSite](/interview/answers/csrf-and-samesite)、[电商 RAG 项目深挖](/interview/answers/ecomm-rag-project)、[Coding Agent 记忆与基线](/interview/answers/coding-agent-memory)、[续传、虚拟滚动、告警与死锁](/interview/answers/upload-scroll-alerting-deadlock)、[RAG 六连问](/interview/answers/rag-deep-dive) | 完整答法骨架、事实基线、采分点与追问链       |
-| **代码题**                 | [JS 手写限流器](/interview/code/rate-limiter)                                                                                                                                                                                                                                                                                                                                                                                                                            | 可运行实现 + 自测 + 分布式延伸               |
+| **代码题**                 | [JS 手写限流器](/interview/code/rate-limiter)、[Promise 并发池](/interview/code/promise-concurrency)、[SSE 客户端与重连退避](/interview/code/sse-retry)、[Go singleflight 与两级 LRU](/interview/code/go-singleflight)                                                                                                                                                                                                                                                   | 可运行实现 + 自测 + 分布式延伸               |
 | **自检工具**               | [全量题库](/interview/question-bank)、[高频易错点](/interview/pitfalls)、[指标口径与基线定义](/interview/metrics-baseline)                                                                                                                                                                                                                                                                                                                                               | 逐条自测、纠偏、量化结论治理                 |
 
 ## 评分量表
@@ -76,10 +98,11 @@ flowchart TB
 ## 复习路径
 
 1. **建体系**：按 D1–D7 顺序读专题知识卡，每章末尾「面试怎么讲」对照自评。
-2. **做自检**：用 [全量题库](/interview/question-bank) 逐条口述，卡住的主题回到对应卡片。
-3. **对答案**：读示范答案的「标准答法骨架」与「采分点」，重点看自己漏掉的**量级计算、概念纠偏、事实缺口口径**。
-4. **纠偏**：把反复答错的点固化到 [高频易错点](/interview/pitfalls)；涉及量化表述时统一走 [指标口径与基线定义](/interview/metrics-baseline)。
-5. **回源码**：任何「项目里怎么做」的表述，回 `content/` 对应文档核对路径与数值。
+2. **刷题库**：按[专题题库总览](#专题题库总览)分组精刷对应篇章，先脱稿口述再对照权威解答，重点补自己漏掉的**源码层细节、量级计算与概念纠偏**。
+3. **做自检**：用 [全量题库](/interview/question-bank) 逐条口述，卡住的主题回到对应卡片与题库篇。
+4. **对答案**：读示范答案的「标准答法骨架」与「采分点」，重点看自己漏掉的**量级计算、概念纠偏、事实缺口口径**。
+5. **纠偏**：把反复答错的点固化到 [高频易错点](/interview/pitfalls)；涉及量化表述时统一走 [指标口径与基线定义](/interview/metrics-baseline)。
+6. **回源码**：任何「项目里怎么做」的表述，回 `content/` 对应文档与本机仓库核对路径与数值。
 
 ## 知识库锚点
 
