@@ -91,6 +91,84 @@ JVM 系的落地细节:
 - 编译期字节码插桩: 构建期通过 AGP 的字节码插桩入口 (AsmClassVisitorFactory, 旧版为 Transform API) 做 ASM 字节码转换, 在目标方法入口指令后插入计时调用 (如 TraceCollector.enter(methodId)), 在所有 return 路径与异常抛出 (athrow) 路径插入 exit。methodId 用构建期分配的整型 ID, 与方法签名的映射归档到 mapping 文件, 避免把字符串常量写进每个方法的 dex。
 - 运行时方法追踪: Debug.startMethodTracing 输出全量方法进出事件到 .trace 文件, Debug.startMethodTracingSampling 切换为采样模式降低开销; 产物用 Android Studio Profiler 查看或转成 perfetto trace。全量追踪的观察者效应显著, 只适合线下定向分析, 不能在线上长开。
 
+AGP 与 ASM 是两个不同层面的工具: AGP 决定"在构建流水线的哪一站碰字节码", ASM 决定"拿到类之后怎么改字节码"。
+
+**AGP (Android Gradle Plugin)** 是 Google 官方的 Gradle 构建插件, 掌管整条 Android 构建流水线:
+
+```text
+.java / .kt 源码
+   │  javac / kotlinc 编译
+   ▼
+.class 文件 (JVM 字节码)          ← AGP 的插桩钩子挂在这一段
+   │  D8 / R8 (dex 化 + 混淆优化)
+   ▼
+.dex 文件 (Dalvik / ART 字节码)
+   │  AAPT2 资源编译、Manifest 合并、打包签名
+   ▼
+APK / AAB
+```
+
+Kotlin 也先编译成 .class, 因此在流水线中段做字节码插桩, Java 与 Kotlin 方法一次全覆盖。AGP 对外开放的插桩入口有两代:
+
+- 旧版 Transform API (AGP 1.5 引入, 7.0 废弃, 8.0 移除): 注册一个 Transform, AGP 把全量 .class 文件 (jar 加目录) 交给你自己遍历、修改、输出; 增量编译很难做对, 多个 Transform 的执行顺序也难以控制。
+- 新版 Instrumentation API (AGP 7.0 起), 即 AsmClassVisitorFactory: 只需提供一个"逐类的访问器工厂", 遍历、增量、缓存与管线顺序全部由 AGP 托管。注册方式:
+
+```kotlin
+androidComponents.onVariants { variant ->
+    variant.instrumentation.transformClassesWith(
+        TraceClassVisitorFactory::class.java,
+        InstrumentationScope.ALL   // ALL = 项目类 + 依赖类; PROJECT = 只改项目类
+    ) { /* 插桩参数 */ }
+}
+```
+
+**ASM** 是读写 .class 文件的 Java 库 (OW2 社区维护, 名字不是缩写, 源自 C 语言的 **asm** 关键字, 寓意"像写汇编一样操作 JVM 字节码")。它懂 JVM class 文件格式, 提供两种 API:
+
+- Core API (事件驱动, SAX 风格): ClassReader 解析 class 文件, 把结构以事件形式吐给 ClassVisitor, 方法体再往下吐给 MethodVisitor (每条指令一个事件), ClassWriter 把事件重新组装成字节; 单遍扫描、内存开销小, 是插桩的主流用法。
+- Tree API (DOM 风格): 把整个类加载成对象树 (ClassNode / MethodNode) 再随机修改, 适合复杂重排, 代价是内存。
+
+插桩的典型写法是用 ASM util 包里的 AdviceAdapter 在方法出入口注入探针指令, 它的 onMethodExit 回调区分正常 return 与 athrow 两类出口, 正好落实前面说的"所有 return 路径与异常抛出路径都要插 exit":
+
+```java
+class TraceMethodVisitor extends AdviceAdapter {
+    protected void onMethodEnter() {
+        mv.visitLdcInsn(methodId);
+        mv.visitMethodInsn(INVOKESTATIC, "TraceCollector", "enter", "(I)V", false);
+    }
+    // opcode 参数区分正常 return 与 athrow, 两类出口都会回调, 不会漏结算
+    protected void onMethodExit(int opcode) {
+        mv.visitLdcInsn(methodId);
+        mv.visitMethodInsn(INVOKESTATIC, "TraceCollector", "exit", "(I)V", false);
+    }
+}
+```
+
+字节码层面的效果等价于把每个方法改写成:
+
+```java
+void foo() {
+    TraceCollector.enter(42);
+    try {
+        /* 原方法体 */
+        TraceCollector.exit(42);   // 每个 return 前
+    } catch (Throwable t) {
+        TraceCollector.exit(42);   // athrow 前
+        throw t;
+    }
+}
+```
+
+很多知名工具底层都是 ASM: JaCoCo 覆盖率探针、Spring 的 CGLIB 动态代理、Hibernate 字节码增强, 以及各家 APM 框架 (腾讯 Matrix、字节 btrace 等早期版本走的就是 Transform API 加 ASM)。
+
+两者的分工:
+
+| 维度         | AGP                                                                      | ASM                                                           |
+| ------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| 是什么       | Android 官方的 Gradle 构建插件                                           | JVM 字节码 (.class) 读写库                                    |
+| 插桩里的角色 | 钩子位置与管线托管: 编译后、dex 化前把每个类交给 visitor, 负责增量与缓存 | 改写能力: 解析 class 结构, 在方法出入口注入 invokestatic 探针 |
+
+没有 AGP, 有库但没有工程化集成: 何时改、改哪些、增量、与 R8 的先后都要自己解决; 没有 ASM, 有钩子但不会改字节码。AsmClassVisitorFactory 这个接口名本身就是两者的合体——AGP 的 Instrumentation API 直接以 ASM 的 ClassVisitor 作为交付形态。
+
 Native 的落地细节:
 
 - 编译期回调: 目标 so 加 -finstrument-functions 编译, 编译器在每个函数出入口插入 __cyg_profile_func_enter / __cyg_profile_func_exit 回调, 配合 addr2line 按地址离线还原符号。
