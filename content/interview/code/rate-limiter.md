@@ -1,18 +1,15 @@
-# Code 01 · JS 手写限流器（按 key + 时间窗）
+---
+title: "代码题：JS 手写限流器"
+description: "滑动窗口日志的可运行实现与自测、固定窗口缺陷对照、分布式 Redis + Lua 延伸"
+---
 
-| 项   | 值                                          |
-| ---- | ------------------------------------------- |
-| 来源 | **用户指定代码题**                          |
-| 日期 | 2026-11-05                                  |
-| 维度 | D4 / D6（并发与容量、工程实现）             |
-| 验证 | Node 22 自测 6 组 case 全通过（`ALL PASS`） |
-| 状态 | 🟢 参考实现已给 · 待手撕                    |
+零依赖、可直接 `node` 运行的代码题参考实现。先澄清固定窗口与滑动窗口的语义，再给主实现、对照实现、六组自测与生产延伸。
 
-:::note 文档归属
-代码题统一放 `interview/code/`，与问答/系统设计题 `interview/rounds/` 分开。本文代码**可直接运行**，零依赖。
+:::note 运行方式
+本文代码零依赖、可直接用 `node` 执行，自测输出 `ALL PASS`。
 :::
 
-## 题目原文
+## 题目
 
 > 用 JS 手写一个限流器：**同一个 key 在一定时间范围内请求不能超过 limit 次数**。
 
@@ -35,7 +32,7 @@
 | 令牌桶                   | `O(1)`     | 控制**速率**而非窗口总量 | **允许突发** | API 网关、上游配额     |
 | 漏桶                     | `O(queue)` | 恒定输出速率             | 排队         | 平滑流量、整形         |
 
-> 项目事实锚点：`content/be/redis.md:434-444` 已把固定窗口（`INCR` + 首次设过期）、滑动窗口（`zset` + `ZREMRANGEBYSCORE`/`ZCARD`/`ZADD` + Lua）、令牌桶（hash + Lua）三种方案与取舍写全。
+> 事实依据：`content/be/redis.md:434-444` 已把固定窗口（`INCR` + 首次设过期）、滑动窗口（`zset` + `ZREMRANGEBYSCORE`/`ZCARD`/`ZADD` + Lua）、令牌桶（hash + Lua）三种方案与取舍写全。
 
 ## 主实现 · 滑动窗口日志
 
@@ -146,7 +143,7 @@ flowchart LR
 | 5   | **复杂度**                  | 时间 O(过期条数)，均摊 O(1)；空间 `O(limit)` / key                           |
 | 6   | **原子性**                  | `tryAcquire` 同步无 `await` → JS 单线程内天然原子；**多进程即失效**          |
 
-> 项目事实锚点：`content/docs/yukino/yukino-code.md` 与 `react-and-agent-loop.md` 记载了消费端的对应实现——Provider 把 `429` 归类为带 `Retry-After` 的 `RateLimitError`，**优先解析 `Retry-After`（支持秒数与 HTTP date 两种格式）**，缺省则指数退避（限流 5s 起步、上限 60s、最多 3 次）。你返回的 `retryAfterMs` 正好喂给这条链路。
+> 事实依据：`content/docs/yukino/yukino-code.md` 与 `react-and-agent-loop.md` 记载了消费端的对应实现——Provider 把 `429` 归类为带 `Retry-After` 的 `RateLimitError`，**优先解析 `Retry-After`（支持秒数与 HTTP date 两种格式）**，缺省则指数退避（限流 5s 起步、上限 60s、最多 3 次）。你返回的 `retryAfterMs` 正好喂给这条链路。
 
 ## 对照实现 · 固定窗口（展示缺陷）
 
@@ -251,7 +248,7 @@ assert(threw, "case6 validate limit");
 console.log("ALL PASS");
 ```
 
-> 已在 **Node 22** 实际运行，输出 `ALL PASS`。
+> 已在 **Node 22** 实际运行，六组 case 全部通过，输出 `ALL PASS`。
 
 ## 生产延伸
 
@@ -266,7 +263,7 @@ console.log("ALL PASS");
 | 分层              | 网关粗限流（IP / 租户）+ 进程内细限流（user / API key）；拒绝用 `429` 而非 `403`                                                                                                                     |
 | 客户端配合        | `Retry-After` + 指数退避 + 抖动，避免重试风暴；对应 `yukino-code.md` 的 `RateLimitError` 退避策略                                                                                                    |
 
-## 采分点（面试官视角）
+## 采分点
 
 | 维度     | 加分                                                            | 扣分                       |
 | -------- | --------------------------------------------------------------- | -------------------------- |
@@ -285,17 +282,13 @@ console.log("ALL PASS");
 5. 被拒后客户端怎么做？（`Retry-After` 优先，否则指数退避 + 抖动）
 6. 令牌桶 vs 滑动窗口怎么选？（允许突发 vs 严格窗口总量）
 
-## 你的作答（手撕区）
-
-> 🕒 15 分钟，**不看上面实现**：先写滑动窗口日志版，再口述固定窗口缺陷与分布式方案。写完后我按 5 维度打分并逐条对照。
-
-## 点评与评分
-
-> 🕒 待作答。
-
 ## 速记卡
 
 - **主解**：每 key 一个时间戳队列，判「过去 window 内条数 < limit」，拒绝时 `retryAfter = 最早戳 + window - now`。
 - **三个工程细节**：`head` 指针（别 `shift`）、`sweep` 清 key（别泄漏）、`now` 可注入（能测 + 单调保护）。
 - **两个必答边界**：固定窗口 2×limit 突发；单进程计数器多实例失效 → Redis + Lua。
 - **对接 HTTP**：`429` + `Retry-After` + `X-RateLimit-Remaining/Reset`。
+
+## 延伸阅读
+
+[算法手撕](/interview/fundamentals/algorithms) · [Go 网关](/interview/fundamentals/backend-go-gateway) · [大 Body 与并发容量](/interview/answers/large-payload-capacity)

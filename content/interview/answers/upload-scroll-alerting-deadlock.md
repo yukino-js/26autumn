@@ -1,12 +1,9 @@
-# Round 07 · 续传 / 虚拟滚动 / 告警治理 / 死锁检测（7 连问）
+---
+title: "断点续传、虚拟滚动、告警治理与死锁检测"
+description: "七连问示范答案：分块状态机与 HTTP Range 边界、不定高虚拟滚动、归属率指标、等待图环检测"
+---
 
-| 项   | 值                                                     |
-| ---- | ------------------------------------------------------ |
-| 来源 | **用户提供的混合面试追问**                             |
-| 日期 | 2026-11-05                                             |
-| 维度 | D4 / D5 / D6（传输与渲染、可观测性治理、并发与图算法） |
-| 形态 | 项目事实核对 + 通用工程框架                            |
-| 状态 | 🟢 已核对 · 待复述                                     |
+混合主题示范答案。两个高频陷阱：**上传续传不能用 HTTP Range 回答**、**告警归属率在知识库里没有落地记录**；后半给出等待图环检测的图算法与监控设计。
 
 ## 事实基线
 
@@ -19,7 +16,7 @@
 | 死锁                 | `content/be/mysql.md:588-610`（四必要条件、间隙锁案例、InnoDB 等待图）、`content/be/redis.md`（锁 TTL 防死锁）、`content/docs/tiktok.md`（`performance_schema.data_lock_waits`）              |
 | 隔离与审查           | `content/docs/yukino/worktree.md`、`sandbox.md`、`permission.md`、`code-review.md`                                                                                                            |
 
-:::danger 事实缺口（Q2 / Q3）
+:::danger 事实缺口
 知识库里**没有「告警归属率 / 归属准确率」这两个指标的落地记录**，也没有「指标收敛分级治理」的专项文档。Q2/Q3 的指标定义、分子分母、判定标准、治理机制下面用 ⚠️ 标为**通用工程框架（推导）**，不是项目已做。若简历写了这类量化治理，务必能说清数据源、口径、验证方式与提升幅度。
 :::
 
@@ -266,7 +263,7 @@ function cycleNodes(graph: Map<string, string[]>): Set<string> {
 
 ---
 
-## 口述速记（3 分钟）
+## 三分钟口述版
 
 > 续传是应用层分块状态机：校验返回缺失块下标，服务器进度就是磁盘上的 chunk 文件集合，5 MiB/块、并发 3、重试 3 次；HTTP 的 `Range/206/Content-Range/If-Range` 是**下载**语义，上传要做到块内偏移得用 `PATCH + Content-Range` 或 tus，所以 2.5M 那块若没写完整要重传这一块，但前面的块不用。虚拟滚动是少渲染节点：定高用除法定位，不定高用预估高度 + 前缀和二分 + ResizeObserver 实测增量重算 + 绝对定位，历史加载要补 scrollTop。告警归属率这类指标我熟悉定义与验证，但项目里没有落地记录，不会当做过。死锁四必要条件里最容易破的是循环等待；检测就是建等待图、用 DFS 三色或 Kahn 找环，采集 `data_lock_waits` 与锁注册表，滑动窗口构图、持续多周期才告警，并带环路径与回滚建议。
 
@@ -280,10 +277,6 @@ function cycleNodes(graph: Map<string, string[]>): Set<string> {
 6. Kahn 输出的是「环所在节点集合」，怎么拿到具体环路径？（配合 DFS 或在剩余子图上再跑一次 DFS）
 7. 分布式死锁没有全局等待图，怎么兜底？（TTL/租约 + 超时 + 全局 trace 关联，牺牲确定性换可用性）
 
-## 你的作答（复述区）
+## 延伸阅读
 
-> 🕒 待填。重点：Q2/Q3 能否守住「知识库无落地记录」的诚实口径，Q4 能否分清应用层分块与 HTTP Range 的边界。
-
-## 点评与评分
-
-> 🕒 待作答。
+[浏览器与 React](/interview/fundamentals/frontend-browser) · [Web 安全与可观测性](/interview/fundamentals/security-observability) · [算法手撕](/interview/fundamentals/algorithms)

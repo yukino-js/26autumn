@@ -1,0 +1,33 @@
+[
+  "index",
+  {
+    "type": "section-header",
+    "label": "备考索引"
+  },
+  "question-bank",
+  "pitfalls",
+  "metrics-baseline",
+  {
+    "type": "section-header",
+    "label": "知识体系"
+  },
+  {
+    "type": "dir",
+    "name": "fundamentals",
+    "label": "专题知识卡"
+  },
+  {
+    "type": "section-header",
+    "label": "示范答案"
+  },
+  {
+    "type": "dir",
+    "name": "answers",
+    "label": "项目与系统设计"
+  },
+  {
+    "type": "dir",
+    "name": "code",
+    "label": "代码题"
+  }
+]

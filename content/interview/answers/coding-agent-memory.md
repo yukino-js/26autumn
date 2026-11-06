@@ -1,22 +1,19 @@
-# Round 06 · Yukino Code 长期上下文 / 短期记忆 / 相对指标 baseline（3 连问）
+---
+title: "Coding Agent 的长期上下文、短期记忆与指标基线"
+description: "源码级调研边界、四层短期记忆机制、相对指标 baseline 缺口的诚实口径与补做方案"
+---
 
-| 项   | 值                                                     |
-| ---- | ------------------------------------------------------ |
-| 来源 | **用户提供的项目专项面试追问**                         |
-| 日期 | 2026-11-05                                             |
-| 维度 | D1 / D2 / D6（上下文工程、Agent 记忆、评测与工程取舍） |
-| 形态 | **项目事实核对型示范卡**（延续 R05）                   |
-| 状态 | 🟢 已核对 · 待口述复述                                 |
+上下文与记忆类追问最容易把「设计动机」讲成「效果数据」。本页给出可核对的机制、调研边界，以及相对指标 baseline 缺口的诚实口径。
 
-## 事实基线（开口先声明）
+## 事实基线
 
-| 来源       | 内容                                                                                                                                                                                                       |
+| 事实依据   | 内容                                                                                                                                                                                                       |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 知识库文档 | `content/docs/yukino/` 共 **27 篇**；frontmatter 声明 `local_path: $HOME/github/yukino-code/apps/yukino`、`local_commit: 1847a71e03f9`                                                                     |
 | 本机检出   | `$HOME/github/yukino-code`（pnpm workspace，`apps/yukino` 是 npm 包 `@yukino.js/yukino`），**当前 HEAD `88a8d5c`**（比文档基线新）                                                                         |
 | 检索结论   | 仓库内 **无 `eval-*` / `bench` / `report` 脚本**（`find` 为空）；`README.md` 的 Highlights 只写 "resumable sessions, automatic context compaction, long-term memory across sessions"，**无任何百分比指标** |
 
-:::danger 面试风险提示
+:::danger 事实缺口
 Q3 是**事实缺口**：仓库里没有定义过「输入 Token 降低 X% / 写入率提升 Y%」的 baseline，也没有对照实验报告。唯一可引用的实测数字是 **cache 命中率 99.4% → 9.5%**，但它是「tools 数组变动」的单次对照，用于解释设计动机，**不是压缩/记忆方案的收益**。把设计动机讲成效果数据，是这题最容易翻车的地方。
 :::
 
@@ -123,7 +120,7 @@ flowchart LR
 
 ---
 
-## 3 分钟口述版（速记）
+## 三分钟口述版
 
 > 调研层面，我对 Claude Code、Pi、LangChain.js、LangGraph.js 做过源码级调研：Pi 是树形 JSONL v3 加 compaction/context_edit，LangChain 把压缩拆成 summarization 与 contextEditing 两条中间件路线，Claude Code 用延迟工具发现保住 tools 数组稳定——这些直接影响了 Yukino 的取舍，但没有正式的框架选型 benchmark。短期记忆分四层：工作记忆是 ConversationManager 里只追加不改的消息；第一层把超过 5 万字符的工具结果溢出到磁盘只留 2000 字符预览；第二层在 usage anchor 校准的 token 用量越过阈值时做 cache-sharing 摘要，近期 1 万 token 逐字保留，压缩结果以 compact_boundary 追加进 JSONL，resume 时从最后一条边界重建；再加文件快照与 /rewind 回退。长期记忆另算：AGENTS.md、MEMORY.md 索引、每轮并行 recall、后台提取与 24 小时整合。
 >
@@ -138,10 +135,6 @@ flowchart LR
 5. 长期记忆放 messages 而不是 system 的理由？（system 保持项目无关、跨项目共享 prompt cache；项目内容走 `<system-reminder>`）
 6. 如果真要测「输入 token 降低」，怎么避免压缩导致的质量下降被忽略？（同轨迹回放 + 任务成功率/回读率作为护栏 + 多次运行取均值）
 
-## 你的作答（复述区）
+## 延伸阅读
 
-> 🕒 待填。**不看本文**讲 3 分钟：Q1 调研边界 → Q2 四层短期记忆 → Q3 诚实说明 baseline 缺口与补做方案。
-
-## 点评与评分
-
-> 🕒 待作答。
+[Agent 执行链路与 MCP](/interview/fundamentals/agent-and-mcp) · [指标口径与基线定义](/interview/metrics-baseline) · [RAG 全链路](/interview/fundamentals/rag-pipeline)

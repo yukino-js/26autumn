@@ -22,4 +22,7 @@ features:
   - title: 工作文档
     details: 工作实践复盘、协议与方案调研、Coding Agent 调研、AI 框架与平台调研, 以及 yukino / yukino-dev-agent / yukino-ecomm-agent 三个项目源码专栏
     link: /docs/
+  - title: 面试备考
+    details: AI 全栈 / Agent 工程方向的结构化备考资料, 覆盖 RAG、Agent 与 MCP、Go 网关、存储一致性、前端与浏览器、Web 安全、算法手撕, 附项目深挖示范答案与可运行代码题
+    link: /interview/
 ---

@@ -17,7 +17,8 @@ export default defineConfig({
   siteOrigin,
   lang: "zh",
   title: "技术学习笔记",
-  description: "技术知识整理、实习与工作期间的技术笔记、项目源码解析",
+  description:
+    "技术知识整理、实习与工作期间的技术笔记、项目源码解析与 AI 全栈面试备考资料",
   icon: "/favicon.svg",
   logo: "/favicon.svg",
   logoText: "技术学习笔记",

@@ -1,26 +1,23 @@
-# Round 08 · RAG 项目追问：知识库 / 分块参数 / rerank / TTFT / 防幻觉模块（6 连问）
+---
+title: "RAG 六连问：语料、分块、重排、TTFT 与防幻觉"
+description: "语料构成、切分参数依据、rerank 评估、TTFT span 拆解与防幻觉责任链"
+---
 
-| 项   | 值                                                                                        |
-| ---- | ----------------------------------------------------------------------------------------- |
-| 来源 | **用户提供的 RAG 项目面试追问**（延续 [R05](./round-05.md) 的 `yukino-ecomm-agent` 主线） |
-| 日期 | 2026-11-05                                                                                |
-| 维度 | D3 / D4 / D6（RAG 语料与切分、评测、延迟、可靠性）                                        |
-| 形态 | 项目事实核对型示范卡                                                                      |
-| 状态 | 🟢 已核对 · 待复述                                                                        |
+语料、参数依据、评估与延迟四条主线。核心纪律：**参数是源码默认常量、报告未归档、SSE 不降低 TTFT**，不把推导讲成项目已做。
 
 ## 事实基线
 
-沿用 R05 的核对结果：`content/docs/yukino-ecomm-agent/` 9 篇（frontmatter `local_commit: b160dff`），本机检出 `$HOME/github/yukino-ecomm-agent` HEAD `c90c843`；6 份 md、实测 **74 条 chunk**、`tests/data/eval_rag.jsonl` **300 行**、`data/rag/reports/` **未提交**。
+沿用[电商 RAG 项目深挖](/interview/answers/ecomm-rag-project)的核对结果：`content/docs/yukino-ecomm-agent/` 9 篇（frontmatter `local_commit: b160dff`），本机检出 `$HOME/github/yukino-ecomm-agent` HEAD `c90c843`；6 份 md、实测 **74 条 chunk**、`tests/data/eval_rag.jsonl` **300 行**、`data/rag/reports/` **未提交**。
 
-本轮新增核对：
+本页补充核对：
 
-| 事实                                                                                                                                                            | 来源                                                      |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| 6 份 md 的 contentType 映射与四类描述                                                                                                                           | `server/src/kb/sources.ts`（源码实读）                    |
-| `buildChunks(md, contentType, chunkSize=400, overlap=60, tableMaxRows=10)` 是**函数默认参数**，调用点 `api/kb.ts` / `scripts/kb-build.ts` 都只传 `(raw, ctype)` | `server/src/kb/documents.ts` + 全 `src/` 检索无配置化     |
-| 无 chunk 相关环境变量                                                                                                                                           | `server/src/config.ts`（对照 R05 已读的三槽位与检索常量） |
+| 事实                                                                                                                                                            | 事实依据                                                       |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| 6 份 md 的 contentType 映射与四类描述                                                                                                                           | `server/src/kb/sources.ts`（源码实读）                         |
+| `buildChunks(md, contentType, chunkSize=400, overlap=60, tableMaxRows=10)` 是**函数默认参数**，调用点 `api/kb.ts` / `scripts/kb-build.ts` 都只传 `(raw, ctype)` | `server/src/kb/documents.ts` + 全 `src/` 检索无配置化          |
+| 无 chunk 相关环境变量                                                                                                                                           | `server/src/config.ts`（对照项目深挖已核对的三槽位与检索常量） |
 
-:::danger 连续第四轮「依据缺口」
+:::danger 依据缺口
 Q3（分块长度谁定）与 Q4（rerank 效果有多好）都指向同一问题：**参数与效果缺少可复现的依据**。源码里 400/60/10 是开发者写死的默认值，没有消融实验；`data/rag/reports/` 未归档，rerank 增量没有可引用的具体数值。下面用 ✅ 事实 / ⚠️ 推导 标清。
 :::
 
@@ -144,13 +141,13 @@ flowchart LR
 
 ## Q6 · 除了知识检索，还有哪些模块能减少模型幻觉？
 
-✅ 按**模块**列（R05 Q9 讲的是提示词手段，这里换成责任模块视角）：
+✅ 按**模块**列（项目深挖已给出提示词视角，这里换成责任模块视角）：
 
 | 模块                           | 机制                                                                                                                                                                                     | 出处                                      |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | **① 图编排（确定性路由）**     | 知识意图 `product_inquiry` **硬接** `retrieve_knowledge` 节点，检索不可能被跳过；宁可用 workflow 也不全交给 ReAct，理由之一就是「模型可能遗漏检索，凭参数记忆作答」                      | `workflow.md:36-41`                       |
 | **② 置信度闸 + selfcheck**     | `score = 0.5·top1 + 0.2·valid/3 + 0.2·margin + 0.1·key` < `0.26` 判 weak；过闸后还有 LLM 自检，**调用失败一律按不足**；weak 直接走固定兜底话术，模型根本没机会编                         | `rag.md:246-255`、`observable.md:117-136` |
-| **③ 提示词约束集**             | `AGENT_SYSTEM` / `RAG_ANSWER_SYSTEM` / `KNOWLEDGE_EVIDENCE_HINT`：严格基于证据、关键结论附 `[1][2]`、型号 verbatim、条件连条件说、证据不足拒答、禁止承诺时限与赔偿                       | `prompts.ts`（R05 已逐条核对）            |
+| **③ 提示词约束集**             | `AGENT_SYSTEM` / `RAG_ANSWER_SYSTEM` / `KNOWLEDGE_EVIDENCE_HINT`：严格基于证据、关键结论附 `[1][2]`、型号 verbatim、条件连条件说、证据不足拒答、禁止承诺时限与赔偿                       | `prompts.ts`（项目深挖已逐条核对）        |
 | **④ 结构化输出 + schema 校验** | `structured()` 用 `withStructuredOutput(functionCalling)`，返回后再过 `zod parse`；失败重试 2 次；评测 judge 额外 `temperature=0`                                                        | `llm.md:56-66`                            |
 | **⑤ 工具执行引擎**             | Ajv 按 JSON Schema 校验参数、失败返回「修正参数/先问用户/不要编造」；`injectUserId` / `injectConversation` **系统注入身份参数，不经过模型**；超时/重试/结果截断；`ToolAuditLog` 全程审计 | `llm.md:127-148`                          |
 | **⑥ 机械闸门 model-guard**     | 答案里出现证据中不存在的型号串 → 检出并带修复提示重试一次，统计命中数与救回数                                                                                                            | `observable.md:79`                        |
@@ -164,7 +161,7 @@ flowchart LR
 
 ---
 
-## 3 分钟口述版（速记）
+## 三分钟口述版
 
 > 知识库是 6 份演示 Markdown，映射成 faq/policy/manual/spec 四类，实测切出 74 条 chunk，另外还有人工审核与会话挖掘两类写回 chunk；被向量化的只有 `category+questions+answer`。分块先按 h1–h4 切小节，表格按 10 行一组复制表头，正文用 400 字符递归切分再加 60 字符句子级 overlap——**这三个值是源码默认常量，开发者定的，没有参数消融实验**，我会如实说。rerank 的评估是 4 策略消融，`hybrid` 与 `hybrid_rerank` 的差值就是增量，看 Recall@5/MRR、证据覆盖率、答案覆盖率与 faithfulness，还可用 `RERANK_API_KEY` 开关做天然对照；但报告未归档，具体分数我不会现场编。首字符慢要先拆 Langfuse span：图里 main_agent 之前的指代消解、意图分类、检索精排、selfcheck 全是串行，SSE 只让已生成的字尽早出现，降 TTFT 得减前置调用、并行化、稳住 prompt 前缀。防幻觉靠整条责任链：确定性路由保证必检索、双门禁决定要不要生成、结构化输出与工具注入约束内容、model-guard 与忠实度台账事后兜底、飞轮补缺口。
 
@@ -177,10 +174,6 @@ flowchart LR
 5. 把 selfcheck 去掉能省一次 LLM 调用，风险是什么？（弱证据直接进生成模型，兜底率下降、幻觉上升；需用拒答率与 faithfulness 验证）
 6. 飞轮写回的新知识会不会把检索质量拖下水？（`eval-flywheel` 记录 4 指标趋势、相邻轮差 >0.005 标回归，就是防这个）
 
-## 你的作答（复述区）
+## 延伸阅读
 
-> 🕒 待填。重点：Q3/Q4 能否守住「参数无消融、报告未归档」的诚实口径；Q5 能否先拆 span 再谈优化。
-
-## 点评与评分
-
-> 🕒 待作答。
+[RAG 全链路](/interview/fundamentals/rag-pipeline) · [指标口径与基线定义](/interview/metrics-baseline) · [电商 RAG 项目深挖](/interview/answers/ecomm-rag-project)
