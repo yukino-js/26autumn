@@ -16,7 +16,11 @@ flowchart TB
 ```
 
 > 定位: 第一至四部分是 Docker 与 Kubernetes 的完整面试知识体系, 每个知识点 = 一句话回答 (先背这个) + 追问展开 (应对深挖); 第五部分是把两者串起来的实战方案——前端 JSError 自动修复云沙箱, 上游衔接 [data](data) 的监控采集与静态代码图谱 (CodeGraph) 的上下文。
-> 环境现状: 本机已装 Docker 29.2.0 与 kubectl v1.34.1, 无集群 context, 如需实操可启动 Docker Desktop 并开启其内置 Kubernetes。
+> 环境现状: 本机已装 Docker Engine 29.8.2 与 kubectl v1.36.1, cgroup v2, 无集群 context, 如需实操可启动 Docker Desktop 并开启其内置 Kubernetes。
+
+:::note 版本基线
+Docker/K8s 知识体系按当前稳定版本撰写: Docker Engine 29.x (Engine API 与 containerd shim 链路)、Kubernetes 当前稳定 minor (v1.36 线); 文中涉及的 ClickHouse 按 25.x、Kafka 按 4.x 口径。第五部分沙箱实现对照本地仓库 `~/github/yukino-codegen/server` @ `da904a235056bb7e42e7917b461bcf7e07b539e2` 核验, 源码路径标注于对应小节; K8s Job + Docker Agent 部分为目标架构设计方案, 不是该仓库现有实现。
+:::
 
 ---
 
@@ -938,6 +942,48 @@ Pod 是牲口: 重建/漂移后 IP 必变, 直接依赖 Pod IP 的调用方会�
 
 ### 8. 云沙箱: K8s Job + Docker Agent (核心)
 
+#### 8.0 现有实现对照: yukino-codegen 的进程级沙箱
+
+目标架构 (§8.1 起) 是面向多租户不可信代码的容器化方案; 本地仓库 `~/github/yukino-codegen/server` @ `da904a23` 落地的是**单机进程级沙箱**, 二者隔离层级不同, 先把现有实现的事实核对清楚, 再看容器化要补哪些能力。
+
+**隔离模型** (`server/src/workspace/sandbox-session.ts`):
+
+- 每个应用一个工作目录 (`workDir`) 加一个临时目录 (`scratchDir`, `mkdtemp`), 命令经 `@yukino.js/yukino` 的 `Sandbox` 原生沙箱准备: Linux 上是 bubblewrap + user namespaces, macOS 上是 seatbelt; 沙箱不可用 (`available()` 返回 false) 直接抛错, 命令不执行。
+- 子进程用 `spawn` 拉起, `detached: true`, 超时/取消时按进程组 `SIGKILL` 回收; 退出时再 reap 一次遗留后代, 避免僵尸进程。
+- 环境变量显式白名单 (`workspaceEnvironment`): 只保留 `PATH`、`LANG`、`TERM`、`HOME`、`TMPDIR`、`XDG_CACHE_HOME`、`npm_config_cache`、`npm_config_update_notifier`, **不继承后端进程的凭证环境**。
+- 写路径白名单: `allowWrite: [workDir, scratchDir]`, `denyWrite: []`, `networkEnabled: true`; 准备产物带 `cleanup` 回调, 命令结束后执行。
+
+**工作区生命周期** (`server/src/workspace/workspace-manager.ts`):
+
+- 工作区按 `appId` 存于内存 `Map`, 预览令牌为 `randomBytes(24).toString("hex")` (48 位十六进制); 会话懒创建, 创建失败从缓存剔除后抛出。
+- 空闲回收: 60 秒一次 sweep 定时器 (`unref`), 超过 `AGENT_WORKSPACE_IDLE_MS` (默认 15 分钟) 无活动的工作区被销毁; 构建中的工作区跳过回收。
+- 构建超时由 `WORKSPACE_BUILD_TIMEOUT_MS` 控制, 默认 300 秒, 超时 `AbortController` 中止; 日志截断保留最近 64 KB。
+- 依赖缓存判定: 把 `package.json`、`package-lock.json`、`npm-shrinkwrap.json`、`pnpm-lock.yaml`、`yarn.lock`、`bun.lock`、`bun.lockb` 内容拼起来做 sha256, 哈希未变且 `node_modules` 存在则跳过安装; 安装命令固定 `npm install --no-audit --no-fund`, 构建命令 `npm run build -- --base=./`。
+- 产物安全校验: `dist` 必须是目录且不是符号链接; `dist/index.html` 经 `realpath` 后必须仍在 `dist` 内, 路径逃逸直接报错; 产物拷到 scratchDir 带 revision 编号, 旧版本只保留最近一版, 已打开的 iframe 继续用旧资产基址。
+- 预览服务: HTTP 路由 `/p/<48hex>/<revision>/<path>`, 令牌查工作区、revision 查产物; `PREVIEW_PORT` 默认 3001, `PREVIEW_HOST` 默认 `0.0.0.0`。
+
+**Git 快照模型** (`server/src/agent-runtime/git-runtime.ts`):
+
+- 现有实现是**本地仓库快照**, 不是远端仓库浅克隆: 目录非 git 仓库时 `git init` + 初始提交; `snapshot` 执行 `add -A`, 无变更返回 `undefined`, 否则以 `GIT_SNAPSHOT_AUTHOR_NAME` (默认 `Yukino Agent`) / `GIT_SNAPSHOT_AUTHOR_EMAIL` (默认 `agent@yukino.local`) 提交并返回 HEAD sha。
+- `listSnapshots` 默认列 50 条; `rewindTo` 按 sha 检出后再补一个 rewind 提交; worktree 经 `Worktree.createAgentWorktree` / `removeAgentWorktree` 管理; git 子进程 `maxBuffer` 16 MiB。
+
+**Agent 运行时约束** (`server/src/agent-runtime/`, `server/src/config/env.schema.ts`):
+
+| 配置 / 常量                           | 默认值        | 含义                                 |
+| ------------------------------------- | ------------- | ------------------------------------ |
+| `AGENT_MAX_CONCURRENT_TURNS`          | 4             | 全局并发 Agent 循环上限 (`TurnGate`) |
+| `AGENT_MAX_CONNECTIONS_PER_WORKSPACE` | 8             | 单工作区连接数上限                   |
+| `AGENT_TURN_CLAIM_STALE_MS`           | 30 分钟       | 任务认领超时, 超时可被重新认领       |
+| `AI_MAX_ITERATIONS`                   | 40            | 单轮 Agent 循环最大迭代次数          |
+| `AGENT_WS_MAX_MESSAGE_BYTES`          | 512 KiB       | WebSocket 单消息上限                 |
+| `MAX_UPLOAD_IMAGE_BYTES`              | 32 MiB        | 上传图片大小上限                     |
+| `MAX_REWIND_POINTS`                   | 50            | 可回退快照点数上限                   |
+| `LLM_RATE_LIMIT` / 窗口               | 10 次 / 60 秒 | 模型调用限流                         |
+
+命令面分两组 (`command-dispatcher.ts`): `TERMINAL_ONLY_COMMANDS` (login/provider/quit/feedback/resume/session, 服务端不可执行) 与 `SERVER_SUPPORTED_COMMANDS` (help/status/clear/compact/skills/skill/memory/mcp/rewind/goal/plan/model/thinking/sandbox/worktree/workflows/review); MCP 连接支持 `stdio`/`http`/`sse` 三种传输, 敏感配置经 `mcp-crypto` 加解密。
+
+**与 §8 容器化方案的差距**: 进程级沙箱依赖同一台机器的原生隔离 (bubblewrap/seatbelt), 工作区在内存 Map 中随进程重启丢失, 无一次性销毁、无资源硬限额、无网络围栏、无跨节点调度; 当 Agent 要执行外部提交的不可信代码、需要按任务隔离磁盘/网络/凭证并弹性扩缩时, 才需要升级到 §8 的 K8s Job + 容器沙箱形态。
+
 #### 8.1 为什么「一任务一 Job Pod」而不是常驻 Agent 服务池
 
 | 维度   | 一任务一 Pod (选它)                          | 常驻服务池                             |
@@ -1191,3 +1237,13 @@ spec:
 - **并发 100 个任务集群怎么扛?** ResourceQuota 封顶 + 编排器排队 + KEDA 按积压扩缩 + 沙箱节点池独立扩容, 业务集群无感。
 - **错误消息里被注入恶意指令怎么办?** 见 §9 prompt 注入三层纵深: 输入清洗、能力收口 (白名单网络 + allowedPaths + 无长期凭证)、出口门禁 (验证 + 人工 Review)。
 - **为什么不直接给 Agent 生产仓库写权限?** 最小权限原则: 只读 deploy key 负责 clone, push token 只允许 `fix/jserror-*` 分支前缀, merge 权限完全在代码平台审批侧——即使沙箱被完全攻破, 攻击者也拿不到主干写入权。
+
+---
+
+**延伸阅读**
+
+- [yukino-codegen](../fe/yukino-codegen): 本文 §8.0 对照的内部代码生成 Agent, 含工作区沙箱、Git 快照与 MCP 接入的完整实现。
+- [@yukino.js/sentry](../fe/yukino-sentry): 第五部分上游监控 SDK, JSError 模型、录屏现场还原与 sourcemap 反解的落地形态。
+- [前端监控与数据请求工程实践](./data): 错误上报、聚合指纹与复现素材 (breadcrumbs/录屏) 的采集口径。
+- [Yukino MCP 集成](./yukino/mcp): 沙箱 Agent 接入外部工具服务的 MCP 传输与权限实践。
+- [Yukino 沙箱](./yukino/sandbox): 进程级隔离与命令执行边界的内部方案对照。

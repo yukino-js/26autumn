@@ -2,12 +2,26 @@
 title: "Yukino 官方 MCP: 一个进程内的工具集合服务器"
 description: "把本地 RAG 文档检索、MCP Apps 交互式 UI、gh CLI 与 PostgreSQL/MySQL/ClickHouse/Redis/MongoDB/Prometheus/Grafana/MinIO/etcd/Milvus/Kafka 十一类数据后端收敛成 15 个 MCP 工具, 用 stdio 与无状态 Streamable HTTP 双传输对外暴露, 并以进程级单例承载向量索引与连接生命周期。"
 local_path: "$HOME/github/yukino-code/apps/mcp"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/mcp` 在 `1847a71e03f9` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/mcp` 在 `7b9add587b16` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+    HOST[MCP 宿主: Yukino CLI / 任意 MCP 客户端] -->|stdio 或 POST /mcp| SERVER[createServer: McpServer]
+    SERVER --> MOD[14 个 ToolModule 逐个 register]
+    MOD --> T1[docs: docs_tool + docs_sync 本地 RAG]
+    MOD --> T2[create_app: MCP Apps 单文件 UI]
+    MOD --> T3[github_tool: gh CLI 子进程]
+    MOD --> T4[11 类数据后端工具]
+    T1 --> IDX[进程级单例: SQLite 向量索引 + 嵌入 Provider]
+    T4 --> CONN[每次调用新建连接, 结束即关]
+```
 
 本文拆解 Yukino 官方 MCP 服务器(`@yukino.js/mcp`): 它把一组彼此独立的能力——本地知识库的语义检索、可交互的单文件 HTML 应用、任意 `gh` 命令、以及十一种数据/消息/可观测后端——统一封装成 MCP 工具, 通过 stdio 或 HTTP 暴露给 Yukino CLI 及任何 MCP 宿主。内容以功能、实现思路与适用场景为主线, 覆盖传输层、工具模块契约、RAG 检索链路、MCP Apps UI 生成、数据库与中间件工具面与配置体系。适合正在搭建 MCP 服务器、关心工具注册与进程内状态管理的工程师阅读。
 
@@ -319,3 +333,12 @@ Milvus 的 RESTful API v2 与 gRPC 共用同一端口(默认 19530), 所以 `MIL
 - 需要 Node.js ≥ 24.6.0(`node:sqlite`); `create_app` 的 UI 外壳需先 `build:app` 生成 `dist/create-app.html`, 且只在支持 MCP Apps 的宿主里可视化。
 - 每次数据库调用新建并关闭连接, 不维持连接池与会话状态; 需要事务或会话相关语句序列时, 应放进**同一次调用**(Redis 的 `SELECT`/`MULTI`/`EXEC` 同理)。Kafka 消费是"有界轮询窗口"(`max_messages` + `timeout_ms`), 不是常驻消费者。
 - etcd 的流式端点(`/v3/watch`、`/v3/maintenance/snapshot`)与 Kafka 的遗留 librdkafka 风格配置键被明确拒绝, 属于协议透传的边界外。
+
+---
+
+**延伸阅读**
+
+- [Yukino Codegen: 编码 Agent 的沙箱迭代与预览桥](./yukino-codegen)
+- [Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent](./yukino-chat)
+- [Yukino Chatbot: Koa 3 服务端与 React 19 分层客户端](./yukino-chatbot)
+- [Yukino Sentry: 前端与 Node 错误采集 SDK](./yukino-sentry)

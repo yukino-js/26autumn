@@ -2,11 +2,11 @@
 title: "MCP 和 Skill"
 description: "MCP 和 Skill: 物流/售后两个演示 MCP 服务器 (Hono + 官方 SDK, 确定性 Mock)、主服务 mcp-client 接入与 registry 合并注册、formatResult 状态码翻译、执行引擎、写前人工确认与审计, 以及测试与验收"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
+local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/mcp-servers/`、`server/src/tools/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -194,3 +194,12 @@ register(
 - `tests/mcp-servers.test.ts`: 以真实子进程拉起两个 MCP 服务器 (测试端口 18101 / 18102), 用真实 `Client` + `StreamableHTTPClientTransport` 验证 `listTools` 能列全三个工具、同一输入两次调用返回完全一致 (确定性 Mock)
 - `tests/mcp-client.test.ts`: 验证 `FORMATTERS` 的翻译映射、未知码透传、类型不匹配透传, 以及 `fetchMcpSpecs` 在服务器不可达时跳过而不抛错
 - `node server/main.js eval-mcp`: MCP 端到端验收评测 (工单 + 物流两条链路)
+
+---
+
+**延伸阅读**
+
+- [LLM 接入、表设计与工具设计](./llm): 注册表、ToolSpec 与执行引擎的完整契约
+- [LangGraph 会话图编排](./workflow): 写工具的 interrupt 确认流与恢复端点
+- [HTTP API 和管理台](./api): action 确认/取消端点与审计查询接口
+- [可观测性和数据飞轮](./observable): MCP 工具调用的审计与 trace 落地

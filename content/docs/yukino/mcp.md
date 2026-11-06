@@ -2,11 +2,11 @@
 title: "MCP"
 description: "MCP 接入: JSON-RPC 2.0 协议与 stdio / streamable http / sse 传输, MCPClient / MCPManager 生命周期, 用户级与项目级配置与环境变量展开, mcp__ 命名与权限匹配, eager / native / dispatch 三种延迟加载模式, ToolSearch / McpCall, server instructions 公告与 remote 模式的 MCP Apps"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/mcp`、`src/tools`、`src/config`、`src/permissions`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -98,7 +98,7 @@ tools/list 返回的工具定义形如:
 
 ### 完整会话 (以 stdio 为例)
 
-1. 初始化握手: MCPClient 启动子进程后发送 `initialize` 请求, 声明协议版本、能力和身份信息 (clientInfo 为 `{ name: "yukino", version }`, version 是 Yukino 自身版本); Server 响应自己的版本、能力和 instructions。协议原语来自 `@modelcontextprotocol/sdk` (package.json 声明 `^1.32.1`, 本机安装 1.32.2), 其 `LATEST_PROTOCOL_VERSION` 是 `2025-11-25`, `SUPPORTED_PROTOCOL_VERSIONS` 还含 `2025-06-18` / `2025-03-26` / `2024-11-05` / `2024-10-07`
+1. 初始化握手: MCPClient 启动子进程后发送 `initialize` 请求, 声明协议版本、能力和身份信息 (clientInfo 为 `{ name: "yukino", version }`, version 是 Yukino 自身版本); Server 响应自己的版本、能力和 instructions。协议原语来自 `@modelcontextprotocol/sdk` (`package.json` 声明 `^1.32.1`), 协议版本协商由 SDK 内部处理, Yukino 侧不写死版本号
 2. Client 发送 `notifications/initialized` 通知
 3. Client 发送 `tools/list` 请求, 拉取全部工具定义并注册进 ToolRegistry, LLM 下一轮即可见
 4. LLM 决定调用时, Client 发送 `tools/call`, 可重复 N 次
@@ -392,3 +392,13 @@ remote server 的 `mcp_app_request` 消息统一经 RemoteMcpApps.request 处理
 - call_tool: 目标工具必须存在; `visibility` 是数组时必须包含 `"app"`; 通过会话的 toolFilter; 触发 pre-tool hooks; 权限 checker 决策 — deny 拒绝、ask 走交互式审批 (allowAlways 持久化规则) — 全部通过后才执行 callToolResult
 
 WS 消息类型与 remote 架构见 [remote](./remote)。
+
+---
+
+**延伸阅读**
+
+- [function-calling](./function-calling): ToolRegistry、deferred 标志与 tools[] 渲染规则
+- [permission](./permission): `Tool(pattern)` 规则语法与 McpCall 双重检查
+- [llm](./llm): defer_loading 与 cache_control 的互斥、prompt cache 打点位置
+- [react-and-agent-loop](./react-and-agent-loop): 工具执行前的 pre-tool hook 与权限判定链
+- [remote](./remote): remote 场景下 MCP Apps 的 WS 消息通路

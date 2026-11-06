@@ -2,16 +2,31 @@
 title: "A2A"
 description: "A2A (Agent2Agent) 互通协议: `--a2a` 模式下 Yukino 作为 A2A 1.0 服务器运行 (默认监听 127.0.0.1:18890), 基于 `@a2a-js/sdk` 提供 Agent Card 发现、JSON-RPC 与 REST 双绑定、artifact 流式助手文本与 input-required 权限握手扩展, 供其他 agent 或编排器发现、派发任务并消费流式更新"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/a2a`、`src/remote`、`src/permission`、`src/session`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 A2A (Agent2Agent) 是一个开放的 agent 互通协议: 一个 agent 以标准化服务的形式对外暴露能力, 其他 agent 或编排器可以发现它、给它派发任务、消费它的流式状态更新
 
-MCP 解决「agent 接入工具」, A2A 解决「agent 接入 agent」: `--a2a` 模式下 Yukino 作为 A2A 服务器运行, 任何 A2A 兼容的客户端都能把编码任务派发给它; 服务端基于 `@a2a-js/sdk` (package.json 声明 `^1.3.0`, 本机安装 1.3.0) 实现, 协议版本由 `A2A_PROTOCOL_VERSION = "1.0"` 固定, 源码集中在 src/a2a/ (card、constants、conversion、executor、prompts、request-handler、server 七个模块, index.ts 以命名空间形式聚合导出)
+MCP 解决「agent 接入工具」, A2A 解决「agent 接入 agent」: `--a2a` 模式下 Yukino 作为 A2A 服务器运行, 任何 A2A 兼容的客户端都能把编码任务派发给它; 服务端基于 `@a2a-js/sdk` (`package.json` 声明 `^1.3.0`) 实现, 协议版本由 `A2A_PROTOCOL_VERSION = "1.0"` 固定, 源码集中在 src/a2a/ (card、constants、conversion、executor、prompts、request-handler、server 七个模块, index.ts 以命名空间形式聚合导出)
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  C[A2A 客户端 / 编排器] --> H[Agent Card 发现]
+  C --> R[JSON-RPC / REST 请求]
+  R --> X[YukinoA2aExecutor]
+  X --> RT[createRemoteAgent 惰性创建 runtime]
+  RT --> L[agent loop 跑任务]
+  L --> E[AgentEvent 转换为 task 快照 / status-update / artifact-update]
+  E --> C
+  L -- 工具权限 --> Q[input-required 握手, 等待 permission-response]
+  Q --> L
+```
 
 ## 启动
 
@@ -199,3 +214,13 @@ sequenceDiagram
 - 库形式嵌入: 包 `@yukino.js/yukino` 导出 `A2A` 命名空间 (Card、Constants、Conversion、Executor、Prompts、RequestHandler、Server 七个子命名空间), `A2A.Server.startA2aServer({ address, runtimeFactory, cwd })` 返回 `{ url, cardUrl, close }`, runtimeFactory 可替换成自定义 runtime (测试即用它注入假 runtime)
 
 A2A 面向 agent (程序驱动, 调用方也是 agent); 面向人的浏览器聊天界面则是 [remote](./remote) 模式的职责
+
+---
+
+**延伸阅读**
+
+- [remote](./remote): createRemoteAgent 装配的工具、skills、hooks、MCP 与记忆全套
+- [permission](./permission): input-required 握手背后的 allow / ask / deny 判定与 allowAlways 持久化
+- [react-and-agent-loop](./react-and-agent-loop): AgentEvent 事件类型与终态 stopReason 映射
+- [hook](./hook): A2A runtime 复用 createRemoteAgent 时 HookEngine 的装配
+- [mcp](./mcp): A2A runtime 内 MCP 工具的连接与加载模式

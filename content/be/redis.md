@@ -1,28 +1,32 @@
 ---
-title: "Redis 技术手册"
-description: "覆盖 Redis 7.x 的数据结构与底层编码、单线程与 IO 多线程模型、RDB/AOF/混合持久化、过期与淘汰、主从哨兵与 Cluster、缓存设计、分布式锁与 Redlock 争议、限流与延时队列以及大 key/热 key 治理"
+title: "Redis 8.x 核心原理与工程实践"
+description: "覆盖 Redis 8.x 的数据结构与底层编码、单线程与 IO 多线程模型、RDB/AOF/混合持久化、过期与淘汰、主从哨兵与 Cluster、缓存设计、分布式锁与 Redlock 争议、限流与延时队列以及大 key/热 key 治理"
 ---
+
+:::note 版本基线
+内容以 **Redis 8.x** 行为为准; 编码阈值、淘汰参数与持久化默认值核对 8.0 官方 `redis.conf` 与源码常量（官方文档 / 源码）, 实例化结论需以本机 `CONFIG GET` 实测为准. AOF 采用*多部分文件*结构: 一个 manifest 记录文件清单, 数据集由全量 base 文件与增量 incr 文件组成, <u>混合持久化</u>把 RDB 格式的 base 与 AOF 文本格式的 incr 拼在同一数据集内.
+:::
+
+**主线一览**
 
 ```mermaid
 flowchart LR
-    A[写命令] --> B[AOF 缓冲区]
-    B --> C{写回策略}
-    C -->|always| D[每次落盘]
-    C -->|everysec| E[每秒 fsync]
-    C -->|no| F[交由操作系统]
-    A --> G[过期字典]
-    G --> H[惰性删除与定期删除]
+    A["写命令"] --> B["AOF 缓冲区"]
+    B --> C{"写回策略"}
+    C -->|always| D["每次落盘"]
+    C -->|everysec| E["每秒 fsync"]
+    C -->|no| F["交由操作系统"]
+    A --> G["过期字典"]
+    G --> H["惰性删除与定期删除"]
 ```
 
-:::note 版本基线
-内容以 **Redis 7.x** 行为为准; 7.0 起 AOF 重写改为*多部分 AOF*, <u>混合持久化</u>把 RDB 全量与增量 AOF 拼在同一文件中, 不再依赖旧版 rewrite 的单文件语义。
-:::
-
 :::danger 生产红线
-**大 key 与热 key** 是 Redis 最常见的线上故障源: 删除大 key 会长时间阻塞主线程, 热 key 会打爆单分片; 治理要<u>前置到写入侧</u>, 不要等告警才处理。
+**大 key 与热 key** 是 Redis 最常见的线上故障源: 删除大 key 会长时间阻塞主线程, 热 key 会打爆单分片; 治理要<u>前置到写入侧</u>, 不要等告警才处理.
 :::
 
-这份文档面向使用 Redis 做缓存、锁、消息与计数的后端工程师, 按"数据结构、运行模型、持久化、高可用、上层用法、治理"的顺序展开, 既解释底层编码与线程模型, 也覆盖分布式锁、限流、延时队列这类工程方案的边界与取舍. 内容以 Redis 7.x 的行为为准. 数据库侧的缓存一致性体系见 [MySQL 与 InnoDB 技术手册](./mysql), 消息链路的可靠投递见 [ClickHouse 与 Kafka 技术手册](./clickhouse-kafka).
+这份文档面向使用 Redis 做缓存、锁、消息与计数的后端工程师, 按"数据结构、运行模型、持久化、高可用、上层用法、治理"的顺序展开, 既解释底层编码与线程模型, 也覆盖分布式锁、限流、延时队列这类工程方案的边界与取舍.
+
+## 一、数据结构与底层编码
 
 ## 一、数据结构与底层编码
 
@@ -79,6 +83,8 @@ listpack 的设计要点是避免级联更新: 每个 entry 只记录自身长�
 | hash | listpack           | 字段数不超过 `hash-max-listpack-entries` (默认 512) 且每个字段/值不超过 `hash-max-listpack-value` (默认 64 字节)                                                                                  | hashtable             |
 | set  | intset 或 listpack | 全整数且成员数不超过 `set-max-intset-entries` (默认 512) 用 intset; 非全整数时成员数不超过 `set-max-listpack-entries` (默认 128) 且成员不超过 `set-max-listpack-value` (默认 64 字节) 用 listpack | hashtable             |
 | zset | listpack           | 成员数不超过 `zset-max-listpack-entries` (默认 128) 且每个成员不超过 `zset-max-listpack-value` (默认 64 字节)                                                                                     | skiplist 加 hashtable |
+
+上表阈值与默认值核对 Redis 8.0 `redis.conf` 的 ADVANCED CONFIG 段（官方配置）, 可用 `CONFIG GET hash-max-listpack-entries` 等在本机实例复核.
 
 三点注意:
 
@@ -487,3 +493,13 @@ object encoding <key>              # 查看当前编码
 - 分布式锁优先用单实例 Redis 加轮询与看门狗; 竞争激烈且已有 etcd 时升级为事件驱动; 正确性要求极高的场景改用共识系统加 fencing token, 不要用 Redlock 承担数据正确性.
 - 限流按对突发流量的容忍度选择固定窗口、滑动窗口或令牌桶; 延时队列用 zset 调度, 需要消费组与确认时用 stream.
 - 大 key 与热 key 必须在上线前评估并持续监控, 它们是单线程模型下最主要的可用性风险来源.
+
+---
+
+**延伸阅读**
+
+- [MySQL 8.4 核心原理](./mysql): 缓存副本与数据库之间的一致性策略、延迟双删与 binlog 订阅兜底.
+- [中间件与基础设施](./middleware): etcd 共识锁与 fencing token、Kafka 消息投递语义, 与 Redis 锁/队列方案的分工.
+- [ClickHouse 与 Kafka 技术手册](./clickhouse-kafka): 消息队列消费组、回溯与可靠投递, 对比 Redis stream 的适用边界.
+- [Go 语言核心与底层原理](./go): 客户端侧 singleflight、本地缓存与 goroutine 并发回填的实现机制.
+- [Go 缓存库实践](./yukino-cache-go): 缓存封装、并发重建与失效广播在工程代码中的落地.

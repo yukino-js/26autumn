@@ -4,11 +4,23 @@ description: "ClickHouse 列式存储、MergeTree 家族、分布式架构与查
 ---
 
 :::note 版本基线
-ClickHouse 行为以 **25.x** 为准, Kafka 行为以 _4.x_ 为准; 涉及 KRaft、Log Compaction 与 <u>exactly-once</u> 的结论均按该基线表述。
+ClickHouse 行为以 **25.x** 为准, Kafka 行为以 _4.x_ 为准; 涉及 KRaft、Log Compaction 与 <u>exactly-once</u> 的结论均按该基线表述. 参数默认值核对 ClickHouse 25.x 官方文档与 Apache Kafka 4.x 官方配置参考（官方文档）, 实例化结论需以本机 `system.settings` / broker 配置实测为准.
 :::
 
+**主线一览**
+
+```mermaid
+flowchart TB
+    SRC["业务数据源"] --> K["Kafka: Partition / Segment / ISR"]
+    K --> CKE["ClickHouse Kafka Engine 攒批消费"]
+    CKE --> MV["物化视图转换"]
+    MV --> MT["MergeTree 家族: 分区 / part / 稀疏索引 / 合并"]
+    MT --> Q["分布式查询: 分片并行 + 协调者聚合"]
+    K -->|"幂等 / 事务 / offset 提交"| SEM["消息语义: 不丢不重与顺序性"]
+```
+
 :::danger 写入红线
-ClickHouse 的**高频小批量写入**会制造大量小 part, 迫使后台频繁合并并放大写放大; *批量攒批*是 Kafka Engine 消费链路的首要约束, 不要用单条 insert 压测或上线。
+ClickHouse 的**高频小批量写入**会制造大量小 part, 迫使后台频繁合并并放大写放大; *批量攒批*是 Kafka Engine 消费链路的首要约束, 不要用单条 insert 压测或上线.
 :::
 
 这份文档面向使用 ClickHouse 做分析存储、使用 Kafka 做消息与流处理管道的后端工程师, 按存储引擎、查询优化、Kafka 架构与存储、Kafka 高级特性、联合架构、综合方案设计的顺序展开. ClickHouse 部分从列式存储的物理布局出发, 依次说明 MergeTree 的存储结构与合并流程、稀疏索引、MergeTree 家族引擎的合并策略、分区与分片、副本同步、向量化执行、物化视图与 TTL, 再进入 ORDER BY 键设计、JOIN 实现、Mutation 代价与 OLAP 性能对比; Kafka 部分从整体架构与消息存储出发, 覆盖 ISR 与 Leader 选举、Producer 发送流程与幂等/事务、Consumer Group Rebalance、端到端不丢失与 exactly-once, 并延伸到消息顺序性、零拷贝、KRaft 元数据管理、Offset 管理与日志清理; 最后一部分讨论 ClickHouse 与 Kafka 联合的实时数仓分层、Kafka Engine 消费、写入与分布式查询优化, 以及实时用户行为分析系统、消费积压排查、集群扩容三类综合方案. ClickHouse 行为以 25.x 系列为准, Kafka 行为以 4.x 系列为准. 缓存与分布式锁主题见 [Redis 技术手册](./redis), 关系型存储的对照见 [MySQL 与 InnoDB 技术手册](./mysql).
@@ -23,9 +35,9 @@ ClickHouse 的**高频小批量写入**会制造大量小 part, 迫使后台频�
 
 列存的三大优势:
 
-1. I/O 放大消除: 100 列的表查 3 列, 行存读 100 列的数据, 列存只读 3 列, I/O 减少约 97%
-2. 压缩率极高: 同列数据类型相同、值域相近 (如 status 列只有几个枚举值), 压缩率通常 5~10 倍; 行存中不同类型混在一行, 压缩率差
-3. 向量化执行友好: 同列数据连续存放, CPU 可以用 SIMD 指令一次处理多个值 (如 AVX2 一次处理 8 个 int32), 充分利用 CPU cache line
+1. I/O 放大消除: 100 列的表查 3 列, 行存读 100 列的数据, 列存只读 3 列, I/O 量与实际读取的列数成正比 (理想估算下为列数之比), 不随未读取列膨胀
+2. 压缩率极高: 同列数据类型相同、值域相近 (如 status 列只有几个枚举值), 同列重复度高, 配合 LZ4/ZSTD 获得远高于行存的压缩率; 行存中不同类型混在一行, 压缩率差
+3. 向量化执行友好: 同列数据连续存放, CPU 可以用 SIMD 指令一次处理多个值 (如 AVX2 一次处理多个 int32), 充分利用 CPU cache line
 
 列存的代价:
 
@@ -56,7 +68,7 @@ table/
 2. 按 `index_granularity` (默认 8192 行) 切分为 granule
 3. 每个 granule 生成一条主键索引记录 (稀疏索引, 只记首行主键值)
 4. 列数据按 granule 分块压缩 (默认 LZ4) 写入 `.bin` 文件
-5. 标记文件 `.mrk2` 记录每个 granule 在 `.bin` 中的压缩块偏移、解压块内偏移与 granule 实际行数 (Wide part 的自适应标记, 每条 24 字节)
+5. 标记文件 `.mrk2` 记录每个 granule 在 `.bin` 中的压缩块偏移、解压块内偏移与 granule 实际行数 (Wide part 的自适应标记, 第三个字段为该 granule 行数)
 6. 整个写入生成一个新的 part 目录, 原子 rename 对读可见
 
 合并 (Merge) 流程:
@@ -91,8 +103,8 @@ granule 2:   rows 16385~24576
 | 适用场景 | 范围查询、前缀匹配              | 点查、范围查询                 |
 | 更新代价 | 合并时重建, 无在线维护开销      | 每次写入都要维护 B+ 树平衡     |
 
-:::info{title="稀疏索引生效的前提：查询条件必须是 ORDER BY 的前缀"}
-稀疏索引要求数据**物理有序**（按 `ORDER BY` 排列），因此 MergeTree 写入时会排序。如果查询条件**不是 `ORDER BY` 的前缀**，索引无法使用，退化为全表扫描。这也是 `ORDER BY` 键设计排在性能优化第一位的根本原因。
+:::info{title="稀疏索引生效的前提: 查询条件必须是 ORDER BY 的前缀"}
+稀疏索引要求数据**物理有序**（按 `ORDER BY` 排列），因此 MergeTree 写入时会排序. 如果查询条件**不是 `ORDER BY` 的前缀**, 索引无法使用, 退化为全表扫描. 这也是 `ORDER BY` 键设计排在性能优化第一位的根本原因.
 :::
 
 ### ReplacingMergeTree、AggregatingMergeTree 与 CollapsingMergeTree 的合并策略
@@ -104,7 +116,7 @@ ReplacingMergeTree(version):
 - 问题: 同一主键的多条记录 (如 CDC 产生的多次更新), 查询时只想看最新版本
 - 机制: 合并时按 ORDER BY 键去重, 保留 `version` 列最大的行; 若 version 相同保留最后写入的
   :::warning{title="去重只在合并时发生"}
-  `ReplacingMergeTree` 的**去重只发生在合并时**，合并前查询仍会看到重复行，必须配合 `FINAL` 关键字或 `argMax` 聚合才能得到「最新版本」。不能假设写入后即刻读到唯一行。
+  `ReplacingMergeTree` 的**去重只发生在合并时**, 合并前查询仍会看到重复行, 必须配合 `FINAL` 关键字或 `argMax` 聚合才能得到「最新版本」. 不能假设写入后即刻读到唯一行.
   :::
 - 典型场景: 从 MySQL binlog 同步到 ClickHouse, 用 ReplacingMergeTree 实现 upsert 语义
 
@@ -213,7 +225,7 @@ Volcano (逐行):          向量化 (逐列块):
     aggregate(row)           aggregate(column_block)
 ```
 
-实际收益: 在聚合、过滤等计算密集型操作上, 向量化比逐行快 5~10 倍; 配合列存的高压缩率, 解压后直接以 SIMD 友好格式处理, 进一步减少内存带宽消耗.
+实际收益: 在聚合、过滤等计算密集型操作上, 向量化以列块为单位消除逐行虚函数调用并利用 SIMD, 相比逐行 Volcano 模型有数量级级别的吞吐提升; 配合列存的高压缩率, 解压后直接以 SIMD 友好格式处理, 进一步减少内存带宽消耗. 实际加速比取决于列宽、过滤选择性与 CPU 指令集, 需以本机 benchmark 实测为准.
 
 ### 物化视图的增量聚合机制
 
@@ -338,8 +350,8 @@ ALTER TABLE events DELETE WHERE user_id = 12345;
 
 慢的根源:
 
-:::warning{title="Mutation 的代价：不可变 part 导致整块重写"}
-ClickHouse 的 part 是**不可变的（immutable）**，`UPDATE`/`DELETE` 不是原地修改。实际执行时：读取包含目标行的整个 part，重写所有列文件（即使只改一列），生成新 part，旧 part 标记删除；一个 1 亿行的 part 改其中 1 行也要重写全部列；且多个 mutation **排队串行执行，不并发**。这正是生产中应优先用 `ReplacingMergeTree`、轻量删除或分区级操作替代 `ALTER UPDATE/DELETE` 的原因。
+:::warning{title="Mutation 的代价: 不可变 part 导致整块重写"}
+ClickHouse 的 part 是**不可变的 (immutable)**, `UPDATE`/`DELETE` 不是原地修改. 实际执行时: 读取包含目标行的整个 part, 重写所有列文件 (即使只改一列), 生成新 part, 旧 part 标记删除; 一个 1 亿行的 part 改其中 1 行也要重写全部列; 且多个 mutation **排队串行执行, 不并发**. 这正是生产中应优先用 `ReplacingMergeTree`、轻量删除或分区级操作替代 `ALTER UPDATE/DELETE` 的原因.
 :::
 
 生产替代方案:
@@ -362,7 +374,7 @@ ClickHouse 的 part 是**不可变的（immutable）**，`UPDATE`/`DELETE` 不�
 | 索引     | B+ 树定位行, 回表读数据                                            | 稀疏索引定位 granule, 顺序扫描                                 |
 | 聚合     | 逐行累加                                                           | 列数据连续, cache 友好, SIMD 加速                              |
 
-综合效果: 典型 OLAP 聚合查询 ClickHouse 比 MySQL 快 100~1000 倍.
+综合效果: 典型 OLAP 聚合查询在扫描列数、压缩率、并行度与执行模型四个环节同时占优, ClickHouse 相对 InnoDB 行存常有数量级以上的吞吐差距; 具体倍数随数据分布与查询形态变化, 不应作为固定指标写入容量评估.
 
 但 ClickHouse 不适合:
 
@@ -418,14 +430,14 @@ partition-0/
 └── ...
 ```
 
-- Segment: 日志文件按大小 (默认 1GB, `log.segment.bytes`) 或时间 (默认 7 天, `log.roll.hours`) 切分为多个 segment
+- Segment: 日志文件按大小 (`log.segment.bytes`, 默认 1GB) 或滚动时间 (`log.roll.ms` / `log.roll.hours`) 切分为多个 segment
 - 每个 segment 以第一条消息的 offset 命名, 查找时二分定位到 segment 文件
 - `.index`: 稀疏索引, 每 4KB 记录一个 (offset, 物理位置) 对, 查找时先定位到索引区间再顺序扫描
 - `.timeindex`: 按时间戳查找消息 (用于 `offsetsForTimes` API)
 
 高吞吐的原因:
 
-1. 顺序写磁盘: 消息追加到日志文件末尾, 磁盘顺序写速度接近内存 (600MB/s vs 随机写 100KB/s)
+1. 顺序写磁盘: 消息追加到日志文件末尾, 顺序写吞吐远高于随机寻道写, 充分利用机械盘与 SSD 的顺序带宽
 2. Page Cache: 写入只到 OS 页缓存, 由操作系统异步刷盘; 读取热数据也命中页缓存, 不经过 JVM 堆
 3. 零拷贝 (sendfile): 消费者读消息时, 数据从磁盘 -> 页缓存 -> 网卡, 不经过用户空间, 省两次内存拷贝
 4. 批量 + 压缩: Producer 端将消息攒批 (默认 16KB, `batch.size`), 压缩 (lz4/zstd) 后一次网络请求发送多条消息
@@ -514,7 +526,7 @@ try {
 ```
 
 - 底层: 事务协调者在 `__transaction_state` topic 中记录事务状态 (PrepareCommit -> Commit), 再向各分区 leader 下发 COMMIT/ABORT 标记, leader 把标记写入本地日志; 消费者设置 `isolation.level=read_committed` 时只读 COMMIT 标记之前的消息
-- 代价: 事务消息的延迟增加 (两阶段提交), 吞吐下降约 30~50%
+- 代价: 事务引入两阶段提交与状态日志写入, 单条延迟上升、吞吐低于普通 Producer, 具体降幅取决于批量大小与事务频率, 需以本机压测为准
 
 ### Consumer Group 的 Rebalance 机制、问题与优化
 
@@ -624,20 +636,20 @@ Kafka 使用 sendfile 系统调用:
 
 ### Kafka、RocketMQ 与 RabbitMQ 的对比与选型
 
-| 维度       | Kafka                 | RocketMQ                     | RabbitMQ                  |
-| ---------- | --------------------- | ---------------------------- | ------------------------- |
-| 设计目标   | 高吞吐日志/流处理     | 业务消息, 金融级可靠         | 灵活路由, 企业集成        |
-| 吞吐量     | 百万级 TPS            | 十万级 TPS                   | 万级 TPS                  |
-| 延迟       | 毫秒级 (批量优化)     | 毫秒级                       | 微秒~毫秒级 (单条低延迟)  |
-| 消息模型   | Pull (消费者拉取)     | Pull + 长轮询                | Push (broker 推送)        |
-| 顺序消息   | 分区内有序            | 队列内有序 + 严格顺序模式    | 单队列有序                |
-| 延迟消息   | 不原生支持            | 18 个等级 (5.x 支持任意时间) | 插件支持                  |
-| 事务消息   | 支持 (事务 Producer)  | 支持 (半消息 + 回查)         | 不原生支持                |
-| 消息回溯   | 支持 (按 offset/时间) | 支持 (按时间)                | 不支持 (消费即删除)       |
-| 消息过滤   | 不支持 (需消费端过滤) | Tag / SQL92 过滤             | Routing Key / Header 匹配 |
-| 死信队列   | 不原生支持            | 支持                         | 支持                      |
-| 协议       | 自定义二进制协议      | 自定义协议                   | AMQP / MQTT / STOMP       |
-| 运维复杂度 | 中 (KRaft 元数据管理) | 中 (NameServer 轻量)         | 低 (Erlang 单节点)        |
+| 维度       | Kafka                 | RocketMQ                  | RabbitMQ                  |
+| ---------- | --------------------- | ------------------------- | ------------------------- |
+| 设计目标   | 高吞吐日志/流处理     | 业务消息, 金融级可靠      | 灵活路由, 企业集成        |
+| 吞吐量     | 百万级 TPS            | 十万级 TPS                | 万级 TPS                  |
+| 延迟       | 毫秒级 (批量优化)     | 毫秒级                    | 微秒~毫秒级 (单条低延迟)  |
+| 消息模型   | Pull (消费者拉取)     | Pull + 长轮询             | Push (broker 推送)        |
+| 顺序消息   | 分区内有序            | 队列内有序 + 严格顺序模式 | 单队列有序                |
+| 延迟消息   | 不原生支持            | 支持延迟消息与定时投递    | 插件支持                  |
+| 事务消息   | 支持 (事务 Producer)  | 支持 (半消息 + 回查)      | 不原生支持                |
+| 消息回溯   | 支持 (按 offset/时间) | 支持 (按时间)             | 不支持 (消费即删除)       |
+| 消息过滤   | 不支持 (需消费端过滤) | Tag / SQL92 过滤          | Routing Key / Header 匹配 |
+| 死信队列   | 不原生支持            | 支持                      | 支持                      |
+| 协议       | 自定义二进制协议      | 自定义协议                | AMQP / MQTT / STOMP       |
+| 运维复杂度 | 中 (KRaft 元数据管理) | 中 (NameServer 轻量)      | 低 (Erlang 单节点)        |
 
 选型建议:
 
@@ -860,8 +872,8 @@ flowchart TD
 
 ### 写入性能优化与高频小批量写入的代价
 
-:::tip{title="高频小批量写入的命门：part 数量爆炸"}
-ClickHouse **每次 INSERT 都生成一个新 part**，后台合并跟不上时就会触发 `Too many parts` 错误。核心解法只有一个字——**攒批**：客户端攒够一批（如 10000~100000 行）再 INSERT，或借助 **Buffer 表引擎** / 服务端 `async_insert` 在服务端合并。每个 part 都有独立索引与标记文件，小文件随机 I/O 远慢于少量大文件的顺序 I/O。
+:::tip{title="高频小批量写入的命门: part 数量爆炸"}
+ClickHouse **每次 INSERT 都生成一个新 part**, 后台合并跟不上时就会触发 `Too many parts` 错误. 核心解法只有一个字——**攒批**: 客户端攒够一批 (如 10000~100000 行) 再 INSERT, 或借助 **Buffer 表引擎** / 服务端 `async_insert` 在服务端合并. 每个 part 都有独立索引与标记文件, 小文件随机 I/O 远慢于少量大文件的顺序 I/O.
 :::
 
 写入模型:
@@ -1035,3 +1047,12 @@ kafka-consumer-groups.sh --bootstrap-server broker:9092 \
 - 修改 Distributed 配置移除该分片
 - 确认无流量后下线节点
 - 注意: 缩容前必须确保数据已完整迁移, 否则数据丢失
+
+---
+
+**延伸阅读**
+
+- [Redis 8.x 核心原理与工程实践](./redis): 热点 key 本地缓存、消息队列替代方案与 Stream 消费组的边界.
+- [MySQL 8.4 核心原理](./mysql): CDC binlog 作为 ODS 数据源、行列存选型对照与事务语义差异.
+- [中间件与基础设施](./middleware): Kafka 之外的 etcd 协调、gRPC 服务通信与 Prometheus 监控在数仓链路中的配套作用.
+- [Go 语言核心与底层原理](./go): 消费侧 goroutine 并发、批量攒批与背压控制的应用层实现.

@@ -9,6 +9,8 @@ local_commit: "62975591df2415d84426e789659a2ae598728b42"
 本文依据 `$HOME/github/wanproxy` 在 `62975591df24` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
+**主线一览**
+
 ```mermaid
 flowchart LR
     A[客户端流量] --> B[Relay 代理中继]
@@ -436,4 +438,6 @@ monitor 端点: `GET /status` (JSON)、`GET /` (HTML)、`GET /:text`、`GET /obj
 
 边界与代价: 会话/队列限额 (8 MiB in-flight、16 MiB 接收与队列) 是每缓冲/每队列的上限而非进程内存预算, 共享缓存另有自己的尺寸规则; UDP 每监听器默认 1024 会话、每会话队列 16 个数据报, 超限或队列满的数据报被丢弃, UDP 保留正常的丢包与乱序语义, 且是固定目标转发 (无流编解码、无 SSH 成帧、不支持 SOCKS5 UDP ASSOCIATE/BIND、不支持 Unix 端点); SSH 算法集沿袭 C++ 原版、以现代标准衡量已过时 (1024 位测试 DH 组、SHA-1 签名、无重密钥), 适合演示与受控环境而非公网对抗; Go↔Go 加密交换有测试覆盖, 与 C++ 的互操作仍是独立的验证目标; XCDFS 在途索引写满才落盘, 退出最多丢 203 条 (与 C++ 相同的取舍); SOCKS 不支持 SOCKS4A 与认证; 未移植 IRC/HTTP 协议库、uinet 栈与 event 子系统。
 
-相关主题: 演示服务端 `srv.go` 的 HTTP 层直接构建在 [yukino_http](./yukino-http) 上 —— 路由分组、CORS 中间件、`Recovery`、文件下载的 `TakeOver` 接管与 Range 流式写出都是该框架机制的直接应用; 移植中用到的并发原语 (`sync.WaitGroup`、channel、`sync.Once`、`context` 级联取消) 与标准库约定见 [Go 语言核心](./go)。
+**延伸阅读**
+
+演示服务端 `srv.go` 的 HTTP 层直接构建在 [yukino_http](./yukino-http) 上 —— 路由分组、CORS 中间件、`Recovery`、文件下载的 `TakeOver` 接管与 Range 流式写出都是该框架机制的直接应用; 移植中用到的并发原语 (`sync.WaitGroup`、channel、`sync.Once`、`context` 级联取消) 与标准库约定见 [Go 语言核心](./go)。

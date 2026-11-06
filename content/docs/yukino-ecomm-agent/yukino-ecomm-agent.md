@@ -2,11 +2,11 @@
 title: "Yukino Ecomm Agent: 电商客服 Agent 的检索、编排、工具与持久化组织方式"
 description: "从 server 与 client 源码事实出发, 讲清客服 Agent 如何把 Hono HTTP 层、LangGraph 会话图、四策略检索与两道置信度门禁、可选 Milvus 向量路径、MCP 工具执行、分层记忆与上下文预算组织成一次可中断、可审计的对话"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
+local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/`、`client/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -426,3 +426,14 @@ client/ 是 pnpm workspace 成员, 一个纯 CSR 的单页控制台: 客服聊�
 - 前端是演示型控制台, 运营页图表的数据可得性取决于对应离线任务是否跑过.
 
 把检索、编排、工具与持久化分层, 并让每一层各自可测试、可替换, 是这套实现最值得借鉴的地方; 它牺牲了一些「单文件就能跑通」的简洁, 换来了中断恢复、证据门禁与运营闭环这些客服 Agent 真正需要的性质.
+
+---
+
+**延伸阅读**
+
+- [LangGraph 会话图编排](./workflow): 12 节点拓扑、九意图五出口与 SSE 中断恢复
+- [RAG](./rag): 四策略检索、RRF/rerank 管线与两道置信度门禁
+- [会话上下文](./context): 三层记忆锚点、token 预算分账与异步摘要
+- [LLM 接入、表设计与工具设计](./llm): 三模型槽位、12 张 Prisma 表与工具执行引擎
+- [MCP 和 Skill](./mcp): 两个演示 MCP 服务、formatResult 整形与写前确认
+- [可观测性和数据飞轮](./observable): Langfuse 追踪、离线评测与低置信回流闭环

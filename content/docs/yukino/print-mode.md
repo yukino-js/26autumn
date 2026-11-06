@@ -2,11 +2,11 @@
 title: "Print Mode"
 description: "Print 模式 (-p): 非交互一次性执行, 自组装完整运行时并消费 agent.run() 事件流; 覆盖旗标解析, slash command 特判, 与交互模式的差异 (bypassPermissions, 无 hook/skill), 工具集装配, text / stream-json 输出, 退出码与清理, SyntheticOutput 结构化交付"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/print-mode.ts`、`src/cli.ts`、`src/bootstrap`、`src/workflow`、`src/goal`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 Print 模式是非交互的执行模式: 一条命令进去, agent 循环跑完, 结果打印到 stdout, 进程退出; 用于脚本、CI 流水线和「把 Yukino 当 Unix 工具用」的组合场景
@@ -17,6 +17,21 @@ yukino -p "fix the failing test" --output-format stream-json
 ```
 
 实现集中在 `src/print-mode.ts` 的 `runPrintMode()`: 它自己组装一次完整的运行时 (config、LLM client、工具注册表、Agent), 消费 `agent.run()` 的事件流并按输出格式打印, 最后在 finally 里清理所有子进程和后台任务
+
+**主线一览**
+
+```mermaid
+flowchart TD
+  A[-p prompt / --output-format] --> P{slash 命令特判}
+  P -- /goal --> G[GoalManager 本地处理]
+  P -- /ultracode / 命名 workflow / /workflows --> W[Workflow 引导或直接命令]
+  P -- 普通 prompt --> R[自组装运行时: config / client / registry / Agent]
+  G --> R
+  W --> R
+  R --> E[消费 agent.run() 事件流]
+  E --> O[text stdout 或 stream-json 逐行 + result 汇总行]
+  O --> F[finally: 停后台任务 / 团队 → dispose 注册表 → 断开 MCP]
+```
 
 ## 旗标与解析
 
@@ -169,3 +184,13 @@ yukino -p "分析这个仓库的依赖, 用 SyntheticOutput 交付 { outdated: s
 ```
 
 构造时可以带一份 JSON Schema 做交付校验 (顶层 type + required 字段), 但 print 模式注册的是无 schema 版本, 校验交给 prompt 约定。coordinator 模式下 SyntheticOutput 是 leader 白名单里的交付通道 —— leader 不动手干活, 汇总各 teammate 的结果后用它输出终稿 (见 [agent-team](./agent-team))
+
+---
+
+**延伸阅读**
+
+- [react-and-agent-loop](./react-and-agent-loop): Agent 装配原料与事件流消费顺序
+- [permission](./permission): print 固定 bypassPermissions 的风险与沙箱的独立兜底
+- [mcp](./mcp): MCP 连接时机与 eager / native / dispatch 模式决策
+- [goal](./goal): print 会话内持久目标的续跑与预算总结
+- [workflow](./workflow): `/workflows` 命令与命名 workflow 脚本在非交互场景的执行路径

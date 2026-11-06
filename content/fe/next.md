@@ -4,10 +4,20 @@ description: "App Router 的组件边界、数据获取与请求瀑布消除、�
 ---
 
 :::note 版本基线
-文中行为以 **Next.js 16 App Router** 为准: 服务端组件为默认边界, 缓存与重验证按当前语义描述; <u>不把</u> Pages Router 或旧版数据获取 API 写成现行用法。
+文中行为以 **Next.js 16.2 App Router** 为准 (本机 `yukino-dev-agent` 检出实测 `next 16.2.9`, 配套 `react 19.2.4`): 服务端组件为默认边界, 缓存与重验证按当前语义描述; <u>不把</u> Pages Router 或旧版数据获取 API 写成现行用法.
 :::
 
-这份文档面向准备用 Next.js 16 App Router 构建生产应用的工程师. 它以"能力 + 机制 + 适用边界"为主线: 渲染策略怎么选, 服务端组件与客户端组件的边界划在哪里, 缓存有哪几层、各自的失效方式是什么, 请求瀑布如何消除, 以及 Next 16 的基线要点有哪些. 阅读前建议先了解 [React 19](react) 的渲染阶段与 Suspense 语义, 本文不再重复; 构建与打包机制见 [Vite](vite).
+**主线一览**
+
+```mermaid
+flowchart TB
+    R["路由文件约定: page / layout / loading / error / route"] --> C["组件边界: Server Component 默认, 'use client' 下压"]
+    C --> D["数据获取: 服务端直取, 并行消除瀑布, React.cache 请求内去重"]
+    D --> K["缓存模型: 请求内记忆 / 数据缓存 / 预渲染产物 / 客户端路由缓存"]
+    K --> A["失效: revalidateTag / updateTag / revalidatePath / router.refresh"]
+```
+
+这份文档面向准备用 Next.js 16.2 App Router 构建生产应用的工程师. 它以"能力 + 机制 + 适用边界"为主线: 渲染策略怎么选, 服务端组件与客户端组件的边界划在哪里, 缓存有哪几层、各自的失效方式是什么, 请求瀑布如何消除, 以及 Next 16 的基线要点有哪些. 阅读前建议先了解 [React 19.2](react) 的渲染阶段与 Suspense 语义, 本文不再重复; 构建与打包机制见 [Vite](vite).
 
 ## 渲染策略: CSR、SSR、SSG、ISR
 
@@ -246,7 +256,7 @@ fetch(url, { next: { revalidate: 3600 } }); // 一小时后过期
 fetch(url, { next: { tags: ["posts"] } }); // 打标签以便按需失效
 ```
 
-不依赖 `fetch` 的数据源 (数据库查询、第三方 SDK) 用 `unstable_cache` 包一层, 并同样给出 key 前缀、标签与过期时间. Route Handler 的 GET 默认是动态的, 需要静态化时显式声明 `export const dynamic = "force-static"`.
+不依赖 `fetch` 的数据源 (数据库查询、第三方 SDK) 在 Cache Components 模型下直接用 `'use cache'` 标注该函数, 配合 `cacheLife` 档位与 `cacheTag` 标签进入持久缓存; 在默认模型下则保持每次请求读取, 不做跨请求复用. Route Handler 的 GET 默认是动态的, 需要静态化时显式声明 `export const dynamic = "force-static"`.
 
 ### 时间与按需重验证
 
@@ -274,13 +284,13 @@ Cache Components 模型下, 缓存的生命周期由 `cacheLife` 配置, 提供�
 
 `revalidateTag` 的第二个参数 (`cacheLife` 档位名或 `{ expire }` 对象) 决定旧数据还能被提供多久, 推荐传 `max` 获得最长的陈旧窗口; 需要写后立即读到自己的变更时改用 `updateTag`. 标签必须先被赋给缓存数据——用 `fetch` 的 `next.tags`, 或在 `use cache` 作用域内调用 `cacheTag`.
 
-一个容易误解的点: 重验证由请求触发, 而不是由 `revalidateTag` 调用触发. 打了标签的页面在下次被访问时才刷新, 不会在调用的一瞬间全部更新. 客户端侧还有 `router.refresh()` 用于清除当前路由的客户端缓存并重新请求, 它不失效服务端缓存; Next 16 另有同名的服务端 `refresh()` (`next/cache`, 仅限 Server Action), 不碰缓存, 只重新执行未缓存的数据读取, 二者互补.
+一个容易误解的点: 重验证由请求触发, 而不是由 `revalidateTag` 调用触发. 打了标签的页面在下次被访问时才刷新, 不会在调用的一瞬间全部更新. 客户端侧还有 `router.refresh()` 用于清除当前路由的客户端缓存并重新请求, 它不失效服务端缓存; 服务端失效统一走 `revalidateTag` / `updateTag` / `revalidatePath`, 客户端刷新与服务端失效是两套互补的机制.
 
 ```mermaid
 flowchart TD
     A[请求带 tag 的数据] --> B{缓存是否过期?}
     B -->|未过期| C[直接返回缓存]
-    B -->|已 stale| D{用哪个 API 失效?}
+    B -->|已 stale| D{"用哪个 API 失效?"}
     D -->|revalidateTag| E[先返回旧数据\n后台刷新 SWR]
     D -->|updateTag| F[立即过期\n等待新数据 read-your-writes]
     E --> G[后续请求命中新数据]
@@ -441,7 +451,7 @@ export async function updateProfile(input: unknown) {
 }
 ```
 
-框架提供的额外保障有三点: Action 请求体默认上限 1MB (可用 `experimental.serverActions.bodySizeLimit` 调整); 未使用的 Server Function 会在构建期从客户端包中移除, 不会留下公开端点; 内联 Action 捕获的闭包变量在发送给客户端前会被加密. 多实例或自托管部署时, 需要为所有实例配置同一个稳定密钥, 否则闭包解密会失败.
+框架提供的额外保障有三点: Action 请求体默认上限 1MB (可用 `serverActions.bodySizeLimit` 配置调整); 未使用的 Server Function 会在构建期从客户端包中移除, 不会留下公开端点; 内联 Action 捕获的闭包变量在发送给客户端前会被加密. 多实例或自托管部署时, 需要为所有实例配置同一个稳定密钥, 否则闭包解密会失败.
 
 还有两个容易忽略的边界: Action 不是通用 API, 需要给第三方调用的接口应当用 Route Handler; Action 内部抛出的错误信息会被暴露给客户端, 敏感细节要自行包装.
 
@@ -527,6 +537,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
 | React Compiler        | 顶层 `reactCompiler` 选项, 依赖 `babel-plugin-react-compiler`      | 默认不开启, 开启后编译时间上升                |
 | 图片默认值            | `minimumCacheTTL` 4 小时、`qualities: [75]`、禁止优化内网地址等    | 自定义 quality 与远程/内网图源需显式配置      |
 | 运行时要求            | Node.js 20.9+, TypeScript 5.1+                                     | 本地与 CI 环境需满足                          |
+| 浏览器基线            | Chrome/Edge 111+, Firefox 111+, Safari/iOS 16.4+                   | 产物转译目标与 CSS 特性支持范围以此为准       |
 | Lint 工具链           | 无内置 lint 命令, 直接使用 ESLint 或 Biome CLI                     | 插件默认使用扁平配置                          |
 | 输出目录分离          | dev 输出到 `.next/dev`, 与 build 独立                              | 可并行执行 dev 与 build                       |
 
@@ -563,3 +574,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
 :::tip
 **缓存策略是产品语义, 不是纯技术.** "数据可以旧多久"先由业务拍板——商品目录允许短暂陈旧就用 `revalidateTag(tag, "max")` 换更快响应, 写后必须立即读到自己的变更就用 `updateTag`. 先问"旧多久能接受", 再翻译成缓存档位与失效 API; 反过来从 `cacheLife` 的数字去猜业务含义, 只会做出过期价格或永远刷不新的页面.
 :::
+
+---
+
+**延伸阅读**
+
+- [react](react): React 19.2 渲染阶段、Suspense 边界与 Actions 的底层调度模型.
+- [tanstack](tanstack): 客户端数据缓存的 staleTime/gcTime、失效与写后同步, 与服务端缓存的职责划分.
+- [vite](vite): Turbopack 之外的通用构建链路、依赖预构建与 HMR 原理对照.
+- [fetchpriority-swr](fetchpriority-swr): HTTP 层 stale-while-revalidate 语义与 Next 缓存档位的对应关系.
+- [fe](fe): HTTP 缓存指令、流式渲染与浏览器资源加载的底层机制.

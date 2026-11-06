@@ -2,11 +2,11 @@
 title: "Yukino Dev Agent 技术笔记"
 description: "Next.js 16 App Router + Vercel AI SDK 的 OnCall/DevFlow 双产品面应用: Milvus 混合检索 RAG、ReAct 与 SSE 流式 Plan-Execute-Replan 编排、A2UI 交互界面、多源告警聚合、MCP 工具体系、Langfuse 可观测性与 Prometheus 指标桥"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "424a270590659dfbea804384d4fd1e14ba1111a5"
+local_commit: "ea0fd1957f83d4a676714cad5fa054b351a3deb2"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent` 在 `424a27059065` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/`、`components/`、`hooks/`）在 `ea0fd1957f83` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 本文讲解 Yukino Dev Agent 这一 Node.js/TypeScript AI 应用的技术实现:它用 Next.js 16 App Router 把前端页面与后端 API 收进同一个进程,同时承载两个产品面——面向值班运维的 AI OnCall 助手(根路径),以及面向 GitHub 协作场景的 DevFlow 工程副驾(`/dev-flow`). 文档围绕产品定位、分层架构、端到端数据流、检索与编排实现、模型抽象、数据模型、前端状态、可观测性、配置体系、部署形态与性能成本取舍逐层展开,适合需要在既有 AI 应用上做二次开发,或正在设计 RAG + Agent 编排系统的工程师阅读. 所有机制描述均以当前源码为准,Milvus 是唯一向量后端. 两个产品面的入门视角另有姊妹篇 [Yukino Dev Agent](./agent) 与 [DevFlow](./dev-flow).
@@ -401,7 +401,7 @@ OnCall 的产品定位是公开无登录,但有一类接口会改变服务端配
 
 A2UI 是一套声明式 UI 协议:模型在 markdown 回答之后可选地附一个 `<a2ui-json>` 块,内容是协议消息数组(创建 surface、更新组件、更新数据模型),前端按本地组件目录渲染成真正的交互界面. 服务端处理分四步.
 
-提示词装配. 界面规约由 SDK 的生成器组装成"协议规则 + 完整组件目录 schema 契约 + 领域 few-shot 示例",示例由 builder 函数生成,界面结构变化只需改 builder,提示词自动保持同步. 组件目录由基础组件(18 个)与 shadcn 扩展组件(47 个)组成. 这段规约被注入对话的 system prompt,并要求:只在有结构化数据时输出、必须先写 markdown 摘要、数据逐字拷贝工具结果、绝不编造;协议消息必须先 createSurface 再给组件树,root 组件存在,surfaceId 全局唯一且是 kebab-case. 字段级红线是协议自带的 zod 版本与应用侧 zod 版本不可混用(web_core 自带一份 zod v3),因此所有边界处的 A2UI 数据都保持 `unknown[]`,在需要校验时才直接调用协议 schema.
+提示词装配. 界面规约由 SDK 的生成器组装成"协议规则 + 完整组件目录 schema 契约 + 领域 few-shot 示例",示例由 builder 函数生成,界面结构变化只需改 builder,提示词自动保持同步. 组件目录以 `lib/a2ui/prompt/schemas/catalog.json` 为准, 共 65 个组件条目, 实现源码分布在 `catalog/components/` 与 `catalog/shadcn/` 两个目录. 这段规约被注入对话的 system prompt,并要求:只在有结构化数据时输出、必须先写 markdown 摘要、数据逐字拷贝工具结果、绝不编造;协议消息必须先 createSurface 再给组件树,root 组件存在,surfaceId 全局唯一且是 kebab-case. 字段级红线是协议自带的 zod 版本与应用侧 zod 版本不可混用(web_core 自带一份 zod v3),因此所有边界处的 A2UI 数据都保持 `unknown[]`,在需要校验时才直接调用协议 schema.
 
 抽取与校验. 抽取器定位标签对、截出干净文本并用协议列表 schema 校验;没有标签不是错误(回答就是普通 markdown);有开标签无闭标签则报错并给出具体错误文案.
 
@@ -646,4 +646,9 @@ zod 边界:凡数据跨越信任边界(HTTP 请求体、API 响应、localStorag
 
 扩展建议按性价比排序. 第一,补认证与 CORS 收敛,这是从"内部演示"走向"可信服务"的门槛;同时给高风险工具加人工确认与审计. 第二,补齐对话路径的 token 计量与检索命中率、分数分布等输出侧监控——检索阶段名次已经下发到引用里,缺的是把这些数据汇总成可查询的质量报表. 第三,把记忆与知识库文件外置到共享存储与对象存储,打通水平扩展;把索引操作从同步改为任务队列,使上传与重建不阻塞请求. 第四,针对 OnCall 报告做程序化的引用核查——报告中提到的告警名是否都在工具真实返回里、时间是否与时间工具一致,不符则标注警告,把幻觉防线从提示词推进到结构性校验,并把三层评估(检索、生成、端到端)纳入持续集成. 第五,把 SOP 本身存入知识库,按告警类型动态装配根指令,替代当前硬编码的单一指令. 第六,给流式路由补上取消语义:把请求中止信号透传到管线消费循环与模型调用,客户端断开即停止计费.
 
-相关阅读:姊妹项目 [Yukino Dev Agent2](../yukino-ecomm-agent/yukino-ecomm-agent) 是同一技术路线的电商客服 Agent,用 Hono + LangGraph + Prisma 实现,可作为向量检索、数据飞轮与 LangGraph 会话图的实现对照;本仓库的两篇分册见 [Yukino Dev Agent](./agent)(OnCall 视角)与 [DevFlow](./dev-flow)(工程副驾视角);编排与协议专题见 [LangGraph](../langgraph)、[A2UI](../a2ui) 与 [MCP Apps](../mcp-app);框架层特性见 [Next.js](../../fe/next)、[React](../../fe/react)、[Vite](../../fe/vite) 与 [TanStack Query](../../fe/tanstack);观测与中间件参见 [中间件与可观测性](../../be/middleware).
+**延伸阅读**
+
+- 姊妹项目 [Yukino Ecomm Agent](../yukino-ecomm-agent/yukino-ecomm-agent): 同一技术路线的电商客服 Agent,用 Hono + LangGraph + Prisma 实现,可作为向量检索、数据飞轮与 LangGraph 会话图的实现对照
+- 本仓库分册: [OnCall 视角](./agent)、[DevFlow 工程副驾](./dev-flow)
+- 编排与协议专题: [LangGraph](../langgraph)、[A2UI](../a2ui)、[MCP Apps](../mcp-app)
+- 框架层特性: [Next.js](../../fe/next)、[React](../../fe/react)、[Vite](../../fe/vite)、[TanStack Query](../../fe/tanstack);观测与中间件参见 [中间件与可观测性](../../be/middleware)

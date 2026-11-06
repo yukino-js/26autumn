@@ -2,11 +2,11 @@
 title: "Yukino Dev Agent"
 description: "OnCall 视角入门: 技术栈与双档模型、RAG 建库与在线问答、Milvus 混合检索流程、ReAct 对话 Agent、Plan-Execute-Replan 运维 Agent 与报告护栏、Tool/MCP、A2UI、知识库管理与自监控"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "424a270590659dfbea804384d4fd1e14ba1111a5"
+local_commit: "ea0fd1957f83d4a676714cad5fa054b351a3deb2"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent` 在 `424a27059065` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/ai/`、`components/`）在 `ea0fd1957f83` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 yukino-dev-agent 是一个 AI 智能运维 (OnCall) 助手, 把两个产品面合并进单一 Next.js 16 + AI SDK 应用:
@@ -245,7 +245,7 @@ A2UI 是声明式的模型生成 UI 协议, 协议本身的机制见 [A2UI](../a
 
 - `lib/ai/a2ui/extract.ts` 的流式过滤器把块从文本流里剥离 (跨 chunk 保留未闭合的标签尾部); 校验只用 `@a2ui/web_core/v0_9` 的 `A2uiMessageListSchema`
 - 校验失败时给一次无工具的纠正重试 (`lib/ai/a2ui/correct.ts`), 仍失败则降级为诚实的 notice 提示, 绝不伪造 UI 数据
-- 组件目录 `catalog/` 注册 18 个基础组件 (`catalog/components/`) + 47 个 shadcn 扩展组件 (`catalog/shadcn/`), 合计 65 个, 与 `lib/a2ui/prompt/schemas/catalog.json` 的 prompt 侧 schema 一一对应; 该 schema 另声明 14 个内置函数 (`required` / `regex` / `length` / `formatNumber` / `openUrl` / `and` 等)
+- 组件目录以 `lib/a2ui/prompt/schemas/catalog.json` 的 prompt 侧 schema 为准: 共 **65 个组件条目** 与 **14 个内置函数** (`required` / `regex` / `length` / `formatNumber` / `openUrl` / `and` 等); 实现源码分布在 `catalog/components/` 与 `catalog/shadcn/` 两个目录
 - 组件 action 由前端携带 `{ name, surfaceId, sourceComponentId, context }` 和当前界面消息一起 `POST /api/a2ui_action`; 服务端用 quickModel 带工具 (`isStepCount(10)`) 处理后, 只返回针对该 surface 的原地 `updateComponents` / `updateDataModel` 消息, 前端追加渲染
 
 :::danger A2UI 与应用的 zod 版本红线
@@ -281,3 +281,12 @@ A2UI 是声明式的模型生成 UI 协议, 协议本身的机制见 [A2UI](../a
 ## 离线验证
 
 `tests/` 下是 `npx tsx tests/*.smoke.ts` 冒烟套件. OnCall 相关: `milvus.smoke.ts` (混合检索, 需要有效 embedding key)、`chunking.smoke.ts` (离线分块语义)、`doc-extract.smoke.ts`、`a2ui.smoke.ts`、`i18n.smoke.ts`、`metrics.smoke.ts`、`ai-ops-graph.smoke.ts` (`AI_OPS_SMOKE_LIVE=1` 跑真实模型)、`oncall-ops.smoke.ts`、`oncall-chat-protocol.smoke.ts`、`migration-restoration.smoke.ts`; DevFlow 各子系统另有 `dev-flow-*.smoke.ts` 一组.
+
+---
+
+**延伸阅读**
+
+- [Yukino Dev Agent 总览](./yukino-dev-agent): 双产品面架构、端到端数据流与取舍全景
+- [DevFlow 工程副驾](./dev-flow): 共享检索/记忆/工具机制在 GitHub 协作场景的落地
+- [RAG](../yukino-ecomm-agent/rag): 混合召回、RRF/精排与证据门禁的对照实现
+- [可观测性和数据飞轮](../yukino-ecomm-agent/observable): 评测、置信度校准与回流闭环的对照设计

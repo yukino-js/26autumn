@@ -2,11 +2,11 @@
 title: "Agent Team"
 description: "Agent Team 网状多代理协作: 多个 team 可并存, 协作工具经 team_name 选择目标 team; 每个 teammate 是有独立上下文窗口的 agent 实例, 协调建立在共享任务板 (tasks.json) 与文件邮箱 (inboxes/) 之上, 邮件以文件加轮询投递, 突破 subagent 星型拓扑不能互通的限制; 覆盖团队解析与隔离、SendMessage/TodoWrite/TaskStop、plan 审批与 Coordinator 模式"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/teams`、`src/subagent`、`src/config`、`src/tools`、`src/permissions`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -315,3 +315,13 @@ plan 审批闸门随 coordinator 模式一起打开 (Team.requiresLeaderPlanAppr
 ```
 
 teammate 的最终响应不会自动转发, 证据经 SendMessage 进入 leader 邮箱; leader 侧 drainLeaderMailbox 把这些邮件包成 `<task-notification team="...">` 注入上下文, 与后台 subagent 的任务通知走同一个 notificationFn。coordinatorPrompt 的委派纪律: 并行独立任务、每个共享文件集合一个写者并串行化依赖变更、worktree 隔离但需要显式整合、不要通过另一个 agent 轮询某个 worker、不要臆测结果、git 操作只在用户授权范围内委派
+
+---
+
+**延伸阅读**
+
+- [subagent](./subagent): spawnSubagent 执行内核、kind 生命周期差异与工具剥离规则
+- [task-tracking](./task-tracking): 共享任务板的依赖图、owner 认领与 TeamTodoWriteTool
+- [worktree](./worktree): teammate 文件系统隔离的目录、分支与显式整合
+- [permission](./permission): TEAMMATE_COORDINATION_TOOLS 放行与 plan 模式禁写例外
+- [react-and-agent-loop](./react-and-agent-loop): leader 邮箱 drain 与后台任务通知的注入时机

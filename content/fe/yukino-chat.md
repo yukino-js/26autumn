@@ -2,12 +2,26 @@
 title: "Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent"
 description: "自托管即时通讯平台的技术拆解: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级、前后端分离的 Nginx 边缘部署与移动端适配, 以及为每个用户进程内嵌入的只读 Yukino coding agent 与它的 JSON-RPC 桥。"
 local_path: "$HOME/github/yukino-chat"
-local_commit: "891b4108fcba145b1e48c0e80b613145e7ec0d92"
+local_commit: "555f62572a3abf905e0cbe1f52dce2088ad76452"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-chat` 在 `891b4108fcba` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-chat` 在 `555f62572a3a` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+    SPA[React SPA] -->|HTTP POST 统一信封| HONO[Hono 服务端 :8000]
+    SPA -->|/wss 聊天与通话信令| HUB[ChatHub 消息管线 + CallManager]
+    SPA -->|/agent/ws JSON-RPC| AM[AgentManager / AgentRuntime]
+    SPA -->|/dashboard/ws| CACHE[CacheService 快照推送]
+    HONO --> DB[(Prisma: PostgreSQL / SQLite)]
+    HONO --> CS[CacheService: Redis / 进程内存]
+    AM --> LIB["内嵌 @yukino.js/yukino 只读运行时"]
+    LIB --> WS[工作区 .yukino/chat/uid]
+```
 
 本文拆解一个自托管即时通讯平台: 单聊与群聊、WebRTC 音视频通话、分块断点续传文件传输, 并为每个登录用户内嵌一个完整的 AI coding agent 作为一等聊天参与者。内容覆盖数据模型、WebSocket 聊天枢纽、消息投递语义、通话信令、文件传输协议、缓存降级、Agent 的进程内只读运行时与 RPC 桥, 以及客户端的工程化组织与前后端分离的部署形态。适合要做自托管 IM、或在既有产品中嵌入 Agent 的工程师阅读, 也适合作为"实时系统与长生命周期 Agent 如何共处一个进程"的参考。
 
@@ -21,7 +35,7 @@ local_commit: "891b4108fcba145b1e48c0e80b613145e7ec0d92"
 
 | 维度       | 选型                                                                                                                                |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 服务端     | Node.js 24 + TypeScript 5.9 + Hono, HTTP 由 `@hono/node-server` 承载                                                                |
+| 服务端     | Node.js 24(node:24-alpine 容器镜像) + TypeScript 5.9 + Hono, HTTP 由 `@hono/node-server` 承载                                       |
 | ORM/数据库 | Prisma 7 驱动适配器, PostgreSQL(`@prisma/adapter-pg`, 默认)或 SQLite(`@prisma/adapter-better-sqlite3`), 由 `DATABASE_PROVIDER` 选择 |
 | 缓存       | Redis(ioredis), `REDIS_URL` 为空串时降级进程内存                                                                                    |
 | 认证       | 手写 HS256 JWT + bcryptjs 口令哈希                                                                                                  |
@@ -453,3 +467,14 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 不适合的场景: 公网大规模部署(需先补 TLS、改密验证、跨实例总线与 TURN); 需要跨 NAT 音视频的生产场景; 需要多实例高可用的场景。
 
 若要做产品化演进, 优先级最高的是补齐 Agent 交互的持久化与多实例路由——当前的纯内存 broker 与单实例运行时是体验最好但扩展性最弱的一环。
+
+---
+
+**延伸阅读**
+
+- [Yukino Chatbot: Koa 3 服务端与 React 19 分层客户端](./yukino-chatbot)
+- [Yukino Codegen: 编码 Agent 的沙箱迭代与预览桥](./yukino-codegen)
+- [Yukino MCP: 工具注册、向量索引与连接生命周期](./yukino-mcp)
+- [Yukino Sentry: 前端与 Node 错误采集 SDK](./yukino-sentry)
+- [React 19 客户端状态与数据获取模式](./react)
+- [Vite 8 构建与 PWA 工程化](./vite)

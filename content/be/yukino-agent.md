@@ -2,12 +2,14 @@
 title: "yukino_agent: 基于 Eino 的 RAG 运维 Agent 后端"
 description: "yukino_agent Go 后端: 以 CloudWeGo Eino 编排 RAG 对话、Plan-Execute-Replan 告警分析与文档索引三条流水线, 打通 Milvus 向量知识库、MCP/Prometheus/MySQL 工具集, 并把浏览器 SDK 上报转换为 Prometheus 指标形成告警闭环"
 local_path: "$HOME/github/yukino.go/apps/agent"
-local_commit: "02e9621cee8763979175549903d7a67534923751"
+local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go/apps/agent` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `apps/agent`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
 
 ```mermaid
 flowchart LR
@@ -280,5 +282,7 @@ collection 的 schema 由 `Fields(dim)` 定义, 四个字段与 `internal/consts
 - Milvus 维度不匹配时会直接 drop 重建 collection, 换 embedding 模型即清空知识库, 需重新索引。
 - `mysql_crud` 工具把 DSN 与 SQL 都交给模型生成并直接执行, 无交互确认、无语句白名单, 接到生产库前必须自行加权限与审计约束。
 - 监控桥的指标是进程内累积的, 与对话/分析能力同进程; 若要把可观测性独立扩缩, 需要把 `/api/log`+`/api/metrics` 拆成单独服务。
+
+**延伸阅读**
 
 本服务的路由、中间件与 SSE 能力由同仓库的 [yukino-http](./yukino-http) 框架提供, 其 API 与中间件模型见该专文。

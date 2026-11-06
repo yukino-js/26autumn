@@ -2,11 +2,11 @@
 title: "Permission"
 description: "权限系统: 对每次工具调用回答 allow / ask / deny, 多层短路判定 — plan 守卫, 显式规则, 协调工具, 安全命令白名单, shell 结构分析, 路径沙箱, OS 沙箱自动放行, 模式矩阵; 覆盖规则文件语法与裁决优先级, remember scope 持久化与人在回路审批"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/permissions`、`src/tools`、`src/config`、`src/utils`、`src/teams`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 LLM 生成的每一次工具调用都是一次真实世界的动作: 执行命令、改写文件、发起网络请求。权限系统回答一个问题 — 这次调用应该直接放行 (allow)、停下来问人 (ask), 还是直接拒绝 (deny)。它要同时抵御三类攻击面:
@@ -16,6 +16,24 @@ LLM 生成的每一次工具调用都是一次真实世界的动作: 执行命�
 - 数据泄露: 读工具把敏感内容带出边界 (如 `.env` 里的密钥)
 
 单一检查点无法同时覆盖这三类问题, 所以判定被拆成多层: 显式规则、模式矩阵、安全命令白名单、路径沙箱、OS 沙箱、hook, 层层短路, 任何一层说 "不" 都优先于放行。
+
+**主线一览**
+
+```mermaid
+flowchart TD
+  T[工具调用: 类型 / 目标 / 参数] --> L1[plan 守卫]
+  L1 --> L2[显式 deny / ask 规则短路]
+  L2 --> L3[协调工具 / plan 文件 / 安全只读命令放行]
+  L3 --> L4[shell 结构分析: 完整命令才算安全]
+  L4 --> L5[OS 沙箱就绪自动放行]
+  L5 --> L6[路径沙箱: 写操作越界则 ask]
+  L6 --> L7[显式 allow 规则]
+  L7 --> M[模式矩阵: default / acceptEdits / plan / bypass]
+  M --> R{裁决}
+  R -- allow --> X[执行]
+  R -- ask --> P[人在回路审批 / remember 持久化]
+  R -- deny --> N[拒绝并回错误结果]
+```
 
 ## 判定入口与工具分类
 
@@ -253,3 +271,13 @@ HITL 确认对话框的第二项是 "Yes, remember the scopes above for all agen
 ## OS 级沙箱
 
 权限系统之外, Yukino 还支持 OS 级沙箱, 把 Bash 命令放进操作系统提供的隔离环境执行 (macOS seatbelt / Linux bubblewrap), 文件系统写入被收敛到允许目录, 网络可以整体关闭。config.yaml 的 `sandbox` 段有三个键: `enabled`、`auto_allow`、`network_enabled`; 运行时也可以用 `/sandbox auto | manual | off` 切换。沙箱开启后, 判定流程第 9 层让 Bash 命令免人工确认 — 且只有当沙箱真正就绪 (seatbelt/bwrap 可用) 时 `sandboxEnabled` / `sandboxAutoAllow` 才会置位。权限层回答「要不要人确认」, 沙箱回答「命令允许碰什么」, 两者独立又协同; 沙箱内部的文件读写限制见 [sandbox](./sandbox)。
+
+---
+
+**延伸阅读**
+
+- [react-and-agent-loop](./react-and-agent-loop): 工具执行前的 pre-tool hook 闸门与 McpCall 双重判定合并规则
+- [mcp](./mcp): `McpCall(server__tool)` 规则匹配内容与命名规范
+- [hook](./hook): `pre_tool_use` reject 如何在权限判定之前短路
+- [sandbox](./sandbox): OS 沙箱的写根、网络开关与就绪判定
+- [worktree](./worktree): worktree 目录如何作为额外可写根加入路径沙箱

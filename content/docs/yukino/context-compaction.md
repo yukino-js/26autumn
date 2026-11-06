@@ -2,11 +2,11 @@
 title: "上下文压缩"
 description: "上下文压缩的两层机制: 第 1 层在工具结果进入历史时把大结果溢出到磁盘、只留预览; 第 2 层在 token 用量越过阈值 (或手动 /compact) 时由 LLM 生成对话摘要, 近期消息逐字保留"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/compact`、`src/tool-result`、`src/session`、`src/agent`、`src/storage`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -41,7 +41,7 @@ LLM API 是无状态的, 每个请求都要携带完整的对话历史, 包括 R
 
 ### 单个工具结果的溢出阈值
 
-agent loop (src/agent/index.ts) 在工具结果进入对话历史前做逐个检查: content 超过 `MAX_OUTPUT_CHARS = 50000` 字符 (约 12.5k tokens, src/agent/constants.ts) 时, persistLargeResult (src/tool-result/index.ts) 把完整内容写入磁盘, replaceToolResultContent 把历史中的文本 (含富文本块里的 text) 替换成 `<persisted-output>` 标签包裹的预览 (buildSpillPreview): 原始内容的字符数、磁盘路径和前 2000 字符 (`TOOL_RESULT_PREVIEW_CHARS`)
+agent loop (src/agent/index.ts) 在工具结果进入对话历史前做逐个检查: content 超过 `MAX_OUTPUT_CHARS = 50000` 字符 (按 3.5 字符/token 估算约 14.3k tokens, src/agent/constants.ts) 时, persistLargeResult (src/tool-result/index.ts) 把完整内容写入磁盘, replaceToolResultContent 把历史中的文本 (含富文本块里的 text) 替换成 `<persisted-output>` 标签包裹的预览 (buildSpillPreview): 原始内容的字符数、磁盘路径和前 2000 字符 (`TOOL_RESULT_PREVIEW_CHARS`)
 
 溢出路径由 sessionId 和 toolUseId 决定:
 
@@ -300,3 +300,13 @@ AutoCompactTrackingState 记录连续失败次数 (生命周期跟随 Agent 实�
 | `IMAGE_CHAR_EQUIV`              | 7000   | src/compact/constants.ts     | 图片块的固定字符当量                         |
 | `RECOVERY_FILE_LIMIT`           | 5      | src/compact/constants.ts     | 恢复附件的文件快照上限                       |
 | `RECOVERY_TOKENS_PER_FILE`      | 5000   | src/compact/constants.ts     | 恢复附件单文件 token 上限                    |
+
+---
+
+**延伸阅读**
+
+- [react-and-agent-loop](./react-and-agent-loop): 每轮 turn 的压缩检查点、forceCompact 自愈与 compact 事件
+- [llm](./llm): usage anchor 四项计数口径与 prompt cache 前缀稳定的代价
+- [agents-md-and-memory](./agents-md-and-memory): 压缩后 restoreContext 重新注入的长期记忆与 skills
+- [react-and-agent-loop](./react-and-agent-loop): compact_boundary 在 loop 中的持久化与 resume 重建链路
+- [mcp](./mcp): tools[] 变更导致缓存失效与 deferred 加载策略

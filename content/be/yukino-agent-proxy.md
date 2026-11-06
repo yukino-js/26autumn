@@ -2,11 +2,11 @@
 title: "Yukino Agent Proxy：单二进制双编码 Agent 的协议网关"
 description: "一个二进制以 --agent 代理 Claude Code 或 Codex，在 Anthropic Messages、OpenAI Responses、Chat Completions 三种协议之间双向桥接，并负责 provider 选择、客户端配置注入与备份、常驻进程管理、MCP 控制面、滚动发布与凭据卫生。"
 local_path: "$HOME/github/yukino.go/apps/agent_proxy"
-local_commit: "02e9621cee8763979175549903d7a67534923751"
+local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go/apps/agent_proxy` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `apps/agent_proxy`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 :::note 阅读路径
@@ -39,6 +39,8 @@ Codex CLI ──Responses──> yukino-agent-proxy ───┬─> OpenAI Resp
 除协议翻译外，网关承担四类职责：从统一的 provider 配置文件选择上游并做连通性预检；备份并改写客户端配置，把 base URL、模型别名、上下文窗口注入进去；以守护进程方式常驻并暴露带鉴权的本地控制面；提供 stdio 或 HTTP 传输的 MCP 工具，让其他 Agent 能启动、查看、停止代理。HTTP 服务面复用了同仓库的 [yukino-http](./yukino-http) 应用框架（`New()` 加 `Recovery()` 中间件）。整个网关是一个独立的 Go module（模块路径 `github.com/hangtiancheng/yukino.go/apps/agent/server_proxy`，`go.mod` 声明 `go 1.26.0`，经相对路径 `replace` 引用 `libs/yukino_http`），直接依赖只有八个：`anthropic-sdk-go` v1.84.0、`openai-go` v1.12.0、`modelcontextprotocol/go-sdk` v1.8.0、`klauspost/compress` v1.20.1（zstd 请求体解码）、`pelletier/go-toml/v2` v2.4.3（Codex config.toml）、`goccy/go-yaml` v1.19.2（provider 配置）、`golang.org/x/sys` v0.49.0（Windows 进程与文件锁）与 `yukino_http`。代码按包分层：`cmd/agent_proxy` 是 CLI 入口，`internal/agent` 是注册表，`internal/config` 是 provider 选择，`internal/claude` 与 `internal/codex` 各自包含 settings 注入、bridge 翻译、proxy 服务面与 check 预检，`internal/daemon` 管进程生命周期，`internal/mcpserver` 是 MCP 工具，`internal/upstream` 是共享传输层，`internal/private` 是原子私有写盘。
 
 一次代理请求的完整链路如下，转换与转发共享同一条流水线，协议选择只改变其中的翻译环节：
+
+**主线一览**
 
 ```mermaid
 flowchart TD
@@ -403,3 +405,8 @@ Live 层全部 opt-in 且会产生小额账单：Claude 桥对配置中每个合
 不适合：需要把一个上游同时服务大量客户端的高并发网关（它是本地单用户工具，安全模型依赖回环绑定）；需要精确分词计费（OpenAI 协议方向明确拒绝 token 计数，不伪造结果）；需要 OAuth 登录、Gemini 协议、provider 故障转移或自动重试（README 明确列为范围之外，重试语义留给调用方）。
 
 主要取舍有三处。其一，direct 模式让 Claude Code 在 anthropic 上游下绕过本地桥，换来零额外延迟与字节级透传，代价是真实 key 进入客户端配置文件；proxy 模式相反。其二，进程内续接缓存让跨协议 Responses 续接可用，代价是重启丢失历史且内存有界，这是无持久会话状态设计的必然结果。其三，滚动发布让下载 URL 永远指向最新，简化了使用，代价是没有版本化回退——回退依赖备份与手工恢复。
+
+**延伸阅读**
+
+- [yukino-http](./yukino-http): 本网关 HTTP 服务面复用的同仓库框架，其中间件、延迟响应与 SSE/WebSocket 接管机制见该专文。
+- [yukino-agent](./yukino-agent): 同仓库的 RAG 运维 Agent 后端，与本代理在模型适配与工具调用层面对照阅读。

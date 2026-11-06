@@ -2,11 +2,11 @@
 title: "工具调用"
 description: "工具调用 (function calling): LLM 负责决策、CLI 负责执行 — 覆盖协议本身、Tool 接口与 ToolRegistry、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/tools`、`src/bootstrap`、`src/conversation`、`src/agent`、`src/llm`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -350,3 +350,13 @@ agent 循环 (src/agent/index.ts, 见 [react-and-agent-loop](./react-and-agent-l
 3. 执行 (StreamingExecutor, src/agent/streaming-executor.ts): 批内调用并发提交, `runPending` 谁先完成先 yield 谁的 tool_result 事件, UI 即时渲染每个工具的完成; parseError 直接变成错误结果, 未知工具名报 `Error: unknown tool '<name>'` 让模型换工具重试, 中断报 `Tool execution was cancelled before it started.`; 每次执行包一层 telemetry 观测
 4. 回写历史: 主循环一边把完成事件即时 yield 给 UI, 一边按 toolId 收集进 Map; 整批完成后按 LLM 给出的原始调用顺序重建 tool_result 块数组, 一条 user 消息写入历史 —— 完成顺序负责交互的实时性, 原始顺序负责配对和回放的稳定性
 5. 结果预算: 单条结果超 50000 字符 (MAX_OUTPUT_CHARS) 落盘换成预览 + 路径, 整批再过一遍 200000 字符的聚合预算 (MESSAGE_AGGREGATE_LIMIT), 防止并发扇出的多个「合规」结果加起来撑爆上下文; 刚从溢出文件读回的结果豁免再次落盘, 避免读回-溢出死循环
+
+---
+
+**延伸阅读**
+
+- [react-and-agent-loop](./react-and-agent-loop): partitionToolCalls 分批、StreamingExecutor 并发与事件时序
+- [permission](./permission): 工具分类与 allow / ask / deny 判定链
+- [mcp](./mcp): deferred 工具、native / dispatch 加载模式与 McpCall 入口
+- [llm](./llm): 三协议 tools[] 翻译、tool_use / tool_result 配对修复与流事件映射
+- [context-compaction](./context-compaction): 工具结果溢出落盘与整批聚合预算

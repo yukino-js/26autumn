@@ -2,12 +2,27 @@
 title: "@yukino.js/sentry: 框架无关浏览器监控 SDK"
 description: "一个框架无关的浏览器监控与分析 SDK: 覆盖错误、HTTP、页面轨迹、性能指标、声明式点击、曝光与白屏检测与错误前录屏, 以发布订阅事件总线解耦采集与上报, 提供批量上报、离线缓存、服务端恢复、采样过滤、手动冲刷与 React/Vue/Node.js 接入。"
 local_path: "$HOME/github/yukino-sentry/sentry"
-local_commit: "b2f2e70f4737c2b957aea56cc58db5ebefdb66b5"
+local_commit: "5d5b58070bd77e1304dffae7cf674f7e9a299d16"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-sentry/sentry` 在 `b2f2e70f4737` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-sentry/sentry` 在 `5d5b58070bd7` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+    SRC[八类采集源: 错误 / HTTP / PV / 性能 / 点击 / 曝光 / 白屏 / 录屏] --> BUS[事件总线 Map 发布订阅]
+    BUS --> HDL[handle 处理器 + 面包屑 + 去重]
+    HDL --> PRE[send-preflight: 采样 + 录屏标记 + beforeSend]
+    PRE --> REP[DataReporter 批量队列]
+    REP --> TR[transports: sendBeacon / fetch]
+    REP --> OFF[offline-cache localStorage 镜像]
+    OFF --> REC[server-recovery HEAD 探测 + 指数退避]
+    REC --> TR
+    PLG[Performance / ScreenRecord / Exposure 插件] --> BUS
+```
 
 本文系统梳理一个框架无关的浏览器监控 SDK 的能力面与实现思路: 它如何把错误、HTTP 请求、页面浏览与停留、性能指标、声明式点击、元素曝光、白屏与错误前操作录屏统一采集, 如何用发布订阅总线解耦采集与上报, 以及批量上报、离线缓存、服务端恢复、采样过滤、插件体系与体积控制等工程取舍; 同一条上报管线还被复用进独立的 Node.js 入口, 为服务端进程提供异常捕获与上报。内容面向需要在 Web 应用或 Node 服务中接入前端/服务端可观测能力的工程师, 也适合作为设计自有监控 SDK 的参考。
 
@@ -601,3 +616,13 @@ SDK 自身的控制台输出默认关闭, 打开 `debug` 后可看到事件采�
 不太适合: 需要全量会话回放(它只保留错误前几秒)或需要跨标签页统一会话存储的场景; 对上报体积极度敏感、无法接受校验库与 UA 解析库常驻主包的项目; 对离线队列容量有很高要求、需要突破本地存储限制的场景。
 
 综合来看, 它的设计主线是"用总线隔离采集与处理, 用插件隔离重能力, 用多层过滤隔离成本, 用镜像加探测隔离网络故障"。理解这条主线后, 接入与排障都有据可依: 采集异常先看对应开关与总线订阅, 体积异常先看动态导入与插件启用, 丢数据先看过滤链与离线缓存, 堆栈看不懂就检查映射文件的收集与匹配。
+
+---
+
+**延伸阅读**
+
+- [Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent](./yukino-chat)
+- [Yukino Codegen: 编码 Agent 的沙箱迭代与预览桥](./yukino-codegen)
+- [Yukino Chatbot: Koa 3 服务端与 React 19 分层客户端](./yukino-chatbot)
+- [Yukino MCP: 工具注册、向量索引与连接生命周期](./yukino-mcp)
+- [React 19 客户端状态与数据获取模式](./react)

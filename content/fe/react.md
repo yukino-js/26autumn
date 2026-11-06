@@ -1,11 +1,22 @@
 ---
-title: "React 19 核心与运行时原理"
-description: "从一次更新的完整生命周期讲到 Fiber 协调、Hooks 链表、Lanes 优先级与批处理, 并覆盖 React 19 的 Actions、use、ref 作为 prop 等新增与稳定 API, 以及性能优化的有效条件"
+title: "React 19.2 核心与运行时原理"
+description: "从一次更新的完整生命周期讲到 Fiber 协调、Hooks 链表、Lanes 优先级与批处理, 并覆盖 React 19.2 的 Actions、use、ref 作为 prop、useEffectEvent、Activity 等稳定 API, 以及性能优化的有效条件"
 ---
 
 :::note 版本基线
-文中机制与 API 以 **React 19** 为准: Actions、`use`、`ref` 作为 prop 属于当前稳定能力; <u>不引入</u> legacy 模式、旧版生命周期或已移除的 Hooks 作为现行写法。
+文中机制与 API 以 **React 19.2** 为准 (本机实测: `yukino-code` 检出中 `react 19.2.7`、`yukino-dev-agent` 检出中 `react 19.2.4`). Actions、`use`、`ref` 作为 prop、ref 回调清理函数、`useEffectEvent`、`<Activity />` 属于当前稳定能力; `<ViewTransition />`、`addTransitionType` 与 Fragment ref 仍在 canary 通道 (Fragment ref 随 19.3 转正), 本文只作边界说明、不作为 19.2 稳定 API 叙述; <u>不引入</u> legacy 模式、旧版生命周期或已移除的 Hooks 作为现行写法.
 :::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+    U["事件 / setState 入队, 标记 lane"] --> R["Render 协调阶段: 可中断, 纯函数"]
+    R --> C["Commit 提交阶段: 不可中断, 写 DOM / ref / effect"]
+    R --> F["Fiber 双缓冲: current ⇄ workInProgress"]
+    C --> P["浏览器绘制"]
+    R --> H["Hooks 链表: 顺序身份, 游标复用"]
+```
 
 这份文档面向已经会写 React、但想搞清楚它为什么这样工作的工程师. 内容以运行时机制为主线: 一次状态更新经历了哪些阶段, Fiber 如何把递归渲染变成可中断的工作循环, Hooks 为什么必须按顺序调用, 并发特性与 Actions 建立在什么调度模型之上. 读完应当能解释"为什么这里会读到旧值""为什么 memo 没有生效""为什么这个 Suspense 没有复用旧 UI"这类问题, 并能据此做取舍, 而不是记住一批 API 用法. 需要渲染框架层面的落地实践, 见 [Next.js](next); 构建与打包见 [Vite](vite).
 
@@ -105,7 +116,7 @@ effect 只运行一次, 它的回调被永久绑定在首次渲染的作用域�
 
 ref 之所以能绕过闭包, 是因为闭包捕获的是 ref 对象本身的引用, 而这个引用在组件整个生命周期内不变; 变得只是它内部的 `current` 字段. 本质上是用引用语义替代值语义.
 
-`useEffectEvent` 是这件事的官方归纳: 它返回一个函数, 这个函数在调用时读取最新的 props 与 state, 但不需要出现在依赖数组里. 规则很明确——返回的函数只能从 effect 内部调用, 不能传递给子组件, 也不应写进依赖数组.
+`useEffectEvent` 是这件事的官方归纳 (React 19.2 起稳定): 它返回一个函数, 这个函数在调用时读取最新的 props 与 state, 但不需要出现在依赖数组里. 规则很明确——返回的函数只能从 effect 内部调用, 不能传递给子组件, 也不应写进依赖数组; 该返回函数刻意不具备稳定身份, 每次渲染身份都变化, 这是运行期断言而非缺陷.
 
 ### 依赖数组的模型
 
@@ -458,12 +469,13 @@ ref 回调用法的另一处变化是允许返回清理函数:
 
 节点从 `null` 变为元素、或从元素变回 `null` 时都会调用回调. 返回清理函数后, React 会在"需要断开上一次绑定"时调用它, 而不需要开发者自己维护"上一次的节点"这类记录.
 
-### 其他稳定能力
+### 其他能力与通道状态
 
-- `useEffectEvent`: 把"读取最新 props/state 但不应成为依赖"的回调从 effect 中抽离, 是闭包陷阱的官方解法. 返回的函数只能在 effect 内调用, 不写进依赖数组.
-- `<ViewTransition>`: 包裹需要动画的子树, 在被 transition 标记的更新引起挂载、卸载或样式变化时, 借助浏览器 View Transition API 播放对应动画. 默认交叉淡入淡出, 可通过类名或 `onEnter`/`onExit`/`onShare`/`onUpdate` 定制. 配合 `addTransitionType` 可以为同一次状态更新附加原因标记, 从而按方向或语义播放不同动画. 目前仅支持 DOM 平台.
-- Fragment ref: 给 `<Fragment ref={...}>` 传入 ref 会得到一个 Fragment 实例, 可以成组地操作该 Fragment 的一级子 DOM 而不改变结构. 能力包括事件订阅与派发、`focus`/`focusLast`/`blur`、对接 IntersectionObserver 与 ResizeObserver 的 `observeUsing`/`unobserveUsing`, 以及 `getClientRects`、`getRootNode`、`scrollIntoView`. 适合需要"把一组兄弟节点当成一个整体"处理焦点或观察尺寸的场景.
+- `useEffectEvent` (React 19.2 稳定): 把"读取最新 props/state 但不应成为依赖"的回调从 effect 中抽离, 是闭包陷阱的官方解法. 返回的函数只能在 effect 内调用, 不写进依赖数组, 且身份每次渲染变化.
+- `<Activity />` (React 19.2 稳定): 以 `mode="visible" | "hidden"` 控制子树, hidden 时保留 DOM 与状态、清理 effect 并推迟更新, 适合频繁切换但重建代价高的面板与标签页.
+- Fragment ref: 给 `<Fragment ref={...}>` 传入 ref 会得到一个 Fragment 实例, 可以成组地操作该 Fragment 的一级子 DOM 而不改变结构. 能力包括事件订阅与派发、`focus`/`focusLast`/`blur`、对接 IntersectionObserver 与 ResizeObserver 的 `observeUsing`/`unobserveUsing`, 以及 `getClientRects`、`getRootNode`、`scrollIntoView`. 注意该能力随 React 19.3 转正, 在 19.2 产物中属于 canary 通道, 稳定基线内不应作为可用 API 依赖; 其定位是替代 `findDOMNode()`, 把一组兄弟节点当成一个整体处理焦点或观察尺寸.
 - 服务端组件中直接渲染 Context Provider: 从客户端模块导入的 Context 可以在服务端组件里直接作为 Provider 使用, 不必再额外导出一个只做包装的客户端组件.
+- `<ViewTransition />` 与 `addTransitionType`: 目前只在 React canary 通道提供, 稳定 19.2 产物中不可直接导入; 其定位是在被 transition 标记的更新引起挂载、卸载或样式变化时, 借助浏览器 View Transition API 播放动画, 产品代码不应在稳定基线中依赖该组件.
 
 ## 错误边界与错误处理
 
@@ -574,3 +586,13 @@ Suspense 处理的是"还没准备好", 错误边界处理的是"出错了", 两
 第三类是边界判断. 当组件单次渲染本身就超过一帧预算时, 调度层面的优先级无法救场, 需要从数据结构和组件拆分入手; 当状态复杂到需要跨组件协调时, 引入状态管理库通常比继续叠加 Context 更划算. 相关实践见 [TanStack Query](tanstack) 与 [Next.js](next).
 
 需要说明的一点: 本页描述的优先级档位、让出策略属于调度模型的定性说明. 具体的 lane 划分与时间片预算是实现细节, 会随版本调整, 不应作为业务代码的依赖前提.
+
+---
+
+**延伸阅读**
+
+- [next](next): Next.js 16.2 App Router 对 Server Component、流式水合与 Actions 的落地约束.
+- [tanstack](tanstack): 服务端状态的缓存、失效与写后同步, 与 effect 内手写取数的职责边界.
+- [vite](vite): React Refresh 的 HMR 边界、产物分割与构建期编译优化.
+- [fe](fe): 事件循环、微任务与浏览器渲染流水线等底层运行时模型.
+- [css](css): 组件样式作用域与 CSS Modules / Shadow DOM 的配合方式.

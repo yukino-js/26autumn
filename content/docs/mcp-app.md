@@ -3,6 +3,10 @@ title: "MCP Apps: 用沙箱 iframe 把交互 UI 带进对话"
 description: "MCP Apps 扩展的协议契约、UI 资源与工具声明、宿主与 iframe 的通信与安全模型、工程实践与降级路径, 以及与 A2UI 的对比"
 ---
 
+:::note 版本基线
+本文描述 MCP 协议的 Apps 扩展 (tool + `ui://` 资源 + iframe postMessage 方言), 不绑定单一代码仓库。可对照本地工作区 `~/github/yukino-code/apps/mcp` 的 `create_app` 工具实现核验: 依赖声明为 `@modelcontextprotocol/ext-apps ^2.0.3`、`@modelcontextprotocol/client|core|server ^2.3.1` (实际解析版本以 lockfile 为准); 扩展能力标识 `io.modelcontextprotocol/ui`, UI 资源 MIME `text/html;profile=mcp-app`。MCP Apps 属核心规范之外的可选扩展, 协议仍在活跃演进, 文中 SDK 导出名、消息方法与选项以所引 SDK 版本为准; 未在本地源码核实的条目已降级为定性描述。
+:::
+
 **主线一览**
 
 ```mermaid
@@ -114,7 +118,7 @@ ui:// 的路径结构是任意的, 多个工具也可以共享同一个 UI 资�
 
 契约分两侧:
 
-- 工具侧: 通过 _meta.ui.resourceUri 声明"调用这个工具时该渲染哪块 UI"; _meta.ui.visibility 声明工具暴露给谁——取值 "model" 与 "app" 的数组, 只给 app 的工具不进模型的工具列表(纯 UI 回程接口), 只给 model 的工具则不出现在 App 可调集合里, SDK 配套 getToolUiResourceUri / isToolVisibilityModelOnly / isToolVisibilityAppOnly 三个读取助手; EXTENSION_ID = "io.modelcontextprotocol/ui" 用于能力协商。
+- 工具侧: 通过 _meta.ui.resourceUri 声明"调用这个工具时该渲染哪块 UI"; _meta.ui.visibility 声明工具暴露给谁——取值 "model" 与 "app" 的数组, 只给 app 的工具不进模型的工具列表(纯 UI 回程接口), 只给 model 的工具则不出现在 App 可调集合里; 宿主侧读取这两个字段后做模型列表过滤与 App 工具集合过滤。扩展标识 `io.modelcontextprotocol/ui` 用于能力协商。
 - 资源侧: 除了 MIME 类型必须为 text/html;profile=mcp-app, 资源元数据还承载 CSP 与权限申报(见第四节), 以及可选的显示偏好(如是否希望宿主为 UI 绘制外框)。
 
 这两侧共同构成"声明"层: 服务端只声明请求, 是否授予由宿主决定。
@@ -168,7 +172,7 @@ App 渲染数据; 用户交互时 App 反向发起 tools/call(宿主代理转发
 
 ### 3.2 通信协议: postMessage 上的 MCP 方言
 
-iframe 内外的传输是 window.postMessage, 消息格式是 JSON-RPC——一个 MCP 方言: 一部分方法直接复用核心 MCP 的线上格式——App→宿主方向有 tools/call(经宿主代理转发)、resources/read、resources/list、sampling/createMessage(需宿主声明 sampling 能力)、notifications/message 日志、ping, 宿主→App 方向有 tools/call 与 tools/list(枚举并调用 App 内注册的工具)——其余是 ui/ 前缀的新方法。扩展协议自身也有版本常量(SDK 2.0.x 内 LATEST_PROTOCOL_VERSION 为 "2026-01-26"), 在 ui/initialize 握手中协商。
+iframe 内外的传输是 window.postMessage, 消息格式是 JSON-RPC——一个 MCP 方言: 一部分方法直接复用核心 MCP 的线上格式——App→宿主方向有 tools/call(经宿主代理转发)、resources/read、resources/list、sampling/createMessage(需宿主声明 sampling 能力)、notifications/message 日志、ping, 宿主→App 方向有 tools/call 与 tools/list(枚举并调用 App 内注册的工具)——其余是 ui/ 前缀的新方法。扩展协议在 ui/initialize 握手中做版本与能力协商, 协议版本号随 SDK 演进, 以所引 SDK 源码中的版本常量为准。
 
 | 方法 / 通知                             | 方向                  | 作用                                                    |
 | --------------------------------------- | --------------------- | ------------------------------------------------------- |
@@ -206,35 +210,41 @@ import {
   applyHostFonts,
 } from "@modelcontextprotocol/ext-apps";
 
-const app = new App({ name: "My App", version: "1.0.0" });
+const app = new App(
+  { name: "My App", version: "1.0.0" },
+  {},
+  { autoResize: false },
+);
 
-// handler 必须在 connect() 之前注册, 否则握手期间的事件会丢
-app.ontoolinput = (params) => {
-  /* params.arguments */
-};
-app.ontoolinputpartial = (params) => {
-  /* 生成中预览 */
-};
-app.ontoolresult = (result) => {
-  /* result.content / structuredContent / _meta */
-};
-app.onhostcontextchanged = (ctx) => {
+// 事件监听必须在 connect() 之前注册, 否则握手期间的事件会丢
+app.addEventListener("toolinputpartial", (params) => {
+  /* params.arguments: 生成中预览 */
+});
+app.addEventListener("toolinput", (params) => {
+  /* params.arguments: 完整工具入参 */
+});
+app.addEventListener("toolresult", (result) => {
+  /* result.content / structuredContent / _meta / isError */
+});
+app.addEventListener("hostcontextchanged", (ctx) => {
   if (ctx.theme) applyDocumentTheme(ctx.theme);
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
   if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
-};
+});
+app.addEventListener("toolcancelled", () => {
+  /* 工具被取消 */
+});
 app.onteardown = async () => ({});
 
-await app.connect(new PostMessageTransport());
+const transport = new PostMessageTransport(window.parent, window.parent);
+await app.connect(transport);
 ```
 
-宿主通过 styles.variables 下发一批 CSS 自定义属性, App 用 var(--x, fallback) 消费即可与宿主主题对齐。App 的宿主绑定方法(如 callServerTool、sendMessage)在握手完成前调用会告警, 严格模式下抛错。SDK 还带 autoResize 开关(监听文档尺寸并自动上报)与 allowUnsafeEval 开关(默认让校验库走无 JIT 路径, 以适配严格 CSP)。
-
-React 技术栈另提供 useApp、useHostStyleVariables、useHostFonts、useDocumentTheme、useAutoResize 等 hooks。
+宿主通过 styles.variables 下发一批 CSS 自定义属性, App 用 var(--x, fallback) 消费即可与宿主主题对齐。App 的宿主绑定方法在握手完成前调用会告警, 严格模式下抛错; 尺寸变化由 SDK 的 `setupSizeChangedNotifications()` 一类能力上报, autoResize 可在构造选项中开关。React 技术栈下 SDK 另提供对应的 hooks 封装(导出名以所引 SDK 版本为准)。
 
 ### 3.4 服务端 SDK 与官方示例
 
-SDK 的 server 入口提供 registerAppTool 与 registerAppResource 两个注册函数; 主入口的 App 类另提供 registerTool, 允许 App 内的 UI 代码注册额外工具, 宿主可经 tools/list 枚举并通过 tools/call 调用。示例覆盖地图(CesiumJS)、3D(Three.js)、着色器、PDF 阅读器、乐谱、语音转写、系统监控仪表盘、预算分配器等, 并提供多种前端模板与 vanilla 用法。宿主侧有两种接入方式: 直接使用 mcp-ui 客户端的 React 组件, 或基于 SDK 的 AppBridge 模块(负责 iframe 渲染、消息转发、工具调用代理与安全策略执行)。
+SDK 的 server 入口提供 registerAppTool 与 registerAppResource 两个注册函数(本地 `create_app` 工具即按此注册); App 侧主入口的 App 类维护 UI 代码与宿主之间的工具调用回路, 宿主可经 tools/list 枚举并通过 tools/call 调用 App 内注册的工具(具体注册 API 名以 SDK 版本为准)。SDK 官方示例覆盖地图、3D、PDF/富媒体查看器、仪表盘、预算分配器等重交互形态, 并提供前端模板与 vanilla 用法。宿主侧接入方式有两类: 直接使用宿主内置的渲染组件, 或基于 SDK 的 AppBridge 模块(负责 iframe 渲染、消息转发、工具调用代理与安全策略执行)。
 
 ## 四、安全模型
 
@@ -348,7 +358,7 @@ MCP Apps 是核心 MCP 规范之外的扩展, 宿主支持可选。定位上最�
 - Claude Artifacts: 体验相似, 但 Artifacts 是宿主内建功能、无法由第三方 Server 提供; MCP Apps 把这个能力开放给了整个 MCP 生态;
 - OpenAI Apps SDK: 同为"工具返回 UI", MCP Apps 走开放规范路线, 社区已有从专有 API 迁移到 MCP Apps 的路径。
 
-生态件包括宿主侧渲染组件、SDK 内置的 AppBridge(自建宿主用, 与 App 类共享同一套协议实现), 以及一批官方示例与多语言模板; 官方还提供 create-mcp-app、migrate-oai-app、add-app-to-server、convert-web-app 四个 Agent Skill, 分别用于从零脚手架、从 OpenAI Apps SDK 迁移、给已有 MCP server 的工具补 UI、把存量 web 应用改造成混合形态。本地可核对的 SDK 版本为 @modelcontextprotocol/ext-apps 2.0.3(搭配 @modelcontextprotocol/client 2.3.1 与 @modelcontextprotocol/server 2.3.1), 扩展协议版本为 2026-01-26; 该规范版本已标注为稳定, 另有 draft 版本并行演进。
+生态件包括宿主侧渲染组件、SDK 内置的 AppBridge(自建宿主用, 与 App 类共享同一套协议实现), 以及一批官方示例与模板; 配套工具覆盖从零脚手架、从其他 Apps 方案迁移、给已有 MCP server 的工具补 UI、把存量 web 应用改造成混合形态等场景(具体命令名随 SDK 版本调整)。本地工作区 `apps/mcp` 的依赖声明为 `@modelcontextprotocol/ext-apps ^2.0.3`、`@modelcontextprotocol/client|core|server ^2.3.1`, 实际解析版本以 pnpm lockfile 为准; 扩展协议仍在活跃演进, 版本协商见 §2.3 与 §3.2。
 
 ## 七、与 A2UI 的对比
 

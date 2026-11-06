@@ -2,12 +2,28 @@
 title: "Yukino Codegen: 从自然语言需求到可运行 Web 应用"
 description: "AI 全栈代码生成平台的技术解析: 服务端用 Yukino 编码 Agent 在真实磁盘上迭代产出 Vite 工程, 再在 OS 沙箱内完成依赖安装与生产构建, 以能力 URL 形式的静态预览发布 dist, 经 WebSocket 事件溯源与预览桥闭合生成/运行/修复回路"
 local_path: "$HOME/github/yukino-codegen"
-local_commit: "1694a6b5eb0632270c2605b4738720fd11073a86"
+local_commit: "da904a235056bb7e42e7917b461bcf7e07b539e2"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-codegen` 在 `1694a6b5eb06` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-codegen` 在 `da904a235056` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+    U[用户自然语言需求] --> WS[WebSocket run 消息]
+    WS --> SUB[submit 按运行时状态分流]
+    SUB --> TURN[executeTurn 单轮编排: claimTurn 互斥 + TurnGate 准入]
+    TURN --> AGENT[Yukino Agent 工具循环]
+    AGENT --> DISK[服务器磁盘 tmp/code_output/appId Vite 工程]
+    DISK --> SB[OS 沙箱: npm install + npm run build -- --base=./]
+    SB --> PRE[独立监听器 /p/能力token/revision/ 静态预览]
+    PRE --> IFRAME[浏览器 iframe 预览]
+    IFRAME --> BRIDGE[预览桥: 元素选中 + 错误回传]
+    BRIDGE --> WS
+```
 
 Yukino Codegen 是一个 AI 全栈代码生成平台: 用户用一句自然语言描述想要的应用, 平台在服务器上驱动一个真实的编码 Agent 在文件系统上迭代产出前端工程, 再在 OS 沙箱内完成依赖安装与生产构建, 把 `dist` 产物经独立监听器发布为静态预览, 最终在预览 iframe 中呈现一个真实可运行的 Web 应用。生成过程本身是实时可交互的: 用户可以中途 steering 纠偏、审批计划、回退对话与代码、切换模型与思考强度、上传图片与 @ 提及文件。本文讲的是这条主链路如何被工程化: 一轮生成如何被编排与准入, 服务器与浏览器各自承担什么职责, 生成产物如何被构建与发布为静态预览, 生成/运行/修复循环如何闭合, 以及沙箱、密钥、文件路径等安全边界如何划定。
 
@@ -449,3 +465,14 @@ Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked`(g
 - 指标采集面目前只有 token 用量, 前端监控在生产构建里实际不外发——可观测性接口已就位但尚未填满;
 - 权限默认 `bypassPermissions`(无人值守生成), 需要人工把关时应切到 `default`/`plan` 等模式, 并接受交互代理 5 分钟超时后失败关闭(拒绝)、计划审批 10 分钟过期的行为;
 - 对话回退检查点上限 50 个, 提示词历史上限 200 条, transcript 回放路径只恢复最近 200 条消息——超长会话的细粒度回退能力有明确边界。
+
+---
+
+**延伸阅读**
+
+- [Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent](./yukino-chat)
+- [Yukino Chatbot: Koa 3 服务端与 React 19 分层客户端](./yukino-chatbot)
+- [Yukino MCP: 工具注册、向量索引与连接生命周期](./yukino-mcp)
+- [Yukino Sentry: 前端与 Node 错误采集 SDK](./yukino-sentry)
+- [React 19 客户端状态与数据获取模式](./react)
+- [Vite 8 构建与 PWA 工程化](./vite)

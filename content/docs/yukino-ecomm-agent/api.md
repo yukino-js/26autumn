@@ -2,11 +2,11 @@
 title: "HTTP API 和管理台"
 description: "HTTP API 和管理台: API 服务拓扑与启动顺序、server/main.js 离线任务入口、统一错误约定, 对话 / 知识库 / 数据飞轮与评测 / 管理各端点的请求响应契约、job runner, 以及 Lit 前端控制台的路由与架构要点"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
+local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/api/`、`server/src/core/`、`client/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 yukino-ecomm-agent 的对外表面分三块: API 服务 (Hono)、两个 MCP 服务 (见 [MCP 和 Skill](./mcp)) 和前端控制台. API 服务是唯一连接 <u>agent 图</u>、知识库、数据飞轮和管理页面的入口, 所有路由都挂在 `server/src/server.ts` 的 `createApp()` 里.
@@ -149,7 +149,7 @@ flowchart TD
 - `GET /api/review/:review_id`: 条目详情 + `approved_answer` + `raws` (归并进该标准化问题的每条原始问题: `{ raw_question, source, reason, retrieved_chunks, created_at }`); 不存在时 `404` "Knowledge gap not found";
 - `POST /api/review/:review_id/approve` `{ approved_answer }`: 仅 `pending_review` 可审 (否则 `409`); 批准答案以 `faq` 类型 chunk 写入知识库并向量化, 写回失败回滚 chunk、返回 `502`, 状态不变可重试; 状态更新遇并发冲突返回 `409` (知识已写入, 需人工核对); 成功返回 `{ ok, chunk_ids }`;
 - `POST /api/review/:review_id/reject`: 仅 `pending_review` 可拒, 否则 `404` / `409`;
-- `GET /api/rag-eval/overview`: 读取 `data/rag/reports/rag_eval.json` (报告不存在时返回 `present: false` 与重跑提示). 有报告时返回 `meta`、`retrieval` (四策略)、`evidence_coverage`、`generation`、`read_notes`、`best` (MRR 最高的策略)、`strategies`、`buckets` (`A_policy` / `B_model` / `C_colloquial` / `E_multi`) 以及产物文件状态与 `eval-rag` job 状态; 页面只读产物, 从不重算;
+- `GET /api/rag-eval/overview`: 读取 `data/rag/reports/rag_eval.json` (报告不存在时返回 `present: false` 与重跑提示). 数据集 `tests/data/eval_rag.jsonl` 共 300 条样本 (5 桶各 60 条). 有报告时返回 `meta`、`retrieval` (四策略)、`evidence_coverage`、`generation`、`read_notes`、`best` (MRR 最高的策略)、`strategies`、`buckets` (`A_policy` / `B_model` / `C_colloquial` / `E_multi`) 以及产物文件状态与 `eval-rag` job 状态; 页面只读产物, 从不重算;
 - `GET /api/rag-eval/faith-cases?status=&page=&size=`: 幻觉案例台账分页 (`page` ≥ 1 默认 1, `size` 1-50 默认 5, `status` ∈ `unresolved` / `resolved` / `dismissed`), 返回 `items`、`total`、`pages`、`counts` 与 `hallucination` 汇总 (evaluated、judged_rate、confirmed_rate、ledger 等); resolved 后又变回 unresolved 的案例带 `reopened: true`;
 - `POST /api/rag-eval/faith-cases/:case_id/status` `{ status, resolution }`: 标记 `resolved` 必须写明如何解决, 标记 `dismissed` 必须写明为何无需改动 (`resolution` ≤ 300 字符, 否则 `400`); 案例不存在 `404`;
 - `GET /api/observability/overview`: 三个块 —— `cost` (读取 `data/observability/reports/cost_by_intent.json`, 对应 `cost-report` job, 含按意图的 token 账单 rows / total_tokens / total_requests / top)、`trend` (数据库中最近 10 轮评测运行, 指标为 `recall_at_5` / `recall_at_10` / `mrr` / `faithfulness` / `refusal_rate`, 对应 `eval-flywheel` job)、`calibration` (读取 `confidence_calibration.json`, 对应 `calibrate-confidence` job; `in_use` 为 `EVIDENCE_CONFIDENCE_THRESHOLD` 默认 0.26, 权重 top1 = 0.5、valid_count = 0.2、margin = 0.2、key_clause = 0.1, `in_sync` ∈ `match` / `conservative` / `aggressive`).
@@ -213,3 +213,13 @@ CSR-only SPA (`client/`): Lit + @yukino.js/lit-jsx (React 风格 JSX 编译成 l
 - `user_id` 来自 localStorage key `yukino_agent2_session_id`, 首次访问用 `crypto.randomUUID()` 生成;
 - API 客户端 `app/lib/api.ts`: 非 2xx 时从响应体提取 `detail` 作为错误消息 (与服务端统一错误约定对齐); SSE 解析在 `app/lib/sse.ts`: 按 `\n\n` 分帧、读 `data:` 行, `[DONE]` 结束, `event: error` 帧直接抛错;
 - 导航用 `app/lib/router.ts` 的 `navigate()`: `history.pushState` + `router.goto`.
+
+---
+
+**延伸阅读**
+
+- [LangGraph 会话图编排](./workflow): SSE 事件、interrupt 确认流与恢复端点背后的图节点
+- [知识库 RAG](./rag): `/api/kb/search` 检索策略与 `/api/kb/preview` 切割特征
+- [可观测性和数据飞轮](./observable): job runner、评测报告与审核队列的数据来源
+- [LLM 接入、表设计与工具设计](./llm): 工具审计与消息/会话表的字段契约
+- [MCP 和 Skill](./mcp): 两个演示 MCP 服务的端口与工具清单

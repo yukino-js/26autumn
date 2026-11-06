@@ -2,11 +2,11 @@
 title: "LLM"
 description: "LLM 接入层 (src/llm/): 把对话历史翻译成 Anthropic / OpenAI Responses / OpenAI Chat Completions 三种协议的 API 请求, 把 SSE 流统一映射成 StreamEvent; 覆盖思考强度映射, token 计费与 prompt cache 打点, 消息构建与配对修复, 错误分类重试, 模型发现与 ConversationManager"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/llm`、`src/conversation`、`src/config`、`src/mcp`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -390,3 +390,13 @@ ConversationManager (src/conversation/index.ts) 是这份历史的唯一持有�
 - recordUsageAnchor / clearUsageAnchor / usageAnchorState: token 估算锚点, 基线为 input + cache_read + cache_creation + output 四项之和
 
 考虑到流式接收, CLI 正在向 assistant 消息追加 SSE 增量, 同时 TUI 正在读消息列表以渲染, 两处同时操作同一份历史; Node.js 单线程异步模型天然避免了数据竞争。追加增量时定位正在接收的 assistant 消息, 更新 TUI 时读取一份快照
+
+---
+
+**延伸阅读**
+
+- [react-and-agent-loop](./react-and-agent-loop): `StreamEvent` 在 agent loop 中的消费顺序与错误自愈
+- [function-calling](./function-calling): 工具 schema 如何按协议翻译, tool_use / tool_result 配对
+- [context-compaction](./context-compaction): usage anchor 作为压缩阈值估算的基线
+- [mcp](./mcp): `defer_loading` 工具与 cache_control 的互斥约束
+- [agents-md-and-memory](./agents-md-and-memory): 长期记忆如何以 system-reminder 注入历史头部

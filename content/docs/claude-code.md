@@ -2,11 +2,11 @@
 title: "Claude Code 兼容实现: 构建体系、核心循环与多 Provider 兼容层"
 description: "一个终端 AI 编码助手的工程实现剖析: Bun 代码分割构建、流式 Agent 循环与工具并发调度、核心白名单加延迟发现的工具系统, 以及把异构模型协议收敛到 Anthropic 内部格式的流适配器模式"
 local_path: "$HOME/Downloads/claude-code"
-local_commit: "963e0013184ecc1521289a0fc7d5da4bb6e45356"
+local_commit: "77a7934e15d69da13879112ed7db695c9ee7a52a"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/claude-code` 在 `963e0013184e` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/claude-code` 在 `77a7934e15d6` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -61,9 +61,9 @@ API 客户端 (`src/services/api/claude.ts`, 约 3600 行) 负责组装请求参
 
 为什么必须代码分割, 是这份实现里最有价值的工程结论之一。Bun 使用的 JavaScript 引擎 (JSC) 会全量解析单个大文件的字节码并做即时编译, 17MB 的单文件产物使进程 RSS 暴涨到约 1GB (同样产物在 Node/V8 下因懒解析只需约 220MB)。分割成 600 多个小 chunk (实测 627 个) 后按需加载, `--version` 这类只触及少量模块的路径 RSS 从 966MB 降到 30MB, 完整加载 (pipe 模式) 也从 1088MB 降到 318MB。这不是风格偏好, 而是被内存数据验证过的硬约束。
 
-同时提供另一条基于 Vite/Rollup 的备选管线 (`vite.config.ts`), 同样开启代码分割, chunk 输出到 `dist/chunks/`; 构建后处理脚本 (`scripts/post-build.ts`) 对仅 Bun 支持的运行时 API 做兼容处理并复制 vendor 资源。
+同时提供另一条基于 Vite/Rollup 的备选管线 (`vite.config.ts`, SSR/Rollup 输出), 同样开启代码分割, chunk 命名到 `dist/chunks/[name]-[hash].js`; 构建后处理脚本 (`scripts/post-build.ts`) 把第三方依赖里未加保护的 `globalThis.Bun` 解构改写为带 `typeof` 守卫的版本, 并复制 vendor 资源。
 
-产物对运行时做了双向兼容: 构建后处理把 Bun 专属的 `import.meta.require` 替换为在 Node 下也能工作的等价实现 (回退到 `createRequire`), 并把第三方依赖里未加保护的 `globalThis.Bun` 解构改写为带 `typeof` 守卫的版本。因此同一份产物既可用 Bun 直接运行, 也可用 Node 运行; 包同时提供两个可执行入口 (`ccb` 走 Node, `ccb-bun` 走 Bun), 都指向同一个 `cli.js`。vendor 路径解析统一走 `src/utils/distRoot.ts` — 基于 `import.meta.url` 中最后一个 `dist` 或 `src` 目录段定位根, 保证源码运行与打包运行都能找到资源。
+产物对运行时做了双向兼容: `build.ts` 把 Bun 专属的 `import.meta.require` 替换为在 Node 下也能工作的等价实现 (回退到 `createRequire`), `scripts/post-build.ts` 处理 `globalThis.Bun` 解构守卫。因此同一份产物既可用 Bun 直接运行, 也可用 Node 运行; 包同时提供两个可执行入口 (`ccb` → `dist/cli-node.js` 走 Node, `ccb-bun` → `dist/cli-bun.js` 走 Bun)。vendor 路径解析统一走 `src/utils/distRoot.ts` — 基于 `import.meta.url` 中最后一个 `dist` 或 `src` 目录段定位根, 保证源码运行与打包运行都能找到资源。
 
 ### 3.2 特性开关机制
 
@@ -147,7 +147,7 @@ API 客户端 (`src/services/api/claude.ts`, 约 3600 行) 负责组装请求参
 
 ### 5.3 核心白名单与延迟发现
 
-工具数量膨胀后的选择是"白名单加延迟发现", 而不是全量注册。`CORE_TOOLS` 白名单 (`src/constants/tools.ts`, 约 29 个工具名) 里的工具 — 文件操作、执行、子代理、任务管理、规划、Web、LSP、Skill、Workflow、Sleep, 加上发现机制三件套 (SearchExtraTools、ExecuteExtraTool、StructuredOutput) — 始终加载并直接可见; 其余内置工具与全部 MCP 工具由 `isDeferredTool()` 判定为延迟工具, 单个工具可以用 `alwaysLoad: true` (MCP 侧通过 `_meta['anthropic/alwaysLoad']`) 显式退出延迟。
+工具数量膨胀后的选择是"白名单加延迟发现", 而不是全量注册。`CORE_TOOLS` 白名单 (`src/constants/tools.ts`, 28 个工具名) 里的工具 — 文件操作、执行、子代理、任务管理、规划、Web、LSP、Skill、Workflow、Sleep, 加上发现机制三件套 (SearchExtraTools、ExecuteExtraTool、StructuredOutput) — 始终加载并直接可见; 其余内置工具与全部 MCP 工具由 `isDeferredTool()` 判定为延迟工具, 单个工具可以用 `alwaysLoad: true` (MCP 侧通过 `_meta['anthropic/alwaysLoad']`) 显式退出延迟。
 
 当前的实现是**统一的自建工具搜索**, 不再依赖任何 API 侧的延迟加载特性 (没有 `defer_loading` 字段、没有 `tool_reference` 块、没有相关 beta 头): 延迟工具的 schema 根本不进入 API 请求的 tools 数组, 只有核心工具与 SearchExtraTools 本身被发送。这样做换来一个直接的收益 — tools 数组跨轮次保持稳定, 提示缓存不会因为"发现的工具越来越多"而被撑爆。模型要用延迟工具, 走两步流程: 先用 SearchExtraTools 发现, 再用 ExecuteExtraTool 按名字调用; ExecuteExtraTool 在执行前会校验目标工具确实已被发现过 (扫描消息历史中的发现记录), 未发现则拒绝并提示正确的发现语法, 从协议上防止模型跳过发现直接猜名字。
 
@@ -168,11 +168,11 @@ API 客户端 (`src/services/api/claude.ts`, 约 3600 行) 负责组装请求参
 
 延迟搜索由环境变量 `ENABLE_SEARCH_EXTRA_TOOLS` 控制, 支持三种模式:
 
-| 模式     | 取值                           | 行为                                                                                                                                                    |
-| -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 始终开启 | 未设置 / true / `auto:0`       | 非核心工具一律延迟, 需要发现后调用 (默认)                                                                                                               |
-| 自动     | `auto` 或 `auto:N` (N 取 1-99) | 当延迟工具定义的 token 规模超过阈值时才启用延迟, 阈值按上下文窗口的百分比配置 (默认 10%), token 计数 API 不可用时退化为字符数启发式 (约 2.5 字符/token) |
-| 关闭     | false / `auto:100`             | 全部工具内联暴露, SearchExtraTools 从工具列表中移除                                                                                                     |
+| 模式     | 取值                            | 行为                                                                                                                                                    |
+| -------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 始终开启 | 未设置 / true / `auto:0`        | 非核心工具一律延迟, 需要发现后调用 (默认)                                                                                                               |
+| 自动     | `auto` 或 `auto:N` (N 取 0-100) | 当延迟工具定义的 token 规模超过阈值时才启用延迟, 阈值按上下文窗口的百分比配置 (默认 10%), token 计数 API 不可用时退化为字符数启发式 (约 2.5 字符/token) |
+| 关闭     | false / `auto:100`              | 全部工具内联暴露, SearchExtraTools 从工具列表中移除                                                                                                     |
 
 另有一个总开关 (`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`) 可以强制关闭延迟搜索。token 计数结果按延迟工具名集合记忆化, MCP 服务器连接/断开时缓存自然失效。这里有一条容易被忽略的工程细节: 阈值判定按**实际调用的模型**判断而不是按会话主模型判断, 事件里专门记录 checkedModel — 因为子代理可能使用更小的模型 (例如 haiku), 上下文窗口不同, 二者的工具搜索决策可能不同。
 
@@ -183,8 +183,8 @@ API 客户端 (`src/services/api/claude.ts`, 约 3600 行) 负责组装请求参
 内部供应商类型共七种: `firstParty` (Anthropic 官方 API)、`bedrock` (AWS)、`vertex` (Google Cloud)、`foundry` (Microsoft), 以及通过兼容层接入的 `openai`、`gemini`、`grok` (xAI)。选择逻辑在 `src/utils/model/providers.ts` 的 `getAPIProvider()`, 优先级是:
 
 1. 登录流程写入设置的 `modelType` (支持 openai/gemini/grok 三值) 最高;
-2. 云平台环境变量 `CLAUDE_CODE_USE_BEDROCK` / `USE_VERTEX` / `USE_FOUNDRY`;
-3. 兼容层环境变量 `CLAUDE_CODE_USE_OPENAI` / `USE_GEMINI` / `USE_GROK`;
+2. 云平台环境变量 `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_FOUNDRY`;
+3. 兼容层环境变量 `CLAUDE_CODE_USE_OPENAI` / `CLAUDE_CODE_USE_GEMINI` / `CLAUDE_CODE_USE_GROK`;
 4. 都未设置时默认直连 `firstParty`。
 
 新增供应商只需在这个函数注册, `isThirdPartyAPIProvider()` 一个谓词即可区分直连与三方。
@@ -261,7 +261,7 @@ Bun workspaces 按职责划分, 主 CLI 依赖其中一部分:
 | ---------------------------- | --------------------------------------------------------------------------- |
 | `@ant/ink`                   | 分叉的 React 终端渲染框架 (components、core、hooks、keybindings、theme)     |
 | `@ant/model-provider`        | 供应商定义、模型映射与流适配器                                              |
-| `builtin-tools`              | 全部内置工具实现 (60 个工具目录)                                            |
+| `builtin-tools`              | 全部内置工具实现 (63 个工具目录, 不含 `shared` 公共目录)                    |
 | `agent-tools`                | 子代理相关工具                                                              |
 | `mcp-client`                 | MCP 协议客户端库                                                            |
 | `acp-link`                   | WebSocket 到 ACP 的桥接服务                                                 |
@@ -318,3 +318,13 @@ workflow-engine 值得单独一提: 编排脚本是普通 JS 函数体 (以 `new
 6. 工具契约的安全默认值全部 fail-closed (默认非并发安全、默认非只读), 由统一的构建工厂集中兜底。
 7. 权限裁决做成多路 resolver 竞速、先到者赢得, 渠道/界面/钩子/分类器共用同一套 claim 语义, 是分布式审批的干净解法。
 8. 在缺乏稳定外部契约时, 用"进程全局 mock 的污染纪律"保证测试隔离, 是一条值得写进规范的经验。
+
+---
+
+**延伸阅读**
+
+- [Pi Agent Harness](./pi): 另一套极简内核 + durable 运行时的编码 Agent 实现对照。
+- [工具调用原理](./yukino/function-calling): 工具 schema、参数校验与结构化返回的通用模型。
+- [ReAct 与 Agent 循环](./yukino/react-and-agent-loop): 观察—推理—行动轮次的通用循环形态。
+- [上下文压缩](./yukino/context-compaction): 摘要边界、延迟工具快照跨压缩存活的通用做法。
+- [Yukino MCP 集成](./yukino/mcp): MCP 客户端接入、工具暴露与资源读取的工程实践。

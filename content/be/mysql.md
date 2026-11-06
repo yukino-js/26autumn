@@ -3,27 +3,31 @@ title: "MySQL 与 InnoDB 技术手册"
 description: "以 MySQL 8.4 LTS 为基准, 覆盖连接与 SQL 执行流程、InnoDB 物理结构与索引体系、事务 MVCC 与锁、redo/undo/binlog 与崩溃恢复、主从复制、分库分表与在线 DDL、读写分离下的缓存一致性以及慢查询调优方法论"
 ---
 
+:::note 版本基线
+文中行为与默认值以 **MySQL 8.4 LTS** 为准, 参数默认值与机制描述核对 MySQL 8.4 Reference Manual（官方文档）; 实例化结论需以本机 `show variables` / `show status` 实测为准. 实例初始化时创建两个默认 undo 表空间, `innodb_undo_tablespaces` 已废弃, 不再用于配置新增 undo 表空间.
+:::
+
+**主线一览**
+
 ```mermaid
 flowchart LR
-    A[客户端 SQL] --> B[连接器与解析器]
-    B --> C[优化器与执行器]
-    C --> D[InnoDB Buffer Pool]
-    D --> E[undo log 记录旧值]
-    D --> F[redo log 写 WAL]
-    F --> G[两阶段提交]
-    G --> H[binlog 落盘]
-    H --> I[返回客户端]
+    A["客户端 SQL"] --> B["连接器与解析器"]
+    B --> C["优化器与执行器"]
+    C --> D["InnoDB Buffer Pool"]
+    D --> E["undo log 记录旧值"]
+    D --> F["redo log 写 WAL"]
+    F --> G["两阶段提交"]
+    G --> H["binlog 落盘"]
+    H --> I["返回客户端"]
 ```
 
-:::note 版本基线
-文中行为与默认值以 **MySQL 8.4 LTS** 为准; 例如 `innodb_undo_tablespaces` 在 8.4 _已废弃_, undo 表空间<u>数量固定为 2</u>, 不再随参数变化。
-:::
-
 :::danger 崩溃恢复前提
-**两阶段提交**是 redo 与 binlog 一致的唯一保障: 只有 `innodb_flush_log_at_trx_commit=1` 且 `sync_binlog=1` 才能做到宕机不丢事务, 任何一侧放宽都会引入主从不一致窗口。
+**两阶段提交**是 redo 与 binlog 一致的唯一保障: 只有 `innodb_flush_log_at_trx_commit=1` 且 `sync_binlog=1` 才能做到宕机不丢事务, 任何一侧放宽都会引入主从不一致窗口.
 :::
 
-这份文档面向后端工程师与 DBA, 从服务端执行流程讲到 InnoDB 的磁盘与内存结构, 再延伸到事务、锁、日志、复制与分布式数据管理, 目标是建立一套可用于排查故障与做架构决策的心智模型. 内容按"机制、现象、取舍"组织: 每一节先说明一条机制如何运作, 再说明它会产生什么可观测现象, 最后给出工程上的选择. 读者可以按章节独立查阅, 也可以顺序阅读. 文中行为与默认值以 MySQL 8.4 LTS 为准. Redis 侧的缓存与锁细节见 [Redis 技术手册](./redis), 面向数仓的消息与列存链路见 [ClickHouse 与 Kafka 技术手册](./clickhouse-kafka).
+这份文档面向后端工程师与 DBA, 从服务端执行流程讲到 InnoDB 的磁盘与内存结构, 再延伸到事务、锁、日志、复制与分布式数据管理, 目标是建立一套可用于排查故障与做架构决策的心智模型. 内容按"机制、现象、取舍"组织: 每一节先说明一条机制如何运作, 再说明它会产生什么可观测现象, 最后给出工程上的选择. 读者可以按章节独立查阅, 也可以顺序阅读.
+
+## 一、连接与 SQL 执行流程
 
 ## 一、连接与 SQL 执行流程
 
@@ -221,7 +225,7 @@ B+ 树与 B 树的区别:
 3. 后台线程定期刷: page cleaner 线程按 `innodb_io_capacity` 与 `innodb_io_capacity_max` 设定的 I/O 能力, 持续把脏页比例压回 `innodb_max_dirty_pages_pct` (默认 90) 以下.
 4. MySQL 正常关闭时, 把所有脏页刷盘保证干净退出.
 
-刷脏速度由 `innodb_io_capacity` 决定上限 (MySQL 8.4 起默认 10000, 8.0 默认 200, 机械盘应调低), 突发刷脏可达 `innodb_io_capacity_max` (默认为前者的 2 倍); 脏页比例逼近阈值时按 `innodb_max_dirty_pages_pct_lwm` 提前降速. 调优的核心是让刷脏速率跟上脏页产生速率, 避免 redo 写满触发的强制刷脏把前台写入拖慢.
+刷脏速度由 `innodb_io_capacity` 决定上限 (**8.4 默认 10000**; 8.0 为 200, 机械盘应按实测 IOPS 调低), 突发刷脏可达 `innodb_io_capacity_max` (**8.4 默认取 `innodb_io_capacity` 的 2 倍**); 脏页比例逼近阈值时按 `innodb_max_dirty_pages_pct_lwm` 提前降速. 以上默认值核对 MySQL 8.4 Reference Manual 的 InnoDB 参数页与升级变更表. 调优的核心是让刷脏速率跟上脏页产生速率, 避免 redo 写满触发的强制刷脏把前台写入拖慢.
 
 ### Change Buffer
 
@@ -237,7 +241,7 @@ Change Buffer 是 Buffer Pool 中的一块区域. 当被更新的二级索引页
 
 ### 索引分类与聚簇索引键的选择
 
-- 按数据结构: B+ 树索引、哈希索引、全文索引. InnoDB 支持 B+ 树与全文索引, 不提供显式哈希索引, 但内部有自适应哈希索引作为优化.
+- 按数据结构: B+ 树索引、哈希索引、全文索引. InnoDB 支持 B+ 树与全文索引, 不提供显式哈希索引; 内部的自适应哈希索引 (Adaptive Hash Index, AHI) 由 `innodb_adaptive_hash_index` 控制, **MySQL 8.4 默认关闭**（8.0 默认开启, 官方 8.4 升级变更表）, 仅在热点等值查询集中的场景评估是否开启.
 - 按存储形式: 聚簇索引 (叶子节点存整行数据) 与二级索引 (叶子节点存索引列值加主键值).
 - 按字段特性: 主键索引、唯一索引、普通索引、前缀索引.
 - 按字段数量: 单列索引与联合索引.
@@ -382,7 +386,7 @@ on t.id = tmp.id;
 - 全字段排序: 把满足条件的行连同所有 select 字段一起放入 `sort_buffer_size` (默认 256KB) 排序, 排好直接输出. 单次排序完成, 但排序单元大, buffer 装不下时落盘归并.
 - rowid 排序: 只把排序键与主键放入 sort buffer 排序, 排好后再按主键回表取其余字段. 排序单元小、buffer 内能放更多行, 但多一次回表随机 I/O.
 
-两种策略的选择由优化器基于成本决定 (`max_length_for_sort_data` 自 MySQL 8.0.20 起已废弃, 不再参与该决策), 实际采用的方式可通过 optimizer trace 中 `filesort_summary` 的 `sort_mode` 确认. 优化方向是让排序尽量走索引 (覆盖索引 + 最左前缀) 免掉 filesort; 必须 filesort 时, 用覆盖索引减少参与排序的列、调大 `sort_buffer_size` 避免落盘.
+两种策略的选择由优化器基于成本决定 (`max_length_for_sort_data` 已废弃, 不再参与该决策), 实际采用的方式可通过 optimizer trace 中 `filesort_summary` 的 `sort_mode` 确认. 优化方向是让排序尽量走索引 (覆盖索引 + 最左前缀) 免掉 filesort; 必须 filesort 时, 用覆盖索引减少参与排序的列、调大 `sort_buffer_size` 避免落盘.
 
 ### join 的算法与驱动表选择
 
@@ -629,7 +633,7 @@ insert into t values (7);
 
 undo log 的细节: insert 回滚记录主键 (回滚即删除); delete 回滚记录整行 (回滚即重插, 且 delete 只是打删除标记, 由 purge 线程最终清理); update 非主键列记录旧值, update 主键列会拆为 delete 加 insert. 每条 undo log 带事务 ID 与回滚指针, 串成版本链支撑 MVCC. undo 页本身的修改也写 redo log, 因此 undo log 同样是持久的.
 
-undo 数据存放在 2 个独立的 undo 表空间中, 与用户表空间分离 (`innodb_undo_tablespaces` 在 8.4 已废弃, 设置不再生效, 数量固定为 2). 不再被任何 Read View 需要的历史版本由 purge 线程清理; 当某个 undo 表空间超过 `innodb_max_undo_log_size` (默认 1GB) 且其中历史版本均可回收时, 通过 truncate 回收磁盘 (`innodb_undo_log_truncate`, 默认开启). 长事务会让 purge 无法推进, undo 表空间持续膨胀, 这是长事务除了锁之外的另一大危害.
+undo 数据存放在 2 个独立的默认 undo 表空间中, 与用户表空间分离; `innodb_undo_tablespaces` 参数已废弃, 不能再用于配置新增 undo 表空间. 不再被任何 Read View 需要的历史版本由 purge 线程清理; 当某个 undo 表空间超过 `innodb_max_undo_log_size` (默认 1GB, 官方文档) 且其中历史版本均可回收时, 通过 truncate 回收磁盘 (`innodb_undo_log_truncate`, 默认开启). 长事务会让 purge 无法推进, undo 表空间持续膨胀, 这是长事务除了锁之外的另一大危害.
 
 ### redo log 与 WAL
 
@@ -1020,3 +1024,13 @@ explain analyze select ...;
 - 单库容量或并发触及瓶颈时, 先做归档、冷热分离与分区, 再考虑分库分表; 一旦分片, 就要一并解决分布式 ID、跨分片查询、分布式事务与平滑迁移.
 - 引入 Redis 作为缓存副本时, 默认接受最终一致, 用 Cache Aside 加 TTL 作为主路径, 用 binlog 订阅兜底, 用对账与监控让不一致可见; 资金、库存等强一致场景不要用缓存糊弄.
 - 大表结构变更使用 gh-ost 等在线工具, 并在变更前清理长事务、设置较短的锁等待超时, 避免 MDL 排队雪崩.
+
+---
+
+**延伸阅读**
+
+- [Redis 8.x 核心原理](./redis): 缓存副本的内存数据结构、淘汰策略与缓存一致性在客户端侧的约束.
+- [ClickHouse 与 Kafka 技术手册](./clickhouse-kafka): 列存分析链路与消息队列, 与 OLTP 库的分工边界.
+- [中间件与基础设施](./middleware): etcd 分布式协调、gRPC 服务通信、Prometheus 监控与 MySQL 实例的配套治理.
+- [Go 语言核心与底层原理](./go): 服务端连接池、goroutine 生命周期与事务边界在应用侧的实现.
+- [Go 缓存库实践](./yukino-cache-go): 缓存封装、并发回填与一致性兜底在工程代码中的落地.

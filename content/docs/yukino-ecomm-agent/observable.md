@@ -2,11 +2,11 @@
 title: "可观测性和数据飞轮"
 description: "从 server 源码出发, 讲清 Langfuse 双链路 tracing、防劣化的离线评测流水线与 job runner、阅读笔记、幻觉案例台账, 以及低置信问题池驱动的数据飞轮闭环"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
+local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/core/`、`server/src/api/`、`server/scripts/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -72,7 +72,7 @@ trace 能看到某一条请求, 但更新知识库/prompt、更换某个节点�
 
 ### eval-rag: RAG 四策略对比
 
-`scripts/eval-rag.ts`, 数据集是 `tests/data/eval_rag.jsonl`, 问题桶为 A_policy 政策、B_model 型号、C_colloquial 口语、E_multi 跨文档 (参与评分), 外加 D_absent 库外问题 (只测拒答). 支持 `--skip-gen` 只跑确定性阶段. 三个阶段:
+`scripts/eval-rag.ts`, 数据集是 `tests/data/eval_rag.jsonl`, 共 300 条样本 (5 桶各 60 条), 问题桶为 A_policy 政策、B_model 型号、C_colloquial 口语、E_multi 跨文档 (参与评分), 外加 D_absent 库外问题 (只测拒答). 支持 `--skip-gen` 只跑确定性阶段. 三个阶段:
 
 1. 检索: 4 种策略 (vector / bm25 / hybrid / hybrid_rerank) × 4 类问题桶, 每策略取 top-10, 按期望 section 在命中列表中的排名算 Recall@5 和 MRR, 分桶加 overall. 检索并发 5, 单次调用 45 秒超时, 失败重试一次.
 2. 证据覆盖率: 确定性机械匹配 —— 标准答案的关键点在 top-10 证据文本中出现的比例 (归一化空白后子串匹配), 不经过 LLM, 结果可复现.
@@ -169,3 +169,13 @@ trace 能看到某一条请求, 但更新知识库/prompt、更换某个节点�
 `kb-mine` (`node server/main.js kb-mine`, `server/src/kb/mining.ts`): 把全部历史会话按每批 20 条交给 LLM (`MINING_PROMPT`), 提取有复用价值的问答对 (跳过闲聊和纯个案), 写入 `qa_extraction_staging` 暂存表 (batchNo 形如 `mine-20261027120000`, 初始状态 `extracted`). 随后与知识库已有问题做标准化去重: `normalizeQuestion` 小写化并去掉所有非字母数字字符, 指纹相同判为重复, 标记 `discarded`, 其余标 `kept`.
 
 `kept` 的条目进入 /kb 页面暂存区人工审核 (页面按 extracted / kept / discarded / approved / rejected 五种状态分组展示); 批准后经 `approvedStagingChunk` 打包成 `conversation_history` 类型的 chunk (`sectionPath=mined`, `contentType=mined`), 走与审核写回相同的双写 + 立即向量化 + 失败回滚流程.
+
+---
+
+**延伸阅读**
+
+- [RAG](./rag): 召回 → RRF → rerank 管线与证据置信度公式
+- [可观测性飞轮的模型与表](./llm): 评测、台账与审计表的字段定义
+- [HTTP API 和管理台](./api): job runner、评测报告与审核队列端点
+- [LangGraph 会话图编排](./workflow): 轮次 trace 如何在节点间落库
+- [会话上下文](./context): 低置信问题与检索快照如何回流到分层记忆

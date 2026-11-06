@@ -3,6 +3,10 @@ title: "NoSQL 管理端工程实践: 组件迁移、native 绑定与池化资源
 description: "类组件迁移函数组件的语义映射与请求竞态、ffi 调用的内存模型与进程池隔离、TCP 连接池的四类异常处理、闭包引用导致的内存泄漏排查、服务可观测性: 运行时指标、OpenTelemetry 插桩、Sentry 错误与 profiling、Grafana 告警设计"
 ---
 
+:::note 版本基线
+本文为 NoSQL 管理端 (Node.js 服务 + React 前端) 的工程实践总结, 不绑定单一代码仓库。文中声明的技术栈: native 侧为第三方 C++ `.so` 动态库, JS 绑定经 ffi-napi (评估迁移 N-API Addon), 进程池/连接池基于 generic-pool; 可观测性栈为 prom-client + Prometheus + Grafana、OpenTelemetry (OTLP/Prometheus 导出)、Sentry Node。文中给出的包名、指标名与 API 名称按当前主流版本口径撰写; 具体依赖版本以落地项目的 lockfile 为准, 本文不钉版本号。
+:::
+
 **主线一览**
 
 ```mermaid
@@ -171,7 +175,7 @@ Buffer 与指针场景是真正的共享内存:
 - JS 把 Buffer 传给 C++ 函数时, 传的是这块内存的地址, C++ 侧直接在这块内存上读写, 零拷贝; C++ 写入的内容 JS 侧立刻可见。解密、解析这类场景正是这样用的: JS 分配 buffer, C++ 原地写入解析结果。
 - 共享带来两个必须注意的问题:
   - 生命周期: C++ 侧只在同步调用期间使用这块内存是安全的; 如果 C++ 把指针存下来异步使用, 而 JS 侧已经没人引用这个 Buffer, GC 可能回收它, C++ 侧就拿到悬垂指针。规避方式是 JS 侧保持引用直到 C++ 用完, 或者 C++ 侧同步拷贝走。
-  - 小 Buffer 的池化陷阱: Node 对小于 `Buffer.poolSize >>> 1` 的 Buffer 会从共享内存池切片分配 (poolSize 长期默认为 8KB, 阈值即 4KB; Node v26.3.0 起默认提升为 64KB, 阈值相应变为 32KB)。把这种切片的地址交给 C++ 有越界读写相邻数据的风险, 传给 native 的 buffer 应用 `Buffer.allocUnsafeSlow` 或确保独立分配。
+  - 小 Buffer 的池化陷阱: Node 对小于 `Buffer.poolSize >>> 1` 的 Buffer 会从共享内存池切片分配 (当前 Node 默认 poolSize 为 8KB, 阈值即 4KB; 该默认值随 Node 版本调整, 以运行时 `Buffer.poolSize` 实测为准)。把这种切片的地址交给 C++ 有越界读写相邻数据的风险, 传给 native 的 buffer 应用 `Buffer.allocUnsafeSlow` 或确保独立分配。
 
 C++ 侧分配的内存不受 JS GC 控制:
 
@@ -392,9 +396,9 @@ JS 插桩与抓栈是后两类数据的生产手段: traces 来自插桩 (在函
 
 ### 运行时指标: RSS、V8 堆与事件循环
 
-prom-client (15.1.3) 的 collectDefaultMetrics 一行代码注册全套默认指标, 是 Node 运行时指标的事实标准。按观测对象分组:
+prom-client 的 collectDefaultMetrics 一行代码注册全套默认指标, 是 Node 运行时指标的事实标准。按观测对象分组:
 
-**内存类。** 指标口径与上文 "RSS 与 V8 堆内存: 两个口径的内存" 一节完全对齐 —— process_resident_memory_bytes 就是 OS 口径的 RSS, nodejs_heap_* 是 V8 托管区口径。数据源可以从源码直接确认: heap 系列指标取自 process.memoryUsage() 的 heapTotal/heapUsed/external 三个字段, heap space 系列取自 v8.getHeapSpaceStatistics(), RSS 指标在 Linux 上读 `/proc/<pid>/status` 的 VmRSS、其他平台读 process.memoryUsage() 的 rss 字段:
+**内存类。** 指标口径与上文 "RSS 与 V8 堆内存: 两个口径的内存" 一节完全对齐 —— process_resident_memory_bytes 就是 OS 口径的 RSS, nodejs_heap_* 是 V8 托管区口径。数据源对应: heap 系列指标取自 process.memoryUsage() 的 heapTotal/heapUsed/external 三个字段, heap space 系列取自 v8.getHeapSpaceStatistics(), RSS 指标在 Linux 上读 `/proc/<pid>/status` 的 VmRSS、其他平台读 process.memoryUsage() 的 rss 字段:
 
 | 指标                                                                   | 含义                                                                       |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -427,13 +431,11 @@ const httpDuration = new client.Histogram({
 
 标签基数纪律是自定义指标的第一约束: 标签值必须是有限可枚举集合 (路由模板、状态码段、操作类型), 不要把 userId、原始 URL、traceId 放进标签 —— 标签组合数就是时间序列数, 基数失控会直接压垮存储与查询。
 
-OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。PrometheusExporter (继承 MetricReader) 以 `{port, endpoint}` 配置启动内置 HTTP server 暴露 /metrics, Prometheus 照常抓取。semantic-conventions (1.43.0) 定义的一组实验性进程与事件循环指标名: `nodejs.eventloop.delay.{min,max,mean,stddev}`、nodejs.eventloop.time、nodejs.eventloop.utilization、process.cpu.time、process.cpu.utilization、process.memory.usage、process.memory.virtual、process.context_switches、process.disk.io —— 语义与 prom-client 默认指标一一对应, 只是命名风格不同; 两条路线选一条, 不要重复采集。
+OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。PrometheusExporter (继承 MetricReader) 以 `{port, endpoint}` 配置启动内置 HTTP server 暴露 /metrics, Prometheus 照常抓取。semantic-conventions 定义的一组进程与事件循环指标名: `nodejs.eventloop.delay.{min,max,mean,stddev}`、nodejs.eventloop.time、nodejs.eventloop.utilization、process.cpu.time、process.cpu.utilization、process.memory.usage、process.memory.virtual、process.context_switches、process.disk.io —— 语义与 prom-client 默认指标一一对应, 只是命名风格不同; 两条路线选一条, 不要重复采集。
 
 两条路线都是拉取模型: Prometheus 按固定周期主动抓取每个实例的 /metrics, 服务端不推送、不维护上报状态, 只负责备好一份当前快照。
 
 ### OpenTelemetry: 自动插桩与手动 span
-
-本机核实的包版本: api 1.9.1、sdk-trace-base 2.11.0、sdk-metrics 2.11.0、sdk-node 0.222.0、exporter-prometheus 0.222.0、semantic-conventions 1.43.0。
 
 装配入口是 NodeSDK, 关键选项:
 
@@ -446,7 +448,7 @@ OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。Pr
 
 一个真实的企业落地实例 (agent 服务的 observability 模块): 用 NodeSDK 装配自定义 SpanProcessor (Langfuse 导出器) 把 trace 导出到 Langfuse; 未配置密钥时整个模块降级为 no-op, 业务路径完全不受影响, 初始化失败也只记日志不抛错; initObservability 与 shutdownObservability 成对, 退出时 sdk.shutdown() 冲刷残余 span。这个 "NodeSDK + spanProcessors + 优雅降级" 的模式值得照抄: 可观测性是增强项而非依赖项, 自身故障必须被吞掉。
 
-自动插桩库生态 (本机核实的清单) 按类别:
+自动插桩库生态按类别:
 
 | 类别           | 库                                                                        |
 | -------------- | ------------------------------------------------------------------------- |
@@ -467,7 +469,7 @@ OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。Pr
 
 ### Sentry Node: 错误、性能与持续 profiling
 
-@sentry/node (10.76.2) 整体构建在 OpenTelemetry 之上: 依赖 @opentelemetry/api、instrumentation、sdk-trace-base, 并内置 http、express、koa、ioredis、mongodb、mysql2、knex、graphql、kafkajs 等 instrumentation 库 —— 性能数据的采集路径直接复用 OTel 自动插桩, Sentry 提供的是上报、聚合、检索与告警平台。
+@sentry/node 整体构建在 OpenTelemetry 之上: 依赖 @opentelemetry/api、instrumentation、sdk-trace-base, 并内置 http、express、koa、ioredis、mongodb、mysql2、knex、graphql、kafkajs 等 instrumentation 库 —— 性能数据的采集路径直接复用 OTel 自动插桩, Sentry 提供的是上报、聚合、检索与告警平台。
 
 错误上报就是错误场景下的抓栈, 一条错误事件携带:
 
@@ -477,7 +479,7 @@ OTel 路线: 项目已接入 OpenTelemetry 时, 指标可并入同一体系。Pr
 
 性能监控由 tracesSampleRate / tracesSampler 控制 trace 采样率。
 
-持续 profiling 是 v9.8.0 引入的能力 (新 continuous profiling API spec, v10 移除了旧的 profilesSampleRate/profilesSampler), 相关选项:
+持续 profiling 对应新的 continuous profiling API (旧的 profilesSampleRate/profilesSampler 已在大版本迭代中移除), 相关选项:
 
 | 选项                       | 语义                                                             |
 | -------------------------- | ---------------------------------------------------------------- |
@@ -588,3 +590,13 @@ groups:
 - 池化资源: 进程池解决崩溃与堆外泄漏的隔离, 连接池解决连接复用与状态治理。参数 (max、min、超时、驱逐) 的取值必须结合被池化资源的成本与故障特征, 通用默认值不足以覆盖生产场景。
 - 内存排查: 先分清堆内堆外, 堆内用 heap snapshot 三次对比加保留链, 堆外用 valgrind 或 ASan; 修复后必须用同一套观测手段复测, 否则无法确认泄漏已收敛。
 - 可观测性: 指标看聚合趋势 (RSS、堆压、GC、事件循环延迟), traces 看单请求因果链, errors 与 profiles 做栈级定位; 告警以症状与 SLO 燃烧率为准, 内存泄漏用 predict_linear 看趋势, CPU 与事件循环告警触发按需 profiling。
+
+---
+
+**延伸阅读**
+
+- [后端中间件与基础设施](../be/middleware): Prometheus、Grafana、OpenTelemetry 在服务端的中间件侧机制与选型对照。
+- [Node 连接池与线程池](../be/node-pool): 池化参数模型、工厂生命周期与异常驱逐的服务端视角补充。
+- [React 组件与 Hooks 实践](../fe/react): 类组件向函数组件迁移时的 effect 依赖、闭包过期值与清理函数规范。
+- [@yukino.js/sentry](../fe/yukino-sentry): 前端 SDK 的错误上报、栈符号化与现场回放形态, 与本文 Sentry Node 侧对照。
+- [插桩与抓栈的理论与方法](./tiktok): 采样/插桩范式、CPU profiling 火焰图归因与跨运行域对齐的完整方法论。

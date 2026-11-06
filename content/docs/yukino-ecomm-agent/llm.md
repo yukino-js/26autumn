@@ -2,11 +2,11 @@
 title: "LLM 接入、表设计与工具设计"
 description: "模型槽位如何接 OpenAI 兼容的 Chat Completions 上游, structured() 与系统提示词如何稳定产出 JSON; PostgreSQL/Prisma 的会话、业务、飞轮与审计表如何组织; 工具注册与执行引擎如何做参数校验、超时、重试与审计"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
+local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/core/`、`server/src/tools/`、`server/prisma/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -146,3 +146,13 @@ MCP 工具 (query_logistics、query_warranty、query_return_status) 由两个独
 8. 审计: 无论成败都写 tool_audit_log (参数、结果摘要截前 500 字符、status、错误消息、重试次数、耗时) 并打 tool_run 结构化日志; 审计写库失败只记 error, 不影响工具执行
 
 查询为空不算故障: engine 不做特殊处理, 工具如实返回空结果, 由模型如实告知用户. 返回给模型的 ToolMessage 带 success/error 状态; 审计里的 status 有 success / failed / timeout / validation_blocked / permission_denied 五种.
+
+---
+
+**延伸阅读**
+
+- [会话上下文](./context): 模型槽位产出的摘要与证据如何进入分层窗口与预算
+- [MCP 和 Skill](./mcp): MCP 工具的注册、formatResult 整形与写前确认
+- [RAG](./rag): query_faq 工具背后的混合检索与精排管线
+- [可观测性和数据飞轮](./observable): 工具审计、trace 与评测样本的落地表
+- [HTTP API 和管理台](./api): 模型槽位配置与审计记录的对外端点

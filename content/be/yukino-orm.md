@@ -2,12 +2,14 @@
 title: "yukino_orm 技术笔记"
 description: "yukino_orm 是构建在 MongoDB 官方驱动之上的 Knex 风格链式 Go ORM: 引擎与连接管理、链式查询构建、聚合分组、流式查询、事务与自增序列"
 local_path: "$HOME/github/yukino.go/libs/yukino_orm"
-local_commit: "02e9621cee8763979175549903d7a67534923751"
+local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go/libs/yukino_orm` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_orm`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
 
 ```mermaid
 flowchart LR
@@ -359,4 +361,6 @@ err := engine.Transaction(ctx, func(sc context.Context, tx *yukino_orm.Engine) e
 - 需要在单个 Query 上并发执行: `Query` 有可变状态, 并发场景应为每个 goroutine 使用独立 Query。
 - 需要不规则复数或缩写命名的集合: 应显式使用 `Collection`。
 
-相关主题: 集合名推导、`$set` 归一化与 `Pluck` 的元素构造都建立在反射之上, `bson` 标签则是驱动与本库共用的字段映射扩展点, 这些语言层机制见 [Go 语言核心](./go); 把查询结果挡在数据库之前的缓存层设计见 [yukino_cache_go](./yukino-cache-go)。
+**延伸阅读**
+
+集合名推导、`$set` 归一化与 `Pluck` 的元素构造都建立在反射之上, `bson` 标签则是驱动与本库共用的字段映射扩展点, 这些语言层机制见 [Go 语言核心](./go); 把查询结果挡在数据库之前的缓存层设计见 [yukino_cache_go](./yukino-cache-go)。

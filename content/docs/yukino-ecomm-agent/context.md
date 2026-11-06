@@ -2,11 +2,11 @@
 title: "会话上下文"
 description: "会话上下文管理: 三层记忆结构 (层 1 原文 / 层 2 规则压缩 / 摘要层)、token 估算、上下文预算分账与启动自检、层降级与异步摘要的轮末结算, 以及模型上下文注入方式和 LangGraph state 字段清单"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
+local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/graph/`、`server/src/core/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -194,3 +194,12 @@ langgraph 的 state 是节点间共享的数据结构, 每个节点都可以读�
 - `trace`: 各节点的诊断信息 (`mergeDict` reducer 浅合并)
 
 图的构建与执行流程见 [workflow](./workflow), 摘要等辅助调用走的模型槽位见 [llm](./llm).
+
+---
+
+**延伸阅读**
+
+- [LangGraph 会话图编排](./workflow): 分层坐标如何在各节点间流转与轮末结算
+- [LLM 接入、表设计与工具设计](./llm): 摘要槽位模型、token 上限与结构化输出
+- [RAG](./rag): 检索证据如何进入 turn-ctx 与上下文预算
+- [可观测性和数据飞轮](./observable): 模型上下文日志与轮次 trace 如何落地

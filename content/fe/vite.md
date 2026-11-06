@@ -4,8 +4,18 @@ description: "Vite 8 的 dev server、依赖预构建、HMR 原理、Rolldown/Ox
 ---
 
 :::note 版本基线
-文中机制以 **Vite 8** 及其 Rolldown / Oxc / Lightning CSS 工具链为准; 与 Webpack 的对比只解释<u>原理差异</u>, 不引入旧构建链的配置写法作为现行方案。
+文中机制以 **Vite 8** 为准: 生产打包默认走 **Rolldown** (Rust 实现的打包器), 解析与转译由 **Oxc** 承担, CSS 处理与压缩可由 **Lightning CSS** 完成; dev server 基于原生 ESM 按需编译. 与 Webpack 的对比只解释<u>原理差异</u>, 不引入旧构建链的配置写法作为现行方案.
 :::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+    S["dev server: 原生 ESM 按需编译"] --> P["依赖预构建: CommonJS 抹平 + 合并请求 + 锁定缓存"]
+    P --> H["HMR: 模块图边界 + 自接受模块 + 失效冒泡"]
+    H --> B["生产构建: Rolldown 打包 + 代码分割 + 产物 hash 缓存"]
+    B --> T["插件体系: 钩子接入转译 / 解析 / 输出各阶段"]
+```
 
 这份文档面向负责前端工程化的工程师: 需要为自己的项目选构建工具、排查 dev 启动与 HMR 的异常、设计生产构建的代码分割与缓存策略. 内容以 Vite 8 为基准, 讲清每个机制背后的原理与边界, 而不是罗列配置项. 框架层面的渲染与数据获取见 [Next.js](next), 运行时机制见 [React](react).
 
@@ -85,7 +95,7 @@ Vite 启动时用打包器把裸模块导入 (bare import, 例如 `import React 
 
 CJS/ESM 互操作是第二类. 某些包对 `default` 导出的处理与打包时代不同, 症状是 `xxx.default is not a function`. 需要理解当前规则: 对 CJS 模块做 `default` 导入时, 当导入方是 `.mjs`/`.mts`、或最近的 `package.json` 声明 `type: "module"`、或被导入模块的 `__esModule` 标记不为真时, `default` 就是模块导出对象本身; 否则取导出对象的 `default` 字段. 不一致时用 `needsInterop`, 或改写导入方式, 或推动上游修复 `exports`.
 
-Monorepo 内部包是第三类. workspace 链接的内部包默认视为源码、跳过预构建; 如果它是 CJS 产物就会报错, 需要加入 `include`. 注意 `build.commonjsOptions` 在当前版本已是空操作, 不需要再同步配置.
+Monorepo 内部包是第三类. workspace 链接的内部包默认视为源码、跳过预构建; 如果它是 CJS 产物就会报错, 需要加入 `include`. Rolldown 打包器下 CJS 互操作由打包器内置处理, 旧的 `commonjsOptions` 配置不再生效, 不需要再同步配置.
 
 模块联邦类插件还会遇到第四类: shared 依赖如果逐个触发预构建, 每次都会走一遍完整流程, shared 数量一多耗时明显上升. 把多个 shared 依赖合并进一次预构建调用, 是这类插件的常见优化点.
 
@@ -105,7 +115,7 @@ flowchart LR
     A[文件变更] --> B[服务端标记受影响模块失效]
     B --> C[WebSocket 通知浏览器]
     C --> D[浏览器带时间戳重 import 该模块\n绕过 HTTP 缓存]
-    D --> E{存在 accept 边界?}
+    D --> E{"存在 accept 边界?"}
     E -->|是| F[局部热替换 保留状态]
     E -->|否| G[一路传播到入口\n退化为整页刷新]
 ```
@@ -144,7 +154,7 @@ Vite 8 的构建管线由一套 Rust 工具接管, 从依赖预构建到生产�
 
 配置入口: 生产打包配置入口是 `build.rolldownOptions`, 依赖预构建是 `optimizeDeps.rolldownOptions`, worker 构建对应 `worker.rolldownOptions`.
 
-`build` 与 `build.minify` 的默认值可以直接从类型定义读出: `build.target` 默认 `'baseline-widely-available'`, 对应 2026-01-01 纳入 Baseline Widely Available 的浏览器版本范围 (Chrome/Edge 111、Firefox 114、Safari/iOS 16.4); `build.minify` 在客户端构建默认 `'oxc'`, 在 SSR 构建默认 `false`, 可选 `'oxc' | 'terser' | 'esbuild'`, 选后两者需要自行安装依赖, 且 `'esbuild'` 已标记废弃; `build.cssMinify` 默认 `'lightningcss'`.
+`build` 与 `build.minify` 的默认值可以直接从类型定义读出: `build.target` 默认 `'baseline-widely-available'`, 对应 2026-01-01 纳入 Baseline Widely Available 的浏览器版本范围 (Chrome/Edge 111、Firefox 114、Safari/iOS 16.4); `build.minify` 在客户端构建默认 `'oxc'`, 在 SSR 构建默认 `false`, 可选 `'oxc' | 'terser' | 'esbuild'`, 选后两者需要自行安装依赖; `build.cssMinify` 默认 `'lightningcss'`.
 
 还有两处需要留意:
 
@@ -199,11 +209,11 @@ build: {
 
 ### 目标与兼容
 
-浏览器目标由 `build.target` 控制, 默认值直接对齐 Baseline Widely Available, 因此大多数项目不需要自定义. 需要支持更老浏览器时显式覆盖.
+浏览器目标由 `build.target` 控制, 默认值直接对齐 Baseline Widely Available, 因此大多数项目不需要自定义; 需要偏离该基线时显式覆盖.
 
 注意 Vite 不读 `browserslist`: 它是构建工具的转换目标, 而 autoprefixer 等工具的浏览器范围来自 `browserslist` 配置, 两者需要手动保持一致, 否则会出现"语法降级了但 CSS 前缀没加"这类错配.
 
-语法降级与 polyfill 要分开考虑: 语法降级由转换器完成, API 缺失需要 polyfill. 现代/传统双产物的方案仍然可用, 但要注意 plugin-legacy 的转换下限是 ES2015, 不支持 ES5 及以下的语法层级.
+语法降级与 polyfill 要分开考虑: 语法降级由转换器按 `build.target` 完成, API 缺失需要运行时 polyfill, 两者不要混为一谈.
 
 ### 产物体积
 
@@ -270,7 +280,6 @@ function endpoints(): Plugin {
 | ------------------------------- | ---------------------------------------- |
 | 框架插件 (React / Vue / Svelte) | 转译 JSX 或单文件组件, 注入 HMR 边界     |
 | CSS 方案插件 (Tailwind 等)      | 接入对应 CSS 处理链, 参与 HMR 与生产压缩 |
-| 传统浏览器兼容插件              | 产出带 polyfill 的降级产物               |
 | 产物分析插件                    | 输出模块体积构成, 定位大依赖             |
 | 压缩增强插件                    | 生成 gzip/brotli 产物或做更激进的压缩    |
 | 校验类插件                      | 在 dev 与 build 阶段运行类型检查或 lint  |
@@ -367,3 +376,13 @@ Webpack 体系与 Vite 的概念对应关系如下:
 - 对 dev 与 build 的产物一致性有极高要求, 且项目模块数量极大——此时值得评估完整打包模式, 但它在当前仍是实验能力.
 
 无论选哪个工具, 下面三件事的收益通常高于换工具本身: 明确浏览器的支持下限并让所有工具链共享同一份目标; 治理依赖体积与重复版本; 让 CI 对产物体积与运行性能设置可见的门槛. 工具决定的是上限, 这些工程约束决定的是实际结果.
+
+---
+
+**延伸阅读**
+
+- [react](react): React Refresh 的 HMR 边界、组件状态保留与 effect 重跑语义.
+- [next](next): Next.js 16.2 的 Turbopack 构建链路与 Vite 通用机制的对照.
+- [css](css): PostCSS / Lightning CSS 处理链、CSS 代码分割与产物缓存策略.
+- [tanstack](tanstack): 客户端数据缓存与构建产物缓存各自的失效边界.
+- [fe](fe): 浏览器模块加载、缓存头与产物长缓存的底层机制.

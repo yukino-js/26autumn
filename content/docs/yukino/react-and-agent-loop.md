@@ -2,14 +2,32 @@
 title: "ReAct and Agent Loop"
 description: "ReAct 范式与 Agent 主循环: Agent.run() 是 AsyncGenerator<AgentEvent>, 每轮经 abort / 预算检查, reminder 注入, 上下文压缩, LLM 流消费, 错误自愈, max_tokens 恢复与分批工具执行; 覆盖退出条件, Steering, partitionToolCalls 与 StreamingExecutor, Plan Mode 约束"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/agent`、`src/llm`、`src/compact`、`src/prompt`、`src/permissions`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 ReAct (Reasoning + Acting) 是 Yukino agent loop 遵循的范式: 推理与行动交替进行, 每一步行动都建立在对上一步结果的观察之上。本页讲清这个范式如何落成代码 — `Agent.run()` 事件循环的每一轮做什么、何时退出、出错如何自愈, 以及工具如何分批执行。
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[run() 启动] --> B[每轮: abort / 预算 / reminder 注入]
+  B --> C[消费 LLM 流: text / thinking / tool_use]
+  C --> D{解析出 tool_use?}
+  D -- 否 --> E[退出条件判定: steering / goal 续跑 / 终态]
+  D -- 是 --> F[分批 partitionToolCalls]
+  F --> G[权限 / hook 闸门]
+  G --> H[StreamingExecutor 并发执行]
+  H --> I[结果入历史 + 预算处理]
+  I --> B
+  E --> J[loop_complete 事件流退出]
+  C -. 错误自愈 .-> K[重试 / 压缩 / max_tokens 恢复]
+  K --> B
+```
 
 ## ReAct: 推理与行动交替
 
@@ -126,7 +144,7 @@ flowchart TD
 
 一轮 stream 失败不等于整个 loop 失败, 有三种自愈路径:
 
-- **ContextTooLongError (prompt too long)**: 立即 `forceCompact` 强制压缩上下文, `clearUsageAnchor` 后 `continue` 重试本轮
+- **ContextTooLongError (prompt too long)**: 立即 `forceCompact` 强制压缩上下文, `clearUsageAnchor` 后 `continue` 重试本轮; 若强制压缩没有成功落地（`result.compacted === false`），或压缩过程自身抛出异常且未被中断，则持久化错误并 `yield error` 退出循环，不再无限重试。
 - **瞬态错误重试** (src/llm/retry.ts 的 `llmRetryDelay`): `RateLimitError` (429)、`ServerError` (5xx)、`NetworkError` 最多重试 `MAX_RETRIES = 3` 次
   - 等待时间: `RateLimitError` / `ServerError` 优先解析 `retry-after` 响应头 (支持秒数和 HTTP date 两种格式), 缺省时指数退避 (限流 5s 起步即 `RATE_LIMIT_BASE_DELAY_MS`, 其他 1s 起步即 `BACKOFF_BASE_DELAY_MS`), 上限 `MAX_DELAY_MS = 60s`
   - 等待是可中断的 `interruptibleSleep`, abortSignal 触发可提前唤醒
@@ -227,11 +245,13 @@ agent loop 运行中 (LLM 正在流式输出或工具正在执行), 用户输入
 
 ### StreamingExecutor
 
-批内的执行由 `StreamingExecutor` (src/agent/streaming-executor.ts) 完成: parallel 批的所有调用先 `submit` 再并发执行, 哪个先完成就先 yield 哪个的 `tool_result` 事件 (UI 即时渲染, 不必等整批); 顺序批 submit 一个收集一个。
+批内的执行由 `StreamingExecutor`（`src/agent/streaming-executor.ts`）完成: parallel 批的所有调用先 `submit` 进待办队列, `runPending()` 一次性把队列里的调用映射成并发任务（`calls.map(...)` 逐个 `await` 各自的 `executeCall`），**没有内置信号量或并发数上限** — 并发度等于当前 parallel 批内的调用数；哪个先完成就先写进 `completed` 队列并唤醒等待方，先到先 yield 对应的 `tool_result` 事件（UI 即时渲染，不必等整批）; 顺序批 submit 一个收集一个。
 
-对话历史和会话日志仍按 LLM 给出的原始调用顺序写入 tool_result 块 (先收集进 Map, 再按 `toolUses` 顺序重组), 事件流的完成序和历史中的调用序互不影响。
+这样设计的原因: read 类工具彼此无共享写状态，并行只受模型一轮发起的调用数约束，再加全局信号量只会拉长长尾; 真正的写冲突由 `partitionToolCalls` 的分批规则在前面挡住，而不是靠执行层排队。代价是同一批内若模型一次发出大量重型 Bash/HTTP 调用，执行层不会主动限流，资源争用由工具自身（超时、子进程上限）兜底。
 
-大结果在入历史前做预算处理: 单个结果超过 `MAX_OUTPUT_CHARS = 50000` 字符就溢出到磁盘, 历史里只留预览加文件路径; 并行批的合计体积也由 `applyBudget` 统一兜底 (见 [context-compaction](./context-compaction))。
+对话历史和会话日志仍按 LLM 给出的原始调用顺序写入 tool_result 块（先收集进 Map，再按 `toolUses` 顺序重组），事件流的完成序和历史中的调用序互不影响。
+
+大结果在入历史前做预算处理: 单个结果超过 `MAX_OUTPUT_CHARS = 50000` 字符就溢出到磁盘，历史里只留预览加文件路径; 并行批的合计体积也由 `applyBudget` 统一兜底（见 [context-compaction](./context-compaction)）。溢出回读（`isSpillReadback`）的结果免于再次溢出，否则模型会在「读回溢出文件」和「再次溢出」之间空转。
 
 ## System Prompt 与每轮注入
 
@@ -254,3 +274,14 @@ plan mode 通过每轮注入的 `buildPlanModeReminder` 约束 LLM 行为。它�
 ### 唯一出口: ExitPlanMode
 
 plan 的唯一出口是 ExitPlanMode 工具: LLM 写完 plan 后调用 ExitPlanMode, 工具成功即结束本轮 loop, `loop_complete(end_turn)`, UI 弹出 plan 审批对话框 (选项: 进入 YOLO 自动批准 / 手动逐项批准编辑 / 反馈修改意见)。reminder 中明确约束「call ExitPlanMode for approval; never request approval through prose」, AskUserQuestion 也只允许用于澄清、不允许用于请求审批。
+
+---
+
+**延伸阅读**
+
+- [goal](./goal): 持久目标如何让 ReAct 回合一直跑到目标完成或预算耗尽
+- [context-compaction](./context-compaction): 循环内自动压缩与 forceCompact 自愈路径
+- [permission](./permission): 工具执行前的 allow / ask / deny 判定链与 plan mode 例外
+- [function-calling](./function-calling): 工具 schema、并发安全判定与分批接口
+- [llm](./llm): 三协议流消费、错误分类与重试退避
+- [a2a](./a2a): `AgentEvent` 向 A2A 协议事件的翻译

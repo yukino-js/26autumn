@@ -2,11 +2,11 @@
 title: "DevFlow"
 description: "DevFlow 视角入门: GitHub 同步与调度、确定性优先的分析 Agent、ActionDraft 安全草稿、每仓 RAG 与答案门禁、对话 Agent 韧性与记忆系统、多 Agent workflow、代码工作区/代码图/知识图"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "424a270590659dfbea804384d4fd1e14ba1111a5"
+local_commit: "ea0fd1957f83d4a676714cad5fa054b351a3deb2"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent` 在 `424a27059065` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/dev-flow/`、`app/api/dev-flow/`、`lib/dev-flow/`）在 `ea0fd1957f83` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 DevFlow 是 yukino-dev-agent 的第二个产品面: 一个 GitHub 工程副驾, UI 在 `/dev-flow`, REST 在 `/api/dev-flow/*`. 它连接 GitHub 仓库, 把 issues / pull requests / CI runs 同步进 PostgreSQL, 跑「确定性优先」的 AI 分析 Agent, 维护每仓 RAG 知识库, 并提供对话、记忆、代码工作区、代码图、知识图、多 Agent workflow 编排和多仓 workspace.
@@ -233,3 +233,12 @@ REST 路由 (`app/api/dev-flow/`): repos (+ 子资源 issues/pulls/runs/sync/rei
 ## 离线验证
 
 `npx tsx tests/*.smoke.ts` 系列覆盖各子系统: `dev-flow-analysis` (分析 Agent)、`dev-flow-skills` (技能注册)、`dev-flow-workflow` (编排)、`dev-flow-memory` (记忆)、`dev-flow-code-graph`、`dev-flow-graph` (知识图)、`dev-flow-content-index`、`dev-flow-context-compression`、`dev-flow-chat-resilience`、`dev-flow-workspaces`、`dev-flow-github-schemas`、`dev-flow-defects`、`dev-flow-b` (工作区发现/分类/分块, 无需 embedding)、`chunking`、`doc-extract`.
+
+---
+
+**延伸阅读**
+
+- [Yukino Dev Agent 总览](./yukino-dev-agent): 双产品面架构、数据流与技术栈全景
+- [OnCall 视角](./agent): 共享的 Milvus 混合检索、模型槽位、工具/MCP 与 A2UI 机制
+- [RAG](../yukino-ecomm-agent/rag): 混合召回、RRF/精排与证据置信度的对照实现
+- [LangGraph 会话图编排](../yukino-ecomm-agent/workflow): 中断恢复与证据门禁的图编排对照

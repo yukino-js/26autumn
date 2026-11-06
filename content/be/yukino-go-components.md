@@ -2,12 +2,14 @@
 title: "Yukino Go 分布式基础设施组件: 九个组件的设计原理、适用场景与边界"
 description: "面向 Go 后端与分布式系统读者的组件解析: 逐一讲清 redis_lock、consistent_hash、consistent_cache、red_mq、tcc、time_wheel、timer、lsm_tree、raft 九个组件解决的问题、关键数据结构与算法、设计取舍, 以及在什么场景下不该使用它们"
 local_path: "$HOME/github/yukino.go/components"
-local_commit: "02e9621cee8763979175549903d7a67534923751"
+local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go/components` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `components`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
 
 ```mermaid
 flowchart TB
@@ -366,4 +368,8 @@ LSM-Tree 的思想是把随机写转换为顺序写: 写入先进内存缓冲与
 
 九个组件共享一种克制的工程风格: 用尽可能少的原语表达清晰的所有权与幂等语义, 把正确性建立在显式的持久化状态与原子操作上, 而不是隐含的时序假设。redis_lock 用 token 表达所有权, consistent_hash 用所有权索引驱动迁移, consistent_cache 用标记抑制竞态, red_mq 用逐消息计数界定失败, tcc 用日志先行支撑崩溃恢复, time_wheel 用 Lua 原子弹出保证不重复触发, timer 用预展开压缩热路径, lsm_tree 用分级合并平衡读写放大, raft 用多数派与任期维持一致。理解每一条边界——尤其是那些"当前未做"的能力——比记住它们的 API 更重要。
 
-相关主题可参阅 [Redis](./redis)、[MySQL](./mysql), 以及展示这些组件同族思想如何被组装进真实系统的 [yukino_taskflow](./yukino-task-flow) 与 [yukino_agent](./yukino-agent)。
+**延伸阅读**
+
+- [Redis](./redis)、[MySQL](./mysql): 各组件所依赖的底层存储机制。
+- [yukino-task-flow](./yukino-task-flow): 这些组件同族思想被组装进真实调度与审计系统的完整案例。
+- [yukino-agent](./yukino-agent): 同仓库另一类组装形态，对照理解组件与应用层的边界。

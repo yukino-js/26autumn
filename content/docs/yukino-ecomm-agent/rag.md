@@ -2,11 +2,11 @@
 title: "RAG"
 description: "RAG 检索: Markdown 文档切割 (标题分节 / 表格按行 / 句子级 overlap)、embedding 策略、关系库与向量库双写状态位、可选 Milvus 与进程内 BM25/稠密检索, 以及召回 → RRF 粗排 → rerank 精排管线与置信度闸"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
+local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/kb/`、`server/data/kb/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -253,3 +253,12 @@ Milvus SDK 的 `hybrid_search` 在一次请求里同时发出两路召回: 稀�
 4. 图中 confidence_check 节点按 `confidenceGate` 分流: strong → main_agent, 证据以 "[n] question: answer" 的编号引用注入回合上下文, 要求模型引用 [1][2] 编号、照抄型号、证据不足时明说; weak → fallback_reply, 回复固定兜底话术并附转人工建议, 同时把问题、原因和 top3 检索快照写入 low_confidence_question 表, 成为数据飞轮的燃料
 
 query_faq 工具走同样的判定 (`evaluateHits`: top1 精排分低于 RERANK_MIN_SCORE 或自检不通过 → sufficient=false, agent 按提示词规则拒答). 置信度权重的展示、阈值校准 (calibrate-confidence) 和飞轮闭环见 [可观测性和数据飞轮](./observable).
+
+---
+
+**延伸阅读**
+
+- [可观测性和数据飞轮](./observable): 离线评测、置信度校准与低置信池回流闭环
+- [LangGraph 会话图编排](./workflow): 检索节点如何接入意图路由与证据闸
+- [会话上下文](./context): 检索证据如何进入模型上下文与预算分账
+- [HTTP API 和管理台](./api): 知识库建库、预览与重切端点契约

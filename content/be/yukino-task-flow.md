@@ -2,12 +2,14 @@
 title: "yukino_taskflow: 条件与定时 AI 任务的分布式执行引擎"
 description: "taskflow 单体分布式后端: cron 物化 + 分布式时间轮触发、MySQL 触发器 CDC + outbox 中继、四层幂等防线、TCC 派发事务、openai-go 工具代理与结构化报告、LSM/Raft 本地审计与 MySQL→Redis 状态同步; 并附组件教程: 从分布式难点入门, 逐一拆解 red_mq、time_wheel、redis_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft 十个分布式组件的问题域、实现入口与开发坑, 给出源码阅读路线与故障实验"
 local_path: "$HOME/github/yukino.go/apps/task_flow"
-local_commit: "02e9621cee8763979175549903d7a67534923751"
+local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go/apps/task_flow` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `apps/task_flow`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
 
 ```mermaid
 stateDiagram-v2
@@ -370,21 +372,28 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 
 认证: `/api/v1` 配置了 `api_token_env` 时要求 `Authorization: Bearer {token}`, 校验方式是把 "Bearer " + 配置 token 整体做 SHA256 后与请求头常量时间比较; 免认证路径只有 `/health`、`/ready`、`/telemetry/log`。未配置 token 时 API 全开。`/internal/v1` 配置了 `internal_token_env` 时同样走 token 校验, 未配置时要求请求来自 loopback。
 
-| 方法与路径 | 说明 |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----- | ------------ | --------- | ------- | ------ | -------- | ----------------------------------------- |
-| `GET /api/v1/health` / `ready` / `overview` | 存活 / 就绪 / 总览 (统计+任务+近期执行+节点) |
-| `GET/POST /api/v1/scheduled-tasks` | 列表 (name/cron/prompt 必填, 时区默认 Asia/Shanghai, 计算 next_fire_at, 重名 409) |
-| `GET/PATCH/DELETE /api/v1/scheduled-tasks/:id` | 更新走指针字段合并 + 重算 next_fire_at + 定义缓存更新 |
-| `POST /api/v1/scheduled-tasks/:id/trigger` | 手动触发 (见上文 fire key 协议) |
-| `GET/POST /api/v1/condition-tasks` | 创建时校验 `ValidWatchTable` 并 `EnsureCapture`, event_type 固定 `mysql_insert` |
-| `GET/PATCH/DELETE /api/v1/condition-tasks/:id` | 定义维护 |
-| `POST /api/v1/condition-tasks/:id/test` | 仅 `risk_records`, 测试入口 |
-| `GET /api/v1/executions` / `:id` / `:id/report` | 列表 (页大小默认 20 上限 200, id DESC); report 返回 `text/markdown; charset=utf-8`, 空则 404 |
-| `POST /api/v1/executions/:id/cancel` | 仅 pending/reserved/queued, 否则 409 |
-| `GET/POST /api/v1/risk-records` | 演示业务表; 创建返回 `event_delivery: "durable"` (依赖触发器捕获) |
-| `GET /api/v1/monitor/nodes                         | stats                                                                                        | cache | dead-letters | consensus | journal | mirror | storage` | 诊断面 (journal 查询要求 `fire_key` 参数) |
-| `POST /api/v1/telemetry/log` | 前端事件落 JSONL |
-| `POST /internal/v1/fire` / `GET /internal/v1/ping` | 时间轮回调 / 内部探活 |
+| 方法与路径                                         | 说明                                                                                         |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `GET /api/v1/health` / `ready` / `overview`        | 存活 / 就绪 / 总览 (统计+任务+近期执行+节点)                                                 |
+| `GET/POST /api/v1/scheduled-tasks`                 | 列表 (name/cron/prompt 必填, 时区默认 Asia/Shanghai, 计算 next_fire_at, 重名 409)            |
+| `GET/PATCH/DELETE /api/v1/scheduled-tasks/:id`     | 更新走指针字段合并 + 重算 next_fire_at + 定义缓存更新                                        |
+| `POST /api/v1/scheduled-tasks/:id/trigger`         | 手动触发 (见上文 fire key 协议)                                                              |
+| `GET/POST /api/v1/condition-tasks`                 | 创建时校验 `ValidWatchTable` 并 `EnsureCapture`, event_type 固定 `mysql_insert`              |
+| `GET/PATCH/DELETE /api/v1/condition-tasks/:id`     | 定义维护                                                                                     |
+| `POST /api/v1/condition-tasks/:id/test`            | 仅 `risk_records`, 测试入口                                                                  |
+| `GET /api/v1/executions` / `:id` / `:id/report`    | 列表 (页大小默认 20 上限 200, id DESC); report 返回 `text/markdown; charset=utf-8`, 空则 404 |
+| `POST /api/v1/executions/:id/cancel`               | 仅 pending/reserved/queued, 否则 409                                                         |
+| `GET/POST /api/v1/risk-records`                    | 演示业务表; 创建返回 `event_delivery: "durable"` (依赖触发器捕获)                            |
+| `GET /api/v1/monitor/nodes`                        | 成员与角色 owner、环上节点 weight 与存活状态                                                 |
+| `GET /api/v1/monitor/stats`                        | 当日状态计数 + 角色 owner + 镜像大小统计快照                                                 |
+| `GET /api/v1/monitor/cache`                        | 报告分组缓存统计                                                                             |
+| `GET /api/v1/monitor/dead-letters`                 | 死信信箱落库记录                                                                             |
+| `GET /api/v1/monitor/consensus`                    | raft ledger 软/硬状态与最近 entries                                                          |
+| `GET /api/v1/monitor/journal`                      | 本地审计账本查询 (要求 `fire_key` 参数)                                                      |
+| `GET /api/v1/monitor/mirror`                       | SQL → Redis 执行镜像对账状态                                                                 |
+| `GET /api/v1/monitor/storage`                      | 触发器覆盖、副本状态、Redis replication 汇总                                                 |
+| `POST /api/v1/telemetry/log`                       | 前端事件落 JSONL                                                                             |
+| `POST /internal/v1/fire` / `GET /internal/v1/ping` | 时间轮回调 / 内部探活                                                                        |
 
 ## 配置与部署形态
 
@@ -1075,3 +1084,9 @@ curl -sS -H "Authorization: Bearer $TASK_FLOW_API_TOKEN" http://127.0.0.1:8090/a
 组件入口见第 2 章表格。官方资料可配合阅读: [MySQL trigger syntax](https://dev.mysql.com/doc/refman/8.4/en/trigger-syntax.html)、[MySQL locking reads](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)、[Redis XREADGROUP](https://redis.io/docs/latest/commands/xreadgroup/)、[Redis XACK](https://redis.io/docs/latest/commands/xack/)、[Redis XAUTOCLAIM](https://redis.io/docs/latest/commands/xautoclaim/)、[Redis distributed locks](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/)、[Redis Cluster specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/)、[MySQL GTID concepts](https://dev.mysql.com/doc/refman/8.4/en/replication-gtids-concepts.html)、[Raft paper](https://raft.github.io/raft.pdf)。项目自带的 `docs/architecture.md`、`docs/operations.md` 与 `README.md` 可与本文对照。
 
 代码变化后, 优先重新核对四处: `go.mod` 的 replace 清单、main 的装配顺序、DAO 的状态迁移条件、各恢复循环的阈值 — 它们共同决定每个组件如何影响业务可靠性。
+
+**延伸阅读**
+
+- [yukino-go-components](./yukino-go-components): 本文第二部分十个组件的独立源码解析。
+- [yukino-cache-go](./yukino-cache-go): 报告分组缓存所依赖的 yukino_cache 库详解。
+- [yukino-http](./yukino-http): 本服务 HTTP 路由与中间件所复用的同仓库框架。

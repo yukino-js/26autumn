@@ -2,12 +2,14 @@
 title: "yukino_cache 分布式缓存技术笔记"
 description: "yukino_cache Go 分布式缓存: groupcache 风格 read-through Group、字节预算双层 LRU、singleflight 去重、一致性哈希分片、gRPC peer 通信与 etcd 服务发现"
 local_path: "$HOME/github/yukino.go/libs/yukino_cache"
-local_commit: "02e9621cee8763979175549903d7a67534923751"
+local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go/libs/yukino_cache` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_cache`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
 
 ```mermaid
 flowchart TD
@@ -332,7 +334,11 @@ watchServiceChanges:
 | 本地存储     | 单层 LRU                 | 分桶双层 LRU + 字节预算                  |
 | 监控         | 无                       | WebSocket 仪表盘 + Stats                 |
 
-它保留了 groupcache 的核心心智模型 (Group + Getter + PeerPicker + singleflight), 并面向需要写传播、自动服务发现与可观测性的微服务场景做了扩展。groupcache 原始设计与 etcd、gRPC 的通用机制见[中间件与可观测性](./middleware); 一个完整的落地样例 (报告字节预算缓存、singleflight 回源与可选 etcd 对等环) 见 [yukino_taskflow](./yukino-task-flow)。
+它保留了 groupcache 的核心心智模型 (Group + Getter + PeerPicker + singleflight), 并面向需要写传播、自动服务发现与可观测性的微服务场景做了扩展。
+
+**延伸阅读**
+
+groupcache 原始设计与 etcd、gRPC 的通用机制见[中间件与可观测性](./middleware); 一个完整的落地样例 (报告字节预算缓存、singleflight 回源与可选 etcd 对等环) 见 [yukino_taskflow](./yukino-task-flow)。
 
 ## 适用场景与选型建议
 

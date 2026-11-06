@@ -2,16 +2,31 @@
 title: "Goal"
 description: "持久目标 (Persistent Goal): GoalManager 状态机、/goal 命令与 Goal 工具三件套, 让 agent 跨轮次、跨用户消息朝一个目标自动推进 — 循环退出前先问是否续跑, 直到完成、受阻或预算耗尽"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/goal`、`src/tools`、`src/agent`、`src/subagent`、`src/session`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 持久目标 (Persistent Goal): 让 agent 跨轮次、跨用户消息地朝一个目标自动推进, 直到完成、受阻或预算耗尽
 
 没有持久目标时, agent loop 在 LLM 停止调用工具的轮次就结束; 有持久目标时, 「LLM 认为当前回合说完了」不再是终点 —— 只要目标还处于 active, 循环退出前会先问 GoalManager 要不要续跑 (见 [react-and-agent-loop](./react-and-agent-loop))
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  U[/goal 命令/] --> M[GoalManager 状态机]
+  M --> P[goal_state 记录持久化到会话日志]
+  A[Goal 工具 get / update] --> M
+  M --> R[每轮 reminder 注入历史]
+  R --> L[agent loop 执行任务回合]
+  L --> C{退出前: 目标 active?}
+  C -- 是 --> N[continuation 续跑 prompt, 轮次 +1]
+  N --> L
+  C -- 否/完成/受阻/预算耗尽 --> Z[loop_complete 收尾]
+```
 
 ## 三件套
 
@@ -173,3 +188,13 @@ agent 用 Goal 工具汇报时, 三种 status 都要附非空 reason, 且只有 
 ```
 
 交互 UI、print、remote 共享同一套 GoalManager + `handleGoalCommand`, 目标行为一致: 设置/恢复目标后立即起跑, 运行中可随时 status / pause / clear / complete, 预算和轮次账目全程持久化在会话日志里
+
+---
+
+**延伸阅读**
+
+- [react-and-agent-loop](./react-and-agent-loop): 续跑闸口、预算总结轮的特殊处理与 goal 相关事件
+- [context-compaction](./context-compaction): goal_state 记录为何不进入对话历史、不受压缩影响
+- [permission](./permission): Goal 工具在 plan 协调工具集合中的放行规则
+- [subagent](./subagent): MAIN_AGENT_ONLY_TOOLS 过滤与委派 agent 的 goal 隔离
+- [print-mode](./print-mode): 非交互单次执行下 /goal 的退出码与 stream-json 输出

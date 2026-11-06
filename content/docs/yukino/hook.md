@@ -2,11 +2,11 @@
 title: "Hook"
 description: "Hook: 在生命周期事件上挂载自动化动作 (事件/条件/动作三要素) — 写文件后自动 format、危险命令执行前拦截、会话开始时注入项目约定; 配置只来自 `~/.yukino/config.yaml` 顶层 hooks 数组"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/hooks`、`src/config`、`src/agent`、`src/remote`、`src/ui`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -326,3 +326,13 @@ hooks:
 - reject 和 async 互斥
 
 所有错误一次性收集, 用 `; ` 拼接成一条 Error 抛出, 每条带 `hook[i]` 或 `hook[i] (id="...")` 前缀定位
+
+---
+
+**延伸阅读**
+
+- [react-and-agent-loop](./react-and-agent-loop): 九个事件在主循环中的触发点与通知 drain 时机
+- [permission](./permission): pre_tool_use reject 与权限判定的先后顺序
+- [agents-md-and-memory](./agents-md-and-memory): session_start 注入项目约定与长期记忆注入的区别
+- [a2a](./a2a): A2A 运行时复用 createRemoteAgent 装配 HookEngine 的路径
+- [remote](./remote): remote 宿主中 MCP Apps 工具调用的 pre-tool hook 通路

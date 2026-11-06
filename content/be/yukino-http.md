@@ -2,12 +2,14 @@
 title: "yukino_http 技术笔记"
 description: "yukino_http Go HTTP 框架: Koa 风格洋葱模型中间件与延迟响应、TakeOver 响应接管、按段 Trie 路由、分组 Router、SSE 与 RFC 6455 WebSocket 的实现机制与适用场景"
 local_path: "$HOME/github/yukino.go/libs/yukino_http"
-local_commit: "02e9621cee8763979175549903d7a67534923751"
+local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go/libs/yukino_http` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_http`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
 
 ```mermaid
 sequenceDiagram
@@ -129,7 +131,7 @@ dispatch = func(i int) {
 - 若用户通过 `ctx.Set("Content-Type", ...)` 设置了响应头, 它会在推断默认值之前被刷入 `ResponseWriter`; 各序列化分支的 `setContentType` 只在 writer 上 Content-Type 仍为空时才写入, 因此用户头优先于框架推断的类型。
 - 204、205、304 这些不允许携带 body 的状态码会强制清空 Body, 并删除 Content-Type、Content-Length、Transfer-Encoding 三个头。
 - JSON 序列化失败时, 记录日志并直接写 500 与 `{"message":"Internal Server Error"}`, 不再二次尝试。
-- 未加载任何 HTML 模板却调用 `HTML()` 时, 写出 500 与一段 `HTML templates are not loaded` 提示, 而不是返回错误; 模板执行中途失败只记录日志, 因为状态码与部分 body 已经写出, 无法再改写。
+- 未加载任何 HTML 模板却调用 `HTML()` 时, 写出 500 与 JSON 错误体 `{"message":"HTML templates are not loaded"}`, 而不是返回错误; 模板执行中途失败只记录日志, 因为状态码与部分 body 已经写出, 无法再改写。
 
 `Redirect` 保留调用方已选择的 3xx 状态码 (300/301/302/303/305/307/308), 未显式设置时默认 302, 置位 `statusSet` 并始终写入 `Location` 头; 若 Body 仍为空, 会补一段 `Redirecting to <url>` 的纯文本提示。
 
@@ -396,4 +398,6 @@ SSE 侧则没有自动重连 ID 管理 (不读取 `Last-Event-ID`)、订阅广�
 - 需要框架层内置 TLS/HTTP2、请求体限额、permessage-deflate 压缩、写超时或 Close 握手超时的场景, 当前实现未覆盖, 需要在外层 `http.Server` 或业务代码中自行扩展。
 - 需要大量路由且对匹配延迟敏感的场景: 按段 Trie 的每层线性扫描会成为瓶颈。
 
-相关主题: 框架的内置能力已被同仓库多个模块直接复用 —— [yukino_cache](./yukino-cache-go) 的实时仪表盘就是一个挂载在本框架上的 WebSocket 端点, 用 `ctx.Upgrade` 完成握手、用 `WSConn` 的 30 秒心跳与 `WriteJSON` 推送缓存快照; [yukino_taskflow](./yukino-task-flow) 用本框架组装 API 路由与中间件链; [yukino_agent_proxy](./yukino-agent-proxy) 用 `New()` 加 `Recovery()` 搭建本地控制面, 借助 `ctx.TakeOver()` 按 transport 参数二选一挂载 MCP SDK 官方的 Streamable HTTP (`/mcp`) 或 HTTP+SSE (`/sse`) 传输端点, 并把 `Application` 作为 `http.Handler` 挂到自带超时配置的外部 `http.Server` 上。接口、方法集与并发原语等语言层基础见 [Go 语言核心](./go)。
+**延伸阅读**
+
+框架的内置能力已被同仓库多个模块直接复用 —— [yukino_cache](./yukino-cache-go) 的实时仪表盘就是一个挂载在本框架上的 WebSocket 端点, 用 `ctx.Upgrade` 完成握手、用 `WSConn` 的 30 秒心跳与 `WriteJSON` 推送缓存快照; [yukino_taskflow](./yukino-task-flow) 用本框架组装 API 路由与中间件链; [yukino_agent_proxy](./yukino-agent-proxy) 用 `New()` 加 `Recovery()` 搭建本地控制面, 借助 `ctx.TakeOver()` 按 transport 参数二选一挂载 MCP SDK 官方的 Streamable HTTP (`/mcp`) 或 HTTP+SSE (`/sse`) 传输端点, 并把 `Application` 作为 `http.Handler` 挂到自带超时配置的外部 `http.Server` 上。接口、方法集与并发原语等语言层基础见 [Go 语言核心](./go)。

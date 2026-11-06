@@ -2,12 +2,29 @@
 title: "Yukino-Chatbot: pnpm 全栈 LLM 聊天应用"
 description: "一个 pnpm workspace 组织的全栈 LLM 聊天应用: Koa 3 后端负责 JWT 会话、AI Provider 热切换、即时构建的 RAG 检索与 SSE 流式输出, React 19 前端以 Jotai 加 React Query 分层状态, 并把流式渲染的热路径移出 React。"
 local_path: "$HOME/github/yukino-chatbot"
-local_commit: "30e9e025220039c716b37dfc8182f932f81a4481"
+local_commit: "13332f3cd4028b61bf7a5b43ddf972d4864e8853"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-chatbot` 在 `30e9e0252200` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-chatbot` 在 `13332f3cd402` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+    SPA[React 19 SPA: Jotai + React Query] -->|JSON / SSE over fetch| KOA[Koa 3 后端 /api/v1]
+    KOA --> MW[JWT 鉴权中间件]
+    MW --> CTRL[Controller: zod 校验 + 统一信封]
+    CTRL --> SVC[Service 业务编排]
+    SVC --> DAO[DAO: Knex 查询]
+    DAO --> DB[(MySQL)]
+    SVC --> MGR[AiAgentManager: 用户-会话-Agent 映射]
+    MGR --> FACT[AiModelFactory: openai / openai-rag]
+    FACT --> LLM[ChatOpenAI 流式调用]
+    FACT --> RAG[RAG: 即时构建 MemoryVectorStore 检索]
+    SVC --> CACHE[cacheGet/Set/Delete: Redis / 进程内 LRU]
+```
 
 本文拆解一个 pnpm workspace 组织的全栈 LLM 聊天应用: 前端 React 单页应用, 后端 Koa 服务, 具备 JWT 会话、模型热切换、RAG 检索增强与 SSE 流式输出。内容以功能能力、实现思路与取舍为主线, 覆盖前后端分层、认证、AI 能力抽象、检索链路、流式渲染性能、数据与缓存, 以及水平扩展时的改造方向。适合正在做 LLM 聊天类产品、关心流式渲染与上下文管理的工程师阅读。
 
@@ -479,3 +496,14 @@ rAF 方案胜出的三个理由: 帧对齐让渲染只发生在浏览器即将�
 这个项目的价值在于用一套清晰的分层把"LLM 聊天"从 demo 推到可维护的产品形态: 后端用工厂加管理器把模型抽象与生命周期隔开, 用内存上下文加 write-behind 落库换取低延迟, 用即时构建的检索链路实现零运维的 RAG, 用绕过框架的原生响应写入实现真正的流式; 前端则把高频流式数据挡在 React 之外, 用 ref 加 rAF 把渲染频率钳制在帧率, 再借增量解析的流式 markdown 渲染器把渲染成本与文本长度解耦。
 
 它适合单实例或小规模部署、需要快速验证 LLM 聊天形态的场景, 也适合作为学习流式渲染与上下文管理的参考实现。不适合直接用于大规模多实例生产: Agent 上下文、RAG 索引、文件与 SSE 连接都绑定单进程, 会话模型还停留在固定有效期的一长串 JWT, 缓存与限流是预留而非落地。要在生产规模使用, 优先补齐三件事: 把对话上下文迁到共享存储, 把向量索引改为独立服务加增量更新, 把断线恢复从人工点按升级为带游标的自动重连。
+
+---
+
+**延伸阅读**
+
+- [Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent](./yukino-chat)
+- [Yukino Codegen: 编码 Agent 的沙箱迭代与预览桥](./yukino-codegen)
+- [Yukino MCP: 工具注册、向量索引与连接生命周期](./yukino-mcp)
+- [Yukino Sentry: 前端与 Node 错误采集 SDK](./yukino-sentry)
+- [React 19 客户端状态与数据获取模式](./react)
+- [TanStack Query 服务端状态管理](./tanstack)

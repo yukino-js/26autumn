@@ -2,11 +2,11 @@
 title: "workflow"
 description: "LangGraph 会话图的完整编排: 12 个节点、9 意图 5 出口的确定性分流、知识检索与置信度闸、退款确定性子流程、ReAct 主力循环与人工确认中断, 以及 Postgres checkpointer 与 SSE 流式运行时"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "b160dff57b5dc32a04ec2d35d05d235e2edee607"
+local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `b160dff57b5d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/graph/`、`server/src/api/`、`client/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 一次对话轮次不是「一个模型从头答到尾」, 而是穿过一张预先编排好的状态图: 能写死的步骤 (指代消解、意图分类、知识检索、兜底话术) 用确定性的 workflow 节点串起来, 真正需要模型自主决定「下一步调什么工具」的部分才交给 ReAct agent loop. 整张图用 LangGraph 的 `StateGraph` 声明, 编排代码集中在 `server/src/graph/` 的五个文件:
@@ -344,3 +344,13 @@ HTTP 层 (`server/src/api/chat.ts`) 把这 6 类事件写成一帧一行 `data:`
 1. `recordTurn`: 把本轮输入/输出/意图/累计 token 记成 langfuse 的 `chat-turn` generation (见 [observable](./observable)); 流式路径在流结束后从 checkpointer 读最终状态 (`finalState`), 非流式路径直接用 `invoke` 返回值
 2. `settleLayers`: 层降级 —— 层 1 超过 `floor(sliding * LAYER1_RATIO)` 预算时, 计算新的 `layer1FromMsgId` 并持久化, 滑出的消息下轮自动按层 2 压缩; 结算失败只记日志, 不影响已发出的回复. 只有新轮次 (`runTurn` / `streamTurn`) 执行, 恢复轮跳过 (详见 [context](./context))
 3. `maybeScheduleSummary`: 层 2 超预算时异步调度滚动摘要, 按会话 ID 去重、不阻塞回复 (详见 [context](./context))
+
+---
+
+**延伸阅读**
+
+- [会话上下文](./context): 三层记忆坐标、token 预算分账与轮末结算
+- [RAG](./rag): 检索管线、混合召回与两道置信度门禁的证据侧细节
+- [LLM 接入、表设计与工具设计](./llm): 模型槽位、结构化输出与工具执行引擎
+- [HTTP API 和管理台](./api): SSE 帧契约、interrupt 恢复端点与 job runner
+- [可观测性和数据飞轮](./observable): 轮次 trace、低置信池与飞轮闭环

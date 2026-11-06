@@ -2,16 +2,18 @@
 title: "Workflow"
 description: "Workflow 子系统: 用确定性 JavaScript 脚本编排多个 subagent, 覆盖脚本模型与注入原语、并发上限、journal 持久化与重放、生命周期回流与 /workflows 监控"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/workflow/`、`src/ui/workflows-dialog.tsx`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
-Workflow (src/workflow/) 用一段确定性的 JavaScript 脚本编排多个 subagent, 在后台并发跑完一整套「拆解 → 执行 → 验证」流程, 最终结果经任务通知回流主 agent
+Workflow (`src/workflow/`) 用一段确定性的 JavaScript 脚本编排多个 subagent, 在后台并发跑完一整套「拆解 → 执行 → 验证」流程, 最终结果经任务通知回流主 agent。
 
-为什么需要它: Agent 工具一次只委派一个 subagent, 主 agent 要逐个等待、逐个整合; 当任务能拆成几十上百个独立子项 (逐文件审查、批量迁移、全仓扫描) 时, 用脚本一次性编排比让主 agent 循环委派更省 token、更可控。每次启动都会落盘脚本源码和 JSON args, 已成功的 agent 调用在恢复 (resume) 时直接从 journal 回放, 流程可重放、可审计
+为什么需要它: Agent 工具一次只委派一个 subagent, 主 agent 要逐个等待、逐个整合; 当任务能拆成几十上百个独立子项（逐文件审查、批量迁移、全仓扫描）时, 用脚本一次性编排比让主 agent 循环委派更省 token、更可控。每次启动都会落盘脚本源码和 JSON args, 已成功的 agent 调用在恢复（resume）时直接从 journal 回放, 流程可重放、可审计。
+
+**主线一览**
 
 ```mermaid
 flowchart TD
@@ -226,3 +228,7 @@ journal 的 key (src/workflow/journal.ts): agentCallKey 取 `prompt + "\n" + 规
 
 - Workflow 在 MAIN_AGENT_ONLY_TOOLS (src/subagent/constants.ts) 里: 所有受委派 agent 都被剥掉该工具, 普通 subagent 不能再起 workflow, 防递归编排; 完整黑名单 SUBAGENT_DISALLOWED_TOOLS 在此基础上另加 Agent / TeamCreate / TeamDelete / SendMessage
 - Workflow 也在 coordinator 白名单 COORDINATOR_ALLOWED_TOOLS (src/teams/constants.ts, 见 [agent-team](./agent-team) 的 Coordinator Mode 一节): coordinator 模式下 leader 仍可用工作流把实际执行委派出去, 自己只做调度和整合
+
+---
+
+**延伸阅读**: [subagent](./subagent) · [task-tracking](./task-tracking) · [worktree](./worktree) · [agent-team](./agent-team) · [skills](./skills) · [print-mode](./print-mode)

@@ -2,14 +2,26 @@
 title: "Code Review"
 description: "Code Review: 收敛为一条 `/review` slash command 加一个内置 `review` subagent 角色, 审查 agent 用 gh CLI 拉取 PR 详情与 diff、用常规只读工具读代码与项目指令, 发现以文字直接返回当前会话供主 agent 继续动作"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/commands`、`src/subagent`、`src/ui`、`src/remote`、`src/session`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 Code Review 在 Yukino 中不是独立子系统: 一条 `/review` slash command + 一个内置的 `review` subagent 角色。审查 agent 用 `gh` CLI 拉取 PR 详情和 diff, 用常规只读工具读代码和项目指令, 最后把发现以文字形式直接返回当前会话, 主 agent 下一轮可以基于发现继续动作 (比如直接按发现修复)
+
+**主线一览**
+
+```mermaid
+flowchart LR
+  C[/review PR 号或 URL/] --> H[runSubagentCommand]
+  H --> T[Agent 工具: review 角色, 前台, fork: false]
+  T --> S[subagent 独立 transcript]
+  S --> G[gh pr view / diff + 只读工具读代码]
+  G --> F[发现以文字 saveMessage 回主会话]
+  F --> M[主 agent 下一轮基于发现继续]
+```
 
 :::note
 为什么收敛成「一个角色 + 一条命令」:
@@ -135,3 +147,13 @@ max_turns: 20
 
 - `/plan` 同为 prompt + agent 命令, 但走 `runPlanAgent` 独立分支: `checker.enterPlanMode()` 进入 plan 模式、`AgentTool.runBuiltin` 固定 `fork: true` 继承父上下文、成功后 `savePlan` 落盘并等待 plan 审批; review 走 `agent.execute` 的 `fork: false` 全新对话, 没有审批流程
 - 需要并发编排多个审查/验证任务 (例如逐 PR 批量审查) 时用 Workflow 脚本 (见 [workflow](./workflow)), `/ultracode` 是让主 agent 编写 Workflow 脚本编排 subagent 的入口
+
+---
+
+**延伸阅读**
+
+- [subagent](./subagent): 角色定义加载、工具过滤、fork 与后台委派的完整机制
+- [permission](./permission): review 继承父 checker 模式与 Bash 跑 gh 的 ask 流程
+- [react-and-agent-loop](./react-and-agent-loop): subagent 事件流与前台中断信号
+- [workflow](./workflow): 批量并发审查的编排入口与 `/ultracode`
+- [agent-team](./agent-team): 与 teammate 并行委派的区别

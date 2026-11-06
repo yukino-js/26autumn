@@ -2,12 +2,14 @@
 title: "yukino_rpc 技术笔记"
 description: "yukino_rpc 自研 Go RPC 框架: 二进制线协议、单连接多路复用、Future 异步模型、服务端流式 RPC、熔断限流负载均衡与 etcd 服务发现"
 local_path: "$HOME/github/yukino.go/libs/yukino_rpc"
-local_commit: "02e9621cee8763979175549903d7a67534923751"
+local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go/libs/yukino_rpc` 在 `02e9621cee87` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_rpc`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
+
+**主线一览**
 
 ```mermaid
 sequenceDiagram
@@ -100,12 +102,12 @@ yukino_rpc 是一个自研的 Go RPC 框架, 对外 API 对齐 grpc-go 的使用
   0x1234    大端 uint32  大端 uint32   长度 N            长度 M
 ```
 
-| 字段                    | 取值                     | 作用                                                         |
-| ----------------------- | ------------------------ | ------------------------------------------------------------ |
-| `Magic`                 | `0x1234`                 | 帧同步与脏数据跳过                                           |
-| `HeaderLen` / `BodyLen` | uint32 大端              | 描述后续两段长度                                             |
-| `Header`                | 始终 JSON                | 控制信息: 请求 ID、服务名、方法名、错误、codec、压缩、流标志 |
-| `Body`                  | 由 codec 决定, 通常 Gzip | 业务载荷                                                     |
+| 字段                    | 取值                            | 作用                                                         |
+| ----------------------- | ------------------------------- | ------------------------------------------------------------ |
+| `Magic`                 | `0x1234`                        | 帧同步与脏数据跳过                                           |
+| `HeaderLen` / `BodyLen` | uint32 大端                     | 描述后续两段长度                                             |
+| `Header`                | 始终 JSON                       | 控制信息: 请求 ID、服务名、方法名、错误、codec、压缩、流标志 |
+| `Body`                  | 由 codec 决定, 帧体经 Gzip 压缩 | 业务载荷                                                     |
 
 Header 结构承载的控制字段如下:
 
@@ -381,3 +383,10 @@ Closed 状态累计成功与失败计数, 窗口满 (`success + failure >= 10`) 
 - 需要稳定权重分配的场景: `WeightedRR` 与 etcd 发现的 map 顺序存在冲突, 需要先修正实例排序。
 - 依赖流调用建连错误快速失败的场景: 分发阶段的流错误帧会被客户端丢弃, 调用方必须给 `NewStream` 传带超时/取消的 ctx 兜底。
 - 对错误类型有强依赖的场景: 跨进程错误只剩字符串, 类型信息会丢失。
+
+**延伸阅读**
+
+- [yukino_http](./yukino-http): 同仓库 Go HTTP 框架, 洋葱模型中间件与流式接管机制。
+- [yukino_cache](./yukino-cache-go): 同仓库缓存库, 其 gRPC peer 通信可与本框架的服务端流式模型对照阅读。
+- [中间件与可观测性](./middleware): 熔断、限流、负载均衡等通用治理模式的横切视角。
+- [Go 语言核心](./go): 反射、并发原语与连接池等语言层基础。

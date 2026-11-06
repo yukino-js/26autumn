@@ -2,11 +2,11 @@
 title: "AGENTS.md and Memory"
 description: "AGENTS.md 与三层记忆: 工作记忆 (上下文窗口本身)、持久化到磁盘的长期记忆 (用户/项目级指令文件 AGENTS.md、JSONL 会话日志加文件快照, 支撑恢复会话与检查点回退), 以及 Agent 在对话中自动积累经验的自动记忆"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/memory`、`src/session`、`src/file-history`、`src/storage`、`src/config`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -412,3 +412,13 @@ run(memDir, sessionIDs)
 
 - 记忆提取每轮 agent loop 结束后都可能触发, 频率高、消耗小、影响小, 输入是最近 40 条消息, 至多 5 轮迭代
 - 记忆整理每隔 24h 且满足会话门槛才可能触发, 频率低、消耗大、影响大, 会 grep 会话日志取证, 至多 15 轮迭代
+
+---
+
+**延伸阅读**
+
+- [context-compaction](./context-compaction): compact_boundary 记录的结构、keep 内联与 resume 重建
+- [react-and-agent-loop](./react-and-agent-loop): 长期记忆注入点、通知 drain 与 loop 结束后的提取回调
+- [llm](./llm): 长期记忆走 system-reminder 而非 system prompt 的 cache 前缀取舍
+- [permission](./permission): 记忆提取 subagent 的收窄权限检查器与目录逃逸防护
+- [goal](./goal): goal_state 记录为何不进入对话历史、不被压缩影响
