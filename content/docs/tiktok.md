@@ -1,24 +1,72 @@
 ---
-title: "移动端性能采集与数据链路: 从设备侧抓栈到前端长列表"
-description: "设备端性能采集的插桩与抓栈两种范式、JS 运行时采集与 CPU profiling 火焰图分析、Kafka 至少一次语义与端到端不丢、消费顺序性与幂等去重、积压定位、Hive/ClickHouse/MySQL/Redis 的链路分工与 ClickHouse 选型优化、RPC 与 BFF 分层, 以及不定高虚拟滚动的实现与取舍"
+title: "TikTok Android 性能采集与数据链路: 双运行时抓栈与插桩到前端长列表"
+description: "以 TikTok Android (React Native + Java/Kotlin + 小程序容器) 为场景: JVM 系与 JS 侧性能数据的统一采集, 插桩与抓栈的底层原理、实现方式与坑点复盘, CPU profiling 火焰图分析, Kafka 至少一次语义与端到端不丢、消息去重与幂等写、消费顺序性、积压定位, 数据库与 MQ 一致性 (本地消息表), Hive/ClickHouse/MySQL/Redis 的链路分工与 ClickHouse 选型优化, RPC 与 BFF 分层, 以及不定高虚拟滚动的实现与取舍"
 ---
 
 **主线一览**
 
 ```mermaid
 flowchart LR
-  A[设备端插桩与抓栈] --> B[Kafka 至少一次]
+  A[TikTok Android 设备端采集<br/>JVM / Native / JS] --> B[Kafka 至少一次]
   B --> C[消费与幂等去重]
   C --> D[ClickHouse 明细]
   C --> E[Hive 离线]
   C --> F[Redis 与 MySQL 维表]
-  D --> G[BFF 聚合]
-  G --> H[前端不定高虚拟滚动]
+  C --> G[本地消息表<br/>DB 与 MQ 一致性]
+  D --> H[BFF 聚合]
+  G -.->|缓存失效通知| H
+  H --> I[前端不定高虚拟滚动]
 ```
 
-这份文档整理一条完整的设备性能数据链路: 从海量 Android 设备侧采集卡顿数据开始, 经过 Kafka 与多种存储的加工, 由后端 RPC 服务与前端 BFF 层逐级适配, 最后在浏览器里用虚拟滚动渲染成长列表。适合做移动端性能监控、数据平台链路设计或大列表渲染优化的工程师阅读。
+这份文档以 TikTok Android 客户端为场景, 整理一条完整的设备性能数据链路: 客户端基于 React Native, 同时存在大量 Java / Kotlin 模块与游戏小程序等小程序容器; 从海量设备上统一采集 JVM 系与 JS 侧的性能数据开始, 经过 Kafka 与多种存储的加工, 由后端 RPC 服务与前端 BFF 层逐级适配, 最后在浏览器里用虚拟滚动渲染成长列表。适合做移动端性能监控、数据平台链路设计或大列表渲染优化的工程师阅读。
 
-内容按技术问题组织: 先讲采集范式的取舍 (插桩还是抓栈、Java 侧还是 JS 侧), 再讲多存储链路的职责划分, 然后回答"为什么需要 RPC""为什么需要 BFF", 最后落到不定高虚拟滚动的算法实现。每个环节都给出约束、方案对比与适用边界。
+内容按技术问题组织: 先交代业务场景 (一个 App, 三类代码运行域), 再讲两种采集范式的底层原理、实现方式与线上坑点复盘 (插桩还是抓栈、JVM 系还是 JS 侧), 然后讲多存储链路的职责划分、消息去重与幂等写、数据库与 MQ 的一致性 (本地消息表), 再回答"为什么需要 RPC""为什么需要 BFF", 最后落到不定高虚拟滚动的算法实现。每个环节都给出约束、方案对比与适用边界。
+
+## 业务场景: 一个 App, 三类代码运行域
+
+TikTok Android 客户端不是单一技术栈的 App, 同一个进程里跑着三类代码运行域:
+
+- **Java / Kotlin (JVM 系)**: 主工程与大量业务模块, UI、网络、存储、信息流、直播等核心链路都运行在 ART 上。
+- **React Native**: 部分业务页面使用 RN, JS 引擎为 Hermes (默认), 通过 bridge / JSI 与 native 通信, UI 由原生视图渲染。
+- **小程序容器**: App 内嵌大量小程序, 包括游戏小程序、工具类小程序等; 每个小程序运行在独立的 JS 上下文里, 引擎为 V8 或 JavaScriptCore, 逻辑层与渲染层分离, 游戏类还有引擎渲染循环 (如 Cocos / Laya)。
+
+三类运行域意味着三类"慢"的位置: JVM 系方法慢、native 库慢、JS 业务逻辑慢, 以及跨边界 (bridge / JSI / JNI) 的相互等待。采集体系的目标是**统一采集**:
+
+- 一套采集 SDK 覆盖 Java / Kotlin、native 与多引擎 JS, 开关、采样率、白名单由云端统一下发配置。
+- 数据模型同构: 插桩产出 slice (名称、起止时间、线程归属), 抓栈产出 sample (时间戳、调用栈), 三个运行域的两类数据都能按同一条时间轴合并。
+- 采集与上报对业务透明: 业务代码不感知探针, 数据在设备侧完成聚合与脱敏后经上报网关送出。
+
+```mermaid
+flowchart TB
+  subgraph App[TikTok Android 客户端]
+    subgraph VM[ART 虚拟机]
+      J[Java / Kotlin 业务代码]
+    end
+    subgraph NL[Native 层]
+      C[C / C++ so 库]
+      HM[Hermes 引擎 — RN]
+      VJ[V8 / JSC — 小程序容器 × N]
+    end
+  end
+  J -->|JNI| C
+  HM -->|JSI / Bridge| C
+  VJ -->|JSBridge| C
+  App --> GW[上报网关]
+  GW --> K[Kafka]
+  K --> HV[Hive 离线]
+  K --> CK[ClickHouse 实时]
+  K --> MY[MySQL 业务表]
+```
+
+三个运行域的采集手段矩阵如下, 后续章节沿这张矩阵展开:
+
+| 运行域                 | 代码形态                  | 插桩手段                                  | 抓栈手段                      |
+| ---------------------- | ------------------------- | ----------------------------------------- | ----------------------------- |
+| ART (Java / Kotlin)    | 字节码加 JIT / AOT 机器码 | AGP 字节码插桩, ART 方法追踪              | ART 采样 profiler, simpleperf |
+| Native (C / C++)       | ELF so 机器码             | -finstrument-functions, PLT / inline hook | simpleperf / perf_event       |
+| JS (Hermes / V8 / JSC) | 字节码加 JIT 机器码       | Babel 编译期转换, 运行时包装              | 引擎自带 CPU profiler         |
+
+量级决定架构: DAU 以亿计, 即使按 1% 抽样, 每天仍有百万级设备在上报; 一次卡顿现场的 trace 少则几十 KB、多则几百 KB, 日增数据量在 TB 级。这约束了整条链路的形态——设备侧必须预聚合与熔断, 上报必须经网关收敛进 Kafka 缓冲, 存储必须按读写模式分发给 Hive、ClickHouse、MySQL、Redis, 查询必须经后端 RPC 与 BFF 逐级适配后才到前端。
 
 ## 设备端性能采集: 插桩与抓栈
 
@@ -38,6 +86,17 @@ flowchart LR
 - 编译期插桩: 构建阶段通过字节码或编译插件, 在指定函数的入口、出口自动注入计时代码, 不改业务代码。
 - 运行时 hook: 利用 ART 提供的方法追踪能力 (记录方法进入与退出事件), 对指定方法集合开启 trace。
 
+JVM 系的落地细节:
+
+- 编译期字节码插桩: 构建期通过 AGP 的字节码插桩入口 (AsmClassVisitorFactory, 旧版为 Transform API) 做 ASM 字节码转换, 在目标方法入口指令后插入计时调用 (如 TraceCollector.enter(methodId)), 在所有 return 路径与异常抛出 (athrow) 路径插入 exit。methodId 用构建期分配的整型 ID, 与方法签名的映射归档到 mapping 文件, 避免把字符串常量写进每个方法的 dex。
+- 运行时方法追踪: Debug.startMethodTracing 输出全量方法进出事件到 .trace 文件, Debug.startMethodTracingSampling 切换为采样模式降低开销; 产物用 Android Studio Profiler 查看或转成 perfetto trace。全量追踪的观察者效应显著, 只适合线下定向分析, 不能在线上长开。
+
+Native 的落地细节:
+
+- 编译期回调: 目标 so 加 -finstrument-functions 编译, 编译器在每个函数出入口插入 __cyg_profile_func_enter / __cyg_profile_func_exit 回调, 配合 addr2line 按地址离线还原符号。
+- PLT hook: 替换目标函数在 PLT / GOT 表里的入口 (bhook、shadowhook 等成熟库), 适合拦截跨 so 调用, 稳定性好; 对不经 PLT 的模块内部调用无效。
+- inline hook: 改写目标函数开头几条指令跳转到探针, 能 hook 任意内部函数, 但要面对指令重入、多线程竞态与指令集兼容问题, 崩溃率显著高于 PLT hook, 线上海量场景慎用。
+
 每次调用产出一条带起止时间的记录, 聚合后就是 perfetto trace 里的 slice (时间片段), 可以精确看到每个函数每一次调用花了多久、调用栈关系如何。
 
 优点与代价:
@@ -55,6 +114,35 @@ flowchart LR
 - ART 的采样式 profiling: 周期性挂起目标线程、抓取 Java 调用栈。
 - simpleperf / perf_event: 基于硬件 PMU 计数或定时器中断采样, 中断处理时抓栈, Java 与 native 代码都能覆盖。
 
+两条路线的差别在"谁触发采样、需要谁配合"。ART 的方式依赖运行时配合: 采集线程先挂起目标线程, 再通过 ART 内部接口遍历托管栈, 只能看到 Java 帧。simpleperf 走内核的 perf_event 机制: 通过 perf_event_open 系统调用为目标进程/线程注册事件, 由内核负责计数与触发中断, 样本写入 mmap 共享的环形缓冲区, 用户态的 simpleperf 再读出, 全程不需要目标线程或运行时配合。
+
+"基于硬件 PMU 计数或定时器中断"指的是采样节拍的两种中断来源:
+
+- 硬件 PMU 计数溢出: PMU (Performance Monitoring Unit) 是 CPU 内置的性能计数器, 能统计 cpu-cycles、instructions、cache-misses、branch-misses 等硬件事件。配置时给定采样周期 (例如每 10000 个 cycle 溢出一次), 计数器溢出时 CPU 硬件产生中断 (x86 称 PMI, Performance Monitoring Interrupt; ARM 上即 PMU 溢出中断), 内核在这个中断上下文里读取被打断线程当时的 PC/SP 寄存器, 沿栈帧回溯, 得到一条调用栈样本。样本密度正比于 CPU 消耗: 越耗 CPU 的代码被采到得越频繁, 天然形成热点分布。
+- 定时器中断: PMU 不可用时 (虚拟机、部分低端 SoC、内核未开放硬件计数器), 退化为软件定时采样: 内核高精度定时器 (hrtimer) 按固定频率触发中断 (例如每 1ms 一次), 同样在中断处理里抓取当前线程的栈。样本按墙上时间均匀分布, 与硬件事件无关。
+
+| 触发源            | 采样节拍                                | 样本分布                      | 依赖条件                      |
+| ----------------- | --------------------------------------- | ----------------------------- | ----------------------------- |
+| 硬件 PMU 计数溢出 | 每累计 N 个硬件事件 (如 cycle) 一次中断 | 正比于 CPU 消耗, 天然偏向热点 | 需要 CPU 与内核支持性能计数器 |
+| 定时器中断        | 每固定时间片 (如 1ms) 一次中断          | 按墙上时间均匀分布            | 只需内核 hrtimer, 通用兜底    |
+
+simpleperf 两种配置口径都支持: 周期模式 (-c, 每累计固定计数采一次) 与频率模式 (-f, 内核动态调整计数周期以命中目标采样频率, 例如每秒 1000 个样本)。
+
+```mermaid
+flowchart LR
+  A[目标线程执行指令] --> B{PMU 可用?}
+  B -- 是 --> C[PMU 计数器随硬件事件累计]
+  C --> D[计数溢出, CPU 产生中断]
+  B -- 否 --> E[hrtimer 定时中断]
+  D --> F[内核中断处理]
+  E --> F
+  F --> G[读被打断线程 PC/SP, 回溯栈帧]
+  G --> H[样本写入环形缓冲区]
+  H --> I[按函数聚合为热点 / 火焰图]
+```
+
+中断驱动采样的关键是异步打断: 中断发生的那一刻, CPU 寄存器里就是该线程正在执行的真实指令位置, 内核就地抓栈即可。因此不管线程当时跑的是 ART 编译出的机器码还是 C/C++ so 里的代码, 都能采到——在 CPU 看来都只是指令, 这就是"Java 与 native 都能覆盖"的来源。Java 帧的符号还原则依赖 ART 导出的 JIT 代码映射与 AOT 产物 (oat 文件) 的符号信息, 把机器码地址映射回 Java 方法名。
+
 优点与代价:
 
 - 开销只取决于采样频率, 与被测函数的调用次数无关, 因此适合在海量设备上长期开启。
@@ -70,6 +158,33 @@ App 内嵌 React Native 与小程序容器时, 相当一部分业务逻辑运行
 
 - ART 的方法追踪只能看到 Java 方法。
 - simpleperf 虽然能采到 JS 引擎的 native 帧, 但看到的是引擎内部实现, 看不到业务 JS 的函数名。
+
+ART 对 JS 盲, 根源在抓栈能力的边界。ART 的栈遍历器只认识托管栈自己的表示: 解释器帧 (shadow frame) 与编译帧 (quick frame) 都依赖 ART 内部元数据还原方法信息。而 JS 引擎对 ART 只是一个普通 native 库, JS 线程由引擎自建, 通常没有 attach 到 ART 虚拟机, 不在 ART 线程列表 (ThreadList) 的管理范围内——挂起机制够不到它, 栈遍历器也无法解释它的栈帧。即便 JS 线程因桥接回调经 JNI attach 到了 ART, ART 能看到的也只是栈上的 Java 帧和标记为 native 的帧, JS 层面的调用关系依然藏在引擎的数据结构里。
+
+simpleperf 能采到 JS 线程, 但采到的是"引擎视角"而非"业务视角"。perf_event 的中断作用于 CPU 上任何正在运行的线程, 不区分代码属于哪个运行时, 因此 JS 线程照样会被采样。问题在于采样结果是机器级的 native 栈, JS 业务栈对 native 展开器不可见:
+
+- 解释器模式: 所有 JS 函数调用都发生在引擎的 C++ 派发循环内部 (如 Hermes 的 interpretFunction), native 栈上只有一个解释器帧, JS 层面的调用关系全部坍缩。
+- JIT 模式: JS 函数被运行时编译成机器码, 地址不在任何 ELF 符号表里, simpleperf 看到的是无符号的匿名地址。
+
+```mermaid
+flowchart LR
+  A[业务 JS 调用栈] -->|藏在引擎数据结构里| B[JS 引擎]
+  B -->|解释器模式| C[C++ 派发循环帧]
+  B -->|JIT 模式| D[匿名机器码地址]
+  C --> E[simpleperf 采到的 native 栈]
+  D --> E
+  A -.->|引擎自带 profiler 直接抓| F[带业务函数名的 JS 火焰图]
+```
+
+例外是引擎主动导出 JIT 符号映射: V8 提供 perf 集成开关 (--perf-basic-prof 写 /tmp/perf-<pid>.map 符号映射, --perf-prof 生成 jitdump), perf / simpleperf 借此能把 JIT 代码地址还原成 JS 函数名, Node.js 在 Linux 上的 perf profiling 就基于这套机制。Android 上的 Hermes 不提供 perf 符号映射, 而是自带采样式 profiler (HermesSamplingProfiler), 周期性抓取 JS 调用栈, 配合 source map 把混淆后的函数名还原成源码名。
+
+三种手段对 JS 的可见性汇总:
+
+| 采集手段                | 能否采到 JS 线程 | 看到什么                   | 业务 JS 函数名在哪丢失                         |
+| ----------------------- | ---------------- | -------------------------- | ---------------------------------------------- |
+| ART 采样 / 追踪         | 否               | 只有 Java 方法             | JS 线程未附着到 ART, 不在线程列表管理范围      |
+| simpleperf / perf_event | 能               | 引擎 C++ 帧与匿名 JIT 地址 | JS 栈在引擎数据结构里, native 展开器看不到     |
+| 引擎自带 CPU profiler   | 能               | 业务 JS 调用栈             | 不丢失: 引擎直接抓 JS 栈, 配合 source map 还原 |
 
 因此 JS 侧需要独立的采集通道, 插桩与抓栈两种范式在这里同样成立。
 
@@ -178,6 +293,49 @@ profile 的数据结构 (以 V8 / CDP 的产物为例):
 
 实际链路中两者是配合关系: 抓栈在海量设备上常态化运行, 用来发现热点、看大盘趋势; 发现疑似问题后, 再对相关函数做插桩, 拿到单次调用级别的精确数据用于定位。JS 侧的采样数据与 Java / native 侧数据按时间轴对齐后统一上报, 才能完整还原一次卡顿中 JS、bridge、native 各阶段的耗时。抓栈范式的完整工程形态即 CPU profiling (采样、聚合、火焰图), 工作流见上一节。
 
+### 坑点复盘: 两种范式的线上问题
+
+原理与实现回答"怎么采", 这一节回答"采出来的数据为什么不对"。按环节归类, 每个坑给出现象、根因与解法。
+
+插桩的坑:
+
+- **全量插桩的观察者效应吞掉问题本身**: 开启全量方法追踪后, 探针开销让原本临界的帧更超帧预算, 卡顿被测量放大; 高频小函数 (getter、lambda、每帧回调) 每秒调用几十万次, 探针耗时超过业务代码本身。解法: 插桩范围按白名单收敛、云控灰度; 大盘摸底交给抓栈, 插桩只用于疑似热点的定点确认。
+- **异常路径漏结算导致耗时悬空**: 只在正常 return 插了 exit、没覆盖 throw 路径, 抛错的方法只有 enter 没有 exit; 悬空记录被聚合成长得离谱的慢调用, 直接污染 P99。解法: 字节码层在所有 return 与 athrow 出口统一插 exit, AST 层用 try/finally 包住函数体。
+- **异步边界记错耗时**: Kotlin 协程的 suspend/resume、JS 的 async/await, 函数体同步返回不等于业务完成; 按同步返回点记 exit, 耗时比真实值小几个量级。解法: 以真正完成点结算——协程用 CoroutineContext 拦截器在挂起与恢复处打点, JS 以 Promise 的 resolve / reject 为结束时间。
+- **mapping 与混淆错位**: R8 混淆后方法名被重写, 构建期生成的 methodId 映射与线上包对不上, 上报数据还原不到源码。解法: mapping.txt 随构建产物归档, 与版本号加构建号强绑定; JS 侧 source map 同理, 服务端符号化先校验版本匹配。
+- **运行时 hook 的稳定性**: inline hook 在指令重入与多线程竞态下崩溃; PLT hook 对模块内部不经 PLT 的调用无效, 覆盖不全被误判为"没有调用"。解法: 能编译期就不运行时, 能 PLT 就不 inline; inline 场景选经过海量线上验证的成熟 hook 库。
+
+抓栈的坑:
+
+- **符号丢失, 满屏十六进制地址**: release 包 so 被 strip、JIT 编译代码没有 ELF 符号, 采到的调用栈全是 unknown 地址。解法: 构建管线强制归档未 strip 的 so、oat 符号与 JIT map, 设备端只上报原始地址, 服务端按版本离线符号化; 不要在设备端做符号解析, 既吃性能又吃包体。
+- **栈展开失败只剩一帧**: 构建省略帧指针 (-fomit-frame-pointer) 时, 基于 fp 的展开一层就断。解法: simpleperf 用 --call-graph dwarf 把栈快照拷回来离线展开 (数据量大), 或对业务 so 统一开 -fno-omit-frame-pointer (体积与少量性能代价); Java 帧交给 ART 的栈遍历能力, 不要用 native 工具硬展开。
+- **采样器自己制造卡顿**: ART 采样抓栈需要挂起线程, 高频挂起本身造成 jank——被测对象变成了测量对象。解法: 降低采样频率、错开采样时机 (fling 与动画期间不采)、只对目标会话开启; 上线前对比开关 profiler 的帧率差异, 量化观察者效应后再定参数。
+- **采样偏斜与 skid**: PMU 溢出中断有硬件延迟, 记录的 PC 可能已越过真实热点若干条指令 (skid), 热点在相邻函数间漂移。解法: 精确采样机制 (x86 的 PEBS、ARM 的 SPE) 可降低 skid, 但移动 SoC 支持有限; 工程上接受该误差——采样结论用于排序与方向判断, 不做绝对归因。
+- **inclusive / exclusive 口径打架**: 同一份数据, 按 self 看结论是函数 A 热, 按 inclusive 看结论是 B 热 (B 本身薄但子树重), 两份报表互相矛盾。解法: 报表定义里固定口径, 火焰图页面同时标注两种数值。
+- **短函数漏采**: 执行时间小于采样间隔的函数出现在样本里的概率低, 0.1ms 的高频小函数在 1kHz 采样下几乎不可见。解法: 这类函数改用插桩精确测量; 不要试图靠拉高采样频率解决, 开销随频率线性上涨。
+
+JS 侧的坑:
+
+- **source map 与 bundle 版本错配**: bundle 热更后 source map 没同步, 行列号映射到错误函数, 热点归因张冠李戴。解法: bundle 与 source map 按内容 hash 强绑定, 服务端符号化校验 hash 一致才解析, 不一致直接丢弃并告警。
+- **Hermes profile 格式割裂**: Hermes 采样产物不是 Chrome trace 标准格式, 需要 hermes-profile-transformer 转换; 引擎版本升级可能变更格式, 转换链路要跟随引擎版本回归测试。
+- **JS 单线程探针阻塞**: 插桩探针在 JS 线程执行, 全量 Babel 转换后低端机明显变卡。解法: 渲染回调、每帧回调等高频函数排除在插桩外; 探针内只做时间戳采集, 缓冲写入批量异步转储。
+- **小程序多上下文串扰**: 一个容器进程承载多个小程序实例, 各自独立 JS 上下文, 样本不带上下文标记会把 A 小程序的热点归到 B 头上。解法: 样本结构里带 appid 与 context id 维度, 聚合时按上下文隔离。
+- **游戏小程序的循环函数吞掉归因**: 游戏主循环 (requestAnimationFrame / 引擎调度器) 每帧执行, inclusive 口径下几乎 100% 归因到循环函数, 没有信息量。解法: 对这类入口函数只看 self time 与子树展开, 或直接下钻到游戏引擎 (Cocos / Laya) 帧与 JS 业务函数帧。
+
+跨运行域对齐的坑:
+
+- **时钟源不一致**: Java 侧 System.nanoTime、JS 侧 performance.now、native 侧 CLOCK_MONOTONIC 各有原点, 三端时间戳直接比较会错位。解法: SDK 统一用同一个单调时钟做时基, 启动时记录各运行时相对该时基的偏移量, 服务端合并 trace 时校准。
+- **trace 体积爆炸**: 一次卡顿的 Java + JS + native 全量 trace 合并后可达数 MB, 设备上传与服务端存储都扛不住。解法: 设备侧裁剪 (只报卡顿点前后 N 秒)、样本预聚合 (按函数聚合计数而非上报原始栈)、采样率分级 (大盘低频、定向高频)。
+- **bridge / JSI 边界归因失真**: 一次"JS 卡顿"实际是 JS 线程在等 native 同步调用; JS profiler 看到等待, native profiler 看到正常, 两边都抓不到真相。解法: 边界两侧都插桩——JS 侧包住 JSI / bridge 调用点记录边界耗时, native 侧记录 JNI 入口, 合并时间轴后才能看出谁在等谁。
+
+设备侧数据工程的坑:
+
+- **弱网重试造成重复上报**: 上报失败重试、进程被杀后重启重发, 服务端收到多份。解法: 每条数据带设备端生成的全局唯一 event_id, 服务端按 event_id 幂等收敛——设备端就是全链路"至少一次加幂等"模式的第一环。
+- **采集影响电量与流量**: 长期高频采样导致耗电与流量明显上升, 触发用户卸载或系统后台限制。解法: 云控采样率与开关, 充电加 Wi-Fi 时才全量采集, 设备高温、低电量时熔断降级。
+- **栈数据的隐私合规**: 调用栈与参数可能带用户敏感信息 (URL、用户标识), 原始 trace 不能直接上传。解法: 符号白名单内才上报, 服务端脱敏管线, 数据留存与出境遵循属地法规。
+
+复盘下来, 绝大多数坑的根因集中在三件事: **符号还原链路断裂** (mapping / source map / 未 strip 产物没有随版本归档)、**测量口径不统一** (inclusive / exclusive、时钟原点、异步结算点)、**规模失控** (全量插桩、原始栈上传、高频采样)。三者分别对应三条工程纪律: 构建产物必须归档符号文件, 报表定义必须固定口径, 采集策略必须有云控与熔断。
+
 ## 数据链路: 接入层与存储层的职责划分
 
 ### 整体链路
@@ -205,6 +363,24 @@ Kafka 在这条链路中充当数据接入层:
 - 可重放: 数据按保留策略落盘保存, 某个下游消费任务写错数据时可以重新消费、重新灌库; 当前链路按至少一次消费, 回放会产生重复, 依赖下游业务唯一键或去重表收敛, 见"重复消费"一节。
 
 Kafka 在这里不承担查询职责, 它只是流动的管道, 真正的查询能力由后面的存储提供。
+
+这条链路收敛出的消息模型如下: event_id 由设备端生成、全局唯一, 是全链路的幂等键; 分区 key 取 device_id, 保证同一设备的上报落同一分区:
+
+```json
+{
+  "event_id": "0f9c1e2a-7b3d-4c56-9a1e-2d4f6a8b0c1e",
+  "device_id": "a1b2c3d4e5",
+  "session_id": "s-1762400000-9527",
+  "app_version": "31.2.0",
+  "os_version": "Android 15",
+  "runtime": "js",
+  "scene": "miniprogram-game",
+  "ts": 1762400000123,
+  "payload": { "type": "cpu_profile", "format": "chrome-trace", "data": "..." }
+}
+```
+
+runtime 字段标记数据属于哪个运行域 (java / native / js), scene 标记业务场景 (RN 页面或某个小程序的 appid), 服务端据此路由符号还原 (mapping / source map) 与维度聚合。
 
 ### 投递语义: 至少一次与端到端不丢
 
@@ -292,7 +468,127 @@ Kafka 的顺序保证边界是分区: 同一分区内按 offset 有序, 不同�
 - 去重与业务写入必须在同一个事务或同一张本地表里完成; 先写去重表再写业务表, 中间崩溃会出现"标记已消费但业务没写"的丢数据。
 - 不要用 offset 当幂等键: 它只在单个分区内唯一, 跨分区会冲突; 分区调整或重建后也无法稳定映射到同一条业务消息。
 
+三类 sink 的幂等写落地示例:
+
+MySQL 业务表用唯一索引加 upsert, 重复退化为空操作:
+
+```sql
+-- event_id 上有唯一索引 uk_event_id
+INSERT INTO perf_event (event_id, device_id, runtime, scene, duration_ms, ts)
+VALUES (?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE updated_at = NOW();
+```
+
+Redis 去重做快路径预筛, MySQL 唯一索引做最终兜底:
+
+```text
+SET dedup:{event_id} 1 NX EX 604800   -- 返回 OK 说明首次, 继续业务写入; 返回 nil 说明重复, 跳过
+```
+
+注意"Redis 去重"与"MySQL 写入"不是原子操作: 标记去重后、业务写入前崩溃, 这条消息会被永久跳过。因此 Redis 只能作为减少无效写入的预筛层, 正确性由 MySQL 唯一索引保证; 或者把去重记录与业务数据放同一库同一事务 (去重表方案)。
+
+ClickHouse 用 ReplacingMergeTree 按 event_id 收敛重复:
+
+```sql
+CREATE TABLE perf_detail
+(
+    event_id    String,
+    device_id   String,
+    runtime     LowCardinality(String),
+    scene       LowCardinality(String),
+    duration_ms UInt32,
+    ts          DateTime,
+    version     UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+PARTITION BY toDate(ts)
+ORDER BY (device_id, runtime, event_id);
+```
+
+查询时用 argMax 或 FINAL 取去重后的最新版本; 注意 ReplacingMergeTree 只在后台 merge 时去重, merge 之前同一 event_id 能查出多行, 实时口径要按此设计。
+
 如果链路只在 Kafka 内部流转 (Kafka 到 Kafka), 可以用事务生产者加 sendOffsetsToTransaction 做到 Kafka 范围内的恰好一次; 一旦落到外部存储, 仍然要回到业务幂等。
+
+### 数据库与 MQ 一致性: 本地消息表
+
+前面几节解决"消息进入 Kafka 之后怎么不丢不重", 这一节解决上游问题: **当一个节点既要写数据库又要发消息时, 怎么保证两者原子**。这条链路里存在双写点: 消费任务把聚合结果写入 MySQL 业务表后, 需要向下游 topic 发"榜单更新"消息触发 BFF 缓存刷新; 运营后台修改采集配置 (存 MySQL) 后, 需要通知设备侧长连接通道下发新配置。
+
+双写无论哪个顺序都不原子:
+
+- 先写 DB 再发 MQ: MQ 发送失败 (网络抖动、broker 不可用), DB 已变更而下游永远不知道, 状态永久不一致。
+- 先发 MQ 再写 DB: DB 写入失败, 下游收到一条指向不存在数据的消息。
+- 用分布式事务 (2PC / TCC) 包住两者理论可行, 工程上不现实: MQ 大多不支持 XA, 2PC 的同步阻塞在海量链路上锁资源, 成本远高于收益。
+
+**方案一: 本地消息表 (Transactional Outbox)**
+
+核心思路是把"发消息"变成"写一行本地表", 与业务写入放在同一个数据库事务里, 借 MySQL 本地事务的原子性; 消息投递由独立的 relay 任务异步完成。
+
+```sql
+CREATE TABLE outbox_message (
+    id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    event_id      VARCHAR(64)  NOT NULL,
+    topic         VARCHAR(128) NOT NULL,
+    payload       JSON         NOT NULL,
+    status        TINYINT      NOT NULL DEFAULT 0, -- 0 待发送, 1 已发送, 2 死信
+    retry_count   INT          NOT NULL DEFAULT 0,
+    next_retry_at DATETIME     NOT NULL,
+    created_at    DATETIME     NOT NULL,
+    UNIQUE KEY uk_event (event_id),
+    KEY idx_status_retry (status, next_retry_at)
+);
+```
+
+```mermaid
+sequenceDiagram
+  participant S as 业务服务
+  participant DB as MySQL
+  participant R as Relay 任务
+  participant K as Kafka
+  participant D as 下游消费者
+  S->>DB: BEGIN
+  S->>DB: 写业务表
+  S->>DB: 写 outbox_message (status=0)
+  S->>DB: COMMIT, 两笔写入原子生效
+  loop 轮询
+    R->>DB: SELECT ... WHERE status=0 AND next_retry_at<=now()
+    R->>K: 发送消息 (key=event_id)
+    K-->>R: acks=all 确认
+    R->>DB: UPDATE status=1
+  end
+  K->>D: 投递
+  D->>D: 按 event_id 幂等处理
+```
+
+关键设计点:
+
+- **同库事务是一致性边界**: 业务行与 outbox 行一起提交或一起回滚, 不存在"业务成功而消息没记录"的状态。
+- **投递仍是至少一次**: 发送成功但 status=1 标记前崩溃, 重启后会重发, 下游收到重复。本地消息表不消灭重复, 它把"可能丢"换成"可能重", 重复仍靠下游 event_id 幂等收敛——与全链路语义一致。
+- **失败退避与死信**: 发送失败按指数退避更新 next_retry_at, 超过阈值标记 status=2 并告警人工介入, 避免毒消息无限重试堵住 relay。
+- **延迟下限是轮询间隔** (百毫秒到秒级); 延迟敏感场景可以"事务提交后立即尽力发一次, relay 任务兜底", 即时发送失败无所谓, relay 会补上。
+- **表要清理**: status=1 的记录定期归档或删除, 否则表膨胀、轮询变慢; 写入量大时按时间分区。
+
+**方案二: CDC 订阅 binlog (Canal / Debezium)**
+
+业务只写 DB, CDC 组件伪装成 MySQL 从库订阅 binlog, 把行级变更近实时转成 Kafka 消息。
+
+- 优点: 业务代码零侵入, 没有双写, 没有轮询; binlog 天然按提交顺序, 配合按主键路由到同一分区可以保序。
+- 缺点: 消息形态是"行级变更"而非"业务事件", 下游要理解表结构语义, schema 变更直接冲击下游; 需要独立部署运维 CDC 组件; 大事务与 DDL 会造成订阅延迟。
+- 与本地消息表的分工: 需要自定义业务语义 (发什么内容、何时算生效) 用 outbox; 纯数据同步 (MySQL 维表到 ClickHouse / 缓存 / ES) 用 CDC。
+
+**方案三: Kafka 事务 (限 Kafka 内部链路)**
+
+"消费 Kafka → 处理 → 写回另一个 topic 并提交位点"的读处理写场景, 可以用事务生产者配合 sendOffsetsToTransaction 把多 topic 写入与位点提交原子化。边界同样清楚: 原子性只覆盖 Kafka 内部, 对 MySQL、ClickHouse 的写入不生效——这条链路的 sink 都是外部存储, 最终仍回到"至少一次加幂等写"。
+
+**方案对比与在本链路的落地**
+
+| 方案           | 一致性边界      | 业务侵入 | 延迟     | 适用               |
+| -------------- | --------------- | -------- | -------- | ------------------ |
+| 本地消息表     | 同库本地事务    | 中       | 秒级     | 业务事件发 MQ      |
+| CDC binlog     | binlog 即事实源 | 低       | 亚秒到秒 | 数据同步与缓存刷新 |
+| Kafka 事务     | Kafka 内部      | 低       | 低       | 纯 Kafka 读处理写  |
+| 尽力通知加对账 | 依赖对账        | 低       | 高       | 非关键通知         |
+
+落到本链路: 设备侧 → 网关 → Kafka 段不涉及 DB 双写——网关不落库, 直发 Kafka, 失败靠设备端重试加 event_id 幂等兜底; 双写点集中在消费侧与配置侧——消费任务写 MySQL 聚合结果并通知下游用本地消息表, MySQL 配置与维表变更同步到 ClickHouse 与缓存用 CDC。
 
 ### 积压定位: 从 lag 到 SQL 慢查询
 
@@ -556,6 +852,33 @@ RPC (Remote Procedure Call, 远程过程调用) 是一种进程间通信方式: 
 - 设备性能数据查询 QPS 高, 二进制序列化与长连接降低了单次调用的开销。
 - BFF 与后端分属不同进程、不同语言运行时, IDL 生成的代码保证了两端类型一致。
 
+### 超时、重试与服务治理
+
+一次榜单请求要穿透前端 → BFF → RPC → 存储四层, 治理参数按整条链路设计:
+
+```mermaid
+sequenceDiagram
+  participant P as 前端页面 React
+  participant B as BFF Nest.js
+  participant R as 后端 RPC Go + Kitex
+  participant D as Redis
+  participant C as ClickHouse
+  P->>B: HTTP GET /api/rank?page=2
+  B->>R: RPC GetPerfRank (Thrift 二进制, 长连接)
+  R->>D: 查热点结果缓存
+  D-->>R: miss
+  R->>C: 查预聚合表 (avgMerge / quantileMerge)
+  C-->>R: 聚合结果
+  R->>D: 回写缓存
+  R-->>B: Thrift 响应
+  B->>B: 字段裁剪、分页整形、格式转换
+  B-->>P: HTTP JSON 视图模型
+```
+
+- 超时预算逐跳递减: 前端 3s > BFF 2.5s > 单次 RPC 调用 1s, 每一跳给自身与下一跳留余量; 反过来配 (内层比外层长) 会让外层先超时、内层还在空跑, 浪费资源还放大长尾。
+- 重试只对幂等读: 这条链路的 RPC 都是查询接口, 天然幂等, BFF 可以安全重试 (限 1 次, 配合熔断); 写接口不自动重试, 或必须携带幂等键。重试会放大流量, 下游过载时重试风暴能把积压变成雪崩, 必须配合熔断与退避。
+- 服务治理由框架提供: 注册中心完成实例发现与健康检查, 负载均衡按加权轮询分发, 错误率超阈值熔断, 限流保护自身容量; trace id 贯穿 BFF → RPC → SQL——积压定位一节里"SQL 注释带上下文"的技巧同样适用于 RPC 链路排障。
+
 ## BFF 层为什么必要
 
 ### 约束: 一个后端能力, 多个消费方
@@ -682,6 +1005,7 @@ function onMeasure(index: number, realHeight: number) {
 
 - 需要精确到单次调用的耗时、且目标函数已知, 用插桩; 需要在海量设备上常态化摸底、目标未知, 用抓栈。两者配合, 抓栈发现热点、插桩定位单点。
 - 含 JS 运行时的 App 必须在 Java / native 通道之外单独采集 JS 侧, 否则 JS 线程的耗时是盲区; 跨 JS / native 边界的瓶颈要合并两边的数据一起看。
+- 采集数据的可信度由三件事决定: 符号还原链路 (mapping、source map、未 strip 产物随版本归档)、测量口径 (inclusive / exclusive、时钟原点、异步结算点)、规模控制 (白名单插桩、采样率、设备侧预聚合); 坑点复盘里的绝大多数问题都源于这三件事中的某一件没做到位。
 
 链路侧:
 
@@ -689,6 +1013,7 @@ function onMeasure(index: number, realHeight: number) {
 - 引入 BFF 的前提是后端能力有多个消费方、数据需要面向前端适配、以及服务端必须控制下发数据量; 如果只有一个前端且数据模型就是视图模型, BFF 只会增加一跳延迟与运维成本。
 - 投递语义选至少一次: 不丢靠生产者 acks=all 加幂等、Broker 多副本与 min.insync.replicas、消费者处理成功后提交位点; 重复靠业务唯一键、去重表与存储层收敛; 顺序只保证分区内, 按设备或会话维度选 key。
 - 积压定位先看 lag 与消费 RT, 再下钻 MySQL 慢查询与锁等待、ClickHouse query_log 与 part 数量; SQL 慢是消费变慢的常见根因, 修复点在索引、事务粒度、连接池与写入模型。
+- "写库又发消息"的双写点用本地消息表: outbox 写入与业务写入同库事务, relay 任务至少一次投递, 下游按 event_id 幂等消费; 纯数据同步场景用 CDC 订阅 binlog, 业务零侵入。
 - ClickHouse 的选型依据是 append-only 明细与大范围聚合, 优化顺序是先建模 (分区、排序键、预聚合) 再调写入与查询; 只在已有表结构上改参数, 收益有限。
 
 渲染侧:
