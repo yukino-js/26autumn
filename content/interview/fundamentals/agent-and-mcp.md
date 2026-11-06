@@ -19,14 +19,13 @@ description: "Agent loop 的终止与恢复、四类消息信任分层、MCP 协
 
 Agent loop 的本质是**由外部运行时驱动的状态机**：模型只产出下一步动作（工具调用或最终答案），循环本身不属于模型。终止必须显式、可判定、由代码裁决，不能指望模型自觉停下。
 
-| 终止类别        | 判据                                             | 裁决方     |
-| --------------- | ------------------------------------------------ | ---------- |
-| 正常完成        | 产出 `final` 且通过结构与引用校验                | Harness    |
-| 步数 / 预算上限 | `step >= max_steps` 或 token / 费用 / 墙钟超预算 | Harness    |
-| 无进展          | 连续 N 步同一工具同一参数，或状态哈希不变        | Harness    |
-| 证据不足        | 检索收益耗尽且关键命题仍未知                     | 检索控制器 |
-| 权限中断        | 命中需审批动作，挂起等待人在回路                 | 权限网关   |
-| 不可恢复        | 重试预算耗尽且无降级路径                         | Harness    |
+| 终止类别        | 判据                                                                             | 裁决方     |
+| --------------- | -------------------------------------------------------------------------------- | ---------- |
+| 正常完成        | 产出 `final` 且通过结构与引用校验                                                | Harness    |
+| 步数 / 预算上限 | `step >= max_steps` 或 token / 费用 / 墙钟超预算；重试耗尽且无降级路径判不可恢复 | Harness    |
+| 无进展          | 连续 N 步同一工具同一参数，或状态哈希不变                                        | Harness    |
+| 证据不足        | 检索收益耗尽且关键命题仍未知                                                     | 检索控制器 |
+| 权限中断        | 命中需审批动作，挂起等待人在回路                                                 | 权限网关   |
 
 ```mermaid
 flowchart TD
@@ -35,41 +34,35 @@ flowchart TD
   D -->|工具调用| V["参数校验 + 权限二次校验"]
   V -->|拒绝| H["挂起 / 人在回路"]
   V -->|放行| E["执行工具<br/>幂等键去重"]
-  E --> P["写事件 + 持久化 checkpoint"]
+  E --> P["写事件 + checkpoint"]
   P --> T{"终止判定"}
-  D -->|final| C["结果校验<br/>引用 / Schema / 机械闸门"]
+  D -->|final| C["引用 / Schema / 机械闸门"]
   C --> T
   T -->|继续| M
   T -->|结束| Z["输出结果 + Trace"]
 ```
 
-Harness 是**让模型按可控流程工作的运行控制层**，把可判定的事全部从模型手里收走：构造 Prompt、管理上下文（分层 / 预算 / 压缩裁剪）、注册工具、校验参数、执行调用、维护状态、重试与超时、Token 成本、Trace、终止判断。缺失任一项分别对应前缀抖动、types 漂移、重复写、断连丢状态、重试风暴、瓶颈无法定位。
-
-`AgentHarness.run()` 骨架（TS 伪代码）：
+Harness 是**让模型按可控流程工作的运行控制层**，把可判定的事全部从模型手里收走：构造 Prompt、管理上下文（分层 / 预算 / 压缩裁剪）、注册工具、校验参数、执行调用、维护状态、重试与超时、Token 成本、Trace、终止判断——缺失任一项分别对应前缀抖动、types 漂移、重复写、断连丢状态、重试风暴、瓶颈无法定位。
 
 ```ts
 class AgentHarness {
   constructor(private model: LLM, private tools: ToolRegistry,
               private store: StateStore, private policy: PolicyGateway) {}
   async run(task: Task): Promise<Result> {
-    let state = await this.store.load(task.runId);          // 断点续跑，不依赖内存 Future
+    let state = await this.store.load(task.runId);   // 断点续跑，不依赖内存 Future
     for (let i = state.stepId; i < task.maxSteps; i++) {
       if (this.budget.exhausted(state) || this.policy.needsApproval(state))
         return this.halt(state, "budget_or_approval");
-      const step = await this.model.invoke({
-        messages: state.messages, tools: this.tools.schemas(), // 会话内字节稳定
-      });
+      const step = await this.model.invoke({ messages: state.messages, tools: this.tools.schemas() });
       if (step.action === "final")
         return this.validate(step.text, state.evidence)
           ? this.commit(state, step.text) : (state = this.reject(state), continue);
       const args = this.tools.validateArgs(step.name, step.args); // Ajv + 身份注入
       if (!this.policy.allow(step.name, args, state)) { state = this.awaitApproval(state); continue; }
       const out = await this.tools.execute(step.name, args, {
-        idempotencyKey: `${task.runId}:${i}:${step.name}:${hash(args)}`,
-        timeoutMs: task.toolTimeoutMs,
-      });
+        idempotencyKey: `${task.runId}:${i}:${step.name}:${hash(args)}`, timeoutMs: task.toolTimeoutMs });
       state = this.appendEvent(state, { stepId: i, out: sanitize(out) });
-      await this.store.checkpoint(state);                    // 每步持久化
+      await this.store.checkpoint(state);            // 每步持久化
       state.messages.push({ role: "tool", content: out, trust: "untrusted" });
     }
     return this.halt(state, "max_steps");
@@ -81,7 +74,7 @@ class AgentHarness {
 
 :::warning 边界与失败模式
 
-- 只依赖模型自报结束：证据不足时仍会给出流畅结论，终止与结果校验必须放在 Harness。
+- 只依赖模型自报结束：证据不足时仍给出流畅结论，终止与结果校验必须放在 Harness。
 - 重试无幂等键：重复下单、重复发消息，恢复次数越多放大越严重。
 - 取消只到最外层：底层查询 / 子进程 / 模型请求仍在跑，前端显示已停而后台继续写入。
 - checkpoint 只存增量不存全量状态：断连后无法重建上下文，只能重跑整条链路。
@@ -120,6 +113,7 @@ class AgentHarness {
 **权限边界在运行时与工具网关，不在 Prompt**：Prompt 只表达意图、不能执行拒绝；执行器对每次调用独立做 Schema 校验、权限判断、输出清洗，身份参数由系统注入并覆盖模型同名值。
 
 :::tip 位置取舍
+
 编号证据 `[n]` 放在当前用户消息之后的 `turn-ctx`，保持 `system + 历史` 前缀字节稳定、命中前缀缓存；放进 system 会让每轮证据变动击穿整段缓存。
 :::
 
@@ -145,17 +139,13 @@ const retrieval_utility =
 
 ## MCP：协议、传输、角色与信任边界
 
-MCP 是 AI 应用与外部工具 / 数据源之间的**标准化中间层**，把「每个应用自己写胶水代码连 DB、文件系统、第三方 API」变成可插拔挂载。它只解决**能力发现与调用协议**，不自动解决安全。消息统一为 JSON-RPC 2.0，仅 request / response / notification 三类：
+MCP 是 AI 应用与外部工具 / 数据源之间的**标准化中间层**，把「每个应用自己写胶水代码连 DB、文件系统、第三方 API」变成可插拔挂载。它只解决**能力发现与调用协议**，不自动解决安全。消息统一为 JSON-RPC 2.0，仅 request / response / notification 三类，例如 `tools/list` 请求：
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "tools/call",
-  "params": {
-    "name": "search_issues",
-    "arguments": { "repo": "golang/go", "query": "error handling" }
-  }
+  "method": "tools/list"
 }
 ```
 
@@ -166,6 +156,7 @@ MCP 是 AI 应用与外部工具 / 数据源之间的**标准化中间层**，�
 | `SSE`             | 早期 HTTP+SSE 长连接，仅用于未迁移的旧 Server                         | 兼容存量                 | 已被 Streamable HTTP 取代        |
 
 :::note 传输模式的常见误答
+
 **`Memory` 不是传输模式**，属资源 / 能力范畴；写成 `stdio / SSE / Memory` 是错的。工具也不是「Server 端自动执行」：调用链是 Host/Client 发起 → Server 执行，Host 始终握有放行权。
 :::
 
@@ -186,10 +177,8 @@ MCP 是 AI 应用与外部工具 / 数据源之间的**标准化中间层**，�
 
 ```mermaid
 flowchart LR
-  H["Host<br/>权限与上下文"] --> C["Client<br/>稳定请求 ID"]
-  C --> S["Server<br/>执行 tools/call"]
-  S --> D[("DB / 模型 / 子进程")]
-  H -. "取消沿链" .-> C --> S
+  H["Host 权限与上下文"] --> C["Client 稳定请求 ID"] --> S["Server 执行 tools/call"] --> D[("DB / 模型 / 子进程")]
+  H -. "取消沿链" .-> C
   S -. "不可取消则标记取消中" .-> H
 ```
 
@@ -216,13 +205,12 @@ flowchart LR
 
 工具定义不是「每轮附带的一段元数据」，而是**前缀的一部分**。tools 数组渲染在 `system` 之后、`messages` 之前，其后整段对话历史都落在同一缓存前缀上：只要 tools 增删、改序或改字段，前缀字节改变，整段历史缓存失效。源码注释实测：**约 20k token 历史下，仅在 tools 末尾追加一个工具，cache 命中率 99.4% → 9.5%**——「网关动态发现工具」看似只是注册中心 watch 一下，实际把长会话成本与延迟放大近一个数量级。
 
-| 变更                             | 缓存影响     | 触发                     |
-| -------------------------------- | ------------ | ------------------------ |
-| 追加 / 删除工具                  | 整段历史失效 | 服务注册发现、热加载配置 |
-| 调整顺序                         | 整段历史失效 | 按相关性动态排序 tools   |
-| 改 `description` / `inputSchema` | 整段历史失效 | Schema 同步、版本漂移    |
-| 加载模式翻转                     | 整段历史失效 | 运行中重算加载策略       |
-| 仅追加 `system-reminder`         | 只影响尾部   | 延迟工具引导、公告变更   |
+| 变更                             | 缓存影响     | 触发                                   |
+| -------------------------------- | ------------ | -------------------------------------- |
+| 追加 / 删除工具、调整顺序        | 整段历史失效 | 服务注册发现、热加载配置、按相关性排序 |
+| 改 `description` / `inputSchema` | 整段历史失效 | Schema 同步、版本漂移                  |
+| 加载模式翻转                     | 整段历史失效 | 运行中重算加载策略                     |
+| 仅追加 `system-reminder`         | 只影响尾部   | 延迟工具引导、公告变更                 |
 
 **工程取舍**：稳定性优先于「工具刚好够用」——工具集合在会话启动时一次性决定，运行中不重算；新增能力通过**固定存在的分发入口**（如 `ToolSearch` / `McpCall`）间接暴露，让 tools 数组保持字节级不变。加载模式（全量 / 带 `defer_loading` 保留 / 完全省略并经分发调用）在连接建立时一次性决策，后续只沿用；Server 使用说明以增量 `system-reminder` 公告，仅在内容变化时追加。存量 API 适配 MCP 时，从 OpenAPI / 路由表抽取「方法 + 路径 + 参数 schema + 描述」映射成 `tools/list` 定义，`tools/call` 由网关翻译回原 HTTP 请求，鉴权 / 限流 / 审计 / 超时 / 重试收口在网关；但**工具列表变化必须治理**，否则缓存抖动会抵消协议转换收益。
 
@@ -243,39 +231,7 @@ UPDATE agent_run_state
  WHERE run_id = ? AND version = expected_version;
 ```
 
-**影响行数为 0 即并发冲突**：重读最新版本、重放补丁后重试。无关字段用字段级补丁降冲突；同一决策点的竞争交仲裁节点或确定性规则，而非「谁后写谁赢」。消息乱序与回放要求事件自带**逻辑时间、因果父事件、生产者 ID**，仅靠 `updated_at` 无法恢复因果。规划器输出必须是**结构化任务图**而非自然语言列表，节点含输入契约、预期产物、依赖、完成条件、预算；调度前检查**是否有环、依赖是否存在、是否有节点产出互斥产物**。
-
-```json
-{
-  "graphId": "g-17",
-  "nodes": [
-    {
-      "id": "n1",
-      "action": "read",
-      "resource": "kb/policy",
-      "output": "evidence",
-      "deps": [],
-      "budgetMs": 800
-    },
-    {
-      "id": "n2",
-      "action": "summarize",
-      "resource": "n1.evidence",
-      "output": "draft",
-      "deps": ["n1"]
-    },
-    {
-      "id": "n3",
-      "action": "sign",
-      "resource": "n2.draft",
-      "output": "report",
-      "deps": ["n2"]
-    }
-  ]
-}
-```
-
-子任务去重不能只比文本相似度：归一化为**动作 + 资源 + 时间范围 + 输出类型**算语义指纹，文本不同但读同一资源、产同一产物的节点应合并。运行中新增依赖必须提交**图变更请求**，由调度器重新做环检测、预算与权限校验，禁止 Agent 直接改图。
+**影响行数为 0 即并发冲突**：重读最新版本、重放补丁后重试。无关字段用字段级补丁降冲突；同一决策点的竞争交仲裁节点或确定性规则，而非「谁后写谁赢」。消息乱序与回放要求事件自带**逻辑时间、因果父事件、生产者 ID**，仅靠 `updated_at` 无法恢复因果。规划器输出必须是**结构化任务图**而非自然语言列表，节点含输入契约、预期产物、依赖、完成条件、预算；调度前检查**是否有环、依赖是否存在、是否有节点产出互斥产物**。子任务去重不能只比文本相似度：归一化为**动作 + 资源 + 时间范围 + 输出类型**算语义指纹，文本不同但读同一资源、产同一产物的节点应合并。运行中新增依赖必须提交**图变更请求**，由调度器重新做环检测、预算与权限校验，禁止 Agent 直接改图。
 
 **Go 业务服务 ↔ Python Agent Runtime**：两种服务**共享协议、不共享内存**——Go 管鉴权、配额、外部 API 与同步请求，Python 管推理、工具规划与工作流。短耗时同步请求走 gRPC（Protobuf 约束 + HTTP/2 多路复用）；长任务不能占着同步 RPC，改为 Go 建任务写消息系统、Python Runtime 消费并持续发事件。事件字段：`run_id`（一次执行的全局主键）、单调递增 `sequence`（去重与检测缺口）、`event_type`（`step_started` / `tool_result` / `token_delta` / `final` / `error`）、`payload`（结构化载荷）、`schema_version`（协议演进兼容）、`created_at_ms`（时间基准）+ 幂等键。
 
@@ -287,7 +243,11 @@ UPDATE agent_run_state
   "schema_version": 2,
   "created_at_ms": 1762400000000,
   "idempotency_key": "run-9f2c:42:query_faq",
-  "payload": { "tool": "query_faq", "result_ref": "blob/9f2c/42", "ok": true }
+  "payload": {
+    "tool": "query_faq",
+    "result_ref": "blob/9f2c/42",
+    "ok": true
+  }
 }
 ```
 
@@ -312,8 +272,10 @@ async function applyPatch(p: Patch, root: string) {
     throw new Error("escape workspace");
   if ((await hashFile(real)) !== p.baseHash)
     throw new ConflictError("re-read and re-plan");
-  const next = applyUnifiedDiff(await fs.readFile(real, "utf8"), p.diff);
-  await fs.writeFile(real, next);
+  await fs.writeFile(
+    real,
+    applyUnifiedDiff(await fs.readFile(real, "utf8"), p.diff),
+  );
   return {
     readSet: p.readSet,
     diff: p.diff,
@@ -334,19 +296,26 @@ async function applyPatch(p: Patch, root: string) {
 
 ## 面试怎么讲
 
-按「链路 → 分层 → 协议 → 边界」四段推进，每段先给结论再给取舍，最后主动点出失败模式。采分点：链路讲 loop 是外部状态机、显式终止、幂等键在副作用边界、checkpoint + 事件日志续跑、Harness 十项职责；分层讲四类消息与「控制信息 / 可信结构 / 不可信数据」三级、身份参数系统注入；协议讲 JSON-RPC 2.0 与三种传输、Host/Client/Server、能力协商与取消沿链、三方对照、tools 数组与缓存；边界讲不可信工具输出、Host 校验、哈希复检与沙箱、乐观并发与任务图。更多题型见 [题库](/interview/question-bank)。
+按「链路 → 分层 → 协议 → 边界」四段推进，每段先给结论再给取舍，最后主动点出失败模式。更多题型见 [题库](/interview/question-bank)。
 
-| 扣分点                               | 为什么扣分                   | 正确说法                                                                   |
-| ------------------------------------ | ---------------------------- | -------------------------------------------------------------------------- |
-| 把 `Memory` 说成 MCP 传输模式        | 概念性错误                   | 三种传输是 `stdio` / `Streamable HTTP` / `SSE`，`Memory` 属资源 / 能力范畴 |
-| 说「工具在 Server 端自动执行」       | 丢了 Host 的决策权与权限边界 | Host/Client 发起、Server 执行、Host 校验与放行                             |
-| 认为接了 MCP 就安全                  | 把协议能力误当安全能力       | 协议只管发现与调用，鉴权、注入防护、清洗都是 Host 责任                     |
-| 认为 function calling 通过即参数可信 | 忽略类型漂移与身份冒用       | Ajv / zod 复核 + 系统注入身份参数并覆盖模型值                              |
-| 用动态 Top-N 工具优化 token          | 未意识到 tools 是缓存前缀    | 约 20k 历史追加一个工具即 99.4% → 9.5%，应一次性决策 + 固定分发入口        |
-| 取消只发到最外层就报「已终止」       | 底层仍在跑，副作用继续       | 沿链下发；底层不可取消则标记「取消中」并停止处理其结果                     |
-| 共享状态用「最后写入获胜」           | 丢失更新且无法追溯           | 事件 / 补丁 + `WHERE version=expected_version`，影响行数为 0 即冲突        |
-| 把权限写在 Prompt 里                 | Prompt 无法执行拒绝          | 权限边界在运行时与工具网关，执行器逐次二次校验                             |
-| 证据不足时让模型补全结论             | 把检索失败转成幻觉           | 预算耗尽返回证据不足，进入兜底与知识缺口闭环                               |
+| 段落 | 采分点                                                                                       |
+| ---- | -------------------------------------------------------------------------------------------- |
+| 链路 | loop 是外部状态机、显式终止、幂等键在副作用边界、checkpoint + 事件日志续跑、Harness 十项职责 |
+| 分层 | 四类消息与「控制信息 / 可信结构 / 不可信数据」三级、身份参数系统注入、证据放尾部             |
+| 协议 | JSON-RPC 2.0 与三种传输、Host/Client/Server、能力协商与取消沿链、三方对照、tools 数组与缓存  |
+| 边界 | 不可信工具输出、Host 校验、哈希复检与沙箱、乐观并发与任务图                                  |
+
+| 扣分点                               | 正确说法                                                                   |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| 把 `Memory` 说成 MCP 传输模式        | 三种传输是 `stdio` / `Streamable HTTP` / `SSE`，`Memory` 属资源 / 能力范畴 |
+| 说「工具在 Server 端自动执行」       | Host/Client 发起、Server 执行、Host 校验与放行                             |
+| 认为接了 MCP 就安全                  | 协议只管发现与调用，鉴权、注入防护、清洗都是 Host 责任                     |
+| 认为 function calling 通过即参数可信 | Ajv / zod 复核 + 系统注入身份参数并覆盖模型值                              |
+| 用动态 Top-N 工具优化 token          | 约 20k 历史追加一个工具即 99.4% → 9.5%，应一次性决策 + 固定分发入口        |
+| 取消只发到最外层就报「已终止」       | 沿链下发；底层不可取消则标记「取消中」并停止处理其结果                     |
+| 共享状态用「最后写入获胜」           | 事件 / 补丁 + `WHERE version=expected_version`，影响行数为 0 即冲突        |
+| 把权限写在 Prompt 里                 | 权限边界在运行时与工具网关，执行器逐次二次校验                             |
+| 证据不足时让模型补全结论             | 预算耗尽返回证据不足，进入兜底与知识缺口闭环                               |
 
 ## 速记卡
 
