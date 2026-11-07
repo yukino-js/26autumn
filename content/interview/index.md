@@ -1,7 +1,7 @@
 ---
 title: "面试备考"
 overview: true
-description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能力矩阵、评分量表、八张专题知识卡、34 篇专题题库 2467 题带权威解答（新增云原生与沙箱、性能采集与数据链路、Node 服务端、生成式 UI 协议、Coding Agent Harness、LangGraph 内核与两大项目深挖）、七份项目与系统设计示范答案、四道可运行代码题与全量题库"
+description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能力矩阵、评分量表、八张专题知识卡、41 篇专题题库 3074 题带权威解答（覆盖云原生与沙箱、性能采集与数据链路、Node 服务端、生成式 UI 协议、Coding Agent Harness、LangGraph 内核、CSS/Next/Vite/TanStack、Yukino Go 分布式组件/HTTP/RPC/缓存/ORM/TaskFlow/WANProxy/AgentProxy 与两大 AI 项目深挖）、七份项目与系统设计示范答案、四道可运行代码题与全量题库"
 ---
 
 面向 **AI 全栈 / Agent 工程** 岗位的系统化备考资料。按知识域组织，给出可复述的机制、工程取舍与边界；所有结论都可回填到本仓库的源码笔记与本机仓库源码中核对。
@@ -9,7 +9,7 @@ description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能�
 ```mermaid
 flowchart TB
     A[面试备考] --> B[知识体系]
-    A --> E[专题题库 2467 题]
+    A --> E[专题题库 3074 题]
     A --> C[示范答案]
     A --> D[自检工具]
     B --> B1[Agent 与 MCP]
@@ -22,6 +22,7 @@ flowchart TB
     E --> E4[JS-TS / React / 流式 UI / 安全]
     E --> E5[云原生 / 沙箱 / 数据链路 / 性能采集]
     E --> E6[生成式 UI 协议 / Harness / LangGraph 内核 / 项目深挖]
+    E --> E7[Go 组件 / HTTP-RPC / 缓存-ORM / TaskFlow / WANProxy / CSS / Next-Vite-TanStack]
     C --> C1[项目深挖]
     C --> C2[系统设计与协议辨析]
     C --> C3[可运行代码题 ×4]
@@ -63,7 +64,7 @@ flowchart TB
 
 ## 专题题库总览
 
-**34 篇 / 2467 题**，每题带权威解答：按「机制 → 源码佐证 → 工程取舍 → 边界」展开，深挖题附采分点；所有项目事实均实读本机仓库源码核验（各篇文首给出证据锚点与 HEAD 短哈希）。本轮新增 13 篇 1123 题，覆盖云原生与沙箱、性能采集与数据链路、Node 服务端、生成式 UI 协议、Coding Agent Harness、LangGraph 内核与两大项目深挖。
+**41 篇 / 3074 题**，每题带权威解答：按「机制 → 源码佐证 → 工程取舍 → 边界」展开，深挖题附采分点；所有项目事实均实读本机仓库源码核验（各篇文首给出证据锚点与 HEAD 短哈希）。累计新增 20 篇 1730 题，覆盖云原生与沙箱、性能采集与数据链路、Node 服务端、生成式 UI 协议、Coding Agent Harness、LangGraph 内核、CSS/Next/Vite/TanStack、Yukino Go 组件库与两大 AI 项目深挖。
 
 | 分组                   | 文档（题数）                                                                                                                                                                                                                                                                                                                                                       | 小计    |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
@@ -72,6 +73,8 @@ flowchart TB
 | **Go 后端**            | [Go 语言与运行时](/interview/qa/go-language-runtime)（68）· [HTTP 框架与网关工程](/interview/qa/http-framework-gateway)（53）· [RPC 与网络编程](/interview/qa/rpc-and-network)（52）· [缓存、存储与 ORM](/interview/qa/cache-storage-orm)（59）                                                                                                                    | **232** |
 | **分布式与架构**       | [分布式组件与一致性](/interview/qa/distributed-components)（57）· [服务架构与任务系统](/interview/qa/service-architecture)（45）                                                                                                                                                                                                                                   | **102** |
 | **前端与全栈**         | [JavaScript 与 TypeScript](/interview/qa/js-ts-language)（71）· [React 与浏览器](/interview/qa/react-and-browser)（65）· [AI 流式前端专题](/interview/qa/ai-streaming-ui)（72）· [前端监控与可观测性](/interview/qa/frontend-observability)（59）· [前端工程化](/interview/qa/frontend-engineering)（61）· [Web 安全与认证](/interview/qa/web-security-auth)（53） | **381** |
+| **前端与全栈（新增）** | [前端监控 SDK](/interview/qa/frontend-monitoring-sdk)（91）· [CSS 与布局工程](/interview/qa/css-layout-engineering)（89）· [Next.js / Vite / TanStack Query](/interview/qa/nextjs-vite-tanstack)（89）                                                                                                                                                             | **269** |
+| **Go 项目与基础设施**  | [Yukino Go 分布式组件](/interview/qa/yukino-go-components)（93）· [Yukino HTTP 框架与 RPC](/interview/qa/yukino-http-rpc)（91）· [Yukino 缓存与 ORM](/interview/qa/yukino-cache-orm)（85）· [Yukino Task Flow](/interview/qa/yukino-task-flow)（83）· [WANProxy 与 Agent Proxy](/interview/qa/wanproxy-agent-proxy)（77）                                          | **429** |
 | **协议与框架深挖**     | [生成式 UI 协议（A2UI 与 MCP Apps）](/interview/qa/generative-ui-protocols)（88）· [Coding Agent Harness 实现剖析](/interview/qa/coding-agent-harness)（90）· [LangGraph.js 内核机制](/interview/qa/langgraph-internals)（86）                                                                                                                                     | **264** |
 | **云原生与沙箱**       | [Docker 与容器运行时](/interview/qa/docker-container-runtime)（88）· [Kubernetes 架构与运维](/interview/qa/kubernetes-architecture)（102）· [Agent 沙箱与 JSError 自动修复](/interview/qa/agent-sandbox-autofix)（48）                                                                                                                                             | **238** |
 | **性能采集与数据链路** | [移动端性能采集与 Profiling](/interview/qa/mobile-perf-profiling)（84）· [数据链路与 OLAP](/interview/qa/data-pipeline-olap)（92）                                                                                                                                                                                                                                 | **176** |
@@ -84,7 +87,7 @@ flowchart TB
 | 分类                       | 文档                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | 用途                                         |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
 | **专题知识卡**             | [Agent 与 MCP](/interview/fundamentals/agent-and-mcp)、[RAG 全链路](/interview/fundamentals/rag-pipeline)、[Go 网关](/interview/fundamentals/backend-go-gateway)、[存储一致性](/interview/fundamentals/storage-consistency)、[浏览器与 React](/interview/fundamentals/frontend-browser)、[OS 与网络](/interview/fundamentals/os-network)、[安全与可观测性](/interview/fundamentals/security-observability)、[算法手撕](/interview/fundamentals/algorithms)               | 按知识域建立机制级理解，含取舍、边界与采分点 |
-| **专题题库**               | 21 篇 / 1344 题带权威解答，见上方[专题题库总览](#专题题库总览)                                                                                                                                                                                                                                                                                                                                                                                                           | 海量刷题：机制、源码佐证、取舍与采分点       |
+| **专题题库**               | 41 篇 / 3074 题带权威解答，见上方[专题题库总览](#专题题库总览)                                                                                                                                                                                                                                                                                                                                                                                                           | 海量刷题：机制、源码佐证、取舍与采分点       |
 | **项目与系统设计示范答案** | [Agent 链路、网关与流式前端](/interview/answers/agent-loop-gateway-streaming)、[大 Body 与并发容量](/interview/answers/large-payload-capacity)、[CSRF 与 SameSite](/interview/answers/csrf-and-samesite)、[电商 RAG 项目深挖](/interview/answers/ecomm-rag-project)、[Coding Agent 记忆与基线](/interview/answers/coding-agent-memory)、[续传、虚拟滚动、告警与死锁](/interview/answers/upload-scroll-alerting-deadlock)、[RAG 六连问](/interview/answers/rag-deep-dive) | 完整答法骨架、事实基线、采分点与追问链       |
 | **代码题**                 | [JS 手写限流器](/interview/code/rate-limiter)、[Promise 并发池](/interview/code/promise-concurrency)、[SSE 客户端与重连退避](/interview/code/sse-retry)、[Go singleflight 与两级 LRU](/interview/code/go-singleflight)                                                                                                                                                                                                                                                   | 可运行实现 + 自测 + 分布式延伸               |
 | **自检工具**               | [全量题库](/interview/question-bank)、[高频易错点](/interview/pitfalls)、[指标口径与基线定义](/interview/metrics-baseline)                                                                                                                                                                                                                                                                                                                                               | 逐条自测、纠偏、量化结论治理                 |

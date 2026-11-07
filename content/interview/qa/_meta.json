@@ -33,6 +33,15 @@
   "cache-storage-orm",
   {
     "type": "section-header",
+    "label": "Go 项目与基础设施"
+  },
+  "yukino-go-components",
+  "yukino-http-rpc",
+  "yukino-cache-orm",
+  "yukino-task-flow",
+  "wanproxy-agent-proxy",
+  {
+    "type": "section-header",
     "label": "分布式与架构"
   },
   "distributed-components",
@@ -65,6 +74,8 @@
   "ai-streaming-ui",
   "frontend-observability",
   "frontend-monitoring-sdk",
+  "css-layout-engineering",
+  "nextjs-vite-tanstack",
   "frontend-engineering",
   "web-security-auth",
   {
