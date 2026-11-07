@@ -4,6 +4,7 @@
   "promise-static",
   "event-emitter",
   "debounce-throttle",
+  "lru-cache",
   "sse-retry",
   "go-singleflight"
 ]
