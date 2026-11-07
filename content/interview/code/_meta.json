@@ -4,7 +4,10 @@
   "promise-static",
   "event-emitter",
   "debounce-throttle",
+  "deep-clone",
+  "retry-backoff",
   "lru-cache",
+  "consistent-hashing",
   "sse-retry",
   "go-singleflight"
 ]
