@@ -23,6 +23,7 @@
   "generative-ui-protocols",
   "coding-agent-harness",
   "langgraph-internals",
+  "langchain-internals",
   {
     "type": "section-header",
     "label": "Go 后端"
