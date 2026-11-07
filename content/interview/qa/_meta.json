@@ -91,5 +91,6 @@
   "yukino-chat-project",
   "yukino-chatbot-project",
   "yukino-codegen-project",
-  "yukino-mcp-server-project"
+  "yukino-mcp-server-project",
+  "yukino-agent-project"
 ]
