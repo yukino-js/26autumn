@@ -6,6 +6,7 @@
   "debounce-throttle",
   "virtual-scroll",
   "deep-clone",
+  "js-handwritten-basics",
   "retry-backoff",
   "circuit-breaker",
   "lru-cache",
