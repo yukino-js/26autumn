@@ -11,6 +11,7 @@
   "yukino-codegen-project",
   "yukino-agent-project",
   "yukino-mcp-project",
+  "yukino-chatbot-project",
   "upload-scroll-alerting-deadlock",
   "rag-deep-dive"
 ]
