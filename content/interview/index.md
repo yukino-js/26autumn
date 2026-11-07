@@ -1,7 +1,7 @@
 ---
 title: "面试备考"
 overview: true
-description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能力矩阵、评分量表、八张专题知识卡、54 篇专题题库 4238 题带权威解答（覆盖云原生与沙箱、性能采集与数据链路、ClickHouse 与 Kafka、MySQL 与 InnoDB、Redis、中间件与分布式基础设施、Node 服务端、生成式 UI 协议、Coding Agent Harness、Yukino Code 执行内核与多代理协作、LangChain/LangGraph 内核、CSS/Next/Vite/TanStack/FetchPriority、Yukino Go 分布式组件/HTTP/RPC/缓存/ORM/TaskFlow/WANProxy/AgentProxy，以及 Yukino Chat/Chatbot/Codegen/官方 MCP 全栈应用与 Go Eino RAG 运维 Agent 项目深挖）、七份项目与系统设计示范答案、四道可运行代码题与全量题库"
+description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能力矩阵、评分量表、八张专题知识卡、54 篇专题题库 4238 题带权威解答（覆盖云原生与沙箱、性能采集与数据链路、ClickHouse 与 Kafka、MySQL 与 InnoDB、Redis、中间件与分布式基础设施、Node 服务端、生成式 UI 协议、Coding Agent Harness、Yukino Code 执行内核与多代理协作、LangChain/LangGraph 内核、CSS/Next/Vite/TanStack/FetchPriority、Yukino Go 分布式组件/HTTP/RPC/缓存/ORM/TaskFlow/WANProxy/AgentProxy，以及 Yukino Chat/Chatbot/Codegen/官方 MCP 全栈应用与 Go Eino RAG 运维 Agent 项目深挖）、七份项目与系统设计示范答案、七道可运行代码题与全量题库"
 ---
 
 面向 **AI 全栈 / Agent 工程** 岗位的系统化备考资料。按知识域组织，给出可复述的机制、工程取舍与边界；所有结论都可回填到本仓库的源码笔记与本机仓库源码中核对。
@@ -26,7 +26,7 @@ flowchart TB
     E --> E8[Yukino Chat / Chatbot / Codegen / MCP / Go Eino Agent 项目深挖]
     C --> C1[项目深挖]
     C --> C2[系统设计与协议辨析]
-    C --> C3[可运行代码题 ×4]
+    C --> C3[可运行代码题 ×7]
     D --> D1[题库]
     D --> D2[易错点]
     D --> D3[指标口径]
@@ -90,7 +90,7 @@ flowchart TB
 | **专题知识卡**             | [Agent 与 MCP](/interview/fundamentals/agent-and-mcp)、[RAG 全链路](/interview/fundamentals/rag-pipeline)、[Go 网关](/interview/fundamentals/backend-go-gateway)、[存储一致性](/interview/fundamentals/storage-consistency)、[浏览器与 React](/interview/fundamentals/frontend-browser)、[OS 与网络](/interview/fundamentals/os-network)、[安全与可观测性](/interview/fundamentals/security-observability)、[算法手撕](/interview/fundamentals/algorithms)               | 按知识域建立机制级理解，含取舍、边界与采分点 |
 | **专题题库**               | 54 篇 / 4238 题带权威解答，见上方[专题题库总览](#专题题库总览)                                                                                                                                                                                                                                                                                                                                                                                                           | 海量刷题：机制、源码佐证、取舍与采分点       |
 | **项目与系统设计示范答案** | [Agent 链路、网关与流式前端](/interview/answers/agent-loop-gateway-streaming)、[大 Body 与并发容量](/interview/answers/large-payload-capacity)、[CSRF 与 SameSite](/interview/answers/csrf-and-samesite)、[电商 RAG 项目深挖](/interview/answers/ecomm-rag-project)、[Coding Agent 记忆与基线](/interview/answers/coding-agent-memory)、[续传、虚拟滚动、告警与死锁](/interview/answers/upload-scroll-alerting-deadlock)、[RAG 六连问](/interview/answers/rag-deep-dive) | 完整答法骨架、事实基线、采分点与追问链       |
-| **代码题**                 | [JS 手写限流器](/interview/code/rate-limiter)、[Promise 并发池](/interview/code/promise-concurrency)、[SSE 客户端与重连退避](/interview/code/sse-retry)、[Go singleflight 与两级 LRU](/interview/code/go-singleflight)                                                                                                                                                                                                                                                   | 可运行实现 + 自测 + 分布式延伸               |
+| **代码题**                 | [JS 手写限流器](/interview/code/rate-limiter)、[Promise 并发池](/interview/code/promise-concurrency)、[Promise.all/race/allSettled/any](/interview/code/promise-static)、[EventEmitter 发布订阅](/interview/code/event-emitter)、[防抖与节流](/interview/code/debounce-throttle)、[SSE 客户端与重连退避](/interview/code/sse-retry)、[Go singleflight 与两级 LRU](/interview/code/go-singleflight)                                                                       | 可运行实现 + 自测 + 分布式延伸               |
 | **HR 面试**                | [HR 面总览](/interview/hr/)、[自我介绍与简历叙事](/interview/hr/narrative)、[行为面题库](/interview/hr/behavioral)、[动机与岗位匹配](/interview/hr/motivation)、[薪资、到岗与反问](/interview/hr/close-and-compensation)、[真实面经拆解](/interview/hr/real-cases)                                                                                                                                                                                                       | 腾讯 HR 面逐题脚本、真实面经频次与收尾话术   |
 | **自检工具**               | [全量题库](/interview/question-bank)、[高频易错点](/interview/pitfalls)、[指标口径与基线定义](/interview/metrics-baseline)                                                                                                                                                                                                                                                                                                                                               | 逐条自测、纠偏、量化结论治理                 |
 

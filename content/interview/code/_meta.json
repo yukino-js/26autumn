@@ -1,1 +1,9 @@
-["rate-limiter", "promise-concurrency", "sse-retry", "go-singleflight"]
+[
+  "rate-limiter",
+  "promise-concurrency",
+  "promise-static",
+  "event-emitter",
+  "debounce-throttle",
+  "sse-retry",
+  "go-singleflight"
+]
