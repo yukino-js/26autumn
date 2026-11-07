@@ -22,6 +22,8 @@
   },
   "generative-ui-protocols",
   "coding-agent-harness",
+  "yukino-code-engine",
+  "yukino-code-orchestration",
   "langgraph-internals",
   "langchain-internals",
   {
