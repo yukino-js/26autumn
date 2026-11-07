@@ -479,6 +479,6 @@ LLM 调用的错误与传统 API 不同：**错误信息常常不在 `message` �
 
 - [Yukino Ecomm Agent 项目深挖题库](/interview/qa/yukino-ecomm-agent-project)：同一技术路线的电商客服 Agent（Hono + LangGraph + Prisma）实现对照。
 - [Agent 框架与架构对比题库](/interview/qa/agent-frameworks)：LangGraph、ReAct、Plan-Execute-Replan 的框架层机制。
-- [声明式 UI 协议题库](/interview/qa/declarative-ui-protocol)：A2UI 协议的完整机制。
+- [生成式 UI 协议题库](/interview/qa/generative-ui-protocols)：A2UI 与 MCP Apps 两条路线的完整机制与选型对比。
 - [RAG 与检索深挖题库](/interview/qa/rag-and-retrieval)：混合检索、重排、置信度门禁的通用原理。
 - [工作文档 · Yukino Dev Agent 技术笔记](/docs/yukino-dev-agent/yukino-dev-agent)：本篇的事实来源。

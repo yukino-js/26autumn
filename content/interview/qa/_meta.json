@@ -18,6 +18,13 @@
   "fullstack-ai-app",
   {
     "type": "section-header",
+    "label": "协议与框架深挖"
+  },
+  "generative-ui-protocols",
+  "coding-agent-harness",
+  "langgraph-internals",
+  {
+    "type": "section-header",
     "label": "Go 后端"
   },
   "go-language-runtime",
@@ -32,12 +39,38 @@
   "service-architecture",
   {
     "type": "section-header",
+    "label": "云原生与沙箱"
+  },
+  "docker-container-runtime",
+  "kubernetes-architecture",
+  "agent-sandbox-autofix",
+  {
+    "type": "section-header",
+    "label": "性能采集与数据链路"
+  },
+  "mobile-perf-profiling",
+  "data-pipeline-olap",
+  {
+    "type": "section-header",
+    "label": "Node 服务端"
+  },
+  "node-native-pooling",
+  "node-service-observability",
+  {
+    "type": "section-header",
     "label": "前端与全栈"
   },
   "js-ts-language",
   "react-and-browser",
   "ai-streaming-ui",
   "frontend-observability",
+  "frontend-monitoring-sdk",
   "frontend-engineering",
-  "web-security-auth"
+  "web-security-auth",
+  {
+    "type": "section-header",
+    "label": "项目深挖"
+  },
+  "yukino-dev-agent-project",
+  "yukino-ecomm-agent-project"
 ]

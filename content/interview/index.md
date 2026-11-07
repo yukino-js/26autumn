@@ -1,7 +1,7 @@
 ---
 title: "面试备考"
 overview: true
-description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能力矩阵、评分量表、八张专题知识卡、21 篇专题题库 1344 题带权威解答、七份项目与系统设计示范答案、四道可运行代码题与全量题库"
+description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能力矩阵、评分量表、八张专题知识卡、34 篇专题题库 2467 题带权威解答（新增云原生与沙箱、性能采集与数据链路、Node 服务端、生成式 UI 协议、Coding Agent Harness、LangGraph 内核与两大项目深挖）、七份项目与系统设计示范答案、四道可运行代码题与全量题库"
 ---
 
 面向 **AI 全栈 / Agent 工程** 岗位的系统化备考资料。按知识域组织，给出可复述的机制、工程取舍与边界；所有结论都可回填到本仓库的源码笔记与本机仓库源码中核对。
@@ -9,7 +9,7 @@ description: "AI 全栈 / Agent 工程方向的结构化面试备考资料: 能�
 ```mermaid
 flowchart TB
     A[面试备考] --> B[知识体系]
-    A --> E[专题题库 1344 题]
+    A --> E[专题题库 2467 题]
     A --> C[示范答案]
     A --> D[自检工具]
     B --> B1[Agent 与 MCP]
@@ -20,6 +20,8 @@ flowchart TB
     E --> E2[RAG / 框架 / 评测 / 全栈应用]
     E --> E3[Go / 分布式 / 服务架构]
     E --> E4[JS-TS / React / 流式 UI / 安全]
+    E --> E5[云原生 / 沙箱 / 数据链路 / 性能采集]
+    E --> E6[生成式 UI 协议 / Harness / LangGraph 内核 / 项目深挖]
     C --> C1[项目深挖]
     C --> C2[系统设计与协议辨析]
     C --> C3[可运行代码题 ×4]
@@ -61,15 +63,21 @@ flowchart TB
 
 ## 专题题库总览
 
-**21 篇 / 1344 题**，每题带权威解答：按「机制 → 源码佐证 → 工程取舍 → 边界」展开，深挖题附采分点；所有项目事实均实读本机仓库源码核验（各篇文首给出证据锚点与 HEAD 短哈希）。
+**34 篇 / 2467 题**，每题带权威解答：按「机制 → 源码佐证 → 工程取舍 → 边界」展开，深挖题附采分点；所有项目事实均实读本机仓库源码核验（各篇文首给出证据锚点与 HEAD 短哈希）。本轮新增 13 篇 1123 题，覆盖云原生与沙箱、性能采集与数据链路、Node 服务端、生成式 UI 协议、Coding Agent Harness、LangGraph 内核与两大项目深挖。
 
-| 分组             | 文档（题数）                                                                                                                                                                                                                                                                                                                                                       | 小计    |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| **LLM 与 Agent** | [LLM 与推理基础](/interview/qa/llm-fundamentals)（85）· [Agent 执行循环与工具体系](/interview/qa/agent-loop-and-tools)（88）· [MCP 协议与 Agent 安全](/interview/qa/mcp-and-agent-security)（68）· [Electron 桌面 Agent 应用](/interview/qa/electron-agent-app)（60）· [Go 实现 AI Agent 工程](/interview/qa/go-agent-engineering)（56）                           | **357** |
-| **RAG 与评测**   | [RAG 与检索深挖](/interview/qa/rag-and-retrieval)（72）· [Agent 框架与架构对比](/interview/qa/agent-frameworks)（80）· [LLM 评测与可观测性](/interview/qa/llm-eval-observability)（60）· [AI 全栈应用架构](/interview/qa/fullstack-ai-app)（60）                                                                                                                   | **272** |
-| **Go 后端**      | [Go 语言与运行时](/interview/qa/go-language-runtime)（68）· [HTTP 框架与网关工程](/interview/qa/http-framework-gateway)（53）· [RPC 与网络编程](/interview/qa/rpc-and-network)（52）· [缓存、存储与 ORM](/interview/qa/cache-storage-orm)（59）                                                                                                                    | **232** |
-| **分布式与架构** | [分布式组件与一致性](/interview/qa/distributed-components)（57）· [服务架构与任务系统](/interview/qa/service-architecture)（45）                                                                                                                                                                                                                                   | **102** |
-| **前端与全栈**   | [JavaScript 与 TypeScript](/interview/qa/js-ts-language)（71）· [React 与浏览器](/interview/qa/react-and-browser)（65）· [AI 流式前端专题](/interview/qa/ai-streaming-ui)（72）· [前端监控与可观测性](/interview/qa/frontend-observability)（59）· [前端工程化](/interview/qa/frontend-engineering)（61）· [Web 安全与认证](/interview/qa/web-security-auth)（53） | **381** |
+| 分组                   | 文档（题数）                                                                                                                                                                                                                                                                                                                                                       | 小计    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| **LLM 与 Agent**       | [LLM 与推理基础](/interview/qa/llm-fundamentals)（85）· [Agent 执行循环与工具体系](/interview/qa/agent-loop-and-tools)（88）· [MCP 协议与 Agent 安全](/interview/qa/mcp-and-agent-security)（68）· [Electron 桌面 Agent 应用](/interview/qa/electron-agent-app)（60）· [Go 实现 AI Agent 工程](/interview/qa/go-agent-engineering)（56）                           | **357** |
+| **RAG 与评测**         | [RAG 与检索深挖](/interview/qa/rag-and-retrieval)（72）· [Agent 框架与架构对比](/interview/qa/agent-frameworks)（80）· [LLM 评测与可观测性](/interview/qa/llm-eval-observability)（60）· [AI 全栈应用架构](/interview/qa/fullstack-ai-app)（60）                                                                                                                   | **272** |
+| **Go 后端**            | [Go 语言与运行时](/interview/qa/go-language-runtime)（68）· [HTTP 框架与网关工程](/interview/qa/http-framework-gateway)（53）· [RPC 与网络编程](/interview/qa/rpc-and-network)（52）· [缓存、存储与 ORM](/interview/qa/cache-storage-orm)（59）                                                                                                                    | **232** |
+| **分布式与架构**       | [分布式组件与一致性](/interview/qa/distributed-components)（57）· [服务架构与任务系统](/interview/qa/service-architecture)（45）                                                                                                                                                                                                                                   | **102** |
+| **前端与全栈**         | [JavaScript 与 TypeScript](/interview/qa/js-ts-language)（71）· [React 与浏览器](/interview/qa/react-and-browser)（65）· [AI 流式前端专题](/interview/qa/ai-streaming-ui)（72）· [前端监控与可观测性](/interview/qa/frontend-observability)（59）· [前端工程化](/interview/qa/frontend-engineering)（61）· [Web 安全与认证](/interview/qa/web-security-auth)（53） | **381** |
+| **协议与框架深挖**     | [生成式 UI 协议（A2UI 与 MCP Apps）](/interview/qa/generative-ui-protocols)（88）· [Coding Agent Harness 实现剖析](/interview/qa/coding-agent-harness)（90）· [LangGraph.js 内核机制](/interview/qa/langgraph-internals)（86）                                                                                                                                     | **264** |
+| **云原生与沙箱**       | [Docker 与容器运行时](/interview/qa/docker-container-runtime)（88）· [Kubernetes 架构与运维](/interview/qa/kubernetes-architecture)（102）· [Agent 沙箱与 JSError 自动修复](/interview/qa/agent-sandbox-autofix)（48）                                                                                                                                             | **238** |
+| **性能采集与数据链路** | [移动端性能采集与 Profiling](/interview/qa/mobile-perf-profiling)（84）· [数据链路与 OLAP](/interview/qa/data-pipeline-olap)（92）                                                                                                                                                                                                                                 | **176** |
+| **Node 服务端**        | [Node 原生绑定与池化资源治理](/interview/qa/node-native-pooling)（82）· [Node 服务可观测性](/interview/qa/node-service-observability)（76）                                                                                                                                                                                                                        | **158** |
+| **前端监控**           | [前端监控 SDK](/interview/qa/frontend-monitoring-sdk)（90）                                                                                                                                                                                                                                                                                                        | **90**  |
+| **项目深挖**           | [Yukino Dev Agent 项目深挖](/interview/qa/yukino-dev-agent-project)（92）· [Yukino Ecomm Agent 项目深挖](/interview/qa/yukino-ecomm-agent-project)（94）                                                                                                                                                                                                           | **186** |
 
 ## 内容地图
 
