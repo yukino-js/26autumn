@@ -1,0 +1,127 @@
+{
+  "message": "",
+  "status": 0,
+  "data": {
+    "postId": "1283878456077394944",
+    "id": 783,
+    "tid": 2,
+    "tidName": "技术",
+    "fid": 75,
+    "oldId": 1,
+    "title": "AI全栈工程师",
+    "desc": "1、负责产品业务系统的全栈开发，涵盖前端交互、后端服务、数据存储等，参与需求分析、架构设计、开发交付与迭代优化；\n2、构建基于大模型的全链路应用系统，包括AI能力接入、Agent架构设计、RAG系统搭建、业务知识库建设等，实现端到端的AI应用落地；\n3、跟踪AI与全栈技术的前沿发展，关注行业前沿动态，并结合业务场景进行落地实践。",
+    "request": "1、熟练掌握主流前后端技术栈，具备扎实的计算机基础知识和全栈工程能力，能够完成需求分析、方案设计、开发交付及迭代优化的完整流程；\n2、熟练使用 AI 编程工具，能通过 AI 完成业务开发与应用搭建；\n3、了解大模型基本原理与推理部署方式，熟悉RAG技术、Agent原理（包括 Tool Use、Planning、Memory 等），有相关实践经验；\n4、 具备系统设计能力，了解分布式系统、微服务架构、消息队列、缓存等后端核心技术；\n5、 对 AI 前沿技术有浓厚兴趣，愿意主动探索AI在业务场景的创新应用； \n6、具备良好的沟通协作与问题解决能力，有较强的责任心，能高效配合团队完成项目交付。",
+    "workCity": "1,2,4,5",
+    "workCityList": ["深圳总部", "北京", "广州", "成都"],
+    "recruitCity": "14,47",
+    "recruitCityList": ["深圳", "远程面试"],
+    "ordering": 99,
+    "status": null,
+    "selectedWorks": "0",
+    "withFile": "0",
+    "ideptId": "208,193,263,216",
+    "intentionBGDList": [
+      {
+        "id": 953,
+        "title": "CDG企业发展事业群",
+        "showTitle": "CDG",
+        "showTxt": "企业发展事业群",
+        "isLock": null,
+        "status": null,
+        "ordering": 953,
+        "departmentList": [
+          {
+            "id": 193,
+            "name": "腾讯金融科技",
+            "bgid": 953,
+            "comment": "腾讯金融科技（Tencent Financial Technology）是腾讯公司提供移动支付与金融服务的综合业务平台。我们始终秉承合规、风控、开放、有所为有所不为的发展理念，用科技连接金融机构、金融产品服务与广大用户，打造安全便捷的产品与服务，坚持用户为本、科技向善，助力金融普惠，让每一个人乐享金融的美好。",
+            "ordering": 1,
+            "enableFlag": 1,
+            "workCity": "1",
+            "workCityList": ["深圳总部"]
+          }
+        ]
+      },
+      {
+        "id": 956,
+        "title": "IEG互动娱乐事业群",
+        "showTitle": "IEG",
+        "showTxt": "互动娱乐事业群",
+        "isLock": null,
+        "status": null,
+        "ordering": 956,
+        "departmentList": [
+          {
+            "id": 263,
+            "name": "WeGame游戏平台",
+            "bgid": 956,
+            "comment": "WeGame游戏平台，作为国内领先的PC游戏平台，汇聚了全球顶尖的服务型游戏，通过深度定制的游戏助手，致力于为PC玩家提供优质的娱乐体验。我们坚持以玩家为中心。从一个功能的上线到一次社区活动的策划，我们用最专业的态度守护每一份热爱，让复杂的系统化为极致简单的用户体验。​面对AI时代的浪潮，WeGame正将进化为一个能够理解玩家、感知需求的“智能伙伴”，让每一个玩家都能在 AI 的助力下，享受到更简单、更纯粹的游戏乐趣。\n​如果你热爱游戏，对未来保持好奇，并渴望在 AI 驱动的变革中留下自己的印记，无论你是技术极客、产品专家还是运营达人，WeGame 都是你施展才华的绝佳舞台。\n加入我们，不只运营平台，更在与千万玩家一同，共创 PC 游戏的未来。",
+            "ordering": 999,
+            "enableFlag": 1,
+            "workCity": "1",
+            "workCityList": ["深圳总部"]
+          }
+        ]
+      },
+      {
+        "id": 29292,
+        "title": "PCG平台与内容事业群",
+        "showTitle": "PCG",
+        "showTxt": "平台与内容事业群",
+        "isLock": null,
+        "status": null,
+        "ordering": 29292,
+        "departmentList": [
+          {
+            "id": 208,
+            "name": "PCG技术线-智能营销/AI小游戏方向",
+            "bgid": 29292,
+            "comment": "负责通过AI+大数据构建行业领先的智能投放平台，结合AIGC能力构建广告素材全自动制作和迭代的生产管线，同时通过AI Agent自动化调优广告账户，提升营销效率；并探索通过智能营销驱动AI+小游戏创作的新模式。",
+            "ordering": 10,
+            "enableFlag": 1,
+            "workCity": "1",
+            "workCityList": ["深圳总部"]
+          }
+        ]
+      },
+      {
+        "id": 14129,
+        "title": "WXG微信事业群",
+        "showTitle": "WXG",
+        "showTxt": "微信事业群",
+        "isLock": null,
+        "status": null,
+        "ordering": 14129,
+        "departmentList": [
+          {
+            "id": 216,
+            "name": "企业微信团队",
+            "bgid": 14129,
+            "comment": "企业微信是企业级的通讯和办公工具，是腾讯连接消费互联网与产业互联网的重要连接器：一端连接超过1400万家企业和组织，一端连接超过14亿微信用户。\n企业微信的客户覆盖制造、零售、教育、金融、互联网等90多个行业。\n在AI时代，企业微信研发了AI Agent智能助理大圆、AI记录面聊、AI服务总结等功能，探索让AI走进企业的办公与经营现场，解决企业的真实问题。\n在这里，你会看到中国千行百业真实的工作现场，直面前沿技术挑战，参与AI功能研发，用产品解决企业每天都在发生的协作与服务难题。\n企业微信团队相信“连接创造价值”，期待有思考、有热情、有创造力的你加入团队！",
+            "ordering": 6,
+            "enableFlag": 1,
+            "workCity": "4,2,5",
+            "workCityList": ["广州", "北京", "成都"]
+          }
+        ]
+      }
+    ],
+    "projectId": 4,
+    "projectName": "日常实习",
+    "recruitType": 2,
+    "recruitLabelName": "日常实习",
+    "introduction": " ",
+    "fileUrl": "",
+    "coverUrl": "",
+    "graduateBonus": "1、有全栈项目经验（如独立开发过 Web 应用 / SaaS 产品 / AI 应用平台等）；\n2、具备模型算法调优经验、个人项目、开源项目或成熟业务系统开发经验者优先；\n3、有RAG、主流Agent框架（如LangGraph / AutoGen 等）使用经验；\n4、有复杂Agent构建经验，能够系统性评估质量、持续改进效果、优化应用性能/成本；\n5、参与过开源项目或有技术博客、技术作品；\n6、在技术竞赛、开源社区中有突出表现。",
+    "internBonus": "",
+    "isQingyun": 0,
+    "techTagId": null,
+    "techTagName": null,
+    "topicDetail": "",
+    "topicRequirement": "",
+    "projectInternDirections": null,
+    "subDirectionId": "",
+    "subDirectionDtos": null
+  }
+}

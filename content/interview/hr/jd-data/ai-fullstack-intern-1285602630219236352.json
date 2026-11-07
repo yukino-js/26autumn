@@ -1,0 +1,64 @@
+{
+  "message": "",
+  "status": 0,
+  "data": {
+    "postId": "1285602630219236352",
+    "id": 783,
+    "tid": 2,
+    "tidName": "技术",
+    "fid": 75,
+    "oldId": 1,
+    "title": "AI全栈工程师",
+    "desc": "1、负责产品业务系统的全栈开发，涵盖前端交互、后端服务、数据存储等，参与需求分析、架构设计、开发交付与迭代优化；\n2、构建基于大模型的全链路应用系统，包括AI能力接入、Agent架构设计、RAG系统搭建、业务知识库建设等，实现端到端的AI应用落地；\n3、跟踪AI与全栈技术的前沿发展，关注行业前沿动态，并结合业务场景进行落地实践。",
+    "request": "1、熟练掌握主流前后端技术栈，具备扎实的计算机基础知识和全栈工程能力，能够完成需求分析、方案设计、开发交付及迭代优化的完整流程；\n2、熟练使用 AI 编程工具，能通过 AI 完成业务开发与应用搭建；\n3、了解大模型基本原理与推理部署方式，熟悉RAG技术、Agent原理（包括 Tool Use、Planning、Memory 等），有相关实践经验；\n4、 具备系统设计能力，了解分布式系统、微服务架构、消息队列、缓存等后端核心技术；\n5、 对 AI 前沿技术有浓厚兴趣，愿意主动探索AI在业务场景的创新应用； \n6、具备良好的沟通协作与问题解决能力，有较强的责任心，能高效配合团队完成项目交付。",
+    "workCity": "1,3",
+    "workCityList": ["深圳总部", "上海"],
+    "recruitCity": "47",
+    "recruitCityList": ["远程面试"],
+    "ordering": 99,
+    "status": null,
+    "selectedWorks": "0",
+    "withFile": "0",
+    "ideptId": "168",
+    "intentionBGDList": [
+      {
+        "id": 956,
+        "title": "IEG互动娱乐事业群",
+        "showTitle": "IEG",
+        "showTxt": "互动娱乐事业群",
+        "isLock": null,
+        "status": null,
+        "ordering": 956,
+        "departmentList": [
+          {
+            "id": 168,
+            "name": "国内发行线",
+            "bgid": 956,
+            "comment": "腾讯游戏国内发行线，搭建了国内乃至全球范围内发行专业度高、产品矩阵丰富度强的跨端发行运营体系，是腾讯游戏业务发展的基石；代理发行产品包括：《QQ炫舞》《桃源深处有人家》《修仙时代》《天龙八部手游》《新剑侠情缘手游》《NBA2K系列产品》《FC系列产品》《红警OL》等。团队负责游戏在中国大陆地区的发行业务，从战略制定到落地执行的所有核心环节，同时深耕研发能力建设。目前与国内众多高潜厂商深度合作，品类布局辐射众多赛道，结合腾讯中台成熟的技术与丰富的资源，共同打造更多爆款游戏产品。\n加入我们，一起在腾讯游戏的世界里探索更多可能，收获成长！",
+            "ordering": 16,
+            "enableFlag": 1,
+            "workCity": "1,3",
+            "workCityList": ["深圳总部", "上海"]
+          }
+        ]
+      }
+    ],
+    "projectId": 2,
+    "projectName": "应届实习",
+    "recruitType": 2,
+    "recruitLabelName": "应届实习",
+    "introduction": " ",
+    "fileUrl": "",
+    "coverUrl": "",
+    "graduateBonus": "1、有全栈项目经验（如独立开发过 Web 应用 / SaaS 产品 / AI 应用平台等）；\n2、具备模型算法调优经验、个人项目、开源项目或成熟业务系统开发经验者优先；\n3、有RAG、主流Agent框架（如LangGraph / AutoGen 等）使用经验；\n4、有复杂Agent构建经验，能够系统性评估质量、持续改进效果、优化应用性能/成本；\n5、参与过开源项目或有技术博客、技术作品；\n6、在技术竞赛、开源社区中有突出表现。",
+    "internBonus": "",
+    "isQingyun": 0,
+    "techTagId": null,
+    "techTagName": null,
+    "topicDetail": "",
+    "topicRequirement": "",
+    "projectInternDirections": null,
+    "subDirectionId": "",
+    "subDirectionDtos": null
+  }
+}

@@ -7,10 +7,19 @@
   "narrative",
   "behavioral",
   "motivation",
+  "jd-matching",
   "close-and-compensation",
+  "pressure",
   {
     "type": "section-header",
     "label": "真实面经"
   },
-  "real-cases"
+  "real-cases",
+  "xhs-cases",
+  "community-cases",
+  {
+    "type": "section-header",
+    "label": "练习"
+  },
+  "practice"
 ]
