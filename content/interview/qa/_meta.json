@@ -35,6 +35,7 @@
   "rpc-and-network",
   "cache-storage-orm",
   "mysql-innodb",
+  "redis-internals",
   {
     "type": "section-header",
     "label": "Go 项目与基础设施"
