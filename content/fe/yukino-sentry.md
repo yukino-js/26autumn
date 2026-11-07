@@ -1,12 +1,12 @@
 ---
 title: "@yukino.js/sentry: 框架无关浏览器监控 SDK"
-description: "一个框架无关的浏览器监控与分析 SDK: 覆盖错误、HTTP、页面轨迹、性能指标、声明式点击、曝光与白屏检测与错误前录屏, 以发布订阅事件总线解耦采集与上报, 提供批量上报、离线缓存、服务端恢复、采样过滤、手动冲刷与 React/Vue/Node.js 接入。"
+description: "一个框架无关的浏览器监控与分析 SDK: 覆盖错误、HTTP、页面轨迹、性能指标、声明式点击、曝光与白屏检测与错误前录屏, 以发布订阅事件总线解耦采集与上报, 提供批量上报、离线缓存、服务端恢复、采样过滤、手动冲刷、W3C traceparent 全链路追踪与 React/Vue/Node.js 接入。"
 local_path: "$HOME/github/yukino-sentry/sentry"
-local_commit: "5d5b58070bd77e1304dffae7cf674f7e9a299d16"
+local_commit: "75500f83ccd6e155c0f7b91a7a321def6db7f3b5"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-sentry/sentry` 在 `5d5b58070bd7` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-sentry/sentry` 在 `75500f83ccd6` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -14,6 +14,8 @@ local_commit: "5d5b58070bd77e1304dffae7cf674f7e9a299d16"
 ```mermaid
 flowchart TB
     SRC[八类采集源: 错误 / HTTP / PV / 性能 / 点击 / 曝光 / 白屏 / 录屏] --> BUS[事件总线 Map 发布订阅]
+    TRACE[trace 上下文: 页面视图级 traceId + 请求级 spanId] --> SRC
+    TRACE -. traceparent 注入 .-> OUT[出站 XHR / fetch]
     BUS --> HDL[handle 处理器 + 面包屑 + 去重]
     HDL --> PRE[send-preflight: 采样 + 录屏标记 + beforeSend]
     PRE --> REP[DataReporter 批量队列]
@@ -24,13 +26,13 @@ flowchart TB
     PLG[Performance / ScreenRecord / Exposure 插件] --> BUS
 ```
 
-本文系统梳理一个框架无关的浏览器监控 SDK 的能力面与实现思路: 它如何把错误、HTTP 请求、页面浏览与停留、性能指标、声明式点击、元素曝光、白屏与错误前操作录屏统一采集, 如何用发布订阅总线解耦采集与上报, 以及批量上报、离线缓存、服务端恢复、采样过滤、插件体系与体积控制等工程取舍; 同一条上报管线还被复用进独立的 Node.js 入口, 为服务端进程提供异常捕获与上报。内容面向需要在 Web 应用或 Node 服务中接入前端/服务端可观测能力的工程师, 也适合作为设计自有监控 SDK 的参考。
+本文系统梳理一个框架无关的浏览器监控 SDK 的能力面与实现思路: 它如何把错误、HTTP 请求、页面浏览与停留、性能指标、声明式点击、元素曝光、白屏与错误前操作录屏统一采集, 如何用发布订阅总线解耦采集与上报, 如何用 W3C traceparent 把前端事件与后端故障串成一条全链路 trace, 以及批量上报、离线缓存、服务端恢复、采样过滤、插件体系与体积控制等工程取舍; 同一条上报管线还被复用进独立的 Node.js 入口, 为服务端进程提供异常捕获与上报。内容面向需要在 Web 应用或 Node 服务中接入前端/服务端可观测能力的工程师, 也适合作为设计自有监控 SDK 的参考。
 
 ## 定位与分层架构
 
 ### 能力边界
 
-SDK 采集的事件类型覆盖八类来源: JavaScript 运行时错误与资源加载错误、未处理的 Promise 拒绝、`console.error`; XHR 与 fetch 请求; 页面浏览与停留时长; 性能指标(Web Vitals、导航与资源计时、长任务、首屏、内存); 声明式点击; 元素曝光时长; 白屏检测; 错误触发点之前的操作录屏。此外提供手动上报错误、性能点、自定义事件与页面浏览的 API, 手动冲刷队列的 `flush`, 以及 React、Vue 与 Node.js 三套接入。
+SDK 采集的事件类型覆盖八类来源: JavaScript 运行时错误与资源加载错误、未处理的 Promise 拒绝、`console.error`; XHR 与 fetch 请求; 页面浏览与停留时长; 性能指标(Web Vitals、导航与资源计时、长任务、首屏、内存); 声明式点击; 元素曝光时长; 白屏检测; 错误触发点之前的操作录屏。所有事件都携带 W3C Trace Context 的 `traceId`, 被监控的出站请求注入 `traceparent` 头, 与 Node.js 入口的 `continueTrace` 配合可以把前端报错与后端故障串成同一条链路。此外提供手动上报错误、性能点、自定义事件与页面浏览的 API, 手动冲刷队列的 `flush`, 以及 React、Vue 与 Node.js 三套接入。
 
 ### 分层结构
 
@@ -42,8 +44,8 @@ Public API       init / destroy / isInitialized / enablePlugin
 Core             sdk-lifecycle(工厂) / browser-lifecycle / setup / bus / api / breadcrumb / options-schema
                  browser-identity / decorates / decorate-http / decorate-route / handlers
                  handle-error / handle-code-error / handle-http / handle-route / handle-events
-                 framework-error / error-dedup / pv-lifecycle / white-screen / identity / plugin-registry
-Node 入口        node/index(init/destroy 与手动 API) / node/setup(进程级捕获)
+                 framework-error / error-dedup / pv-lifecycle / white-screen / identity / plugin-registry / trace
+Node 入口        node/index(init/destroy 与手动 API) / node/setup(进程级捕获) / node/trace(continueTrace 与 ALS 上下文)
 Reporter         DataReporter / transports / offline-cache / server-recovery
                  flush-scheduler / send-preflight / report-data / report-data-schema
                  network-listener / timer / promise
@@ -66,6 +68,7 @@ Utils            data-structures / session / uuid / throttle / click-data / dom2
 | PV 生命周期  | 页面加载、路由切换的 PV 与停留时长                   |
 | 白屏检测     | 视口采样点检测, 由 setup 直接启动而不走总线          |
 | 数据上报器   | 批量队列、传输通道选择、离线缓存与服务端恢复         |
+| trace 上下文 | traceId/spanId 生成、traceparent 解析与传播规则      |
 | 插件注册     | 插件集合管理与生命周期编排                           |
 | 配置校验     | 运行时 schema 校验, 非法配置显式抛错                 |
 
@@ -73,15 +76,15 @@ Utils            data-structures / session / uuid / throttle / click-data / dom2
 
 ### 包入口
 
-| 入口    | 内容                                                                |
-| ------- | ------------------------------------------------------------------- |
-| 核心    | SDK 本体、全部类型与枚举、插件抽象基类、全部上报钩子类型            |
-| Node    | Node.js SDK: 进程级异常/拒绝捕获、fetch 拦截与同一条上报管线        |
-| 插件    | PerformancePlugin、ScreenRecordPlugin、ExposurePlugin、录屏解压工具 |
-| React   | ReactErrorBoundary 组件                                             |
-| Vue     | Vue 3 插件                                                          |
-| Vite    | dev server 的 mock 上报端点与 Source Map 反解                       |
-| webpack | dev server 的 mock 上报端点、插件与可手动挂载的中间件               |
+| 入口    | 内容                                                                                          |
+| ------- | --------------------------------------------------------------------------------------------- |
+| 核心    | SDK 本体、全部类型与枚举、插件抽象基类、全部上报钩子类型、`getTraceContext`                   |
+| Node    | Node.js SDK: 进程级异常/拒绝捕获、fetch 拦截、`continueTrace` 请求 trace 续接与同一条上报管线 |
+| 插件    | PerformancePlugin、ScreenRecordPlugin、ExposurePlugin、录屏解压工具                           |
+| React   | ReactErrorBoundary 组件                                                                       |
+| Vue     | Vue 3 插件                                                                                    |
+| Vite    | dev server 的 mock 上报端点与 Source Map 反解                                                 |
+| webpack | dev server 的 mock 上报端点、插件与可手动挂载的中间件                                         |
 
 React(`^16` 到 `^19`)、Vue(`^3`)、Vite(`^7` 或 `^8`)、webpack(`^4` 或 `^5`)均为可选 peer 依赖, 只在用到对应集成时安装。构建时 zod、web-vitals、ua-parser-js、fingerprintjs、rrweb、pako、source-map 等第三方包全部标记为 external, 不内联进产物, 按 npm 依赖或动态导入的方式加载。
 
@@ -134,24 +137,25 @@ setup 的职责是按开关安装各事件类型的总线订阅与猴子补丁, 
 
 ### 调优与采样
 
-| 配置项                      | 默认值                             | 说明                               |
-| --------------------------- | ---------------------------------- | ---------------------------------- |
-| `screenRecordDurationMs`    | 3000                               | 录屏滚动窗口长度                   |
-| `screenRecordEventTypes`    | 错误、XHR、fetch、资源、未处理拒绝 | 触发录屏上报的事件类型             |
-| `hasSkeleton`               | false                              | 页面是否有骨架屏                   |
-| `rootCssSelectors`          | html/body/#app/#root               | 白屏检测的根元素选择器             |
-| `clickThrottleDelay`        | 0                                  | 点击采集节流延迟                   |
-| `maxBreadcrumbs`            | 30                                 | 面包屑容量(保留最新若干条)         |
-| `ignoreErrors`              | 空                                 | 运行时错误的忽略规则(字符串或正则) |
-| `excludeAPIs`               | 空                                 | HTTP 请求的排除规则                |
-| `cacheMaxLength`            | 10                                 | 单批最大条数                       |
-| `cacheWaitingTime`          | 2000                               | 批量等待时间                       |
-| `maxQueueLength`            | 200                                | 离线或重试期间的最大排队条数       |
-| `retryIntervalMilliseconds` | 60000                              | 服务端恢复探测的退避封顶间隔       |
-| `offlineCacheKey`           | `yukino_sentry_offline_cache`      | 离线缓存的 localStorage 键名       |
-| `tracesSampleRate`          | 1                                  | 采样率, 0 到 1                     |
+| 配置项                      | 默认值                             | 说明                                                          |
+| --------------------------- | ---------------------------------- | ------------------------------------------------------------- |
+| `screenRecordDurationMs`    | 3000                               | 录屏滚动窗口长度                                              |
+| `screenRecordEventTypes`    | 错误、XHR、fetch、资源、未处理拒绝 | 触发录屏上报的事件类型                                        |
+| `hasSkeleton`               | false                              | 页面是否有骨架屏                                              |
+| `rootCssSelectors`          | html/body/#app/#root               | 白屏检测的根元素选择器                                        |
+| `clickThrottleDelay`        | 0                                  | 点击采集节流延迟                                              |
+| `maxBreadcrumbs`            | 30                                 | 面包屑容量(保留最新若干条)                                    |
+| `ignoreErrors`              | 空                                 | 运行时错误的忽略规则(字符串或正则)                            |
+| `excludeAPIs`               | 空                                 | HTTP 请求的排除规则                                           |
+| `tracePropagationTargets`   | 未设置                             | traceparent 传播目标; 浏览器默认仅同源, Node 默认全部出站请求 |
+| `cacheMaxLength`            | 10                                 | 单批最大条数                                                  |
+| `cacheWaitingTime`          | 2000                               | 批量等待时间                                                  |
+| `maxQueueLength`            | 200                                | 离线或重试期间的最大排队条数                                  |
+| `retryIntervalMilliseconds` | 60000                              | 服务端恢复探测的退避封顶间隔                                  |
+| `offlineCacheKey`           | `yukino_sentry_offline_cache`      | 离线缓存的 localStorage 键名                                  |
+| `tracesSampleRate`          | 1                                  | 采样率, 0 到 1                                                |
 
-schema 会额外约束: 面包屑容量、批量条数与队列长度必须为正整数; 录屏时长、点击节流、批量等待与重试间隔必须非负; 采样率必须落在 0 到 1 之间; 忽略与排除规则数组的每一项必须是字符串或正则; 录屏触发类型数组的每一项必须是合法的事件类型枚举值。
+schema 会额外约束: 面包屑容量、批量条数与队列长度必须为正整数; 录屏时长、点击节流、批量等待与重试间隔必须非负; 采样率必须落在 0 到 1 之间; 忽略、排除与 trace 传播目标数组的每一项必须是字符串或正则; 录屏触发类型数组的每一项必须是合法的事件类型枚举值。
 
 ### 上报钩子
 
@@ -273,6 +277,54 @@ HTTP 数据会被转换成一个新对象并派生状态与消息, 不改动入�
 ### 请求过滤
 
 请求在满足以下任一条件时被跳过: 向配置的 `dsn` 发起的 POST 或 HEAD(前者避免上报请求自我采集导致死循环, 后者让服务端恢复探测不被自采集), 或匹配 `excludeAPIs`。这里有一个容易踩的差异: `excludeAPIs` 的字符串项是严格相等匹配, 正则项才按 `test` 匹配; 而 `ignoreErrors` 的字符串项是子串包含匹配。此外, 任何地址中含 `dsn` 的请求都不会写入面包屑, 保证 SDK 自身的流量不污染操作轨迹。
+
+## 全链路 Trace: 用一个 traceId 串起前后端
+
+前端报错的根因经常在后端(接口 500、网关超时), 而前端上报与后端日志天然是两条孤立的数据流, 靠时间戳与 URL 人工对齐。SDK 把 W3C Trace Context 内建进采集管线: 每条上报事件都携带 32 位十六进制的 `traceId`, 每个被监控的请求携带 16 位十六进制的 `spanId`, 同一个故障用一个 traceId 就能拉出前后端完整链路(实现见 `sentry/src/core/trace.ts`)。
+
+### 浏览器: 页面视图是 trace 的根
+
+trace 的粒度与页面视图对齐: `renewTraceContext()` 在 `pv-lifecycle` 的 `createPageState` 里执行——初始化(首个 PageLoad)、每次 history/hash 路由切换与手动 `tracePageView` 都会生成新的 traceId。`getBaseData()` 把当前 traceId 打进每条事件的载荷, 上报外壳再把它提升为顶层检索维度。效果是: 同一页面视图内的 JSError、HTTP 事件、点击、PV、性能指标与录屏事件天然聚合在同一个 traceId 下; 路由切换时为上一页补发的停留时长事件(PageDwell)仍携带旧 traceId, 因为它的上报顺序先于上下文轮换。
+
+### 请求传播: traceparent 注入与边界
+
+被监控的 XHR 与 fetch 请求各自生成 spanId(记在 `IHttpData` 上, 成功请求的性能镜像事件的附加字段里也携带), 并向出站请求注入标准头:
+
+```text
+traceparent: 00-<traceId>-<spanId>-01
+```
+
+传播规则(`shouldPropagateTrace`):
+
+- 未配置 `tracePropagationTargets` 时, 浏览器只对同源请求传播(相对路径视为同源)——`traceparent` 不是 CORS 安全头, 跨源注入会触发预检, 因此跨源传播必须显式选择加入; Node 运行时没有 CORS 约束, 默认对全部出站请求传播。
+- 配置 `tracePropagationTargets` 后完全替换默认规则: 字符串项按子串匹配, 正则项按 `test` 匹配(注意与 `excludeAPIs` 的字符串严格相等语义不同)。
+- 发往 `dsn` 自身的请求在忽略判定阶段就被排除, 永远不会被注入头。
+
+注入点是防御性的: XHR 在装饰后的 `send` 里调用 `setRequestHeader`(仅当 `readyState === OPENED`), 并用 try/catch 包裹, 注入失败只记日志、绝不打断业务请求; fetch 按「Request 自带头 → RequestInit 头 → traceparent」的顺序合并, 不丢失任何一方的头。
+
+### Node: continueTrace 还原请求上下文
+
+Node 入口用 `AsyncLocalStorage` 还原入站 trace(`sentry/src/node/trace.ts`):
+
+```ts
+import { continueTrace, getTraceparent } from "@yukino.js/sentry/node";
+
+// Koa: 一行中间件让请求处理链路内的所有上报进入同一个 trace
+app.use((ctx, next) =>
+  continueTrace(ctx.req.headers.traceparent, () => next()),
+);
+
+// Express
+app.use((req, _res, next) => continueTrace(req.headers.traceparent, next));
+```
+
+`continueTrace` 解析入站 `traceparent`(接受 `string | string[] | null | undefined`, 拒绝畸形与全零 id), 继承其 traceId、给自己签发新的 spanId, 然后在 ALS 上下文内运行回调: 上下文内创建的所有事件(含 await 之后的异步延续)都携带该请求的 traceId, 出站 fetch 继续向下游传播 traceparent, 多级服务可以级联串起来。`getActiveTraceContext()` 与 `getTraceparent()` 供手动传播场景(如 `http.request`)使用。
+
+边界同样要明确: 未在 `continueTrace` 内上报的事件每次获得全新的 traceId(诚实但不可关联); 进程级 `uncaughtException` 到达处理器时异步上下文已丢失, 无法归因到具体请求的 trace——这是所有基于 ALS 方案的共同限制, 需要归因的业务错误应在请求上下文内捕获并自行调用 `traceError`。
+
+### 查询: 一个 traceId 拉出整条链路
+
+上报外壳的 traceId 是顶层检索维度, 日志服务端提供 `GET /api/logs/trace?traceId=<id>&file=all`, 按时间升序返回该 trace 的全部事件。一条典型的前端链路形如: PageLoad PV → 一批 ResourceTiming/性能事件 → 失败的 fetch 事件(带 spanId) → 前端 JSError → 同一 trace 下后端服务的错误事件。
 
 ## 页面轨迹: 浏览与停留时长
 
@@ -398,22 +450,23 @@ SDK 自动生成并持久化两个标识: 设备 ID 存在 localStorage(键 `yuk
 
 每条上报数据由统一外壳与原始载荷两层组成。外壳是检索维度, 载荷保留事件细节。
 
-| 字段                                   | 说明                                            |
-| -------------------------------------- | ----------------------------------------------- |
-| `id`                                   | 所属上报器实例的 id, 同一实例的所有事件共享     |
-| `type` / `name` / `message`            | 事件类型、名称与消息                            |
-| `status`                               | 正常或错误                                      |
-| `time` / `timestamp`                   | ISO 时间与数值时间戳                            |
-| `url`                                  | 组装外壳时的页面地址                            |
-| `userId` / `anonymousId` / `visitorId` | 三层身份标识                                    |
-| `projectId` / `sdkVersion`             | 归属信息                                        |
-| `breadcrumbs`                          | 仅错误类事件携带的操作轨迹                      |
-| `deviceInfo`                           | 惰性采集的设备、浏览器、系统、语言与屏幕信息    |
-| `payload`                              | 原始事件载荷, 内含事件级唯一 id 与设备/会话标识 |
+| 字段                                   | 说明                                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------ |
+| `id`                                   | 所属上报器实例的 id, 同一实例的所有事件共享                                          |
+| `type` / `name` / `message`            | 事件类型、名称与消息                                                                 |
+| `status`                               | 正常或错误                                                                           |
+| `time` / `timestamp`                   | ISO 时间与数值时间戳                                                                 |
+| `traceId`                              | 全链路追踪 id, 同一页面视图(浏览器)或同一 `continueTrace` 上下文(Node)内所有事件共享 |
+| `url`                                  | 组装外壳时的页面地址                                                                 |
+| `userId` / `anonymousId` / `visitorId` | 三层身份标识                                                                         |
+| `projectId` / `sdkVersion`             | 归属信息                                                                             |
+| `breadcrumbs`                          | 仅错误类事件携带的操作轨迹                                                           |
+| `deviceInfo`                           | 惰性采集的设备、浏览器、系统、语言与屏幕信息                                         |
+| `payload`                              | 原始事件载荷, 内含事件级唯一 id、设备/会话标识与 traceId; HTTP 载荷另带请求级 spanId |
 
 面包屑只附加到六类错误事件(JS 错误、未处理拒绝、资源错误、Vue、React、其他框架), 因为它是故障前的操作轨迹; 若给每条批量事件都带上, 载荷体积会成倍放大且没有诊断价值。面包屑条目本身继承载荷结构并附加操作类型(Http、Click、Route、Resource、Code Error、Custom 六种), 写入前经过 `beforeBreadcrumb` 钩子, 容量按 `maxBreadcrumbs` 保留最新若干条。
 
-一条 JS 错误最终携带的信息包括: 外壳上的类型、名称(出错脚本地址)、消息、状态、页面地址、三层身份、项目与 SDK 版本、设备信息; 以及载荷里的行列号(供 Source Map 反解)与堆栈字符串。框架错误额外携带错误对象、堆栈与框架上下文; 批次错误额外携带批次标记、条数与最后发生时间; 录屏事件携带压缩后的记录流与事件条数。
+一条 JS 错误最终携带的信息包括: 外壳上的类型、名称(出错脚本地址)、消息、状态、traceId、页面地址、三层身份、项目与 SDK 版本、设备信息; 以及载荷里的行列号(供 Source Map 反解)与堆栈字符串。框架错误额外携带错误对象、堆栈与框架上下文; 批次错误额外携带批次标记、条数与最后发生时间; 录屏事件携带压缩后的记录流与事件条数。
 
 ## 离线缓存与断点恢复
 
@@ -542,6 +595,10 @@ setup 按开关订阅三类进程级事件:
 
 崩溃路径有 `isCrashing` 防重入: 首次致命错误触发后, 后续异常不再重复处理; 冲刷以 2 秒超时为界(`CRASH_FLUSH_TIMEOUT_MS`), 不让上报把退出卡死。`destroy` 会取消待决的致命处理并丢弃在途报告, 之后重新 `init` 从全新状态开始。
 
+### 请求 trace 上下文
+
+setup 会安装基于 `AsyncLocalStorage` 的 trace 上下文解析器(见「全链路 Trace」一节): 服务端用 `continueTrace(req.headers.traceparent, handler)` 包裹请求处理后, 上下文内产生的全部上报(含 `traceError`、出站 fetch 错误与未处理拒绝)都携带入站请求的 traceId, 出站 fetch 自动继续向下游传播 `traceparent`; 上下文外的事件每次获得独立的新 traceId。`destroy` 会卸载解析器, 恢复模块级的环境上下文。
+
 ### 运行时适配
 
 核心与上报器为支持 Node 做了一组运行时适配, 都以能力探测而非平台判断实现:
@@ -552,7 +609,7 @@ setup 按开关订阅三类进程级事件:
 - `Event`/`ErrorEvent` 的 `instanceof` 判定都先探测全局存在性, 拒绝理由与上下文的序列化用循环引用/bigint 安全的 `stringify`;
 - 类型声明不依赖 TypeScript 的 DOM lib: 性能指标类型不再引用 web-vitals 的 `Metric` 与 DOM 的 `PerformanceEntry`, 改为自有的数值与结构类型。
 
-可用 API 与浏览器入口大体对齐(`init`/`destroy`/`isInitialized`/`enablePlugin`/身份与钩子注册/`flush`/`flushOfflineCache`/`traceError`/`tracePerformance`/`traceCustomEvent`/`reportFrameworkError` 及全部共享类型), 但 `tracePageView` 是浏览器专属, 不在 Node 入口导出。包内另有 `test:package` 脚本(`node --test`), 在构建后验证 ESM/CJS 入口可加载、子进程崩溃行为与类型声明不依赖 DOM lib。
+可用 API 与浏览器入口大体对齐(`init`/`destroy`/`isInitialized`/`enablePlugin`/身份与钩子注册/`flush`/`flushOfflineCache`/`traceError`/`tracePerformance`/`traceCustomEvent`/`reportFrameworkError` 及全部共享类型), 并额外提供 trace 三件套 `continueTrace`/`getActiveTraceContext`/`getTraceparent` 与 `TraceparentSource` 类型; `tracePageView` 是浏览器专属, 不在 Node 入口导出。包内另有 `test:package` 脚本(`node --test`), 在构建后验证 ESM/CJS 入口可加载、子进程崩溃行为与类型声明不依赖 DOM lib。
 
 ## 采样与前置过滤
 
@@ -611,11 +668,11 @@ SDK 自身的控制台输出默认关闭, 打开 `debug` 后可看到事件采�
 
 ## 适用场景与小结
 
-这套 SDK 适合: 需要一次性接入错误、性能、页面轨迹与行为埋点而不想引入多套前端可观测库的项目; 需要在 React 或 Vue 之外保持框架无关、或要在微前端里按需挂载卸载的场景; 需要错误现场录屏与开发期 Source Map 反解的团队; 希望用声明式 HTML 属性完成埋点、避免业务代码侵入的产品; 以及需要让 Node.js 服务与前端共用同一条上报管线与后端的项目。
+这套 SDK 适合: 需要一次性接入错误、性能、页面轨迹与行为埋点而不想引入多套前端可观测库的项目; 需要在 React 或 Vue 之外保持框架无关、或要在微前端里按需挂载卸载的场景; 需要错误现场录屏与开发期 Source Map 反解的团队; 希望用声明式 HTML 属性完成埋点、避免业务代码侵入的产品; 需要用一个 traceId 把前端 JSError 与后端服务故障串成完整链路排查的项目; 以及需要让 Node.js 服务与前端共用同一条上报管线与后端的项目。
 
 不太适合: 需要全量会话回放(它只保留错误前几秒)或需要跨标签页统一会话存储的场景; 对上报体积极度敏感、无法接受校验库与 UA 解析库常驻主包的项目; 对离线队列容量有很高要求、需要突破本地存储限制的场景。
 
-综合来看, 它的设计主线是"用总线隔离采集与处理, 用插件隔离重能力, 用多层过滤隔离成本, 用镜像加探测隔离网络故障"。理解这条主线后, 接入与排障都有据可依: 采集异常先看对应开关与总线订阅, 体积异常先看动态导入与插件启用, 丢数据先看过滤链与离线缓存, 堆栈看不懂就检查映射文件的收集与匹配。
+综合来看, 它的设计主线是"用总线隔离采集与处理, 用插件隔离重能力, 用多层过滤隔离成本, 用镜像加探测隔离网络故障, 用 traceId 打通前端与后端"。理解这条主线后, 接入与排障都有据可依: 采集异常先看对应开关与总线订阅, 体积异常先看动态导入与插件启用, 丢数据先看过滤链与离线缓存, 堆栈看不懂就检查映射文件的收集与匹配, 跨端对不上就检查 traceparent 传播规则与 `continueTrace` 包裹。
 
 ---
 
