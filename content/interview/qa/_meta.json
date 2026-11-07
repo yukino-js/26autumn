@@ -62,6 +62,7 @@
   },
   "mobile-perf-profiling",
   "data-pipeline-olap",
+  "clickhouse-kafka",
   {
     "type": "section-header",
     "label": "Node 服务端"
