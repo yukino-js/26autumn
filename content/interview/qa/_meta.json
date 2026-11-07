@@ -51,6 +51,7 @@
   },
   "distributed-components",
   "service-architecture",
+  "middleware-infrastructure",
   {
     "type": "section-header",
     "label": "云原生与沙箱"
