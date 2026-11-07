@@ -85,5 +85,9 @@
     "label": "项目深挖"
   },
   "yukino-dev-agent-project",
-  "yukino-ecomm-agent-project"
+  "yukino-ecomm-agent-project",
+  "yukino-chat-project",
+  "yukino-chatbot-project",
+  "yukino-codegen-project",
+  "yukino-mcp-server-project"
 ]
