@@ -9,6 +9,15 @@
   "metrics-baseline",
   {
     "type": "section-header",
+    "label": "HR 面"
+  },
+  {
+    "type": "dir",
+    "name": "hr",
+    "label": "HR 面试问答"
+  },
+  {
+    "type": "section-header",
     "label": "知识体系"
   },
   {
