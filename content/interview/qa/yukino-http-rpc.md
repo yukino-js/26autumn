@@ -1,6 +1,6 @@
 ---
 title: "Yukino HTTP 框架与 RPC 题库"
-description: "90 题: yukino_http 零依赖 Go HTTP 框架（洋葱模型 compose、延迟响应与 TakeOver、按段 Trie 路由与通配、分组 Router 与静态文件、Context API 与统一错误、SSE 多 goroutine 安全写、WebSocket RFC6455 握手与帧重组、优雅关闭）与 yukino_rpc TCP RPC（线协议二进制分帧、Future 异步模型、多路复用、服务端流式与 termCh 带外终结、客户端治理管线限流/熔断/重试、GracefulStop 与 Stop 差异、协议级盲区）, 全部对照 yukino.go/libs 源码"
+description: "90 题：yukino_http 零依赖 Go HTTP 框架（洋葱模型 compose、延迟响应与 TakeOver、按段 Trie 路由与通配、分组 Router 与静态文件、Context API 与统一错误、SSE 多 goroutine 安全写、WebSocket RFC6455 握手与帧重组、优雅关闭）与 yukino_rpc TCP RPC（线协议二进制分帧、Future 异步模型、多路复用、服务端流式与 termCh 带外终结、客户端治理管线限流/熔断/重试、GracefulStop 与 Stop 差异、协议级盲区），全部对照 yukino.go/libs 源码"
 ---
 
 :::note 事实基线
@@ -228,7 +228,7 @@ codec 抽象编解码（JSON/Protobuf 等），压缩抽象帧体压缩。帧头
 
 **Q33. 一句话解释 matchRouterPath 按段边界匹配。** 避免 /api 误匹配 /apifoo——前缀匹配要按路径段边界。
 
-**Q34. 一句话解释 Trie 路由的三类段。** 静态段（users）、参数段（:id 取单段值）、通配段（*filepath 贪婪匹配剩余所有段，至少一段）。
+**Q34. 一句话解释 Trie 路由的三类段。** 静态段（users）、参数段（：id 取单段值）、通配段（*filepath 贪婪匹配剩余所有段，至少一段）。
 
 **Q35. 一句话解释通配段为什么至少匹配一段。** 通配节点只能经父节点 matchChildren 尝试，请求段在父层耗尽时父节点因 pattern 空提前返回 nil。
 
@@ -256,7 +256,7 @@ codec 抽象编解码（JSON/Protobuf 等），压缩抽象帧体压缩。帧头
 
 **Q47. 一句话解释 Done() 的 [DONE] 约定。** 对齐 OpenAI 风格流式结束——data: [DONE] 标记流结束。
 
-**Q48. 一句话解释 writeData 的多行编码。** 数据按 \n 切分，每行加 data: 前缀，最后补空行结束事件——符合 SSE 多行数据编码。
+**Q48. 一句话解释 writeData 的多行编码。** 数据按 \n 切分，每行加 data：前缀，最后补空行结束事件——符合 SSE 多行数据编码。
 
 **Q49. 一句话解释 WebSocket 为什么用 Hijack。** 升级后连接不再是 HTTP 语义，需要双向全双工读写帧，ResponseWriter 只能写响应——Hijack 转移 TCP 连接所有权。
 

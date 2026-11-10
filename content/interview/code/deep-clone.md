@@ -1,6 +1,6 @@
 ---
 title: "代码题：JS 手写深拷贝"
-description: "零依赖可运行的 deepClone 实现与自测: 递归 + WeakMap 处理循环引用、Date/RegExp/Map/Set/Array/普通对象、保留原型与 symbol 键与访问器属性, 对照 JSON 法与 structuredClone 的缺陷与边界"
+description: "零依赖可运行的 deepClone 实现与自测：递归 + WeakMap 处理循环引用、Date/RegExp/Map/Set/Array/普通对象、保留原型与 symbol 键与访问器属性，对照 JSON 法与 structuredClone 的缺陷与边界"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。先澄清深拷贝的语义边界与常见错误答案，再给主实现、自测与生产延伸。

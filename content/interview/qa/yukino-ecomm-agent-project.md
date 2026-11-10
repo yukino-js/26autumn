@@ -1,6 +1,6 @@
 ---
 title: "Yukino Ecomm Agent 项目深挖题库"
-description: "94 题: Hono + LangGraph 电商客服 Agent 的三层结构与启动顺序、zod 边界与 SSE 帧协议、12 节点会话图与九意图五出口表驱动路由、状态通道 reducer 与 checkpointer 每轮重置、interrupt 前端动作闭环、四策略检索与进程内 BM25/CJK bigram、RRF k=60 与子句拆分头尾排布、两道置信度门禁、rerank 双协议适配、Milvus 双模式与 BM25 Function、工具注册表权限模型与写前确认、三锚点窗口与上下文预算分账、低置信数据飞轮、Langfuse over OTel、Lit 工作台, 全部对照 yukino-ecomm-agent 源码"
+description: "94 题：Hono + LangGraph 电商客服 Agent 的三层结构与启动顺序、zod 边界与 SSE 帧协议、12 节点会话图与九意图五出口表驱动路由、状态通道 reducer 与 checkpointer 每轮重置、interrupt 前端动作闭环、四策略检索与进程内 BM25/CJK bigram、RRF k=60 与子句拆分头尾排布、两道置信度门禁、rerank 双协议适配、Milvus 双模式与 BM25 Function、工具注册表权限模型与写前确认、三锚点窗口与上下文预算分账、低置信数据飞轮、Langfuse over OTel、Lit 工作台，全部对照 yukino-ecomm-agent 源码"
 ---
 
 :::note 事实基线

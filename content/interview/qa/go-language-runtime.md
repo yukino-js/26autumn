@@ -1,6 +1,6 @@
 ---
 title: "Go 语言与运行时"
-description: "GMP 调度、GC 三色标记与混合写屏障、channel 底层与 close 语义、sync 原语与 atomic 实战、context 取消树、interface 与反射派发、错误处理与 panic 边界、现代 Go 特性, 全部结合 yukino.go 与 wanproxy 源码例证"
+description: "GMP 调度、GC 三色标记与混合写屏障、channel 底层与 close 语义、sync 原语与 atomic 实战、context 取消树、interface 与反射派发、错误处理与 panic 边界、现代 Go 特性，全部结合 yukino.go 与 wanproxy 源码例证"
 ---
 
 本篇是 Go 语言与运行时的带解答题库（68 题）。通用机制按标准 Go 运行时知识作答；凡标注「项目例证」的结论均来自实读源码：`$HOME/github/yukino.go`（HEAD `facf5d6`，`go.mod` 声明 **go 1.26.0**）与 `$HOME/github/wanproxy`（HEAD `07f7fb8`，`go.work` 声明 **go 1.26.5**），路径为仓库根相对路径。
@@ -246,7 +246,7 @@ type hchan struct {
 | 操作  | nil channel | 已关闭 channel         | 正常 channel   |
 | ----- | ----------- | ---------------------- | -------------- |
 | 发送  | 永久阻塞    | **panic**              | 阻塞或成功     |
-| 接收  | 永久阻塞    | 立即返回零值, ok=false | 阻塞或成功     |
+| 接收  | 永久阻塞    | 立即返回零值，ok=false | 阻塞或成功     |
 | close | **panic**   | **panic**（重复关闭）  | 成功，广播唤醒 |
 
 推论：**close 是广播**——所有等待的接收者同时被唤醒，这是「关闭即通知」模式的基础；发送方负责 close，接收方永不 close（多发送方时用额外 done channel 协调）。
@@ -458,7 +458,7 @@ return context.Cause(r.ctx) // 返回第一个真实失败原因
 
 ### Q51. iface 和 eface 的区别？
 
-空接口 `any` = `eface{_type *_type, data unsafe.Pointer}`；带方法接口 = `iface{tab *itab, data unsafe.Pointer}`。`itab` 缓存（接口类型, 具体类型）对与方法表，首次断言时构建。接口值 = **16 字节双字**（类型指针 + 数据指针），赋值给接口通常装箱（数据复制到堆，逃逸）。
+空接口 `any` = `eface{_type *_type, data unsafe.Pointer}`；带方法接口 = `iface{tab *itab, data unsafe.Pointer}`。`itab` 缓存（接口类型，具体类型）对与方法表，首次断言时构建。接口值 = **16 字节双字**（类型指针 + 数据指针），赋值给接口通常装箱（数据复制到堆，逃逸）。
 
 ### Q52. 「nil 接口 ≠ 装了 nil 指针的接口」陷阱，怎么踩怎么防？
 

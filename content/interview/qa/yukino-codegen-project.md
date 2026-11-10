@@ -1,6 +1,6 @@
 ---
 title: "Yukino Codegen AI 代码生成平台项目深挖题库"
-description: "90 题: 从自然语言需求到可运行 Web 应用的 AI 全栈代码生成平台——服务器磁盘为文件权威源与唯一构建场地、submit 一个入口多路流量、executeTurn 十步编排、TurnGate 进程级公平准入、计划模式与失败关闭的交互代理、17 个服务端斜杠命令、RuntimeManager 长驻按应用键控、rehydrate 让 restoreContext 成唯一注入点、事件溯源序列号与事件适配器分流、finalizeTurn 轮末四件事、rewind 双维回退、claimTurn 原子互斥与僵死回收、OS 沙箱缩减环境与进程组回收、能力 URL 静态预览与路径安全、预览桥可视化编辑与错误回传、createRemoteAgent 句柄集成与模型/思考/沙箱/MCP 运行时切换、AES-256-GCM 加密 MCP 凭据、配置 fail-fast、renderSafeMarkdown 消毒, 全部对照 yukino-codegen 源码"
+description: "90 题：从自然语言需求到可运行 Web 应用的 AI 全栈代码生成平台——服务器磁盘为文件权威源与唯一构建场地、submit 一个入口多路流量、executeTurn 十步编排、TurnGate 进程级公平准入、计划模式与失败关闭的交互代理、17 个服务端斜杠命令、RuntimeManager 长驻按应用键控、rehydrate 让 restoreContext 成唯一注入点、事件溯源序列号与事件适配器分流、finalizeTurn 轮末四件事、rewind 双维回退、claimTurn 原子互斥与僵死回收、OS 沙箱缩减环境与进程组回收、能力 URL 静态预览与路径安全、预览桥可视化编辑与错误回传、createRemoteAgent 句柄集成与模型/思考/沙箱/MCP 运行时切换、AES-256-GCM 加密 MCP 凭据、配置 fail-fast、renderSafeMarkdown 消毒，全部对照 yukino-codegen 源码"
 ---
 
 :::note 事实基线

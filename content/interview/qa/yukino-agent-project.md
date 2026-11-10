@@ -1,6 +1,6 @@
 ---
 title: "Yukino Agent（Go Eino RAG 运维 Agent）项目深挖题库"
-description: "88 题: 用 Go + CloudWeGo Eino 编排的 AI 运维助手后端——三条流水线（RAG 对话图 AllPredecessor 并行汇聚、Plan-Execute-Replan 告警分析、文档索引图 AnyPredecessor 线性链）、Think/Quick 双模型与 openai/anthropic Provider 适配、signaturePatchingTransport 兼容补丁、ProbeDimension 权威维度、四内置工具 InferOptionableTool 反推 schema、MCP 三传输与长连接会话缓存与 watchSession 失效、错误即观测（JSON 载荷回喂）、TolerateEmptyArguments 空参容忍、extractJSONObject 结构化输出剥离、Milvus 七步 bootstrap 与维度不匹配 drop 重建、FloatVector 与 truncateToRuneBoundary、emptyTolerantRetriever 空库容错、DeleteBySource 先删后插去重、yukino_http 六路由与统一信封、SSE 帧格式、上传安全（safeUploadName/confinedPath/writeLimited/WithoutCancel）、监控桥私有 registry 与 GoCollector 规则组与 boundedLabel 标签收敛、prometheus.rules.yml 五组告警闭环、LRU 会话记忆与滑动窗口配对、JSONC 配置剥离、优雅降级主线, 全部对照 yukino.go/apps/agent 源码"
+description: "88 题：用 Go + CloudWeGo Eino 编排的 AI 运维助手后端——三条流水线（RAG 对话图 AllPredecessor 并行汇聚、Plan-Execute-Replan 告警分析、文档索引图 AnyPredecessor 线性链）、Think/Quick 双模型与 openai/anthropic Provider 适配、signaturePatchingTransport 兼容补丁、ProbeDimension 权威维度、四内置工具 InferOptionableTool 反推 schema、MCP 三传输与长连接会话缓存与 watchSession 失效、错误即观测（JSON 载荷回喂）、TolerateEmptyArguments 空参容忍、extractJSONObject 结构化输出剥离、Milvus 七步 bootstrap 与维度不匹配 drop 重建、FloatVector 与 truncateToRuneBoundary、emptyTolerantRetriever 空库容错、DeleteBySource 先删后插去重、yukino_http 六路由与统一信封、SSE 帧格式、上传安全（safeUploadName/confinedPath/writeLimited/WithoutCancel）、监控桥私有 registry 与 GoCollector 规则组与 boundedLabel 标签收敛、prometheus.rules.yml 五组告警闭环、LRU 会话记忆与滑动窗口配对、JSONC 配置剥离、优雅降级主线，全部对照 yukino.go/apps/agent 源码"
 ---
 
 :::note 事实基线

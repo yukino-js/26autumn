@@ -1,6 +1,6 @@
 ---
 title: "Yukino Chat 自托管 IM 与内嵌 Agent 项目深挖题库"
-description: "92 题: 自托管即时通讯平台的实时后端与每用户内嵌只读 coding agent——Hono + Prisma 双镜像 schema、带前缀 uuid 的路由语义、三条 WebSocket 通道与 client_id 防伪、ChatHub 单消费者串行链与持久化先行扇出、JSON 零值线协议、WebRTC 全网状信令与 glare 消除、无数据库状态机的分块断点续传、worker 二次摘要哈希、Redis/进程内存双实现读穿缓存、AgentManager 心跳驱逐与只读三层圈禁、JSON-RPC 桥与转录/overlay 缝合, 全部对照 yukino-chat 源码"
+description: "92 题：自托管即时通讯平台的实时后端与每用户内嵌只读 coding agent——Hono + Prisma 双镜像 schema、带前缀 uuid 的路由语义、三条 WebSocket 通道与 client_id 防伪、ChatHub 单消费者串行链与持久化先行扇出、JSON 零值线协议、WebRTC 全网状信令与 glare 消除、无数据库状态机的分块断点续传、worker 二次摘要哈希、Redis/进程内存双实现读穿缓存、AgentManager 心跳驱逐与只读三层圈禁、JSON-RPC 桥与转录/overlay 缝合，全部对照 yukino-chat 源码"
 ---
 
 :::note 事实基线

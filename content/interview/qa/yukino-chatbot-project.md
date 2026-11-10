@@ -1,6 +1,6 @@
 ---
 title: "Yukino Chatbot 全栈 LLM 应用项目深挖题库"
-description: "88 题: pnpm workspace 全栈 LLM 聊天应用——Koa 3 后端 Router/Controller/Service/DAO 分层、Rollup 单文件 ESM 与 external 排除、JWT 鉴权与 SSE query 兜底、AiModelFactory/AiAgentManager/AiAgent 三角色与模型热切换、内存上下文加 write-behind 落库、启动全量物化重建、即时构建 MemoryVectorStore 的 RAG 与 CRC32 内容寻址去重、绕过 Koa 原生 res 写 SSE 与 X-Accel-Buffering、Fetch 而非 EventSource 的三点理由、流级断线恢复为何不适用与真正断点重连设计、前端三层状态、流式渲染头号陷阱与 rAF 三层解耦、节流方案对比、虚拟化与贴底滚动、Streamdown 块级增量解析、缓存函数入口布尔分发与 LRU 降级, 全部对照 yukino-chatbot 源码"
+description: "88 题：pnpm workspace 全栈 LLM 聊天应用——Koa 3 后端 Router/Controller/Service/DAO 分层、Rollup 单文件 ESM 与 external 排除、JWT 鉴权与 SSE query 兜底、AiModelFactory/AiAgentManager/AiAgent 三角色与模型热切换、内存上下文加 write-behind 落库、启动全量物化重建、即时构建 MemoryVectorStore 的 RAG 与 CRC32 内容寻址去重、绕过 Koa 原生 res 写 SSE 与 X-Accel-Buffering、Fetch 而非 EventSource 的三点理由、流级断线恢复为何不适用与真正断点重连设计、前端三层状态、流式渲染头号陷阱与 rAF 三层解耦、节流方案对比、虚拟化与贴底滚动、Streamdown 块级增量解析、缓存函数入口布尔分发与 LRU 降级，全部对照 yukino-chatbot 源码"
 ---
 
 :::note 事实基线

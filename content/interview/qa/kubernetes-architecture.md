@@ -1,6 +1,6 @@
 ---
 title: "Kubernetes 架构与运维题库"
-description: "102 题: 声明式 API 与 reconcile 循环、控制面与节点组件全链路、Informer/watch 机制、Pod 与 pause 容器、五种工作负载控制器选型、Service 与 kube-proxy 四模式、CoreDNS 与 ndots 陷阱、Ingress 与 Gateway API、ConfigMap/Secret 热更新语义、PV/PVC/CSI 存储体系、调度四手段与抢占、三种探针、requests/limits 与 QoS 驱逐、HPA/VPA/CA/KEDA、RBAC/PSA/NetworkPolicy、etcd、排障速查、CRD/Operator/Webhook/Helm、集群升级, 以及沙箱节点池的完整落地"
+description: "102 题：声明式 API 与 reconcile 循环、控制面与节点组件全链路、Informer/watch 机制、Pod 与 pause 容器、五种工作负载控制器选型、Service 与 kube-proxy 四模式、CoreDNS 与 ndots 陷阱、Ingress 与 Gateway API、ConfigMap/Secret 热更新语义、PV/PVC/CSI 存储体系、调度四手段与抢占、三种探针、requests/limits 与 QoS 驱逐、HPA/VPA/CA/KEDA、RBAC/PSA/NetworkPolicy、etcd、排障速查、CRD/Operator/Webhook/Helm、集群升级，以及沙箱节点池的完整落地"
 ---
 
 :::note 事实基线

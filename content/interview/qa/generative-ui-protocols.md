@@ -1,6 +1,6 @@
 ---
 title: "生成式 UI 协议题库（A2UI 与 MCP Apps）"
-description: "88 题: A2UI 声明式 UI 协议（消息信封与 Catalog 契约、邻接表组件模型、JSON Pointer 数据绑定、action/functionCall 事件语义、checks 校验、macros 服务端展开、能力协商、多语言 SDK、A2A 集成、生成可靠性三步循环、安全模型）与 MCP Apps 扩展（tool + ui:// 资源、能力协商、生命周期时序、postMessage 方言、CSP/sandbox 安全、create_app 三通道可见性、闭环全景）, 以及两者「数据 vs 代码」的选型对比, 全部对照 a2ui.md 与 mcp-app.md"
+description: "88 题：A2UI 声明式 UI 协议（消息信封与 Catalog 契约、邻接表组件模型、JSON Pointer 数据绑定、action/functionCall 事件语义、checks 校验、macros 服务端展开、能力协商、多语言 SDK、A2A 集成、生成可靠性三步循环、安全模型）与 MCP Apps 扩展（tool + ui:// 资源、能力协商、生命周期时序、postMessage 方言、CSP/sandbox 安全、create_app 三通道可见性、闭环全景），以及两者「数据 vs 代码」的选型对比，全部对照 a2ui.md 与 mcp-app.md"
 ---
 
 :::note 事实基线

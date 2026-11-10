@@ -1,6 +1,6 @@
 ---
 title: "Yukino Task Flow 题库"
-description: "82 题: 企业级定时/条件任务调度与审计系统——MySQL 权威 + Redis 加速的核心原则、触发不丢/不重/状态一致三层拆解、确定性 fire key 协议、幂等四层防线（Bloom 预检/SETNX 认领/唯一索引/CAS 状态迁移）、Migrator cron 物化与分布式时间轮、事务内 CDC 触发器与 outbox 两阶段中继、TCC 派发事务、Executor 与 LLM Agent 工具沙箱、报告产物与分组缓存、集群协调（心跳/哈希环/单例角色）、Monitor 清扫、LSM journal 与 Raft ledger 节点本地审计, 全部对照 yukino.go/apps/task_flow 源码"
+description: "82 题：企业级定时/条件任务调度与审计系统——MySQL 权威 + Redis 加速的核心原则、触发不丢/不重/状态一致三层拆解、确定性 fire key 协议、幂等四层防线（Bloom 预检/SETNX 认领/唯一索引/CAS 状态迁移）、Migrator cron 物化与分布式时间轮、事务内 CDC 触发器与 outbox 两阶段中继、TCC 派发事务、Executor 与 LLM Agent 工具沙箱、报告产物与分组缓存、集群协调（心跳/哈希环/单例角色）、Monitor 清扫、LSM journal 与 Raft ledger 节点本地审计，全部对照 yukino.go/apps/task_flow 源码"
 ---
 
 :::note 事实基线

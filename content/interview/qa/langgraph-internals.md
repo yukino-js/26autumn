@@ -1,6 +1,6 @@
 ---
 title: "LangGraph.js 内核机制题库"
-description: "86 题: StateGraph 到 Pregel 的编译管线、BaseChannel 契约与九种内置通道、messagesStateReducer 与 DeltaChannel、节点输入与 Runtime、写回管线与空值语义、子图命名空间、Store 跨线程记忆、Pregel 超步执行循环与 _runLoop、PregelLoop.tick 状态机、_prepareNextTasks/_applyWrites 的确定性、PregelRunner 并发与 invalid resume、RetryPolicy/TimeoutPolicy/CachePolicy、durability 与 invoke 折叠、Checkpoint v4 数据结构、时间旅行、interrupt/resume 与严格恢复、八种 StreamMode 与协议事件流、Functional API entrypoint/task、Prebuilt ToolNode, 全部对照 langgraphjs 源码"
+description: "86 题：StateGraph 到 Pregel 的编译管线、BaseChannel 契约与九种内置通道、messagesStateReducer 与 DeltaChannel、节点输入与 Runtime、写回管线与空值语义、子图命名空间、Store 跨线程记忆、Pregel 超步执行循环与 _runLoop、PregelLoop.tick 状态机、_prepareNextTasks/_applyWrites 的确定性、PregelRunner 并发与 invalid resume、RetryPolicy/TimeoutPolicy/CachePolicy、durability 与 invoke 折叠、Checkpoint v4 数据结构、时间旅行、interrupt/resume 与严格恢复、八种 StreamMode 与协议事件流、Functional API entrypoint/task、Prebuilt ToolNode，全部对照 langgraphjs 源码"
 ---
 
 :::note 事实基线

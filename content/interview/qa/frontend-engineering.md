@@ -1,6 +1,6 @@
 ---
 title: "前端工程化"
-description: "monorepo 与 pnpm workspace、构建工具原理与对比、Tree Shaking 与代码分割、ESLint flat config 与 git hooks、TypeScript 工程配置、测试策略、CI/CD 与 Docker 多阶段部署、Next.js 渲染模式、代码生成平台与供应链安全, 共 61 题带权威解答"
+description: "monorepo 与 pnpm workspace、构建工具原理与对比、Tree Shaking 与代码分割、ESLint flat config 与 git hooks、TypeScript 工程配置、测试策略、CI/CD 与 Docker 多阶段部署、Next.js 渲染模式、代码生成平台与供应链安全，共 61 题带权威解答"
 ---
 
 本章覆盖前端工程化全链路：包管理与 monorepo、构建工具原理、质量工具链、测试、CI/CD 与容器化部署、渲染模式选型，以及代码生成平台与供应链安全。所有「项目里」的陈述均实读源码，证据来源如下。

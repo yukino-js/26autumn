@@ -1,6 +1,6 @@
 ---
 title: "Yukino Dev Agent 项目深挖题库"
-description: "92 题: Next.js 16 App Router 全栈 AI 应用的 OnCall/DevFlow 双产品面、双槽位模型与 extended thinking、兼容网关协议修复、Milvus 混合检索与集合设计、间接注入防御、ReAct 与 Plan-Execute-Replan 图拓扑、双护栏与 concat reducer、工具系统三层分离与 postgres_query 四层隔离、MCP 多连接与 SKILL.md 渐进式披露、管理门禁 fail-closed、A2UI 流式过滤与纠错重试、Prometheus 指标桥与标签基数防御、告警规则契约、面向 LLM 的错误处理、zod 边界与类型纪律, 全部对照 yukino-dev-agent 源码"
+description: "92 题：Next.js 16 App Router 全栈 AI 应用的 OnCall/DevFlow 双产品面、双槽位模型与 extended thinking、兼容网关协议修复、Milvus 混合检索与集合设计、间接注入防御、ReAct 与 Plan-Execute-Replan 图拓扑、双护栏与 concat reducer、工具系统三层分离与 postgres_query 四层隔离、MCP 多连接与 SKILL.md 渐进式披露、管理门禁 fail-closed、A2UI 流式过滤与纠错重试、Prometheus 指标桥与标签基数防御、告警规则契约、面向 LLM 的错误处理、zod 边界与类型纪律，全部对照 yukino-dev-agent 源码"
 ---
 
 :::note 事实基线
@@ -230,7 +230,7 @@ MCP 工具来源有两处：内置日志源（环境变量声明的单一 SSE �
 
 技能遵循 SKILL.md 约定：文件开头是 YAML frontmatter（含 name 与 description），正文是完整指令。校验规则完整——文件名必须恰为 SKILL.md、大小（64KB）与字符数有上限、名称是 1 到 64 位的小写字母/数字/单连字符且首尾无连字符、不允许双连字符、描述非空且有长度上限。
 
-**渐进式披露**：启用中的技能**只把「名称: 描述」一行注入 system prompt 的技能目录，正文由 `load_skill` 工具按名加载**；未知名称如实返回错误并列出当前可加载的技能，不编造内容。**这是渐进式披露：技能再多也只在提示词里占一行，正文按需加载**。
+**渐进式披露**：启用中的技能**只把「名称：描述」一行注入 system prompt 的技能目录，正文由 `load_skill` 工具按名加载**；未知名称如实返回错误并列出当前可加载的技能，不编造内容。**这是渐进式披露：技能再多也只在提示词里占一行，正文按需加载**。
 
 **采分点**：能说出「**技能目录只注入一行，正文按需加载**」——这是控制 system prompt 体积的关键，与 yukino 引擎的 Skill 机制、MCP 工具的延迟发现是同一思想（渐进式披露）。
 
@@ -417,7 +417,7 @@ LLM 调用的错误与传统 API 不同：**错误信息常常不在 `message` �
 
 **Q64. 一句话解释 MCP schema 包装前为什么要形状校验。** 服务端返回的是普通 JSON Schema，包装进 AI SDK 前先校验形状，防脏数据进入 SDK。
 
-**Q65. 一句话解释 SKILL.md 渐进式披露。** 技能目录只注入「名称: 描述」一行，正文由 load_skill 按名加载——技能再多也只占提示词一行，控制体积。
+**Q65. 一句话解释 SKILL.md 渐进式披露。** 技能目录只注入「名称：描述」一行，正文由 load_skill 按名加载——技能再多也只占提示词一行，控制体积。
 
 **Q66. 一句话解释管理门禁为什么 fail-closed。** 公开产品不能把「决定服务端出站连接」的能力默认开放——未配置 Token 时写操作直接拒绝，而不是放行。
 

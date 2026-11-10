@@ -1,6 +1,6 @@
 ---
 title: "Yukino 缓存与 ORM 题库"
-description: "84 题: yukino_cache 无中心 read-through 分组缓存（Group/Getter、分桶双层 LRU 字节预算淘汰、粗粒度时钟、SingleFlight 去重、带虚拟节点的一致性哈希、etcd 服务发现与重注册退避、gRPC 对等通信、分片而非复制的弱一致、与 groupcache 对比）与 yukino_orm MongoDB 链式查询构建器（Engine/Query、延迟执行、构建期错误模型、集合命名复数化、条件 AND 合并、$set 归一化、切片展开白名单、聚合分组、事务与自增序列、Clone 深拷贝、preflight 预检）, 全部对照 yukino.go/libs 源码"
+description: "84 题：yukino_cache 无中心 read-through 分组缓存（Group/Getter、分桶双层 LRU 字节预算淘汰、粗粒度时钟、SingleFlight 去重、带虚拟节点的一致性哈希、etcd 服务发现与重注册退避、gRPC 对等通信、分片而非复制的弱一致、与 groupcache 对比）与 yukino_orm MongoDB 链式查询构建器（Engine/Query、延迟执行、构建期错误模型、集合命名复数化、条件 AND 合并、$set 归一化、切片展开白名单、聚合分组、事务与自增序列、Clone 深拷贝、preflight 预检），全部对照 yukino.go/libs 源码"
 ---
 
 :::note 事实基线

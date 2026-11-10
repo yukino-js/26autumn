@@ -1,6 +1,6 @@
 ---
 title: "Next.js / Vite / TanStack Query 题库"
-description: "88 题: Next.js 四种渲染策略（CSR/SSR/SSG/ISR）与请求时间线、流式渲染与 Suspense 边界、App Router 服务端/客户端组件与 'use client' 边界、RSC Payload 序列化与引用去重、四个缓存层级与 cacheLife 档位、revalidateTag/updateTag/revalidatePath 语义差异、params 异步访问、Server Actions 安全、next/image 与 next/font；Vite 开发态为什么快（no-bundle + 按需编译）、optimizeDeps 预构建与运行时发现依赖整页刷新、HMR accept 边界、Rolldown 工具链、Tree Shaking 与代码分割；TanStack Query 服务端状态边界、QueryClient/QueryCache/Query 对象模型、queryKey 确定性哈希、staleTime vs gcTime、invalidateQueries 前缀匹配、structuralSharing、乐观更新与回滚、预取与 SSR 水合, 全部对照 next.md / vite.md / tanstack.md"
+description: "88 题：Next.js 四种渲染策略（CSR/SSR/SSG/ISR）与请求时间线、流式渲染与 Suspense 边界、App Router 服务端/客户端组件与 'use client' 边界、RSC Payload 序列化与引用去重、四个缓存层级与 cacheLife 档位、revalidateTag/updateTag/revalidatePath 语义差异、params 异步访问、Server Actions 安全、next/image 与 next/font；Vite 开发态为什么快（no-bundle + 按需编译）、optimizeDeps 预构建与运行时发现依赖整页刷新、HMR accept 边界、Rolldown 工具链、Tree Shaking 与代码分割；TanStack Query 服务端状态边界、QueryClient/QueryCache/Query 对象模型、queryKey 确定性哈希、staleTime vs gcTime、invalidateQueries 前缀匹配、structuralSharing、乐观更新与回滚、预取与 SSR 水合，全部对照 next.md / vite.md / tanstack.md"
 ---
 
 :::note 事实基线

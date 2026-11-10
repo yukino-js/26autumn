@@ -1,6 +1,6 @@
 ---
 title: "代码题：手写指数退避重试（含抖动）"
-description: "零依赖可运行的 retry 实现与自测: 指数退避、full/equal/none 三种抖动、shouldRetry 错误分级、Retry-After 优先、AbortSignal 可中断睡眠、maxDelay 封顶, 对照 LLM Provider 重试、gRPC 可靠性与 SSE 重连"
+description: "零依赖可运行的 retry 实现与自测：指数退避、full/equal/none 三种抖动、shouldRetry 错误分级、Retry-After 优先、AbortSignal 可中断睡眠、maxDelay 封顶，对照 LLM Provider 重试、gRPC 可靠性与 SSE 重连"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。先澄清重试的语义边界（哪些能重试、退避与抖动、幂等），再给主实现、自测与生产延伸。

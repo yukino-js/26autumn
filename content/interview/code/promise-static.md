@@ -1,6 +1,6 @@
 ---
 title: "代码题：JS 手写 Promise.all / race / allSettled / any"
-description: "零依赖可运行的 Promise 四个静态方法实现与自测: all 顺序保持与快速失败、race 首个 settled、allSettled 全量落定、any 首个 fulfilled 与 AggregateError, 对照原生行为与并发池延伸"
+description: "零依赖可运行的 Promise 四个静态方法实现与自测：all 顺序保持与快速失败、race 首个 settled、allSettled 全量落定、any 首个 fulfilled 与 AggregateError，对照原生行为与并发池延伸"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。先澄清四个方法的语义差异，再给实现、自测与生产延伸。

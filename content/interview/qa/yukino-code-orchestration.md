@@ -1,6 +1,6 @@
 ---
 title: "Yukino Code 多代理协作、权限与宿主形态题库"
-description: "95 题: 终端 Coding Agent Yukino Code 的协作与边界子系统——权限多层短路判定（plan 守卫/显式规则/协调工具/安全命令白名单/shell 结构分析/路径沙箱/OS 沙箱自动放行/模式矩阵）与 fail-closed、remember scope 持久化、人在回路三宿主一致语义、OS 沙箱 seatbelt/bwrap 与缩减环境、Hook 九事件三要素与项目级禁用、Subagent 星型委派与五层工具过滤与 fork 上下文继承、Agent Team 网状协作与文件邮箱 bakery 锁与共享任务板、plan-mode teammate 审批流、Coordinator 按上下文成本切工具、持久 Goal 状态机与终止闸门与预算总结轮、Skills 三层目录与渐进式披露、Slash Command 四类型分派、Workflow 确定性脚本编排与 journal 重放、Worktree 隔离与删除安全闸、TUI/Print/Remote/A2A 四宿主形态、Telemetry 三后端与隐私洗消, 全部对照 yukino-code 源码"
+description: "95 题：终端 Coding Agent Yukino Code 的协作与边界子系统——权限多层短路判定（plan 守卫/显式规则/协调工具/安全命令白名单/shell 结构分析/路径沙箱/OS 沙箱自动放行/模式矩阵）与 fail-closed、remember scope 持久化、人在回路三宿主一致语义、OS 沙箱 seatbelt/bwrap 与缩减环境、Hook 九事件三要素与项目级禁用、Subagent 星型委派与五层工具过滤与 fork 上下文继承、Agent Team 网状协作与文件邮箱 bakery 锁与共享任务板、plan-mode teammate 审批流、Coordinator 按上下文成本切工具、持久 Goal 状态机与终止闸门与预算总结轮、Skills 三层目录与渐进式披露、Slash Command 四类型分派、Workflow 确定性脚本编排与 journal 重放、Worktree 隔离与删除安全闸、TUI/Print/Remote/A2A 四宿主形态、Telemetry 三后端与隐私洗消，全部对照 yukino-code 源码"
 ---
 
 :::note 事实基线

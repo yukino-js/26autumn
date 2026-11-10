@@ -1,6 +1,6 @@
 ---
 title: "WANProxy 与 Agent Proxy 题库"
-description: "76 题: wanproxy（XCodec 去重编解码：滚动哈希/EXTRACT/REF/BACKREF 四类帧/回引用窗口/XCDFS 磁盘缓存、管道协议会话 ASK/LEARN/ADVANCE、SSH-2 传输层移植与 NEWKEYS 修复、CodecSpec 管线组合、双向中继与半关闭、SOCKS/UDP 转发）与 yukino-agent-proxy（让 Claude Code/Codex 用任意兼容模型的协议网关：claude/codex 双向镜像、direct vs proxy 模式、Messages/Responses/Chat Completions 三协议互译、请求桥模型别名替换与输出上限/推理力度决议链、响应桥四象限容错、工具展平 ns__name 截断、续接缓存 previous_response_id、守护进程先检查后副作用、配置注入与备份、MCP 工具面）, 全部对照 wanproxy.md 与 yukino-agent-proxy.md"
+description: "76 题：wanproxy（XCodec 去重编解码：滚动哈希/EXTRACT/REF/BACKREF 四类帧/回引用窗口/XCDFS 磁盘缓存、管道协议会话 ASK/LEARN/ADVANCE、SSH-2 传输层移植与 NEWKEYS 修复、CodecSpec 管线组合、双向中继与半关闭、SOCKS/UDP 转发）与 yukino-agent-proxy（让 Claude Code/Codex 用任意兼容模型的协议网关：claude/codex 双向镜像、direct vs proxy 模式、Messages/Responses/Chat Completions 三协议互译、请求桥模型别名替换与输出上限/推理力度决议链、响应桥四象限容错、工具展平 ns__name 截断、续接缓存 previous_response_id、守护进程先检查后副作用、配置注入与备份、MCP 工具面），全部对照 wanproxy.md 与 yukino-agent-proxy.md"
 ---
 
 :::note 事实基线

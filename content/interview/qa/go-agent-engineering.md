@@ -1,6 +1,6 @@
 ---
 title: "Go 实现 AI Agent 工程"
-description: "基于 CloudWeGo Eino 的 Go Agent 工程逐机制深挖: plan-execute-replan 三代理编排、chat pipeline 图状态流转、LLM 客户端与 RoundTripper 补丁、反射工具注册与 MCP 会话生命周期、Go 版 RAG 与 Milvus 维度自愈、双层 LRU 会话记忆、Prometheus 指标网关与基数保护、多 cmd 入口组织, 兼论 Go 写 Agent 的取舍与 TS harness 对比"
+description: "基于 CloudWeGo Eino 的 Go Agent 工程逐机制深挖：plan-execute-replan 三代理编排、chat pipeline 图状态流转、LLM 客户端与 RoundTripper 补丁、反射工具注册与 MCP 会话生命周期、Go 版 RAG 与 Milvus 维度自愈、双层 LRU 会话记忆、Prometheus 指标网关与基数保护、多 cmd 入口组织，兼论 Go 写 Agent 的取舍与 TS harness 对比"
 ---
 
 本篇是「Go 语言视角的 AI Agent 工程」带解答题库（56 题），证据仓库为 `$HOME/github/yukino.go/apps/agent`（HEAD `facf5d6`，`server/go.mod` 声明 **go 1.26.0**，核心依赖 **`github.com/cloudwego/eino v0.9.22`**、`modelcontextprotocol/go-sdk v1.8.0`、`milvus-sdk-go/v2 v2.4.2`、`anthropic-sdk-go v1.84.0`、`gorm v1.31.2`、`prometheus/client_golang v1.25.0`）。路径为 `apps/agent/server/` 下相对路径。TS 侧 agent loop 细节见 [Agent 执行循环与工具体系](/interview/qa/agent-loop-and-tools)，task_flow/agent_proxy 见 [服务架构与任务系统](/interview/qa/service-architecture)，本篇聚焦 **Go 实现层**。
@@ -77,7 +77,7 @@ flowchart TB
 
 1. `planner.go` `structuredOutputModel{model.ToolCallingChatModel}`——嵌入接口，覆写 `Generate` 加 JSON 提取（Q8）；
 2. `retriever.go` `emptyTolerantRetriever{inner}`——把「无结果」错误转空切片（Q46）；
-3. `models.go` `signaturePatchingTransport{base http.RoundTripper}`——HTTP 层补丁 thinking signature（Q27）;
+3. `models.go` `signaturePatchingTransport{base http.RoundTripper}`——HTTP 层补丁 thinking signature（Q27）；
 4. `invoke.go`（yukino_rpc，对照）`observedStream{inner, br}`——流式熔断记账。
 
 Go 没有继承，**嵌入 + 接口 = 装饰器**的标准形态；每层装饰只做一件事，可独立测试。

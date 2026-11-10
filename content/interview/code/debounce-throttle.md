@@ -1,6 +1,6 @@
 ---
 title: "代码题：JS 手写防抖与节流"
-description: "零依赖可运行的 debounce / throttle 实现与自测: leading/trailing 双沿、cancel/flush、maxWait、时间戳与定时器组合、rAF 帧级节流, 对照前端工程与监控 SDK 的真实用法"
+description: "零依赖可运行的 debounce / throttle 实现与自测：leading/trailing 双沿、cancel/flush、maxWait、时间戳与定时器组合、rAF 帧级节流，对照前端工程与监控 SDK 的真实用法"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。先澄清防抖与节流的语义差异与双沿行为，再给主实现、对照实现、自测与生产延伸。

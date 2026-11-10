@@ -1,6 +1,6 @@
 ---
 title: "Docker 与容器运行时题库"
-description: "88 题: namespace/cgroups/OverlayFS 三大内核机制、OCI 与 runC 链路、镜像分层与 digest、Dockerfile 层缓存与多阶段构建、CMD/ENTRYPOINT 与 PID 1 信号语义、四种网络模式与 NAT、volume/bind/tmpfs 持久化、BuildKit/buildx 与构建缓存、镜像签名与 SBOM 供应链、capabilities/seccomp/rootless/gVisor 安全加固、排障速查, 以及 Coding Agent 一次性沙箱镜像的工程落地"
+description: "88 题：namespace/cgroups/OverlayFS 三大内核机制、OCI 与 runC 链路、镜像分层与 digest、Dockerfile 层缓存与多阶段构建、CMD/ENTRYPOINT 与 PID 1 信号语义、四种网络模式与 NAT、volume/bind/tmpfs 持久化、BuildKit/buildx 与构建缓存、镜像签名与 SBOM 供应链、capabilities/seccomp/rootless/gVisor 安全加固、排障速查，以及 Coding Agent 一次性沙箱镜像的工程落地"
 ---
 
 :::note 事实基线

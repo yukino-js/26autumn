@@ -1,6 +1,6 @@
 ---
 title: "ClickHouse 与 Kafka 技术深挖题库"
-description: "96 题: ClickHouse 25.x 列式存储与 MergeTree 写入合并流程、稀疏索引与 B+ 树差异、Replacing/Aggregating/CollapsingMergeTree 合并策略、分区与分片职责、ReplicatedMergeTree 副本同步与 ClickHouse Keeper、向量化执行与 Volcano 对比、物化视图增量聚合、TTL、ORDER BY 键设计、JOIN 实现与大表陷阱、Mutation 不可变 part 代价与轻量删除、OLAP 性能差异根源; Kafka 4.x 架构与 segment 存储、ISR/HW/LEO 与 Leader 选举、Producer acks 与幂等/事务、Consumer Rebalance 问题与 Cooperative/Static Membership、端到端不丢失与 exactly-once、消息顺序性与乱序、零拷贝 sendfile、KRaft 元数据、Offset 自动/手动提交、Log Compaction、生产调优参数; ClickHouse Kafka Engine 攒批消费、实时数仓 ODS/DWD/DWS/ADS 分层、高频小批量写入 Too many parts 与攒批、分布式查询流程、消费积压排查、集群扩容再平衡, 全部对照 ClickHouse 25.x 与 Kafka 4.x 基线"
+description: "96 题：ClickHouse 25.x 列式存储与 MergeTree 写入合并流程、稀疏索引与 B+ 树差异、Replacing/Aggregating/CollapsingMergeTree 合并策略、分区与分片职责、ReplicatedMergeTree 副本同步与 ClickHouse Keeper、向量化执行与 Volcano 对比、物化视图增量聚合、TTL、ORDER BY 键设计、JOIN 实现与大表陷阱、Mutation 不可变 part 代价与轻量删除、OLAP 性能差异根源；Kafka 4.x 架构与 segment 存储、ISR/HW/LEO 与 Leader 选举、Producer acks 与幂等/事务、Consumer Rebalance 问题与 Cooperative/Static Membership、端到端不丢失与 exactly-once、消息顺序性与乱序、零拷贝 sendfile、KRaft 元数据、Offset 自动/手动提交、Log Compaction、生产调优参数；ClickHouse Kafka Engine 攒批消费、实时数仓 ODS/DWD/DWS/ADS 分层、高频小批量写入 Too many parts 与攒批、分布式查询流程、消费积压排查、集群扩容再平衡，全部对照 ClickHouse 25.x 与 Kafka 4.x 基线"
 ---
 
 :::note 事实基线
@@ -145,7 +145,7 @@ Mutation（`ALTER TABLE UPDATE/DELETE`）是异步的重量级操作。**慢的�
 
 ### Q20. Kafka 的消息存储结构是什么？
 
-partition 目录下有多个 segment：`00000000000000000000.log`（消息数据文件）、`.index`（稀疏偏移量索引）、`.timeindex`（时间戳索引）。**Segment** 按大小（`log.segment.bytes` 默认 1GB）或滚动时间切分，每个 segment 以第一条消息的 offset 命名，查找时二分定位到 segment 文件；`.index` 是稀疏索引，每 4KB 记录一个 (offset, 物理位置) 对，查找时先定位到索引区间再顺序扫描；`.timeindex` 按时间戳查找消息（用于 `offsetsForTimes` API）。
+partition 目录下有多个 segment：`00000000000000000000.log`（消息数据文件）、`.index`（稀疏偏移量索引）、`.timeindex`（时间戳索引）。**Segment** 按大小（`log.segment.bytes` 默认 1GB）或滚动时间切分，每个 segment 以第一条消息的 offset 命名，查找时二分定位到 segment 文件；`.index` 是稀疏索引，每 4KB 记录一个 (offset，物理位置) 对，查找时先定位到索引区间再顺序扫描；`.timeindex` 按时间戳查找消息（用于 `offsetsForTimes` API）。
 
 ### Q21. Kafka 高吞吐的来源有哪些？
 
@@ -350,7 +350,7 @@ ClickHouse 内置 Kafka 引擎，把 Kafka topic 作为数据源，典型三表�
 
 **Q67. 一句话解释为什么消费者数不能超过 partition 数。** 每个 partition 只被组内一个消费者消费，消费者数 > partition 数时多出的消费者空闲分不到 partition。
 
-**Q68. 一句话解释 segment 的 .index 为什么是稀疏索引。** 每 4KB 记录一个 (offset, 物理位置) 对，查找时先定位索引区间再顺序扫描——与 ClickHouse primary.idx 同思路，用稀疏换内存。
+**Q68. 一句话解释 segment 的 .index 为什么是稀疏索引。** 每 4KB 记录一个 (offset，物理位置) 对，查找时先定位索引区间再顺序扫描——与 ClickHouse primary.idx 同思路，用稀疏换内存。
 
 **Q69. 一句话解释 Page Cache 对 Kafka 的意义。** 写入只到 OS 页缓存由 OS 异步刷盘，读热数据命中页缓存不经过 JVM 堆——把内存管理交给 OS，避免 JVM GC。
 

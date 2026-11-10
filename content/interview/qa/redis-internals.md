@@ -1,6 +1,6 @@
 ---
 title: "Redis 技术深挖题库"
-description: "95 题: Redis 8.x 基线——redisObject 与 type/encoding 解耦、string 三编码与 44 字节分界、SDS 优势、quicklist/listpack 避免级联更新、hash/set/zset 编码转换阈值、zset 跳表选型与跨度排名、dict 渐进式 rehash、单线程准确含义与 I/O 多线程、ae 事件循环、RDB fork 写时复制、AOF 三写回策略与多部分 AOF 重写、混合持久化、过期字典与惰性/定期删除、内存淘汰三组策略、LRU/LFU 近似实现、主从全量/增量复制、哨兵主观/客观下线与故障转移、Cluster 16384 槽与 ASK/MOVED、脑裂与 min-replicas-to-write、缓存穿透/击穿/雪崩、Cache Aside、热点 key 治理、分布式锁七问题与 SET NX PX + Lua 释放、看门狗续期、事件驱动通知、Redlock 争议与 fencing token、固定/滑动窗口与令牌桶限流、zset 延时队列与 stream、大 key/热 key 治理, 全部对照 Redis 8.x 基线"
+description: "95 题：Redis 8.x 基线——redisObject 与 type/encoding 解耦、string 三编码与 44 字节分界、SDS 优势、quicklist/listpack 避免级联更新、hash/set/zset 编码转换阈值、zset 跳表选型与跨度排名、dict 渐进式 rehash、单线程准确含义与 I/O 多线程、ae 事件循环、RDB fork 写时复制、AOF 三写回策略与多部分 AOF 重写、混合持久化、过期字典与惰性/定期删除、内存淘汰三组策略、LRU/LFU 近似实现、主从全量/增量复制、哨兵主观/客观下线与故障转移、Cluster 16384 槽与 ASK/MOVED、脑裂与 min-replicas-to-write、缓存穿透/击穿/雪崩、Cache Aside、热点 key 治理、分布式锁七问题与 SET NX PX + Lua 释放、看门狗续期、事件驱动通知、Redlock 争议与 fencing token、固定/滑动窗口与令牌桶限流、zset 延时队列与 stream、大 key/热 key 治理，全部对照 Redis 8.x 基线"
 ---
 
 :::note 事实基线

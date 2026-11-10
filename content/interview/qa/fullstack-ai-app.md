@@ -236,7 +236,7 @@ return new Response(stream, {
 
 ### Q34. RBAC 是怎么建模的？
 
-**事实基线**（`lib/dev-flow/permissions.ts`）：权限点 7 个（`repo:read / repo:sync / agent:run / draft:create / draft:approve / eval:read / settings:manage`），角色 4 档（owner/maintainer/developer/viewer），`ROLE_PERMISSIONS: Record<string, ReadonlySet<Permission>>` 静态映射；越权抛类型化 `PermissionError(permission)`。**设计要点**：权限点是「资源:动作」字符串联合类型（编译期防拼错）；角色是权限集合的命名快照；`draft:create` 与 `draft:approve` 分离——**AI 产出的动作草稿（ActionDraft 表）创建与批准是两个人**，这是 agent 写操作的职责分离。
+**事实基线**（`lib/dev-flow/permissions.ts`）：权限点 7 个（`repo:read / repo:sync / agent:run / draft:create / draft:approve / eval:read / settings:manage`），角色 4 档（owner/maintainer/developer/viewer），`ROLE_PERMISSIONS: Record<string, ReadonlySet<Permission>>` 静态映射；越权抛类型化 `PermissionError(permission)`。**设计要点**：权限点是「资源：动作」字符串联合类型（编译期防拼错）；角色是权限集合的命名快照；`draft:create` 与 `draft:approve` 分离——**AI 产出的动作草稿（ActionDraft 表）创建与批准是两个人**，这是 agent 写操作的职责分离。
 
 ### Q35. 第三方令牌（GitHub token）怎么存储？
 

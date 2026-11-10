@@ -1,6 +1,6 @@
 ---
 title: "Agent 沙箱与 JSError 自动修复题库"
-description: "48 题: 监控闭环中自动修复的位置、错误富化（sourcemap 反解/代码图谱）、触发策略与错误分类、任务 Payload 契约、编排器状态机与并发熔断、K8s Job + Docker Agent 沙箱执行流程、退出码约定、prompt 注入三层纵深、最小权限凭证、弹性加速与成本、漏斗看板与北极星指标（人工采纳率/MTTR/复发率）、分阶段落地计划、与 Sentry Autofix 的差异, 全部对照 docker-k8s-agent-sandbox.md 第五部分"
+description: "48 题：监控闭环中自动修复的位置、错误富化（sourcemap 反解/代码图谱）、触发策略与错误分类、任务 Payload 契约、编排器状态机与并发熔断、K8s Job + Docker Agent 沙箱执行流程、退出码约定、prompt 注入三层纵深、最小权限凭证、弹性加速与成本、漏斗看板与北极星指标（人工采纳率/MTTR/复发率）、分阶段落地计划、与 Sentry Autofix 的差异，全部对照 docker-k8s-agent-sandbox.md 第五部分"
 ---
 
 :::note 事实基线

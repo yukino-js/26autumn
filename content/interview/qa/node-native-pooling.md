@@ -1,6 +1,6 @@
 ---
 title: "Node 原生绑定与池化资源治理题库"
-description: "82 题: ffi-napi 调用机制与内存模型（标量拷贝/Buffer 共享/C++ 侧堆外内存）、Buffer 池化陷阱与悬垂指针、RSS 与 V8 堆两个口径、进程池 vs 线程池的三层选型论证、generic-pool 参数模型、valgrind 排查 native 泄漏、N-API Addon 迁移收益与代价、TCP 连接池四类异常处理、闭包内存泄漏的两次成立条件与三次快照对比法, 全部对照 ieg.md 工作实践"
+description: "82 题：ffi-napi 调用机制与内存模型（标量拷贝/Buffer 共享/C++ 侧堆外内存）、Buffer 池化陷阱与悬垂指针、RSS 与 V8 堆两个口径、进程池 vs 线程池的三层选型论证、generic-pool 参数模型、valgrind 排查 native 泄漏、N-API Addon 迁移收益与代价、TCP 连接池四类异常处理、闭包内存泄漏的两次成立条件与三次快照对比法，全部对照 ieg.md 工作实践"
 ---
 
 :::note 事实基线
@@ -84,8 +84,8 @@ ffi-napi 底层基于 **libffi**。JS 侧声明 C 函数签名（参数类型、
 | 维度     | RSS                                                                 | V8 堆 (heapTotal/heapUsed)    |
 | -------- | ------------------------------------------------------------------- | ----------------------------- |
 | 统计主体 | 操作系统 (进程页表)                                                 | V8 引擎 (GC 托管区)           |
-| 覆盖范围 | 全部驻留物理内存: V8 堆、native 堆、Buffer 后备、代码段、栈、共享库 | 仅 JS 对象所在的各 heap space |
-| 回收机制 | OS 不主动回收, 进程退出或显式 free/munmap 才释放                    | V8 GC 按可达性自动回收        |
+| 覆盖范围 | 全部驻留物理内存：V8 堆、native 堆、Buffer 后备、代码段、栈、共享库 | 仅 JS 对象所在的各 heap space |
+| 回收机制 | OS 不主动回收，进程退出或显式 free/munmap 才释放                    | V8 GC 按可达性自动回收        |
 
 ### Q8. `process.memoryUsage()` 的五个字段各是什么口径？
 

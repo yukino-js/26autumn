@@ -1,6 +1,6 @@
 ---
 title: "Yukino 官方 MCP 服务器项目深挖题库"
-description: "85 题: 一个进程内的官方工具集合 MCP 服务器——15 个工具由 14 个 ToolModule 注册、ToolModule 契约把每会话注册与进程级单例分开、stdio 与无状态 Streamable HTTP 双传输、docs_tool/docs_sync 本地 RAG（node:sqlite 向量索引懒加载与 ExperimentalWarning 过滤、WAL、三张 STRICT 表、可重建缓存、RecursiveCharacterTextSplitter markdown 分块、EMBED_BATCH_SIZE=10、BEGIN IMMEDIATE 原子替换与单飞、内存 Float32Array 矩阵点积检索、两阶段初始化与降级 30 秒重试）、create_app MCP Apps 单文件外壳与 srcdoc 沙箱、github_tool spawn gh 进程组回收、十一类数据后端四层（SQL/协议驱动/HTTP 透传/对象存储/消息队列）与 unrestrictedAnnotations、minio 手写 SigV4 与点段路径兼容、kafka @platformatic/kafka、etcd base64 双向翻译、zod EnvSchema 降级优先于崩溃、tsup+vite 双构建产物, 全部对照 yukino-code/apps/mcp 源码"
+description: "85 题：一个进程内的官方工具集合 MCP 服务器——15 个工具由 14 个 ToolModule 注册、ToolModule 契约把每会话注册与进程级单例分开、stdio 与无状态 Streamable HTTP 双传输、docs_tool/docs_sync 本地 RAG（node:sqlite 向量索引懒加载与 ExperimentalWarning 过滤、WAL、三张 STRICT 表、可重建缓存、RecursiveCharacterTextSplitter markdown 分块、EMBED_BATCH_SIZE=10、BEGIN IMMEDIATE 原子替换与单飞、内存 Float32Array 矩阵点积检索、两阶段初始化与降级 30 秒重试）、create_app MCP Apps 单文件外壳与 srcdoc 沙箱、github_tool spawn gh 进程组回收、十一类数据后端四层（SQL/协议驱动/HTTP 透传/对象存储/消息队列）与 unrestrictedAnnotations、minio 手写 SigV4 与点段路径兼容、kafka @platformatic/kafka、etcd base64 双向翻译、zod EnvSchema 降级优先于崩溃、tsup+vite 双构建产物，全部对照 yukino-code/apps/mcp 源码"
 ---
 
 :::note 事实基线

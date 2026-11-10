@@ -1,6 +1,6 @@
 ---
 title: "Yukino Code 执行内核与上下文工程题库"
-description: "96 题: 终端 Coding Agent Yukino Code（@yukino.js/yukino）的内置核——ReAct 范式与 Agent.run() AsyncGenerator 事件流、每轮 reminder 注入而非改系统提示词、AgentEvent 判别联合、六种退出条件、ContextTooLong/瞬态/max_tokens 三条自愈路径、只在无可见输出时重放、steering 轮次边界投递、partitionToolCalls 读写分批与 StreamingExecutor 无信号量并发、LLMClient 最小接口与三协议收敛、七档思考强度只降不升、prompt cache 一等约束（99.4%→9.5% 实测）、Tool 契约与注册表自有/借用所有权、MCP eager/native/dispatch 三加载模式、工具名消歧与参数归一、上下文压缩双阈值与比例封顶、锚点式 token 估算、保留尾部与配对完整、摘要三路径与缓存共享、恢复附件、溢出落盘与回读豁免, 全部对照 yukino-code 源码"
+description: "96 题：终端 Coding Agent Yukino Code（@yukino.js/yukino）的内置核——ReAct 范式与 Agent.run() AsyncGenerator 事件流、每轮 reminder 注入而非改系统提示词、AgentEvent 判别联合、六种退出条件、ContextTooLong/瞬态/max_tokens 三条自愈路径、只在无可见输出时重放、steering 轮次边界投递、partitionToolCalls 读写分批与 StreamingExecutor 无信号量并发、LLMClient 最小接口与三协议收敛、七档思考强度只降不升、prompt cache 一等约束（99.4%→9.5% 实测）、Tool 契约与注册表自有/借用所有权、MCP eager/native/dispatch 三加载模式、工具名消歧与参数归一、上下文压缩双阈值与比例封顶、锚点式 token 估算、保留尾部与配对完整、摘要三路径与缓存共享、恢复附件、溢出落盘与回读豁免，全部对照 yukino-code 源码"
 ---
 
 :::note 事实基线

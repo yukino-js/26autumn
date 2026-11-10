@@ -1,6 +1,6 @@
 ---
 title: "Node 服务可观测性题库"
-description: "76 题: 三支柱与四类信号分工、prom-client 默认指标（RSS/V8 堆/事件循环/GC/句柄）与标签基数纪律、OpenTelemetry NodeSDK 自动插桩与手动 span、Sentry Node 错误/性能/持续 profiling、CPU Profiling 生产按需抓栈、Grafana 看板分区与告警设计（predict_linear 趋势外推/SLO 燃烧率/症状优先）、metrics/traces/errors/profiles 选型矩阵, 全部对照 ieg.md 工作实践"
+description: "76 题：三支柱与四类信号分工、prom-client 默认指标（RSS/V8 堆/事件循环/GC/句柄）与标签基数纪律、OpenTelemetry NodeSDK 自动插桩与手动 span、Sentry Node 错误/性能/持续 profiling、CPU Profiling 生产按需抓栈、Grafana 看板分区与告警设计（predict_linear 趋势外推/SLO 燃烧率/症状优先）、metrics/traces/errors/profiles 选型矩阵，全部对照 ieg.md 工作实践"
 ---
 
 :::note 事实基线

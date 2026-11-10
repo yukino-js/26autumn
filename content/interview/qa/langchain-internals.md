@@ -1,6 +1,6 @@
 ---
 title: "LangChain.js 内核机制题库"
-description: "86 题: LangChain.js 1.x monorepo 包布局与 peerDependency、Runnable 内核（invoke/stream/batch/pipe）、BaseMessage 体系与 Chunk 延迟折叠（O(n²)→增量）、内容块与 provider 翻译器、StructuredTool 与 tool() 工厂分派、ToolRuntime 自动注入、initChatModel 与 ConfigurableModel、createAgent 14 重载与 ReAct 三节点模型、createMiddleware 六钩子与包装链折叠、内置中间件清单、HITL batched/per_call 两种中断、上下文压缩 summarization vs contextEditing、Context 与 State 边界、store 长期记忆（程序性 vs 语义）、langchain-classic 与 mcp-adapters、构建测试发布设施, 全部对照 langchainjs 源码"
+description: "86 题：LangChain.js 1.x monorepo 包布局与 peerDependency、Runnable 内核（invoke/stream/batch/pipe）、BaseMessage 体系与 Chunk 延迟折叠（O(n²)→增量）、内容块与 provider 翻译器、StructuredTool 与 tool() 工厂分派、ToolRuntime 自动注入、initChatModel 与 ConfigurableModel、createAgent 14 重载与 ReAct 三节点模型、createMiddleware 六钩子与包装链折叠、内置中间件清单、HITL batched/per_call 两种中断、上下文压缩 summarization vs contextEditing、Context 与 State 边界、store 长期记忆（程序性 vs 语义）、langchain-classic 与 mcp-adapters、构建测试发布设施，全部对照 langchainjs 源码"
 ---
 
 :::note 事实基线

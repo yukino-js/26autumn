@@ -1,6 +1,6 @@
 ---
 title: "MySQL 与 InnoDB 技术深挖题库"
-description: "96 题: MySQL 8.4 LTS 基线——Server 层与存储引擎层两层结构、一条 select/update 的完整路径与三种日志协作、长连接内存与连接重置、InnoDB 表空间/段/区/页/行与 compact/dynamic 行格式、B+ 树为什么矮胖与三层 2000 万行估算、Buffer Pool 改进 LRU（young/old 区与 innodb_old_blocks_time）、刷脏时机与 innodb_io_capacity、Change Buffer 与唯一索引限制、聚簇/二级索引与回表/覆盖索引、联合索引最左前缀与索引下推、七类索引失效、前缀索引区分度、explain 解读、count/limit 深分页/order by filesort/join 算法、ACID 与四种隔离级别、MVCC Read View 可见性判断、可重复读幻读的两个例外、begin 与 consistent snapshot、长事务危害、锁分类与意向锁、MDL 事故链、AUTO-INC 锁模式、记录/间隙/临键/插入意向锁与加锁规则、死锁案例与规避、乐观锁悲观锁、undo/redo/binlog 三日志对比、WAL 与刷盘参数、binlog 格式与组提交、两阶段提交与崩溃恢复、Doublewrite Buffer、误删恢复、主从复制与异步/半同步/组复制、主从延迟治理、GTID、分库分表与分片键/分布式 ID/跨分片问题、在线 DDL、缓存一致性四组合与 Cache Aside/延迟双删/binlog 订阅兜底/多级缓存热点 key、慢查询排查方法论与 SQL 注入防御, 全部对照 MySQL 8.4 基线"
+description: "96 题：MySQL 8.4 LTS 基线——Server 层与存储引擎层两层结构、一条 select/update 的完整路径与三种日志协作、长连接内存与连接重置、InnoDB 表空间/段/区/页/行与 compact/dynamic 行格式、B+ 树为什么矮胖与三层 2000 万行估算、Buffer Pool 改进 LRU（young/old 区与 innodb_old_blocks_time）、刷脏时机与 innodb_io_capacity、Change Buffer 与唯一索引限制、聚簇/二级索引与回表/覆盖索引、联合索引最左前缀与索引下推、七类索引失效、前缀索引区分度、explain 解读、count/limit 深分页/order by filesort/join 算法、ACID 与四种隔离级别、MVCC Read View 可见性判断、可重复读幻读的两个例外、begin 与 consistent snapshot、长事务危害、锁分类与意向锁、MDL 事故链、AUTO-INC 锁模式、记录/间隙/临键/插入意向锁与加锁规则、死锁案例与规避、乐观锁悲观锁、undo/redo/binlog 三日志对比、WAL 与刷盘参数、binlog 格式与组提交、两阶段提交与崩溃恢复、Doublewrite Buffer、误删恢复、主从复制与异步/半同步/组复制、主从延迟治理、GTID、分库分表与分片键/分布式 ID/跨分片问题、在线 DDL、缓存一致性四组合与 Cache Aside/延迟双删/binlog 订阅兜底/多级缓存热点 key、慢查询排查方法论与 SQL 注入防御，全部对照 MySQL 8.4 基线"
 ---
 
 :::note 事实基线

@@ -1,6 +1,6 @@
 ---
 title: "Coding Agent Harness 实现剖析题库（Claude Code 与 Pi）"
-description: "90 题: Claude Code 兼容实现的 Bun 代码分割构建与内存依据、编译期特性开关、QueryEngine 与流式 Agent 循环、工具并发调度与结果按序回吐、核心白名单加延迟发现、流适配器把异构协议收敛到 Anthropic 内部格式、权限 resolver 竞速、测试 mock 污染纪律；Pi 的极简内核哲学与资源阶梯七层、扩展机制与五档工具暴露、entry 树会话模型、TypeScript SDK 进程内嵌入、durable 运行时先提交再展示的持久化不变量与 ExecutionEnv 抽象、chord 对象/引用/重载、pi-env 远程执行帧协议、codemode 沙箱脚本, 全部对照 claude-code.md 与 pi.md"
+description: "90 题：Claude Code 兼容实现的 Bun 代码分割构建与内存依据、编译期特性开关、QueryEngine 与流式 Agent 循环、工具并发调度与结果按序回吐、核心白名单加延迟发现、流适配器把异构协议收敛到 Anthropic 内部格式、权限 resolver 竞速、测试 mock 污染纪律；Pi 的极简内核哲学与资源阶梯七层、扩展机制与五档工具暴露、entry 树会话模型、TypeScript SDK 进程内嵌入、durable 运行时先提交再展示的持久化不变量与 ExecutionEnv 抽象、chord 对象/引用/重载、pi-env 远程执行帧协议、codemode 沙箱脚本，全部对照 claude-code.md 与 pi.md"
 ---
 
 :::note 事实基线

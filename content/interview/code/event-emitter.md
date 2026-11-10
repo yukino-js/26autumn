@@ -1,6 +1,6 @@
 ---
 title: "代码题：JS 手写 EventEmitter（发布订阅）"
-description: "零依赖可运行的发布订阅实现与自测: on/off/once/emit、Map<type,Set> 存储、单处理器异常隔离、订阅返回清理函数、通配符与异步扩展, 对照 @yukino.js/sentry 事件总线的工程取舍"
+description: "零依赖可运行的发布订阅实现与自测：on/off/once/emit、Map<type,Set> 存储、单处理器异常隔离、订阅返回清理函数、通配符与异步扩展，对照 @yukino.js/sentry 事件总线的工程取舍"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。先澄清发布订阅的语义边界，再给主实现、对照实现、自测与生产延伸。

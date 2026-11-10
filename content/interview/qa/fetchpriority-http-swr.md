@@ -1,6 +1,6 @@
 ---
 title: "FetchPriority 与 HTTP SWR 题库"
-description: "72 题: 浏览器默认资源优先级模型（Highest/High/Medium/Low/Lowest）与 HTTP/1.1 vs HTTP/2/3 的作用差异、fetchpriority 三取值与支持元素、fetch() priority 选项、与 preload/prefetch/lazy 的关系、提升 LCP 图片优先级（preload+imagesrcset/React 19 fetchPriority/Next Image）、降低非关键资源、脚本优先级梯度、动态请求 priority、收益度量（DevTools Priority 列/PerformanceObserver LCP/Resource Timing/web-vitals 字段数据）、渐进增强与常见误区、HTTP 层 stale-while-revalidate 与 stale-if-error 缓存扩展指令（RFC 9111 新鲜度模型）、前端 SWR 模式与 TanStack Query 对照、后台重验证请求的低优先级交叉点, 全部对照 fetchpriority-swr.md"
+description: "72 题：浏览器默认资源优先级模型（Highest/High/Medium/Low/Lowest）与 HTTP/1.1 vs HTTP/2/3 的作用差异、fetchpriority 三取值与支持元素、fetch() priority 选项、与 preload/prefetch/lazy 的关系、提升 LCP 图片优先级（preload+imagesrcset/React 19 fetchPriority/Next Image）、降低非关键资源、脚本优先级梯度、动态请求 priority、收益度量（DevTools Priority 列/PerformanceObserver LCP/Resource Timing/web-vitals 字段数据）、渐进增强与常见误区、HTTP 层 stale-while-revalidate 与 stale-if-error 缓存扩展指令（RFC 9111 新鲜度模型）、前端 SWR 模式与 TanStack Query 对照、后台重验证请求的低优先级交叉点，全部对照 fetchpriority-swr.md"
 ---
 
 :::note 事实基线

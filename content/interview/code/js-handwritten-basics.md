@@ -1,6 +1,6 @@
 ---
 title: "代码题：JS 手写基础系列（curry/compose/instanceof/new/bind/flat/deepEqual）"
-description: "零依赖可运行的 JS 手写基础合集与自测: 柯里化、compose/pipe、instanceof 原型链、new 的返回对象覆盖、call/apply/bind 与 bind 作构造器、flat 递归展平、deepEqual 含 NaN 与 symbol 键, 每题给采分点与陷阱"
+description: "零依赖可运行的 JS 手写基础合集与自测：柯里化、compose/pipe、instanceof 原型链、new 的返回对象覆盖、call/apply/bind 与 bind 作构造器、flat 递归展平、deepEqual 含 NaN 与 symbol 键，每题给采分点与陷阱"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。这是 JS 面试最高频的一批「手写基础题」合集——每题都短，但采分点在于**讲清语义边界与陷阱**，而不是背模板。

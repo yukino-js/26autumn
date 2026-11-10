@@ -1,6 +1,6 @@
 ---
 title: "代码题：手写 LRU 缓存"
-description: "零依赖可运行的 LRU Cache 实现与自测: JS Map 插入序 O(1) get/put、双向链表+哈希表的通用 O(1) 结构、容量淘汰与新鲜度刷新, 延伸到 LFU、TTL、两级 LRU 与一致性哈希, 对照 Redis 近似 LRU 与 groupcache/yukino-cache-go"
+description: "零依赖可运行的 LRU Cache 实现与自测：JS Map 插入序 O(1) get/put、双向链表+哈希表的通用 O(1) 结构、容量淘汰与新鲜度刷新，延伸到 LFU、TTL、两级 LRU 与一致性哈希，对照 Redis 近似 LRU 与 groupcache/yukino-cache-go"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。先澄清 LRU 的语义与 O(1) 要求，再给主实现、通用结构、自测与生产延伸。

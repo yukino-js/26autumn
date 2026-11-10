@@ -1,6 +1,6 @@
 ---
 title: "前端监控 SDK 题库"
-description: "90 题: rrweb 滚动窗口现场还原、JSError 四层数据模型与两条捕获路径、跨域 Script error、componentStack 生成机制与 React 16/17 差异、sourcemap 反解与堆栈聚合 fingerprint、前后端全链路 trace（traceparent/continueTrace/AsyncLocalStorage）、资源加载竞态三层防御、FSP 首屏计算、手写 SWR 预加载去重、引导脚本性能监控、SDK 插件化与体积治理, 全部对照 data.md 工作实践与 yukino-sentry 源码"
+description: "90 题：rrweb 滚动窗口现场还原、JSError 四层数据模型与两条捕获路径、跨域 Script error、componentStack 生成机制与 React 16/17 差异、sourcemap 反解与堆栈聚合 fingerprint、前后端全链路 trace（traceparent/continueTrace/AsyncLocalStorage）、资源加载竞态三层防御、FSP 首屏计算、手写 SWR 预加载去重、引导脚本性能监控、SDK 插件化与体积治理，全部对照 data.md 工作实践与 yukino-sentry 源码"
 ---
 
 :::note 事实基线

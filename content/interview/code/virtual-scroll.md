@@ -1,6 +1,6 @@
 ---
 title: "代码题：手写虚拟滚动（窗口计算）"
-description: "零依赖可运行的虚拟滚动窗口计算实现与自测: 定高列表的 startIndex/endIndex/offsetY/totalHeight 纯函数计算、overscan、渲染数与总量无关, 延伸动态高度 measureElement、贴底滚动, 对照 yukino-chat/yukino-chatbot 的 TanStack Virtual 落地"
+description: "零依赖可运行的虚拟滚动窗口计算实现与自测：定高列表的 startIndex/endIndex/offsetY/totalHeight 纯函数计算、overscan、渲染数与总量无关，延伸动态高度 measureElement、贴底滚动，对照 yukino-chat/yukino-chatbot 的 TanStack Virtual 落地"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。先澄清虚拟滚动解决什么问题（以及它不解决什么），再给窗口计算的纯函数实现、自测与生产延伸。

@@ -1,6 +1,6 @@
 ---
 title: "代码题：手写熔断器（Circuit Breaker）"
-description: "零依赖可运行的熔断器实现与自测: CLOSED/OPEN/HALF_OPEN 三态状态机、失败阈值触发、resetTimeout 后探测恢复、half-open 限制探测数、成功重置计数, 对照重试/限流/降级组成弹性四件套, 连接 gRPC 与分布式容错"
+description: "零依赖可运行的熔断器实现与自测：CLOSED/OPEN/HALF_OPEN 三态状态机、失败阈值触发、resetTimeout 后探测恢复、half-open 限制探测数、成功重置计数，对照重试/限流/降级组成弹性四件套，连接 gRPC 与分布式容错"
 ---
 
 零依赖、可直接 `node` 运行的代码题参考实现。先澄清熔断器解决什么问题（与重试的分工），再给三态状态机实现、自测与生产延伸。

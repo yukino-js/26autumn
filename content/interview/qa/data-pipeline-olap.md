@@ -1,6 +1,6 @@
 ---
 title: "数据链路与 OLAP 题库"
-description: "92 题: Kafka 接入与缓冲、至少一次投递语义与端到端不丢、消费顺序性与分区、重复消费与幂等去重、数据库与 MQ 一致性（本地消息表 outbox/CDC）、消费积压定位（MySQL 慢查询/ClickHouse query_log）、Hive 离线数仓、ClickHouse 列存建模与四层优化、MySQL/Redis 分工、RPC 与 BFF 分层、超时预算与重试治理、不定高虚拟滚动（前缀和+二分+实测修正）, 全部对照 tiktok.md 工作实践"
+description: "92 题：Kafka 接入与缓冲、至少一次投递语义与端到端不丢、消费顺序性与分区、重复消费与幂等去重、数据库与 MQ 一致性（本地消息表 outbox/CDC）、消费积压定位（MySQL 慢查询/ClickHouse query_log）、Hive 离线数仓、ClickHouse 列存建模与四层优化、MySQL/Redis 分工、RPC 与 BFF 分层、超时预算与重试治理、不定高虚拟滚动（前缀和+二分+实测修正），全部对照 tiktok.md 工作实践"
 ---
 
 :::note 事实基线

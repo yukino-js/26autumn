@@ -1,6 +1,6 @@
 ---
 title: "CSS 与布局工程题库"
-description: "88 题: 选择器家族与从右往左匹配、:is/:where/:has/:not 特异性与容错、层叠八级来源与 @layer、特异性三元组、盒模型与 BFC、margin 合并、定位与层叠上下文、Flexbox 主轴与 min-width:0 陷阱、Grid 轨道与 auto-fill/auto-fit、居中方案矩阵、三栏布局、媒体查询与移动优先、容器查询与 cqw、clamp 流式排版、深色模式与 light-dark、自定义属性与 @property、原生嵌套、@scope/相对颜色/锚点定位、transition/animation、transform 合成层与 FLIP、will-change、强制同步布局、contain 与 content-visibility、样式方案对比（原子化/Modules/css-in-js）、预处理器与 PostCSS、link vs @import、Shadow DOM 与 scoped、React Native 与 Yoga, 全部对照 css.md"
+description: "88 题：选择器家族与从右往左匹配、：is/:where/:has/:not 特异性与容错、层叠八级来源与 @layer、特异性三元组、盒模型与 BFC、margin 合并、定位与层叠上下文、Flexbox 主轴与 min-width:0 陷阱、Grid 轨道与 auto-fill/auto-fit、居中方案矩阵、三栏布局、媒体查询与移动优先、容器查询与 cqw、clamp 流式排版、深色模式与 light-dark、自定义属性与 @property、原生嵌套、@scope/相对颜色/锚点定位、transition/animation、transform 合成层与 FLIP、will-change、强制同步布局、contain 与 content-visibility、样式方案对比（原子化/Modules/css-in-js）、预处理器与 PostCSS、link vs @import、Shadow DOM 与 scoped、React Native 与 Yoga，全部对照 css.md"
 ---
 
 :::note 事实基线
@@ -71,11 +71,11 @@ flowchart TB
 
 **注意 `!important` 反转了来源优先级**：用户代理的 `!important` 高于作者的 `!important`，这是为可访问性兜底，让用户能强制覆盖页面样式。另外，**过渡期间的声明优先级高于所有 `!important` 声明**，这正是过渡能平滑接管样式的原因。
 
-**采分点**：能说出「**!important 反转来源优先级（UA !important > 作者 !important），为可访问性兜底**」+「**transition 进行中的声明高于一切**」——这两个反直觉点是层叠的精髓。
+**采分点**：能说出「**！important 反转来源优先级（UA !important > 作者 !important），为可访问性兜底**」+「**transition 进行中的声明高于一切**」——这两个反直觉点是层叠的精髓。
 
 ### Q6. 特异性（specificity）怎么计算？
 
-规范把特异性定义为**三元组（ID 数, 类/属性/伪类数, 类型/伪元素数）**，行内样式单独处理且高于任何选择器；工程上常把它记成四元组按位比较。补充规则：**通配符与组合器不增加权重**；`:is()`/`:not()`/`:has()` 计入参数中最高者；`:where()` 恒为零；权重相同则后书写者生效；**直接命中元素的声明永远高于继承来的值**。
+规范把特异性定义为**三元组（ID 数，类/属性/伪类数，类型/伪元素数）**，行内样式单独处理且高于任何选择器；工程上常把它记成四元组按位比较。补充规则：**通配符与组合器不增加权重**；`:is()`/`:not()`/`:has()` 计入参数中最高者；`:where()` 恒为零；权重相同则后书写者生效；**直接命中元素的声明永远高于继承来的值**。
 
 ```css
 :is(#app, .theme) .btn {
@@ -451,7 +451,7 @@ React Native 没有浏览器、没有 DOM、没有 CSSOM，所谓「RN 里的 CS
 
 **Q48. 一句话解释为什么 transition 优先级最高。** 过渡期间的声明高于所有 !important——这是过渡能平滑接管样式的原因。
 
-**Q49. 一句话解释特异性三元组。** (ID 数, 类/属性/伪类数, 类型/伪元素数)，行内样式单独处理且高于任何选择器——按位比较。
+**Q49. 一句话解释特异性三元组。** (ID 数，类/属性/伪类数，类型/伪元素数)，行内样式单独处理且高于任何选择器——按位比较。
 
 **Q50. 一句话解释直接命中为什么高于继承。** 直接命中元素的声明永远高于继承来的值——继承是最低优先级。
 

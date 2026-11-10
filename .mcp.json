@@ -2,7 +2,7 @@
   "mcpServers": {
     "browsermcp": {
       "command": "npx",
-      "args": ["@browsermcp/mcp"],
+      "args": ["@browsermcp/mcp@latest"],
       "enable": true
     }
   }

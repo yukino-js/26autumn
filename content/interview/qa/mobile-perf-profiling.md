@@ -1,6 +1,6 @@
 ---
 title: "移动端性能采集与 Profiling 题库"
-description: "84 题: 插桩与抓栈两种范式的底层原理、AGP 字节码插桩与 ASM、ART 方法追踪、simpleperf/perf_event/PMU 采样、JS 运行时独立采集（Hermes/V8/JSC）、CPU profiling 与火焰图归因、inclusive/exclusive 口径、符号还原链路、双运行时时间轴对齐、观察者效应与采样偏差、设备侧数据工程坑点复盘, 全部对照 tiktok.md 工作实践"
+description: "84 题：插桩与抓栈两种范式的底层原理、AGP 字节码插桩与 ASM、ART 方法追踪、simpleperf/perf_event/PMU 采样、JS 运行时独立采集（Hermes/V8/JSC）、CPU profiling 与火焰图归因、inclusive/exclusive 口径、符号还原链路、双运行时时间轴对齐、观察者效应与采样偏差、设备侧数据工程坑点复盘，全部对照 tiktok.md 工作实践"
 ---
 
 :::note 事实基线
@@ -453,7 +453,7 @@ Hermes sampling profiler 产出的样本用 `hermes-profile-transformer` 转成 
 因为线上问题回来时，需要的是**出错那个版本**的符号文件——mapping/source map/未 strip 的 so 都是版本相关的，用错版本还原结果全错（源码小改动会造成偏移量剧变）。所以每个 release 的符号文件都要归档，与版本号严格关联。
 
 **Q56. retrace 与 addr2line 分别还原什么？**
-retrace 用 mapping.txt 还原 Java/Kotlin 的混淆名与行号（R8/ProGuard 把 `com.foo.Bar.baz` 混淆成 `a.b.c`，retrace 反查）；addr2line 用未 strip 的 so 把 native 地址还原为源文件:行号。两者是不同运行域的符号还原工具。
+retrace 用 mapping.txt 还原 Java/Kotlin 的混淆名与行号（R8/ProGuard 把 `com.foo.Bar.baz` 混淆成 `a.b.c`，retrace 反查）；addr2line 用未 strip 的 so 把 native 地址还原为源文件：行号。两者是不同运行域的符号还原工具。
 
 **Q57. 为什么「异步结算点」要统一？**
 异步操作的「结束时间」有多种定义——回调触发时、回调执行完时、下一个宏任务开始时。如果不同运行域用不同定义，合并时间轴时同一个异步操作的起止会对不上，导致「谁在等谁」的归因错误。所以报表定义里要写死异步结算点。
@@ -507,7 +507,7 @@ retrace 用 mapping.txt 还原 Java/Kotlin 的混淆名与行号（R8/ProGuard �
 
 **Q74. 为什么 native 插桩产物是 slice？** 因为要与 ART 插桩、JS 插桩的数据模型同构（slice = 名称 + 起止时间 + 线程归属），才能按同一条时间轴合并成一张 perfetto trace。
 
-**Q75. source map 还原 JS 栈的边界？** 能还原文件路径与行号，但**无法可靠还原被 mangle 掉的函数名**（source map 的 names 字段是位置相关的符号映射，不等同于语义名称）——所以函数名仅作辅助，文件:行号是主定位依据。
+**Q75. source map 还原 JS 栈的边界？** 能还原文件路径与行号，但**无法可靠还原被 mangle 掉的函数名**（source map 的 names 字段是位置相关的符号映射，不等同于语义名称）——所以函数名仅作辅助，文件：行号是主定位依据。
 
 **Q76. 为什么「报表定义必须固定口径」？** 因为 inclusive/exclusive、时钟原点、异步结算点任一不固定，「函数 A 占 30%」就没有意义，不同人/不同时间的数据无法对比、趋势无法追踪——口径是数据可比性的前提。
 
