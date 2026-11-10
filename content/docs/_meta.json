@@ -1,0 +1,48 @@
+[
+  "index",
+  {
+    "type": "section-header",
+    "label": "工作实践"
+  },
+  "tiktok",
+  "ieg",
+  "data",
+  "docker-k8s-agent-sandbox",
+  {
+    "type": "section-header",
+    "label": "协议与方案调研"
+  },
+  "a2ui",
+  "mcp-app",
+  {
+    "type": "section-header",
+    "label": "Coding Agent 调研"
+  },
+  "claude-code",
+  "pi",
+  {
+    "type": "section-header",
+    "label": "AI 框架与平台调研"
+  },
+  "langchain",
+  "langgraph",
+  {
+    "type": "section-header",
+    "label": "项目"
+  },
+  {
+    "type": "dir",
+    "name": "yukino",
+    "label": "yukino"
+  },
+  {
+    "type": "dir",
+    "name": "yukino-dev-agent",
+    "label": "yukino-dev-agent"
+  },
+  {
+    "type": "dir",
+    "name": "yukino-ecomm-agent",
+    "label": "yukino-ecomm-agent"
+  }
+]

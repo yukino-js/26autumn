@@ -1,0 +1,30 @@
+[
+  "index",
+  {
+    "type": "section-header",
+    "label": "语言基础"
+  },
+  "go",
+  {
+    "type": "section-header",
+    "label": "存储与中间件"
+  },
+  "mysql",
+  "redis",
+  "clickhouse-kafka",
+  "middleware",
+  "node-pool",
+  "wanproxy",
+  {
+    "type": "section-header",
+    "label": "Yukino Go 系列"
+  },
+  "yukino-http",
+  "yukino-rpc",
+  "yukino-orm",
+  "yukino-cache-go",
+  "yukino-agent",
+  "yukino-agent-proxy",
+  "yukino-go-components",
+  "yukino-task-flow"
+]

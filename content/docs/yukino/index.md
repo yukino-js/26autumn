@@ -1,0 +1,56 @@
+---
+title: "Yukino Code"
+overview: true
+description: "yukino 栏目: 终端 Coding Agent Yukino Code (npm 包 @yukino.js/yukino) 源码解析, 覆盖 ReAct 主循环与事件流、LLM 三协议接入、工具调用与 MCP、system prompt 与上下文压缩、权限/沙箱/Hook、AGENTS.md 与三层记忆、Skill 与 Slash Command、Subagent/Agent Team/Workflow/Worktree/Goal 多代理协作、TUI/Print/Remote/A2A 宿主形态, 以及遥测、任务跟踪与代码评审"
+local_path: "$HOME/github/yukino-code/apps/yukino"
+local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+---
+
+:::note 事实基线
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+:::
+
+**主线一览**
+
+```mermaid
+flowchart TB
+  A[Yukino Code 主循环] --> B[LLM 三协议]
+  A --> C[工具与 MCP]
+  A --> D[上下文与记忆]
+  A --> E[权限沙箱 Hook]
+  A --> F[多代理协作]
+  F --> G[Subagent 与 Agent Team]
+  F --> H[Workflow 与 Goal]
+  A --> I[TUI Print Remote A2A]
+```
+
+yukino-code 仓库 `apps/yukino` (Yukino Code, npm 包 `@yukino.js/yukino`, Node >= 20) 的系统性源码笔记, 共 27 个页面 (含本落地页). CLI 用 React 19 + Ink 7 渲染单窗格终端界面, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环; 全部文档以该仓库源码为唯一事实依据. 总览篇见 [what-is-an-agent](./what-is-an-agent) 与 [yukino-code](./yukino-code), 其余页面按子系统拆分, 顺序与侧边栏一致.
+
+| 页面                                           | 内容概要                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [a2a](./a2a)                                   | A2A (Agent2Agent) 互通协议: `--a2a` 模式下 Yukino 作为 A2A 服务器运行 (默认监听 127.0.0.1:18890), 基于 `@a2a-js/sdk` 以标准化服务暴露能力, 供其他 agent 或编排器发现、派发任务并消费流式状态更新                                                                                                                                           |
+| [agent-team](./agent-team)                     | Agent Team 网状多代理协作: 多个 team 可并存, 协作工具经 team_name 选择目标 team; 每个 teammate 是有独立上下文窗口的 agent 实例, 协调建立在共享任务板 (tasks.json) 与文件邮箱 (inboxes/) 之上, 邮件以文件加轮询投递, 突破 subagent 星型拓扑不能互通的限制; 覆盖团队解析与隔离、SendMessage/TodoWrite/TaskStop、plan 审批与 Coordinator 模式 |
+| [agents-md-and-memory](./agents-md-and-memory) | AGENTS.md 与三层记忆: 工作记忆 (上下文窗口本身)、持久化到磁盘的长期记忆 (用户/项目级指令文件 AGENTS.md、JSONL 会话日志加文件快照, 支撑恢复会话与检查点回退), 以及 Agent 在对话中自动积累经验的自动记忆                                                                                                                                     |
+| [code-review](./code-review)                   | Code Review: 收敛为一条 `/review` slash command 加一个内置 `review` subagent 角色, 审查 agent 用 gh CLI 拉取 PR 详情与 diff、用常规只读工具读代码与项目指令, 发现以文字直接返回当前会话供主 agent 继续动作                                                                                                                                 |
+| [context-compaction](./context-compaction)     | 上下文压缩的两层机制: 第 1 层在工具结果进入历史时把大结果溢出到磁盘、只留预览; 第 2 层在 token 用量越过阈值 (或手动 /compact) 时由 LLM 生成对话摘要, 近期消息逐字保留                                                                                                                                                                      |
+| [function-calling](./function-calling)         | 工具调用 (function calling): LLM 负责决策、CLI 负责执行 — 覆盖协议本身、Tool 接口与 ToolRegistry、内置工具的实现要点、各宿主的装配差异, 以及流式解析和执行管线                                                                                                                                                                             |
+| [goal](./goal)                                 | 持久目标 (Persistent Goal): GoalManager 状态机、/goal 命令与 Goal 工具三件套, 让 agent 跨轮次、跨用户消息朝一个目标自动推进 — 循环退出前先问是否续跑, 直到完成、受阻或预算耗尽                                                                                                                                                             |
+| [hook](./hook)                                 | Hook: 在生命周期事件上挂载自动化动作 (事件/条件/动作三要素) — 写文件后自动 format、危险命令执行前拦截、会话开始时注入项目约定; 配置只来自 `~/.yukino/config.yaml` 顶层 hooks 数组                                                                                                                                                          |
+| [llm](./llm)                                   | LLM 接入层 (src/llm/): 把对话历史翻译成 Anthropic / OpenAI Responses / OpenAI Chat Completions 三种协议的 API 请求, 把 SSE 流统一映射成 StreamEvent; 覆盖思考强度映射, token 计费与 prompt cache 打点, 消息构建与配对修复, 错误分类重试, 模型发现与 ConversationManager                                                                    |
+| [mcp](./mcp)                                   | MCP 接入: JSON-RPC 2.0 协议与 stdio / streamable http / sse 传输, MCPClient / MCPManager 生命周期, 用户级与项目级配置与环境变量展开, mcp__ 命名与权限匹配, eager / native / dispatch 三种延迟加载模式, ToolSearch / McpCall, server instructions 公告与 remote 模式的 MCP Apps                                                             |
+| [permission](./permission)                     | 权限系统: 对每次工具调用回答 allow / ask / deny, 多层短路判定 — plan 守卫, 显式规则, 协调工具, 安全命令白名单, shell 结构分析, 路径沙箱, OS 沙箱自动放行, 模式矩阵; 覆盖规则文件语法与裁决优先级, remember scope 持久化与人在回路审批                                                                                                      |
+| [print-mode](./print-mode)                     | Print 模式 (-p): 非交互一次性执行, 自组装完整运行时并消费 agent.run() 事件流; 覆盖旗标解析, slash command 特判, 与交互模式的差异 (bypassPermissions, 无 hook/skill), 工具集装配, text / stream-json 输出, 退出码与清理, SyntheticOutput 结构化交付                                                                                         |
+| [react-and-agent-loop](./react-and-agent-loop) | ReAct 范式与 Agent 主循环: Agent.run() 是 AsyncGenerator<AgentEvent>, 每轮经 abort / 预算检查, reminder 注入, 上下文压缩, LLM 流消费, 错误自愈, max_tokens 恢复与分批工具执行; 覆盖退出条件, Steering, partitionToolCalls 与 StreamingExecutor, Plan Mode 约束                                                                             |
+| [remote](./remote)                             | Remote 模式: Express + 同端口 WebSocket 桥把 Yukino 变成本地 Web 服务, 浏览器 React 前端对齐终端 UI 功能; 覆盖 127.0.0.1:18888 默认地址, token + 同源 WS 接入控制, 18 种入站 / 44 种出站消息协议, 请求生命周期与心跳, 前端组件与离线队列, 优雅关闭                                                                                         |
+| [sandbox](./sandbox)                           | OS 级沙箱: Bash 命令放进 macOS seatbelt / Linux bubblewrap 隔离执行, 文件系统写入收敛到允许目录, 网络可整体关闭; 覆盖 sandbox 配置与 /sandbox 切换, Sandbox 接口, SBPL profile 生成与注入防护, bwrap 挂载顺序, BashTool 集成, worktree 联动与 auto_allow 免确认                                                                            |
+| [skills](./skills)                             | Skill: 写给 AI 的 SOP (SKILL.md + YAML frontmatter), inline / fork 两种执行模式; 覆盖三层目录扫描与优先级, 渐进式披露两阶段加载, LoadSkill / InstallSkill 工具, $ARGUMENTS 替换, 热加载三层机制, 自动注册为 Slash Command 与目录型 skill 资产                                                                                              |
+| [slash-command](./slash-command)               | Slash Command: / 输入在进入 agent loop 前被拦截, 解析, 匹配注册表并按类型 (local / local_ui / prompt / skill_fork) 分派; 覆盖注册顺序与优先级, 内置命令清单, 用户自定义命令与参数替换, 命名 workflow, skill 命令, 输入补全与使用频率追踪, 各前端宿主差异                                                                                   |
+| [subagent](./subagent)                         | Yukino 的委派子系统: Agent 工具把有界子任务交给独立的 agent loop 执行, 覆盖参数与校验、角色定义、fork 上下文继承、五层工具过滤、后台异步任务, 以及 teammate 的多团队选择语义                                                                                                                                                               |
+| [system-prompt](./system-prompt)               | system prompt 的构成: 8 个模块与环境探测、system/tools/messages 三字段的分工与 prompt cache 取舍, 以及 <system-reminder> 动态指令注入与周期性提醒机制                                                                                                                                                                                      |
+| [task-tracking](./task-tracking)               | 两套同名不同义的 task 机制: TodoWrite 任务板 (私有板与团队共享板、原子增量编辑、依赖校验) 与 TaskManager 后台任务 (登记、通知、TaskOutput/TaskStop), 含多团队下的板选择语义                                                                                                                                                                |
+| [telemetry](./telemetry)                       | 遥测子系统: OpenTelemetry/Langfuse/Sentry 三后端的启用条件与装配、agent/LLM/tool 三层观测点与指标、隐私洗消规则, 以及生命周期与环境变量参考                                                                                                                                                                                                |
+| [terminal-ui](./terminal-ui)                   | 交互式 TUI: 主屏原生滚动加实时帧的渲染模型、stdin 过滤、输入框 (粘贴折叠、剪贴板图片、补全菜单)、快捷键、用户 Bash、Agents 列表、prompt 历史与退出摘要                                                                                                                                                                                     |
+| [what-is-an-agent](./what-is-an-agent)         | agent 的概念拆解与 Yukino 的形态: provider 配置与三协议客户端、核心循环、五层架构、四种运行模式、内置工具分组与 agent 驱动开发的一等公民制品                                                                                                                                                                                               |
+| [worktree](./worktree)                         | worktree 子系统: 用 git worktree 给每个并发工作单元一份独立检出, 覆盖路径与分支格式、创建与 HEAD 读取、创建后准备、进入/退出、变更检测与删除安全闸                                                                                                                                                                                         |
+| [workflow](./workflow)                         | Workflow 子系统: 用确定性 JavaScript 脚本编排多个 subagent, 覆盖脚本模型与注入原语、并发上限、journal 持久化与重放、生命周期回流与 /workflows 监控                                                                                                                                                                                         |
+| [yukino-code](./yukino-code)                   | 按 Agent 主循环与事件流、Provider 适配与重试、工具系统与 MCP 延迟加载、上下文压缩与恢复、检查点与 fork、长期记忆、subagents 与团队、coordinator 与持久 goal、权限、Hooks 与沙箱、运行模式与遥测等子系统, 深入论述 Yukino Code 内置核的实现思路与设计取舍, 并以三十一问的设计问答篇补充边界与取舍                                           |

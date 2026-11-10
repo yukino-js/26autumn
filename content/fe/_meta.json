@@ -1,0 +1,27 @@
+[
+  "index",
+  {
+    "type": "section-header",
+    "label": "语言、运行时与 CSS"
+  },
+  "fe",
+  "css",
+  {
+    "type": "section-header",
+    "label": "框架与工程化"
+  },
+  "react",
+  "next",
+  "vite",
+  "tanstack",
+  "fetchpriority-swr",
+  {
+    "type": "section-header",
+    "label": "Yukino 前端与 Agent 系列"
+  },
+  "yukino-codegen",
+  "yukino-mcp",
+  "yukino-chatbot",
+  "yukino-chat",
+  "yukino-sentry"
+]

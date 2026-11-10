@@ -1,0 +1,35 @@
+[
+  "index",
+  {
+    "type": "section-header",
+    "label": "问答主线"
+  },
+  "narrative",
+  "behavioral",
+  "product-owner-mindset",
+  "motivation",
+  "jd-matching",
+  "close-and-compensation",
+  "pressure",
+  {
+    "type": "section-header",
+    "label": "文化与价值观"
+  },
+  "tencent-culture-values",
+  {
+    "type": "section-header",
+    "label": "业务理解与规划"
+  },
+  "business-outlook-qa",
+  {
+    "type": "section-header",
+    "label": "真题与流程"
+  },
+  "real-questions",
+  "process",
+  {
+    "type": "section-header",
+    "label": "练习"
+  },
+  "practice"
+]
