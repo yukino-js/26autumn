@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://yukino-js.github.io/26autumn/sitemap.xml
