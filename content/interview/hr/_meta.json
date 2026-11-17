@@ -2,34 +2,31 @@
   "index",
   {
     "type": "section-header",
-    "label": "问答主线"
+    "label": "个人主线与岗位匹配"
   },
   "narrative",
-  "behavioral",
-  "product-owner-mindset",
   "motivation",
   "jd-matching",
-  "close-and-compensation",
-  "pressure",
+  "engineering-ownership",
   {
     "type": "section-header",
-    "label": "文化与价值观"
+    "label": "行为与业务问答"
   },
+  "behavioral",
+  "business-outlook-qa",
+  "pressure",
   "tencent-culture-values",
   {
     "type": "section-header",
-    "label": "业务理解与规划"
+    "label": "收尾与练习"
   },
-  "business-outlook-qa",
-  {
-    "type": "section-header",
-    "label": "真题与流程"
-  },
+  "close-and-compensation",
   "real-questions",
   "process",
+  "practice",
   {
     "type": "section-header",
-    "label": "练习"
+    "label": "事实与来源"
   },
-  "practice"
+  "sources-and-facts"
 ]
