@@ -182,23 +182,23 @@ html {
 
 /* ---------- Mermaid diagrams ---------- */
 
-.rspress-doc .mermaid,
-.rspress-doc pre.mermaid {
+/* rspress-plugin-mermaid 2 在客户端把 SVG 注入一个无类名的 div, 旧的 `.mermaid` 选择器已失效. */
+.rspress-doc div:has(> svg[aria-roledescription]) {
   background: var(--rp-c-bg-soft);
   border: 1px solid var(--rp-c-divider-light);
   border-radius: var(--rp-radius-lg);
   margin: 1.5rem 0;
   padding: 1.25rem;
   text-align: center;
+  overflow-x: auto;
 }
 
-.rspress-doc .mermaid svg {
+.rspress-doc div:has(> svg[aria-roledescription]) svg {
   max-width: 100%;
   height: auto;
 }
 
-.dark .rspress-doc .mermaid,
-.dark .rspress-doc pre.mermaid {
+.dark .rspress-doc div:has(> svg[aria-roledescription]) {
   background: var(--rp-c-bg-alt);
 }
 

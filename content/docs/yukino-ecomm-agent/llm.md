@@ -2,11 +2,11 @@
 title: "LLM 接入、表设计与工具设计"
 description: "模型槽位如何接 OpenAI 兼容的 Chat Completions 上游, structured() 与系统提示词如何稳定产出 JSON; PostgreSQL/Prisma 的会话、业务、飞轮与审计表如何组织; 工具注册与执行引擎如何做参数校验、超时、重试与审计"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
+local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/core/`、`server/src/tools/`、`server/prisma/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/core/`、`server/src/tools/`、`server/prisma/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -51,8 +51,6 @@ chat 组还支持三个思考/推理扩展参数 (`thinkingKwargs()`, 拼进 mod
 
 `getChatModel(options)` 的默认值: `streaming=false`、`temperature=0.3`、`maxTokens=MAX_OUTPUT_TOKENS` (默认 10000)、`streamUsage=true` (流式响应也回传 usage_metadata, 主力 agent 的 agent_step 日志据此统计每步 token)、`thinking=true`. thinking 显式传 false 时改挂 `thinking={ type: "disabled" }` —— 所有结构化输出调用统一关闭 thinking.
 
-个别模型家族不支持流式工具调用: `needsNonStreamingTools` 检查模型名是否包含 minimax, 命中则由调用方降级为非流式.
-
 ### 结构化输出 structured()
 
 `structured(schema)` (`server/src/core/llm.ts`) 封装了全部「LLM 返回 JSON 对象」的场景:
@@ -61,7 +59,7 @@ chat 组还支持三个思考/推理扩展参数 (`thinkingKwargs()`, 拼进 mod
 2. invoke 返回后再过一遍 `schema.parse` 做 zod 校验
 3. 失败自动重试: 返回 null/undefined (模型没给 tool_calls) 或 invoke 抛错时记 warn 并重试, 最多两次尝试, 第二次仍失败则抛错
 
-streaming 默认 true, 但 `needsNonStreamingTools` 命中时强制 false. 项目里的调用点: 意图分类 (`core/intent.ts`, slot=intent)、会话摘要 (`core/summarizer.ts`, slot=summary)、查询改写与扩写 (`core/query-understanding.ts`)、证据自检 (`core/selfcheck.ts`)、飞轮问题标准化 (`core/flywheel.ts`)、历史会话问答挖掘 (`kb/mining.ts`)、售后工单字段抽取 (`api/extract.ts`), 以及评测脚本里的忠实度评审 (`server/scripts/eval-*.ts`, 额外传 temperature=0).
+streaming 默认 true, 可用 `streaming: false` 显式关闭. 项目里的调用点: 意图分类 (`core/intent.ts`, slot=intent)、会话摘要 (`core/summarizer.ts`, slot=summary)、查询改写与扩写 (`core/query-understanding.ts`)、证据自检 (`core/selfcheck.ts`)、飞轮问题标准化 (`core/flywheel.ts`)、历史会话问答挖掘 (`kb/mining.ts`)、售后工单字段抽取 (`api/extract.ts`), 以及评测脚本里的忠实度评审 (`server/scripts/eval-*.ts`, 额外传 temperature=0).
 
 两个不走 structured() 的例外: 主力 agent 用 `getChatModel({ streaming: true }).bindTools(toolDefs)` 跑 ReAct 工具循环 (`graph/nodes.ts` 的 `mainAgent`); 指代消解 (`core/coref.ts`) 直接 `getChatModel()` 接纯文本改写结果, 失败时静默回退原句.
 

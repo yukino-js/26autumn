@@ -31,7 +31,7 @@ flowchart TB
 
 ## 协议与方案调研
 
-- [a2ui](a2ui): A2UI 声明式 UI 协议. 消息信封与 Catalog 契约、数据绑定与事件回传语义、v0.9.1 生产版与 v1.0 候选版的差异、basic/MCP/VegaChart 三份官方 catalog、多语言 SDK 与渲染器能力面、A2A 集成, 以及仓库内示例链路.
+- [a2ui](a2ui): A2UI 声明式 UI 协议. 消息信封与 Catalog 契约、数据绑定与事件回传语义、v1.0 当前版与 v0.9.1 上一版的差异、basic/MCP/VegaChart 三份官方 catalog、多语言 SDK 与渲染器能力面、A2A 集成, 以及仓库内示例链路.
 - [mcp-app](mcp-app): MCP Apps 扩展. 工具与 UI 资源的声明契约、宿主与 iframe 的通信与安全模型、以真实工具为例的工程实践与降级路径, 以及与 A2UI 的对比.
 
 ## Coding Agent 调研

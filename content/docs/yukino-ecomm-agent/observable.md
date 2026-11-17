@@ -2,11 +2,11 @@
 title: "可观测性和数据飞轮"
 description: "从 server 源码出发, 讲清 Langfuse 双链路 tracing、防劣化的离线评测流水线与 job runner、阅读笔记、幻觉案例台账, 以及低置信问题池驱动的数据飞轮闭环"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
+local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/core/`、`server/src/api/`、`server/scripts/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/core/`、`server/src/api/`、`server/scripts/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

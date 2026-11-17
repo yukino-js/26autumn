@@ -2,11 +2,11 @@
 title: "Slash Command: 命令拦截、类型分派与内置命令清单"
 description: "Slash Command 以 / 开头的输入在进入 agent loop 前被拦截、解析、匹配注册表并按类型 (local / local_ui / prompt / skill_fork) 分派; 覆盖注册顺序与优先级, 内置命令清单, 用户自定义命令与参数替换, 命名 workflow, skill 命令, 输入补全与使用频率追踪, 各前端宿主差异"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
+local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 Slash Command: 以 `/` 开头的输入在进入 agent loop 之前被命令系统拦截, 先解析、匹配注册表, 再按命令类型分派 —— 要么就地执行本地 UI 动作, 要么构造 prompt 发给 LLM。命令的定义、解析、注册集中在 `src/commands/`, 分派逻辑由各前端宿主（终端 UI、remote WebSocket server 等）各自实现。本文按「解析与注册 → 四种类型 → TUI 分派流程 → 内置命令清单 → prompt 命令 → 自定义命令 → 命名 workflow → skill 命令 → 补全与频率追踪 → 宿主差异」的顺序展开。

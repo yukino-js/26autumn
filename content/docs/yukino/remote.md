@@ -2,11 +2,11 @@
 title: "Remote 模式: Express + 同端口 WebSocket 桥的浏览器 Agent 服务"
 description: "Remote 模式把 Yukino 变成本地 Web 服务: Express HTTP 与同端口 WebSocket 桥把终端 Agent 循环暴露给浏览器 React 前端; 覆盖 127.0.0.1:18888 默认地址, token + 同源 WS 接入控制, 18 种入站 / 44 种出站消息协议, 请求生命周期与心跳, 前端组件与离线队列, 优雅关闭"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
+local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 Remote 模式把 Yukino 变成一个本地 Web 服务: Express HTTP 服务器 + 同端口的 WebSocket 桥, 浏览器打开一个 React 前端, 得到与终端 UI 功能对齐的聊天界面 —— 流式回复、工具执行卡片、权限对话框、plan 审批、slash 命令、模型/provider 切换都在这里发生。

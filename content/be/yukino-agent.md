@@ -2,11 +2,11 @@
 title: "yukino_agent: 基于 Eino 的 RAG 运维 Agent 后端"
 description: "yukino_agent Go 后端: 以 CloudWeGo Eino 编排 RAG 对话、Plan-Execute-Replan 告警分析与文档索引三条流水线, 打通 Milvus 向量知识库、MCP/Prometheus/MySQL 工具集, 并把浏览器 SDK 上报转换为 Prometheus 指标形成告警闭环"
 local_path: "$HOME/github/yukino.go/apps/agent"
-local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
+local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `apps/agent`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `apps/agent`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

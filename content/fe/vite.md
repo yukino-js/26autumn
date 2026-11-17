@@ -382,7 +382,7 @@ Webpack 体系与 Vite 的概念对应关系如下:
 **延伸阅读**
 
 - [react](react): React Refresh 的 HMR 边界、组件状态保留与 effect 重跑语义.
-- [next](next): Next.js 16.2 的 Turbopack 构建链路与 Vite 通用机制的对照.
+- [next](next): Next.js 16.4 的 Turbopack 构建链路与 Vite 通用机制的对照.
 - [css](css): PostCSS / Lightning CSS 处理链、CSS 代码分割与产物缓存策略.
 - [tanstack](tanstack): 客户端数据缓存与构建产物缓存各自的失效边界.
 - [fe](fe): 浏览器模块加载、缓存头与产物长缓存的底层机制.

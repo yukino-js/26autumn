@@ -2,11 +2,11 @@
 title: "Yukino Dev Agent"
 description: "OnCall 视角入门: 技术栈与双档模型、RAG 建库与在线问答、Milvus 混合检索流程、ReAct 对话 Agent、Plan-Execute-Replan 运维 Agent 与报告护栏、Tool/MCP、A2UI、知识库管理与自监控"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "ea0fd1957f83d4a676714cad5fa054b351a3deb2"
+local_commit: "e36d16bacb9ba400d904ece0542c4467f8ef049d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/ai/`、`components/`）在 `ea0fd1957f83` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/ai/`、`components/`）在 `e36d16bacb9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 yukino-dev-agent 是一个 AI 智能运维 (OnCall) 助手, 把两个产品面合并进单一 Next.js 16 + AI SDK 应用:
@@ -25,7 +25,7 @@ yukino-dev-agent 是一个 AI 智能运维 (OnCall) 助手, 把两个产品面�
 | 框架      | Next.js 16 App Router + React 19 + TypeScript strict                                    |
 | AI SDK    | Vercel AI SDK v7 (`ai`): `streamText` / `generateText` / `tool` / `embed` / `embedMany` |
 | LLM       | OpenAI 兼容 (`@ai-sdk/openai`) 或 Anthropic (`@ai-sdk/anthropic`), `LLM_PROVIDER` 切换  |
-| Embedding | text-embedding-v4 (`@ai-sdk/openai-compatible`), 批次上限 10 条                         |
+| Embedding | `qwen3.7-text-embedding-flash` (可配, `@ai-sdk/openai-compatible`), 批次上限 10 条      |
 | 向量库    | Milvus Standalone (`@zilliz/milvus2-sdk-node`, :19530)                                  |
 | 数据库    | PostgreSQL + Prisma 7 (`@prisma/adapter-pg`, 生成到 `generated/prisma`)                 |
 | 编排      | LangGraph (`@langchain/langgraph`), 见 [LangGraph](../langgraph)                        |
@@ -86,6 +86,10 @@ OnCall 的知识库由 `FILE_DIR` (默认 `./data/docs`) 支撑:
 2. **召回**: 向量库对 query 向量做相似度搜索, 召回 topK 个最相似的候选 chunk
 3. **重排**: 拼接问题和召回的 chunk 原文, 输入 rerank 模型 (cross-encoder 交叉编码), 输出相关性得分, 取最相关的 topK
 4. **精排** (optional): 把命中的参考资料拼进提示词
+
+:::note embedding 可降级
+未配置 `OPENAI_EMBEDDING_API_KEY`, 或远端 embedding 调用失败时 (进程内标记后不再重试), 检索降级为纯 BM25: 写入用 1024 维占位向量, `retrieveDense()` 返回空, 引用里只有 BM25 阶段名次.
+:::
 
 ```mermaid
 flowchart LR
@@ -273,7 +277,7 @@ A2UI 是声明式的模型生成 UI 协议, 协议本身的机制见 [A2UI](../a
 
 关键探针:
 
-- `GET /api/ready`: 数据库 / Milvus / LLM+embedding+rerank 配置 / Prometheus / MCP / 各告警源连通性逐项探测; 数据库和 Milvus 是核心依赖, 任一挂掉返回 503
+- `GET /api/ready`: 数据库 / Milvus / LLM+embedding+rerank 配置 / Prometheus / MCP / 各告警源连通性逐项探测; 数据库和 Milvus 是核心依赖, 任一挂掉返回 503; MCP 未配置 `MCP_URL` 时该项直接记为已就绪
 - `GET /api/config_check`: 配置预期清单, 只给非敏感摘要 (DSN 打码), 不回显密钥
 
 启动钩子 `instrumentation.ts` (`register()`, 仅 nodejs runtime): 初始化 Langfuse -> 把 `FILE_DIR` 文档建索引进 Milvus -> 启动 DevFlow 自动同步循环 (`DEV_FLOW_AUTO_SYNC_ENABLED`, 默认间隔 900s).

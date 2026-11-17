@@ -3,7 +3,7 @@ title: "HR 面 QA：业务理解、行业前景与个人规划"
 description: "HR 面/业务型 HRBP 面 19 题：把 Agent 运行时讲成客户价值、对 2026 年 Agent 赛道洗牌的观点（含腾讯产品调整的稳妥口径）、Code Agent 时代个人能力如何提升，以及短/中/长期职业规划；每题给 60–90 秒口述版、采分点与雷区，与本仓库已有 HR 事实口径严格一致"
 ---
 
-本篇只负责三件事：**业务理解、业务前景的观点、个人发展的规划**。动机/城市/薪资/压力/行为面已有专篇，不重复（索引见文末）。素材沉淀自本机 Chrome 的三个豆包对话标签页（2026-10-27 的运行时八股、2026-11-07 的 Managed Agent 业务讨论与「对未来规划」「代码都是 agent 生成，我们自己的能力怎么去提升呢」）；厂商动向的已核实事实见 [业务面 QA：Managed Agent 运行时与赛道判断](/interview/qa/managed-agents-business)。
+本篇只负责三件事：**业务理解、业务前景的观点、个人发展的规划**。动机/城市/薪资/压力/行为面已有专篇，不重复（索引见文末）。素材沉淀自本机 Chrome 的三个豆包对话标签页（2026-10-27 的运行时八股、2026-11-07 的 Managed Agent 业务讨论与「对未来规划」「代码都是 agent 生成，我们自己的能力怎么去提升呢」）。
 
 ```mermaid
 flowchart LR
@@ -198,17 +198,15 @@ flowchart LR
 
 ## 六、与已有材料的分工
 
-| 需要                                               | 去哪篇                                                                             |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| 厂商动向的核实事实、时间与链接                     | [业务面 QA：Managed Agent 运行时与赛道判断](/interview/qa/managed-agents-business) |
-| 云业务 / Agent + 云 / Managed Agent API 的商业理解 | [云业务与 Agent：从卖算力到卖 Agent 运行环境](/interview/qa/cloud-business-agent)  |
-| 为什么腾讯、为什么这个岗位、城市/offer/家庭        | [动机与岗位匹配](/interview/hr/motivation)                                         |
-| 自我介绍、三段实习主线、数字口径                   | [简历叙事](/interview/hr/narrative)                                                |
-| 成就感、压力、分歧、行为面 STAR                    | [行为面题库](/interview/hr/behavioral)                                             |
-| 职业规划原版、岗位匹配原版                         | [Q13 职业规划](/interview/hr/behavioral#q13-你的职业规划是什么)                    |
-| 真题频次、HR 面形态与评估维度                      | [HR 面总览](/interview/hr/)                                                        |
-| 分题型练习、追问链、7 天计划                       | [练习手册](/interview/hr/practice)                                                 |
-| 到岗时间、薪资、反问、收尾                         | [收尾与背调](/interview/hr/close-and-compensation)                                 |
+| 需要                                        | 去哪篇                                                          |
+| ------------------------------------------- | --------------------------------------------------------------- |
+| 为什么腾讯、为什么这个岗位、城市/offer/家庭 | [动机与岗位匹配](/interview/hr/motivation)                      |
+| 自我介绍、三段实习主线、数字口径            | [简历叙事](/interview/hr/narrative)                             |
+| 成就感、压力、分歧、行为面 STAR             | [行为面题库](/interview/hr/behavioral)                          |
+| 职业规划原版、岗位匹配原版                  | [Q13 职业规划](/interview/hr/behavioral#q13-你的职业规划是什么) |
+| 真题频次、HR 面形态与评估维度               | [HR 面总览](/interview/hr/)                                     |
+| 分题型练习、追问链、7 天计划                | [练习手册](/interview/hr/practice)                              |
+| 到岗时间、薪资、反问、收尾                  | [收尾与背调](/interview/hr/close-and-compensation)              |
 
 :::note 维护提示
 本篇的行业判断依赖 2026-11-08 核实的公开状态；元器停服（2026-11-09）、OpenAI Agent Builder/Evals 停服（2026-11-30）都在近几周内。**面试前一天回业务面 QA 的来源清单重查一次**，日期不确定时改用「今年上半年 / 最近」这类模糊但不会错的说法。

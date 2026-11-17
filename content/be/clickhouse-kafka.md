@@ -4,7 +4,7 @@ description: "ClickHouse 列式存储、MergeTree 家族、分布式架构与查
 ---
 
 :::note 版本基线
-ClickHouse 行为以 **25.x** 为准, Kafka 行为以 _4.x_ 为准; 涉及 KRaft、Log Compaction 与 <u>exactly-once</u> 的结论均按该基线表述. 参数默认值核对 ClickHouse 25.x 官方文档与 Apache Kafka 4.x 官方配置参考（官方文档）, 实例化结论需以本机 `system.settings` / broker 配置实测为准.
+ClickHouse 行为以 **25.x** 为准, Kafka 行为以 _4.x_ 为准; 涉及 KRaft、Log Compaction 与 <u>exactly-once</u> 的结论均按该基线表述. 参数默认值核对 ClickHouse 25.x 官方文档与 Apache Kafka 4.x 官方配置参考（官方文档）, 实例化结论需以本机 `system.settings` / broker 配置实测为准. 需要留意的是 ClickHouse 当前最新稳定版已是 **26.10**: 26.x 移除了旧查询分析器逻辑、`system.metric_log` 默认改用 `bucketed` 模式、`arrayCount` 返回类型由 `UInt32` 改为 `UInt64`, 凡涉及这几项的默认值或返回值类型, 升级实例后应按目标版本复核.
 :::
 
 **主线一览**
@@ -389,17 +389,17 @@ ClickHouse 的 part 是**不可变的 (immutable)**, `UPDATE`/`DELETE` 不是原
 ### Kafka 的整体架构与核心组件
 
 ```text
-                    ┌─────────────────────────────────────────────┐
-                    │              Kafka Cluster                   │
-                    │                                             │
-  Producer ──────> │  Broker 0          Broker 1          Broker 2│
-                    │  ┌──────────┐     ┌──────────┐     ┌──────┐│
-                    │  │Topic A P0│     │Topic A P1│     │Topic A P2│
-                    │  │(Leader)  │     │(Leader)  │     │(Leader)  │
-                    │  │Topic B P1│     │Topic B P2│     │Topic B P0│
-                    │  │(Follower)│     │(Follower)│     │(Follower)│
-                    │  └──────────┘     └──────────┘     └──────┘│
-                    └─────────────────────────────────────────────┘
+                    ┌─────────────────────────────────────────────────┐
+                    │              Kafka Cluster                      │
+                    │                                                 │
+  Producer ──────>  │  Broker 0          Broker 1          Broker 2   │
+                    │  ┌──────────┐     ┌──────────┐     ┌──────────┐ │
+                    │  │Topic A P0│     │Topic A P1│     │Topic A P2│ │
+                    │  │(Leader)  │     │(Leader)  │     │(Leader)  │ │
+                    │  │Topic B P1│     │Topic B P2│     │Topic B P0│ │
+                    │  │(Follower)│     │(Follower)│     │(Follower)│ │
+                    │  └──────────┘     └──────────┘     └──────────┘ │
+                    └─────────────────────────────────────────────────┘
                               ^                    |
                               │                    v
                          Controller           Consumer Group

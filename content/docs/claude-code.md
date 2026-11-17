@@ -2,11 +2,11 @@
 title: "Claude Code 兼容实现: 构建体系、核心循环与多 Provider 兼容层"
 description: "一个终端 AI 编码助手的工程实现剖析: Bun 代码分割构建、流式 Agent 循环与工具并发调度、核心白名单加延迟发现的工具系统, 以及把异构模型协议收敛到 Anthropic 内部格式的流适配器模式"
 local_path: "$HOME/Downloads/claude-code"
-local_commit: "77a7934e15d69da13879112ed7db695c9ee7a52a"
+local_commit: "963e0013184ecc1521289a0fc7d5da4bb6e45356"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/claude-code` 在 `77a7934e15d6` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/claude-code` 在 `963e0013184` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

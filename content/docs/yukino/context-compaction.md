@@ -2,11 +2,11 @@
 title: "上下文压缩"
 description: "上下文压缩的两层机制: 第 1 层在工具结果进入历史时把大结果溢出到磁盘、只留预览; 第 2 层在 token 用量越过阈值 (或手动 /compact) 时由 LLM 生成对话摘要, 近期消息逐字保留"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
+local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/compact`、`src/tool-result`、`src/session`、`src/agent`、`src/storage`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/compact`、`src/tool-result`、`src/session`、`src/agent`、`src/storage`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

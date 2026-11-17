@@ -3,11 +3,11 @@ title: "Yukino Code"
 overview: true
 description: "yukino 栏目: 终端 Coding Agent Yukino Code (npm 包 @yukino.js/yukino) 源码解析, 覆盖 ReAct 主循环与事件流、LLM 三协议接入、工具调用与 MCP、system prompt 与上下文压缩、权限/沙箱/Hook、AGENTS.md 与三层记忆、Skill 与 Slash Command、Subagent/Agent Team/Workflow/Worktree/Goal 多代理协作、TUI/Print/Remote/A2A 宿主形态, 以及遥测、任务跟踪与代码评审"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "1847a71e03f90d0e5fc60a2a797c60af327b7750"
+local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `1847a71e03f9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `a60e5efccef` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -25,6 +25,8 @@ flowchart TB
 ```
 
 yukino-code 仓库 `apps/yukino` (Yukino Code, npm 包 `@yukino.js/yukino`, Node >= 20) 的系统性源码笔记, 共 27 个页面 (含本落地页). CLI 用 React 19 + Ink 7 渲染单窗格终端界面, 通过可配置的 LLM Provider 驱动「模型到工具再回到模型」的自治循环; 全部文档以该仓库源码为唯一事实依据. 总览篇见 [what-is-an-agent](./what-is-an-agent) 与 [yukino-code](./yukino-code), 其余页面按子系统拆分, 顺序与侧边栏一致.
+
+同一 monorepo 下的 `apps/app` 是基于 `@yukino.js/yukino` 的 Electron 桌面端 (Yukino Desktop, 包名 `@yukino.js/app`), 复用同一套 runtime 与 `~/.yukino/config.yaml`; `apps/mcp` 是官方 MCP 工具集, 见 [yukino-mcp](../../fe/yukino-mcp). 本栏目只解析 `apps/yukino` 这个终端形态.
 
 | 页面                                           | 内容概要                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

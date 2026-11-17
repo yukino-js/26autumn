@@ -2,11 +2,11 @@
 title: "MCP"
 description: "MCP 接入: JSON-RPC 2.0 协议与 stdio / streamable http / sse 传输, MCPClient / MCPManager 生命周期, 用户级与项目级配置与环境变量展开, mcp__ 命名与权限匹配, eager / native / dispatch 三种延迟加载模式, ToolSearch / McpCall, server instructions 公告与 remote 模式的 MCP Apps"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
+local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/mcp`、`src/tools`、`src/config`、`src/permissions`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/mcp`、`src/tools`、`src/config`、`src/permissions`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

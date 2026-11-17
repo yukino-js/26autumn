@@ -2,11 +2,11 @@
 title: "AGENTS.md and Memory"
 description: "AGENTS.md 与三层记忆: 工作记忆 (上下文窗口本身)、持久化到磁盘的长期记忆 (用户/项目级指令文件 AGENTS.md、JSONL 会话日志加文件快照, 支撑恢复会话与检查点回退), 以及 Agent 在对话中自动积累经验的自动记忆"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
+local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/memory`、`src/session`、`src/file-history`、`src/storage`、`src/config`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/memory`、`src/session`、`src/file-history`、`src/storage`、`src/config`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

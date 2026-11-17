@@ -1,12 +1,12 @@
 ---
 title: "WANProxy 技术笔记"
-description: "WANProxy Go 移植工作区: XCodec 2048 字节段滚动哈希去重、HELLO/FRAME/ASK/LEARN/ADVANCE/EOS 管道协议会话、XCDFS 磁盘缓存、SSH-2 传输、TCP/UDP/SOCKS/SSH 代理中继与字节计数器, 纯 JSON 配置与 Draft 2020-12 JSON Schema 校验、合法/非法夹具, 以及 srv.go 演示服务端、A/B 实验编排与 React 仪表盘的实现机制"
+description: "WANProxy Go 移植工作区: XCodec 2048 字节段滚动哈希去重、HELLO/FRAME/ASK/LEARN/ADVANCE/EOS 管道协议会话、XCDFS 磁盘缓存、SSH-2 传输、TCP/UDP/SOCKS/SSH 代理中继与字节计数器, 纯 JSON 配置与 Draft 2020-12 JSON Schema 校验、合法/非法夹具, 以及 srv 演示服务端、A/B 实验编排与 React 仪表盘的实现机制"
 local_path: "$HOME/github/wanproxy"
-local_commit: "62975591df2415d84426e789659a2ae598728b42"
+local_commit: "24648b4f0de9549aa3d3aa7a3b5736c8b8c78831"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/wanproxy` 在 `62975591df24` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/wanproxy` 在 `24648b4f0de` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -28,31 +28,32 @@ flowchart LR
 XCodec 把流切成 **2048 字节段**, 命中缓存时只传引用、未命中才声明新段并 zlib 压缩; <u>去重收益</u>取决于数据的重复度, 镜像与增量备份最明显。
 :::
 
-WANProxy 是一个 WAN 优化代理的 Go 移植工作区, 移植对象是同名的 C++ 原版。核心能力是 XCodec 去重编解码: 把数据流拆成 2048 字节的段, 用滚动哈希识别重复段, 在 WAN 链路上只传输引用与新段声明, 再叠加 zlib 压缩, 使重复数据 (虚拟机镜像、日志流、增量备份) 的跨链路传输量收敛到引用级别。当前 Go 工程零第三方运行时依赖、自成体系, C++ 线格式仅作为算法与 golden 向量的参照。工作区包含三个可构建部分: `wanproxy.go/` 是纯标准库的 Go 库与五个命令行程序 (守护进程、tack、xcdump、fwdproxy、diskdup), `srv.go/` 是基于 [yukino_http](./yukino-http) 的演示服务端, 负责拉起一支 10 个代理的演示舰队并提供文件/基准/A/B 实验 API, `web/` 是 React + TailwindCSS 仪表盘。本文面向想理解 WAN 优化代理内部机制、或需要一个可验证正确性的 Go 代理库的工程师, 依次讲解工作区布局、XCodec 编解码、管道协议会话、缓存体系、SSH 传输、代理中继与 UDP 转发、纯 JSON 配置与 Schema 校验、监控与日志、命令行工具、一致性证据, 最后是演示栈的编排与 API。
+WANProxy 是一个 WAN 优化代理的 Go 移植工作区, 移植对象是同名的 C++ 原版。核心能力是 XCodec 去重编解码: 把数据流拆成 2048 字节的段, 用滚动哈希识别重复段, 在 WAN 链路上只传输引用与新段声明, 再叠加 zlib 压缩, 使重复数据 (虚拟机镜像、日志流、增量备份) 的跨链路传输量收敛到引用级别。当前 Go 工程零第三方运行时依赖、自成体系, C++ 线格式仅作为算法与 golden 向量的参照。工作区包含三个可构建部分: `wanproxy/` 是纯标准库的 Go 库与五个命令行程序 (守护进程、tack、xcdump、fwdproxy、diskdup), `srv/` 是基于 [yukino_http](./yukino-http) 的演示服务端, 负责拉起一支 10 个代理的演示舰队并提供文件/基准/A/B 实验 API, `web/` 是 React + TailwindCSS 仪表盘。本文面向想理解 WAN 优化代理内部机制、或需要一个可验证正确性的 Go 代理库的工程师, 依次讲解工作区布局、XCodec 编解码、管道协议会话、缓存体系、SSH 传输、代理中继与 UDP 转发、纯 JSON 配置与 Schema 校验、监控与日志、命令行工具、一致性证据, 最后是演示栈的编排与 API。
 
 ## 工作区布局与构建
 
-仓库是一个 Go workspace, `go.work` 声明 `go 1.26.0` 并 `use` 两个模块 (`./srv.go` 与 `./wanproxy.go`)。根 Makefile 的所有目标都转发给跨平台编排器 `go run ./srv.go/cmd/stack`, 端口用变量注入 (`SRV_PORT=3101`、`WEB_PORT=5173`、`MONITOR_PORT=9901`、`SSH_ECHO_PORT=8349`, 经 `--srv-port`/`--web-port`/`--monitor-port`/`--ssh-echo-port` 传入):
+仓库是一个 Go workspace, `go.work` 声明 `go 1.27.4` 并 `use` 两个模块 (`./srv` 与 `./wanproxy`)。根 Makefile 除仓库维护目标外的所有目标都转发给跨平台编排器 `go run ./srv/cmd/stack`, 端口用变量注入 (`SRV_PORT=3101`、`WEB_PORT=5173`、`MONITOR_PORT=9901`、`SSH_ECHO_PORT=8349`, 经 `--srv-port`/`--web-port`/`--monitor-port`/`--ssh-echo-port` 传入):
 
-| 目标                                                  | 作用                                       |
-| ----------------------------------------------------- | ------------------------------------------ |
-| `make dev` (默认)                                     | 后端 + web 前台运行, Ctrl-C 同时停止       |
-| `make srv` / `make web`                               | 只跑后端 / 只跑前端                        |
-| `make start` / `stop` / `restart` / `status` / `logs` | 后台运行 (pidfile 与日志在 `srv.go/data/`) |
-| `make install`                                        | 安装 web 依赖并构建 Go 后端                |
-| `make build` / `build-go` / `build-web`               | 构建                                       |
-| `make test` / `test-go` / `test-web`                  | Go 测试/vet + web 构建/lint                |
-| `make open` / `clean` / `help`                        | 打开浏览器 / 清理构建产物 / 列出所有目标   |
+| 目标                                                  | 作用                                        |
+| ----------------------------------------------------- | ------------------------------------------- |
+| `make dev` (默认)                                     | 后端 + web 前台运行, Ctrl-C 同时停止        |
+| `make srv` / `make web`                               | 只跑后端 / 只跑前端                         |
+| `make start` / `stop` / `restart` / `status` / `logs` | 后台运行 (pidfile 与日志在 `srv/data/`)     |
+| `make install`                                        | 安装 web 依赖并构建 Go 后端                 |
+| `make build` / `build-go` / `build-web`               | 构建                                        |
+| `make test` / `test-go` / `test-web`                  | Go 测试/vet + web 构建/lint                 |
+| `make open` / `clean` / `help`                        | 打开浏览器 / 清理构建产物 / 列出所有目标    |
+| `make config` / `commit` / `feat`                     | 仓库维护: 配置 git 身份 / 提交 / 提交并推送 |
 
-| 目录           | 内容                                                                                                                                                                                                                                                                                                                                             |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `wanproxy.go/` | Go 移植本体: xcodec、ssh、pipeline、proxy、config、monitor、validation、common 包与 `cmd/{wanproxy,tack,xcdump,fwdproxy,diskdup}` 五个程序, 外加 `e2e/`、`examples/` (5 份 JSON 示例)、`config/schema.json`、`wanproxy.example.json` 与自己的 Makefile (`build` 产出 `bin/` 下五个二进制, 另有 `test`/`race`/`vet`/`fmt`/`e2e`/`schema`/`clean`) |
-| `srv.go/`      | 演示服务端模块: `cmd/{server,wanbench,stack}` 与 `internal/{daemon,files,monitor,bench,benchsvc,payload,tools,server,paths}`, `demo/wanproxy.example.json` 演示配置模板, 运行时状态落在 `data/`                                                                                                                                                  |
-| `web/`         | React 仪表盘 (页面、shadcn 组件、主题)                                                                                                                                                                                                                                                                                                           |
+| 目录        | 内容                                                                                                                                                                                                                                                                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `wanproxy/` | Go 移植本体: xcodec、ssh、pipeline、proxy、config、monitor、validation、common 包与 `cmd/{wanproxy,tack,xcdump,fwdproxy,diskdup}` 五个程序, 外加 `e2e/`、`examples/` (5 份 JSON 示例)、`config/schema.json`、`wanproxy.example.json` 与自己的 Makefile (`build` 产出 `bin/` 下五个二进制, 另有 `test`/`race`/`vet`/`fmt`/`e2e`/`schema`/`clean`) |
+| `srv/`      | 演示服务端模块: `cmd/{server,wanbench,stack}` 与 `internal/{daemon,files,monitor,bench,benchsvc,payload,tools,server,paths}`, `demo/wanproxy.example.json` 演示配置模板, 运行时状态落在 `data/`                                                                                                                                                  |
+| `web/`      | React 仪表盘 (页面、shadcn 组件、主题)                                                                                                                                                                                                                                                                                                           |
 
-`wanproxy.go` 的模块路径是 `github.com/hangtiancheng/wanproxy/wanproxy.go`, `go.mod` 没有任何 `require`, 全部实现基于标准库 (`net`、`net/netip`、`compress/zlib`、`net/http`、`crypto/*`、`encoding/json`、`encoding/binary`、`reflect`、`log/slog`)。`srv.go` 模块 `github.com/hangtiancheng/wanproxy/srv.go` 用 `replace` 指向相邻的 `../wanproxy.go`, 并依赖 `github.com/hangtiancheng/yukino.go/libs/yukino_http v0.0.1`。
+`wanproxy` 的模块路径是 `github.com/hangtiancheng/wanproxy/wanproxy`, `go.mod` 没有任何 `require`, 全部实现基于标准库 (`net`、`net/netip`、`compress/zlib`、`net/http`、`crypto/*`、`encoding/json`、`encoding/binary`、`reflect`、`log/slog`)。`srv` 模块 `github.com/hangtiancheng/wanproxy/srv` 用 `replace` 指向相邻的 `../wanproxy`, 并依赖 `github.com/hangtiancheng/yukino.go/libs/yukino_http v0.0.1`。
 
-## wanproxy.go 模块结构
+## wanproxy 模块结构
 
 包与职责:
 
@@ -116,24 +117,24 @@ XCodec 把数据流变成三类元素的混合: 对已见段的哈希引用、�
 
 ## 管道协议会话
 
-会话帧格式 (对应 C++ `xcodec_pipe_protocol.h`):
+会话帧格式 (骨架对应 C++ `xcodec_pipe_protocol.h`, 但 Go 版已升到协议版本 2: `<HELLO>` 增加版本字节、`<FRAME>` 增加明文长度与 SHA-256 头, 与 C++ 线格式**不互通**, C++ 只作算法参照):
 
-| 帧                    | 操作码          | 载荷                                               |
-| --------------------- | --------------- | -------------------------------------------------- |
-| `<HELLO>`             | `0xff`          | uint8 长度 + 16 字节缓存身份, 必须出现在编码流开头 |
-| `<FRAME>`             | `0x02`          | uint32 长度 + 编码块                               |
-| `<ASK>`               | `0xf0`          | uint16 数量 + 哈希列表, 请求段数据                 |
-| `<LEARN>`             | `0xf1`          | uint16 数量 + 整段数据, 应答 `<ASK>`               |
-| `<ADVANCE>`           | `0x01`          | uint32 帧数, 对端已消费、无需再保留这些帧的引用    |
-| `<EOS>` / `<EOS_ACK>` | `0xfc` / `0xfb` | 无更多数据 / 全部数据已处理                        |
+| 帧                    | 操作码          | 载荷                                                                       |
+| --------------------- | --------------- | -------------------------------------------------------------------------- |
+| `<HELLO>`             | `0xff`          | uint8 协议版本 (当前 `2`) + uint8 长度 + 16 字节缓存身份, 必须在编码流开头 |
+| `<FRAME>`             | `0x02`          | uint32 编码块长度 + uint32 明文长度 + 32 字节 SHA-256 + 编码块             |
+| `<ASK>`               | `0xf0`          | uint16 数量 + 哈希列表, 请求段数据                                         |
+| `<LEARN>`             | `0xf1`          | uint16 数量 + 整段数据, 应答 `<ASK>`                                       |
+| `<ADVANCE>`           | `0x01`          | uint32 帧数, 对端已消费、无需再保留这些帧的引用                            |
+| `<EOS>` / `<EOS_ACK>` | `0xfc` / `0xfb` | 无更多数据 / 全部数据已处理                                                |
 
-协议常数: 最大帧 `PipeMaxFrame = 1 MiB`, 单帧最大明文 `PipeMaxPayloadFrame = 512 KiB` (编码至多翻倍, 帧自包含), 每个 `<ASK>`/`<LEARN>` 至多 `PipeAskMax = 512` 个哈希, HELLO 身份固定 `PipeHelloIDLength = 16` 字节。`ReadPipeFrame` 对长度为零/超限、计数为零/超限、未知操作码一律返回 Invalid。
+协议常数: 最大帧 `PipeMaxFrame = 1 MiB`, 单帧最大明文 `PipeMaxPayloadFrame = 512 KiB` (编码至多翻倍, 帧自包含), 每个 `<ASK>`/`<LEARN>` 至多 `PipeAskMax = 512` 个哈希, HELLO 身份固定 `PipeHelloIDLength = 16` 字节, 协议版本 `PipeProtocolVersion = 2`. `<FRAME>` 头固定 `PipeDataHeaderSize = 1 + 4 + 4 + 32` 字节: 发送端在为编码块算 `SHA-256` 时对的是**明文**, 而不只是压缩后的编码块, 因此接收端能在解码后校验"这段字节确实对应发送端声明的那一段明文"; 版本字节不匹配时 `ReadPipeFrame` 直接返回 Invalid 而不是尝试兼容旧线格式. `ReadPipeFrame` 对长度为零/超限、计数为零/超限、未知操作码一律返回 Invalid.
 
-`Session` 是会话的一端 (对应 C++ `XCodecPipePair`), 双向: `EncodeData`/`CloseWrite` 产生本端发送的线上字节, `Receive` 消费对端字节并返回解码明文、要回写的协议响应与流结束信号。一个编码 goroutine 与一个解码 goroutine 可并发使用。
+`Session` 是会话的一端 (对应 C++ `XCodecPipePair`), 双向: `EncodeData`/`CloseWrite` 产生本端发送的线上字节, `Receive` 消费对端字节并返回解码明文、要回写的协议响应与流结束信号. 一个编码 goroutine 与一个解码 goroutine 可并发使用.
 
-编码半边: 首次使用时先发 `<HELLO>`。`<HELLO>` 里通告的身份是缓存的 UUID, 跨连接稳定 —— 重连的对端复用之前连接的解码缓存, 引用无需重新 `<ASK>`/`<LEARN>`。明文按 512 KiB 切块, 每块编码成一个 `<FRAME>`; 每帧的 refmap 与明文大小记入 `refFrames` 并累计 `inFlightBytes`。窗口默认 `defaultInFlightBytes = 8 MiB` (字节限额可由 `WithInFlightLimit` 调整), 未确认帧数上限固定 `maxInFlightFrames = 256`; 单次调用超出窗口直接 `ErrSessionLimit`, 窗口满返回 `ErrBackpressure` 且输入不被消费; `EncodeDataContext` 在不持锁的情况下等待 `<ADVANCE>` (每次 ADVANCE 关闭 `advanced` channel 并重建) 或 ctx 取消。`CloseWrite` 产生 `<EOS>`。
+编码半边: 首次使用时先发 `<HELLO>`. `<HELLO>` 里通告的身份是缓存的 UUID, 跨连接稳定 —— 重连的对端复用之前连接的解码缓存, 引用无需重新 `<ASK>`/`<LEARN>`. 明文按 512 KiB 切块, 每块编码成一个 `<FRAME>`; 每帧的 refmap 与明文大小记入 `refFrames` 并累计 `inFlightBytes`. 窗口默认 `defaultInFlightBytes = 8 MiB` (字节限额可由 `WithInFlightLimit` 调整), 未确认帧数上限固定 `maxInFlightFrames = 256`; 单次调用超出窗口直接 `ErrSessionLimit`, 窗口满返回 `ErrBackpressure` 且输入不被消费; `EncodeDataContext` 在不持锁的情况下等待 `<ADVANCE>` (每次 ADVANCE 关闭 `advanced` channel 并重建) 或 ctx 取消. `CloseWrite` 产生 `<EOS>`.
 
-解码半边: `Receive` 先把字节追加进 `decBuffer` (上限 `maxReceiveBytes = 16 MiB`), 循环解析控制帧, 再解码已帧化的数据。`<HELLO>` 用对端身份 `Connect` 出专属解码缓存视图, 外包一层 `learnedCache` 把 ASK 应答钉住, 与共享缓存的淘汰解耦, 保证解码前进。`<ASK>` 从保留的 refFrames 里逐哈希找段 (找不到即协议错误), 组装 `<LEARN>` 回写; `<LEARN>` 要求每个段都对应一个未决 ASK (拒绝 C++ 所称的 gratuitous LEARN), 冗余 LEARN (缓存已有相同数据) 保持原样, 名字复用则 `Replace`; 全部未知哈希解决且解码缓冲排空后清空钉住的段。`<ADVANCE>` 按计数释放 refFrames、归还 in-flight 窗口, 计数超过保留帧数是错误。解码产生的 `<ASK>` 按 512 个一组排序发出。
+解码半边: `Receive` 先把字节追加进 `decBuffer` (上限 `maxReceiveBytes = 16 MiB`), 循环解析控制帧, 再按 `receiveFrames` 队列逐帧解码. **每帧的明文先落在该帧自己的缓冲区里, 只有解码产出的长度等于 `<FRAME>` 头声明的明文长度且 `SHA-256` 与该头携带的摘要一致, 才整体追加到返回值**; 不一致返回 `ErrIntegrity`, 解码超长或不足同样按错误处理, 因此半帧数据不会被下游看到. `<HELLO>` 用对端身份 `Connect` 出专属解码缓存视图, 外包一层 `learnedCache` 把 ASK 应答钉住, 与共享缓存的淘汰解耦, 保证解码前进. `<ASK>` 从保留的 refFrames 里逐哈希找段 (找不到即协议错误), 组装 `<LEARN>` 回写; `<LEARN>` 要求每个段都对应一个未决 ASK (拒绝 C++ 所称的 gratuitous LEARN), 冗余 LEARN (缓存已有相同数据) 保持原样, 名字复用则 `Replace`; 全部未知哈希解决且解码缓冲排空后清空钉住的段. `<ADVANCE>` 按计数释放 refFrames、归还 in-flight 窗口, 计数超过保留帧数是错误. 解码产生的 `<ASK>` 按 512 个一组排序发出.
 
 结束语义: 收到 `<EOS>` 且对端所发全部处理完毕后回 `<EOS_ACK>` 并置 `OutputEOF` (调用方应半关闭下游写向); 双向都确认后 `Done` 一次性置位, 此后再收到数据是错误。`HasPending`/`FinishReceive` 用同一组条件判断传输 EOF 时是否丢了数据 (未解析控制字节、未解码帧、被未知哈希阻塞的解码器)。协议违例全部拒绝: 二次 `<HELLO>`、解码器初始化前收到帧、`<EOS>` 后收到帧、`<HELLO>` 前收到 `<ASK>`/`<LEARN>`/`<ADVANCE>`/`<EOS>`、未发 `<EOS>` 或重复收到 `<EOS_ACK>`、`<EOS_ACK>` 时仍有未确认帧等。
 
@@ -275,13 +276,13 @@ UDP 是固定目标转发: 不套用流编解码, 也不做 SSH 成帧; 配置�
 
 `config/schema.json` 是 JSON Schema Draft 2020-12 文档: 顶层 `additionalProperties: false`, `proxies` 设 `minItems: 1`, 各命名映射用 `propertyNames.pattern` 约束名字, 缓存与端点用 `oneOf` 区分形态, 并用 `allOf` + `if/then/else` 表达按 `type`/`mode` 的条件约束 (SOCKS 禁 `upstream`、非 SOCKS 必填 `upstream`; UDP/SOCKS 禁编解码槽; SSH 必填 `hostKey`、其余禁; TCP/UDP 禁 `handshakeTimeoutSeconds`; 仅 UDP 可给 `idleTimeoutSeconds`/`maxSessions` 且两端点必须是 `ipEndpoint`; XCodec 模式必填 `cache`、非 zlib 模式禁 `compressorLevel`)。端口、超时、会话数、压缩级别的范围与 `size` 的正则都在 Schema 里声明; 唯一命名、引用存在、缓存图无环、Go 正则、尺寸溢出与 SSH 密钥文件等语义检查则在守护进程内完成。
 
-`config/schema_test.py` 用 `Draft202012Validator` 独立校验: `check_schema(schema)` 自检 Schema 本身, 再验证 `examples/*.json`、`wanproxy.example.json`、`srv.go/demo/wanproxy.example.json` 全部通过, 并对 `testdata/{valid,invalid}` 下共享夹具断言 `is_valid == (kind == "valid")`。`config/fixtures_test.go` 的 `TestConfigurationFixtures` 用同一批夹具喂给 Go 的 `Parse`, 断言 valid 全部接受、invalid 全部拒绝 —— Go 解析器与 Python Schema 校验共用一套事实。`make schema` (`uv run --with jsonschema python config/schema_test.py`) 是可选的开发期校验, 守护进程运行时不需要。
+`config/schema_test.py` 用 `Draft202012Validator` 独立校验: `check_schema(schema)` 自检 Schema 本身, 再验证 `examples/*.json`、`wanproxy.example.json`、`srv/demo/wanproxy.example.json` 全部通过, 并对 `testdata/{valid,invalid}` 下共享夹具断言 `is_valid == (kind == "valid")`。`config/fixtures_test.go` 的 `TestConfigurationFixtures` 用同一批夹具喂给 Go 的 `Parse`, 断言 valid 全部接受、invalid 全部拒绝 —— Go 解析器与 Python Schema 校验共用一套事实。`make schema` (`uv run --with jsonschema python config/schema_test.py`) 是可选的开发期校验, 守护进程运行时不需要。
 
-夹具共 5 份合法 (`socks-ipv6.json`、`tcp-codec.json`、`udp-options.json`、`udp.json`、`unix-tcp.json`) 与 20 份非法 (`bad-type.json`、`cache-forbidden-path.json`、`case-sensitive-fields.json`、`codec-forbidden-compressor.json`、`empty-family.json`、`empty.json`、`large-sessions.json`、`legacy-json.json`、`missing-cache.json`、`missing-log-regex.json`、`missing-port.json`、`null-port.json`、`socks-upstream.json`、`ssh-no-key.json`、`tcp-udp-options.json`、`udp-codec.json`、`udp-unix.json`、`unknown-field.json`、`upstream-zero.json`、`zero-idle.json`)。`legacy-json.json` 是一个被显式拒绝的、不符合当前顶层布局的负例; `case-sensitive-fields.json` 确认字段名大小写敏感。`config/config_test.go` 另有 `TestCompleteJSONConfig` (一次覆盖 log/caches/codecs/四种 type/monitor 与对象导出)、`TestJSONErrors` (空对象、null、数组、未知字段、缺失/null 端口、重复键、尾随内容、非法日志级别与正则)、`TestProxyValidation`、`TestCacheAndCodecValidation`、`TestLoadJSONOnly` (非 JSON 文本被 `Load` 拒绝)、`TestParseSize`; `config/lifecycle_test.go` 验证解析失败时共享磁盘引用被关闭、`Close` 幂等且保留错误; `config/examples_test.go` 逐一加载 `../examples/*.json`。
+夹具共 5 份合法 (`socks-ipv6.json`、`tcp-codec.json`、`udp-options.json`、`udp.json`、`unix-tcp.json`) 与 20 份非法 (`bad-type.json`、`cache-forbidden-path.json`、`case-sensitive-fields.json`、`codec-forbidden-compressor.json`、`empty-family.json`、`empty.json`、`large-sessions.json`、`missing-cache.json`、`missing-log-regex.json`、`missing-port.json`、`null-port.json`、`socks-upstream.json`、`ssh-no-key.json`、`tcp-udp-options.json`、`udp-codec.json`、`udp-unix.json`、`unknown-field.json`、`unknown-top-level.json`、`upstream-zero.json`、`zero-idle.json`)。`unknown-top-level.json` 保留旧式 `socksProxies` 顶层键, 是一个被显式拒绝的、不符合当前顶层布局的负例; `case-sensitive-fields.json` 确认字段名大小写敏感。`config/config_test.go` 另有 `TestCompleteJSONConfig` (一次覆盖 log/caches/codecs/四种 type/monitor 与对象导出)、`TestJSONErrors` (空对象、null、数组、未知字段、缺失/null 端口、重复键、尾随内容、非法日志级别与正则)、`TestProxyValidation`、`TestCacheAndCodecValidation`、`TestLoadJSONOnly` (非 JSON 文本被 `Load` 拒绝)、`TestParseSize`; `config/lifecycle_test.go` 验证解析失败时共享磁盘引用被关闭、`Close` 幂等且保留错误; `config/examples_test.go` 逐一加载 `../examples/*.json`。
 
 ### 示例配置
 
-`examples/` 下 5 份示例 (全部带 `$schema: "../config/schema.json"`): `forwarding.json` (TCP + UDP 纯转发, 供 `fwdproxy` 使用)、`udp-echo.json` (UDP 转发 + monitor)、`tcp-xcodec-echo.json` (命名 memory 缓存 + xcodec 编解码 + monitor)、`two-proxy-chain.json` (两条 TCP 代理构成 zlib+xcodec 编解码链, 分别挂 `peerCodec` 与 `interfaceCodec`, 带 `trackStatistics`)、`socks-with-monitor.json` (SOCKS + monitor)。模块根 `wanproxy.example.json` 是完整部署示例: `log` 级别与掩码、`128MB` memory + `1GB` disk + pair 缓存层次、`encode`/`decode` 两个 zlib 级 6 的 `zlib+xcodec` 编解码、四条代理 (3300→3301→3302 的 TCP 链、3302 的 SOCKS、5300→53 的 UDP), monitor 在 `9900`。`srv.go/demo/wanproxy.example.json` 是演示舰队的 10 代理模板 (见「演示拓扑与端口」)。
+`examples/` 下 5 份示例 (全部带 `$schema: "../config/schema.json"`): `forwarding.json` (TCP + UDP 纯转发, 供 `fwdproxy` 使用)、`udp-echo.json` (UDP 转发 + monitor)、`tcp-xcodec-echo.json` (命名 memory 缓存 + xcodec 编解码 + monitor)、`two-proxy-chain.json` (两条 TCP 代理构成 zlib+xcodec 编解码链, 分别挂 `peerCodec` 与 `interfaceCodec`, 带 `trackStatistics`)、`socks-with-monitor.json` (SOCKS + monitor)。模块根 `wanproxy.example.json` 是完整部署示例: `log` 级别与掩码、`128MB` memory + `1GB` disk + pair 缓存层次、`encode`/`decode` 两个 zlib 级 6 的 `zlib+xcodec` 编解码、四条代理 (3300→3301→3302 的 TCP 链、3302 的 SOCKS、5300→53 的 UDP), monitor 在 `9900`。`srv/demo/wanproxy.example.json` 是演示舰队的 10 代理模板 (见「演示拓扑与端口」)。
 
 ## 监控与日志
 
@@ -296,7 +297,7 @@ UDP 是固定目标转发: 不套用流编解码, 也不做 SSH 成帧; 配置�
 
 对象名用 `cache.<name>`/`codec.<name>`/`proxy.<name>` 分隔命名空间; `status.go` 的 `CodecStatus` 把 `mode`/`compressorLevel`/`trackStatistics` 与四计数器快照一起输出, 未配置或 `ModeNone` 的槽为 `null`。
 
-`common` 包实现 C++ `Log::mask` 语义的分级日志: slog TextHandler (stderr) 外包一层 `maskHandler`, 掩码是 (组件正则, 级别) 的有序列表, 第一个匹配的掩码决定结果 —— 消息级别不低于掩码级别才输出; 组件不匹配任何掩码时输出; 一条掩码都没有时全部输出。`Mask(regex, level)` 编译失败返回错误 (对应 C++ `regcomp` 失败), `SetLevel` 用单一 catch-all 替换全部掩码, `ResetMasks` 清空, `Component(path)` 派生带 C++ 风格组件路径 (如 `/wanproxy/proxy/proxy0`) 的 logger。守护进程 `cmd/wanproxy` 的安装顺序与 C++ `main()` 一致: 横幅 (`WANProxy (Go port)` 与版权行) 先于任何掩码打印, 因此 `-q` 下也可见; `-v`/`-q` 用 `common.SetLevel(Debug/Error)` 装单一 catch-all, 配置里的 `log.masks` 不生效; 不带 `-q`/`-v` 时先 `ResetMasks()`, 再逐条安装 `cfg.LogMasks`, 最后用 `common.Mask(".?", cfg.LogLevel)` 追加一条覆盖所有组件的兜底掩码。配置里的 `log.level` 只接受 `debug`/`info`/`warn`/`error` (`parseLogLevel`)。
+`common` 包实现 C++ `Log::mask` 语义的分级日志: slog TextHandler (stderr) 外包一层 `maskHandler`, 掩码是 (组件正则, 级别) 的有序列表, 第一个匹配的掩码决定结果 —— 消息级别不低于掩码级别才输出; 组件不匹配任何掩码时输出; 一条掩码都没有时全部输出。`Mask(regex, level)` 编译失败返回错误 (对应 C++ `regcomp` 失败), `SetLevel` 用单一 catch-all 替换全部掩码, `ResetMasks` 清空, `Component(path)` 派生带 C++ 风格组件路径 (如 `/wanproxy/proxy/proxy0`) 的 logger。守护进程 `cmd/wanproxy` 的安装顺序与 C++ `main()` 一致: 横幅 (`WANProxy`) 先于任何掩码打印, 因此 `-q` 下也可见; `-v`/`-q` 用 `common.SetLevel(Debug/Error)` 装单一 catch-all, 配置里的 `log.masks` 不生效; 不带 `-q`/`-v` 时先 `ResetMasks()`, 再逐条安装 `cfg.LogMasks`, 最后用 `common.Mask(".?", cfg.LogLevel)` 追加一条覆盖所有组件的兜底掩码。配置里的 `log.level` 只接受 `debug`/`info`/`warn`/`error` (`parseLogLevel`)。
 
 ## 命令行工具
 
@@ -317,7 +318,7 @@ diskdup 以最小写入量把源卷复制成目标卷 (`diskdup [-s block_size] 
 - 哈希与帧: `hash_test.go` 跑 C++ `xcodec-hash1` 的 256 个已知答案向量与 roll-vs-重算检查; `TestEncodeDecodeCharKAT` 移植 C++ `xcodec-encode-decode1` 对每个字节值的往返; `golden_test.go` 钉死 ESCAPE/EXTRACT/REF/BACKREF 与 HELLO/FRAME/ASK/LEARN/ADVANCE/EOS/EOS_ACK 的精确线上字节, 含一次最小会话交换。
 - 会话: `session_test.go` 覆盖完整状态机、独立对端缓存、协议违例拒绝与 gratuitous LEARN 规则; `session_limits_test.go` 覆盖背压、取消、微小帧上限与截断传输。
 - 部署: `relay_test.go` 在真实 TCP 上跑双代理链 (客户端侧 peer 编解码 + 服务端侧 interface 编解码、独立缓存), 验证数据完整性、每编解码四个 C++ 字节计数器与跨连接去重; 三代理测试以 18 MiB 传输与极小缓存同时驱动两个编解码槽; `flow_test.go` 用无缓冲 `net.Pipe` 验证写阻塞时控制流量仍能推进。
-- 配置与 Schema: `config/fixtures_test.go` 与 `config/schema_test.py` 共用 5 份合法 / 20 份非法夹具, 分别由 Go 解析器和 Draft 2020-12 校验器验证; `examples_test.go` 加载全部 `examples/*.json`; `config/config_test.go` 覆盖完整 JSON 配置、错误输入、代理/缓存/编解码语义校验、`TestLoadJSONOnly` 与 `ParseSize`; `config/lifecycle_test.go` 覆盖解析失败时的磁盘句柄回收与幂等 `Close`; `srv.go/internal/daemon/config_test.go` 用守护进程同一个 `config.Parse` 校验演示模板经端口/路径替换后仍是合法的 10 代理拓扑。
+- 配置与 Schema: `config/fixtures_test.go` 与 `config/schema_test.py` 共用 5 份合法 / 20 份非法夹具, 分别由 Go 解析器和 Draft 2020-12 校验器验证; `examples_test.go` 加载全部 `examples/*.json`; `config/config_test.go` 覆盖完整 JSON 配置、错误输入、代理/缓存/编解码语义校验、`TestLoadJSONOnly` 与 `ParseSize`; `config/lifecycle_test.go` 覆盖解析失败时的磁盘句柄回收与幂等 `Close`; `srv/internal/daemon/config_test.go` 用守护进程同一个 `config.Parse` 校验演示模板经端口/路径替换后仍是合法的 10 代理拓扑。
 - 端到端: `e2e/e2e_test.go` 用内嵌 JSON 模板构建并运行守护进程 (SOCKS5 客户端 → proxy0 → zlib+xcodec WAN → proxy1 → SOCKS → echo), 断言回显逐字节一致且 monitor `/status` 中 `codecToOutgoingBytes` 显著小于 `incomingToCodecBytes`; `e2e/ssh_e2e_test.go` 用两个带显式 `hostKey` 的 SSH-SSH 代理夹一段 zlib+xcodec WAN 跳; `e2e/udp_e2e_test.go` 覆盖空/普通/60000 字节数据报的 UDP 回显、monitor 的 `kind: "udp"` 计数器与 HTML UDP 状态行, 并验证活跃 UDP 会话下守护进程能被干净终止。`proxy/udp_test.go` 另覆盖 IPv4/IPv6、并发客户端隔离、空闲重建、会话/队列上限与取消。
 - SSH: `transport_test.go` 覆盖握手、DH 组交换、密钥派生、NEWKEYS 切换、加标签/不加标签成帧与 100KB 加密往返。
 - XCDFS/日志/diskdup: registry、FIFO 回绕与索引失效、边界损坏检查、跨重开的 XUID 命名空间隔离、Memory+Disk 配对; C++ `Log::mask` 语义 (有序正则、首匹配生效、未匹配输出、空表全输出) 与 `log.masks` 校验 (含非法正则拒绝); diskdup 的最小写入、短卷停止、尾部残块与 CLI。
@@ -325,13 +326,13 @@ diskdup 以最小写入量把源卷复制成目标卷 (`diskdup [-s block_size] 
 
 已知差异 (不含上文 SSH NEWKEYS 与 XCDFS registry 修复): 算法子集过时 (以现代标准衡量); XCDFS 在途索引块写满才落盘 (与 C++ 相同的取舍); SOCKS 成功响应在 dial 之后、应答携带绑定地址、缓冲数据保留; 会话生命周期更严格 (EOS 后数据、过早 EOS_ACK、截断传输都是错误, LEARN 应答独立于共享缓存淘汰被钉住); UDP 是固定目标转发、保留正常丢包与乱序语义、受会话与队列上限约束且不支持 SOCKS5 UDP ASSOCIATE; tack/diskdup 失败非零退出; 未移植 IRC 与 HTTP 协议库、`uinet` 用户态 TCP/IP 栈、event/callback 子系统、`Buffer`/引用计数/线程基础设施 (由 Go 切片、goroutine 与 GC 取代) 以及 `websplat` 演示 Web 服务器; `XCodecCache::connect` 的进程级 UUID 表换成内存缓存的 per-cache children map 与磁盘缓存的 XCDFS registry。C++ SSH 互操作仍是独立的验证目标。
 
-## srv.go 演示服务端
+## srv 演示服务端
 
-`srv.go` 用一个进程完成四件事: 拉起 wanproxy.go 演示舰队与进程内 SSH echo、在 `127.0.0.1:3101` 提供 HTTP API、通过代理链跑服务端基准、在 SIGINT/SIGTERM 时完整拆除 (不留孤儿子进程)。
+`srv` 用一个进程完成四件事: 拉起 wanproxy 演示舰队与进程内 SSH echo、在 `127.0.0.1:3101` 提供 HTTP API、通过代理链跑服务端基准、在 SIGINT/SIGTERM 时完整拆除 (不留孤儿子进程)。
 
 ### 舰队生命周期
 
-`internal/daemon` 的 `Start` 顺序: `prepare` (建目录; 缺 `wanproxy.go/bin/{wanproxy,tack,xcdump}` 时在该目录跑 `make build`; 缺主机密钥时生成演示用 RSA-2048 PKCS#1 PEM, 权限 0600; `renderConfig` 读 `demo/wanproxy.example.json`) → `spawnWanproxy` 以 `-c data/wanproxy.json` 启动 wanproxy 子进程 (stdout/stderr 按行加 `[wanproxy]` 前缀转进 Go 日志) → `waitForHTTP` 轮询 monitor `/status` 至多 15s (2xx 或 404 均视为就绪) → 启动进程内 SSH echo (`bench.ServeSSHEcho` 加载同一主机密钥, 每连接握手后 `io.Copy(tr, tr)`) → 等 echo 端口可连至多 10s。任何一步失败都先拆除已启动的部分。
+`internal/daemon` 的 `Start` 顺序: `prepare` (建目录; 缺 `wanproxy/bin/{wanproxy,tack,xcdump}` 时在该目录跑 `make build`; 缺主机密钥时生成演示用 RSA-2048 PKCS#1 PEM, 权限 0600; `renderConfig` 读 `demo/wanproxy.example.json`) → `spawnWanproxy` 以 `-c data/wanproxy.json` 启动 wanproxy 子进程 (stdout/stderr 按行加 `[wanproxy]` 前缀转进 Go 日志) → `waitForHTTP` 轮询 monitor `/status` 至多 15s (2xx 或 404 均视为就绪) → 启动进程内 SSH echo (`bench.ServeSSHEcho` 加载同一主机密钥, 每连接握手后 `io.Copy(tr, tr)`) → 等 echo 端口可连至多 10s。任何一步失败都先拆除已启动的部分。
 
 `renderConfig` 是纯 JSON 变换: `json.Unmarshal` 成 `map[string]any` 后递归 `apply`, 把 `port` 值 `3101`/`9901`/`8349` 分别替换成 `paths.SRVPort()`/`MonitorPort()`/`SSHEchoPort()`, 把 `path` 值 `"wanproxy.xcache"` 换成 `paths.XCachePath`, 把每个 `hostKey` 换成 `paths.HostKeyPath`, 再 `json.MarshalIndent` (两空格) 写回 `data/wanproxy.json` (由 `json` 编码器处理转义, `daemon/config_test.go` 用带引号与反斜杠的路径验证)。内部代理跳的端口保持模板中的固定值。`Restart(clearCache)` 由 `restartMu` 串行化: 停止、可选删除 `data/wanproxy.xcache` (XCDFS 卷, 内存缓存重启后总是冷的) 得到真正的冷启动基线、再 `Start`。`Stop` 幂等: 先关 echo, 再给子进程 SIGTERM (Windows 直接 Kill), 3s 宽限后 SIGKILL。
 
@@ -368,11 +369,11 @@ diskdup 以最小写入量把源卷复制成目标卷 (`diskdup [-s block_size] 
 
 `internal/tools` 对已存文件跑三步分析: 带内压缩 (`tack -c -s`)、字典两遍 (先 `-c -Q -p dict` 建字典, 再压缩两遍得到 first/second pass 尺寸)、`xcdump -v` 帧转储, 然后汇总 EXTRACT/REF/ESCAPE/data 计数、data 字节数、按出现次数排序的前 8 个哈希与前 24 帧。
 
-`cmd/stack` 是根 Makefile 背后的跨平台编排器: `dev` 同时起后端二进制与 `pnpm --dir web dev` (任一方退出或 Ctrl-C 时杀整棵进程树); `start` 后台化并写 `srv.go/data/pids/{srv,web}.pid` 与 `server.log`/`web.log`; `logs` 先输出各日志尾部 4096 字节再每 500ms 增量跟随; `build-go` 编译 wanproxy.go 全部包与五个二进制再编 `srv.go/bin/wanproxy-srv`; `test-go` 跑 wanproxy.go 测试加 srv.go 的 vet + 测试; `clean` 只删构建产物。
+`cmd/stack` 是根 Makefile 背后的跨平台编排器: `dev` 同时起后端二进制与 `pnpm --dir web dev` (任一方退出或 Ctrl-C 时杀整棵进程树); `start` 后台化并写 `srv/data/pids/{srv,web}.pid` 与 `server.log`/`web.log`; `logs` 先输出各日志尾部 4096 字节再每 500ms 增量跟随; `build-go` 编译 wanproxy 全部包与五个二进制再编 `srv/bin/wanproxy-srv`; `test-go` 跑 wanproxy 测试加 srv 的 vet + 测试; `clean` 只删构建产物。
 
 ## web 仪表盘
 
-React 19 + react-router 7 + Vite 8 + TailwindCSS 4 (`@tailwindcss/vite`), UI 用 shadcn 组件 (cva 变体) 与 recharts 图表。`src/lib/api.ts` 用原生 `fetch` 请求 `http://127.0.0.1:3101`, 类型定义与 SRV 的 JSON 逐字段对齐; Files 页的文件传输改用 axios, 以便经 `UPLOAD_ROUTES` 里可选的入口 (SRV 直连 :3101、passthrough :8310、zlib 链 :8311、xcodec 链 :8312、WAN 链 :8320) 上传/下载, 让浏览器流量真实穿过代理链。`vite.config.ts` 设 `@` 别名并用 `advancedChunks` 把 react 系与 UI 系依赖拆成独立 vendor 块; `pnpm build` 是 `tsc -b && vite build`, `pnpm lint` 用 flat config (ui/ 组件豁免 fast-refresh 规则)。主题色是 `src/index.css` 里的语义 token (`primary` 蓝、`success`/`warning`/`info`、`chart-1..5`), 支持暗色。
+React 19.3 + react-router-dom 7 + Vite 8.3 + TailwindCSS 4.3 (`@tailwindcss/vite`), UI 用 shadcn 组件 (cva 变体) 与 recharts 图表。`src/lib/api.ts` 用原生 `fetch` 请求 `http://127.0.0.1:3101`, 类型定义与 SRV 的 JSON 逐字段对齐; Files 页的文件传输改用 axios, 以便经 `UPLOAD_ROUTES` 里可选的入口 (SRV 直连 :3101、passthrough :8310、zlib 链 :8311、xcodec 链 :8312、WAN 链 :8320) 上传/下载, 让浏览器流量真实穿过代理链。`vite.config.ts` 设 `@` 别名并用 `advancedChunks` 把 react 系与 UI 系依赖拆成独立 vendor 块; `pnpm build` 是 `tsc -b && vite build`, `pnpm lint` 用 flat config (ui/ 组件豁免 fast-refresh 规则)。主题色是 `src/index.css` 里的语义 token (`primary` 蓝、`success`/`warning`/`info`、`chart-1..5`), 支持暗色。
 
 | 路由          | 页面                | 内容                                                                   |
 | ------------- | ------------------- | ---------------------------------------------------------------------- |
@@ -407,10 +408,10 @@ make install     # 安装 web 依赖并构建 Go 后端
 make dev         # SRV (:3101) + web (:5173), 前台; 打开 http://localhost:5173
 ```
 
-直接使用库与工具 (在 `wanproxy.go/` 下):
+直接使用库与工具 (在 `wanproxy/` 下):
 
 ```sh
-cd wanproxy.go
+cd wanproxy
 go build ./... && go test ./...
 go run ./cmd/wanproxy -c examples/udp-echo.json       # 单 UDP 转发 + monitor
 go run ./cmd/wanproxy -c wanproxy.example.json        # 完整 TCP + SOCKS + UDP 部署
@@ -440,4 +441,4 @@ monitor 端点: `GET /status` (JSON)、`GET /` (HTML)、`GET /:text`、`GET /obj
 
 **延伸阅读**
 
-演示服务端 `srv.go` 的 HTTP 层直接构建在 [yukino_http](./yukino-http) 上 —— 路由分组、CORS 中间件、`Recovery`、文件下载的 `TakeOver` 接管与 Range 流式写出都是该框架机制的直接应用; 移植中用到的并发原语 (`sync.WaitGroup`、channel、`sync.Once`、`context` 级联取消) 与标准库约定见 [Go 语言核心](./go)。
+演示服务端 `srv` 的 HTTP 层直接构建在 [yukino_http](./yukino-http) 上 —— 路由分组、CORS 中间件、`Recovery`、文件下载的 `TakeOver` 接管与 Range 流式写出都是该框架机制的直接应用; 移植中用到的并发原语 (`sync.WaitGroup`、channel、`sync.Once`、`context` 级联取消) 与标准库约定见 [Go 语言核心](./go)。

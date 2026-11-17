@@ -2,11 +2,11 @@
 title: "Subagent: 委派子系统与隔离 agent loop"
 description: "Yukino 的委派子系统: Agent 工具把有界子任务交给独立的 agent loop 执行, 覆盖参数与校验、角色定义、fork 上下文继承、五层工具过滤、后台异步任务, 以及 teammate 的多团队选择语义"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
+local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

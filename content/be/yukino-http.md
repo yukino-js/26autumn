@@ -2,11 +2,11 @@
 title: "yukino_http 技术笔记"
 description: "yukino_http Go HTTP 框架: Koa 风格洋葱模型中间件与延迟响应、TakeOver 响应接管、按段 Trie 路由、分组 Router、SSE 与 RFC 6455 WebSocket 的实现机制与适用场景"
 local_path: "$HOME/github/yukino.go/libs/yukino_http"
-local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
+local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_http`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_http`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

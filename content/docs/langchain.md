@@ -2,11 +2,11 @@
 title: "LangChain.js 1.x: Monorepo、Runnable 内核与 createAgent 中间件体系"
 description: "拆解 LangChain.js 1.x 的 monorepo 包布局、langchain-core 的 Runnable 与消息/工具抽象、provider 集成模式、langchain 主包的 createAgent 与中间件体系, 以及构建、测试与发布设施。"
 local_path: "$HOME/Downloads/langchainjs"
-local_commit: "fb6179926d70c76cc81a238aed4f2ad8c9531d4b"
+local_commit: "7704471213953c590c50deaa0ae8e9a34b66003d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/langchainjs` 在 `fb6179926d70` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/langchainjs` 在 `77044712139` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -146,9 +146,9 @@ Runnable 继承的 `Serializable` 基类定义了 `lc_serializable`、`lc_namesp
 
 ### 子路径导出
 
-core 的 package exports 共 73 个导出条目, 全部按功能域拆分, 例如 runnables、messages 及其 tool 子域、tools、prompts、output_parsers、callbacks 的 base/manager/dispatch、language_models 的 base/chat_models/structured_output/profile、retrievers、tracers、load 与 load/serializable、embeddings、caches、documents、errors、memory、chat_history、context、indexing、example_selectors。细粒度子路径是各包 tree-shaking 与按需加载的基础。
+core 的 package exports 共 74 个导出条目, 全部按功能域拆分, 例如 runnables、messages 及其 tool 子域、tools、prompts、output_parsers、callbacks 的 base/manager/dispatch、language_models 的 base/chat_models/structured_output/profile、retrievers、tracers、load 与 load/serializable、embeddings、caches、documents、errors、memory、chat_history、context、decisions、indexing、example_selectors。细粒度子路径是各包 tree-shaking 与按需加载的基础。
 
-core 的依赖面极窄, 只有七个: `@cfworker/json-schema` (浏览器可用的 JSON Schema 校验)、`@standard-schema/spec` (标准 schema 规范)、`js-tiktoken` (token 计数)、`langsmith`、`mustache`、`p-queue` 与 `zod` (`^3.25.76 || ^4` 双版本)。
+core 的依赖面极窄, 只有七个: `@cfworker/json-schema` (浏览器可用的 JSON Schema 校验)、`@standard-schema/spec` (标准 schema 规范)、`js-tiktoken` (token 计数)、`langsmith`、`mustache`、`p-queue` 与 `zod` (`^4.6.6`; v3 schema 仍经 `zod/v3` 子路径兼容)。
 
 ## 消息体系
 
@@ -175,7 +175,7 @@ core 的依赖面极窄, 只有七个: `@cfworker/json-schema` (浏览器可用�
 
 ### 内容块体系
 
-消息内容支持结构化块 (text、image_url、tool_call、reasoning 等), 由类型化的消息结构 (`MessageStructure`) 承载。两个机制值得记录:
+消息内容支持结构化块 (text、image_url、tool_call、reasoning、refusal 等), 由类型化的消息结构 (`MessageStructure`) 承载。两个机制值得记录:
 
 - **v1 内容标记**: 当构造消息时传入 `contentBlocks` (而非 `content`), 构造器会以这些块作为内容, 并在 `response_metadata` 上标记 `output_version: "v1"`。`contentBlocks` getter 见到该标记直接返回块数组; `AIMessage` 的 getter 还会把 `tool_calls` 中尚未出现在内容块里的条目以 `tool_call` 块补齐, 实现双向同步。
 - **provider 内容翻译**: `src/messages/block_translators/` 下为 openai、anthropic、google、google_genai、google_vertexai、bedrock_converse、groq、deepseek、xai、ollama、openrouter 等 provider 各有一个翻译器。当 `response_metadata.model_provider` 命中时, `contentBlocks` getter 用对应翻译器把厂商原生格式转成标准块。
@@ -292,12 +292,12 @@ Google 一线的统一包是 `@langchain/google`: 它不依赖 Google 官方 SDK
 
 内部按“facade + 协议处理器 + 转换器 + 生成类型”四层解耦:
 
-| 层         | 位置                                                   | 职责                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| facade     | `chat_models/base.ts` 的 `BaseChatGoogle`              | 只保留 LangChain 抽象: 工具绑定、结构化输出、模型画像; 经懒加载的 `apiHandler` getter 把协议细节全部委托出去, 处理器可由构造参数以工厂形式注入 (默认 `generateContent`)                                                                                                                                                                                                                                                                                                                                      |
-| 协议处理器 | `chat_models/handlers/`                                | `GoogleChatApiHandler` 抽象基类定义 generate/streamResponseChunks/streamChatModelEvents/invocationParams/formatStructuredOutputTool 与 URL 构造契约; 实现 `GenerateContentApiHandler` 承载 GenerateContent 线协议: 非流式与 `alt=sse` 流式 (eventsource-parser 解析)、`promptFeedback.blockReason` 安全阻断、按 `previousUsage` 做 usage delta 计算; URL 按平台构造 —— Gemini 走 `models/{model}:{method}`, Vertex 区分 Express (publishers 级) 与 location (`projects/{id}/locations/{loc}/publishers/...`) |
-| 转换器     | `converters/shared/` 与 `converters/generate_content/` | 协议无关的参数规整集中在 shared (`getGoogleChatModelParams`); GenerateContent 专属转换器 (messages、params、tools、stream_events) 各取所需                                                                                                                                                                                                                                                                                                                                                                   |
-| 生成类型   | `chat_models/api_types/`                               | OpenAPI 规格 (`src/openapi/generate-content-openapi.json`, 由 `typegen:fetch` 脚本拉取) 经 sparktype 生成 `GenContent` 命名空间, 类型按协议归组                                                                                                                                                                                                                                                                                                                                                              |
+| 层         | 位置                                                                               | 职责                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| facade     | `chat_models/base.ts` 的 `BaseChatGoogle`                                          | 只保留 LangChain 抽象: 工具绑定、结构化输出、模型画像; 经懒加载的 `apiHandler` getter 把协议细节全部委托出去, 处理器可由构造参数以工厂形式注入, 内置 `generateContent` (默认) 与 `interactions` 两条协议线                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 协议处理器 | `chat_models/handlers/`                                                            | `GoogleChatApiHandler` 抽象基类定义 generate/streamResponseChunks/streamChatModelEvents/invocationParams/formatStructuredOutputTool 与 URL 构造契约; 实现 `GenerateContentApiHandler` 承载 GenerateContent 线协议: 非流式与 `alt=sse` 流式 (eventsource-parser 解析)、`promptFeedback.blockReason` 安全阻断、按 `previousUsage` 做 usage delta 计算; URL 按平台构造 —— Gemini 走 `models/{model}:{method}`, Vertex 区分 Express (publishers 级) 与 location (`projects/{id}/locations/{loc}/publishers/...`)。同目录的 `InteractionsApiHandler` 承载第二条线协议 Interactions (`/v1beta/interactions`, 流式为 `?alt=sse`) |
+| 转换器     | `converters/shared/`、`converters/generate_content/` 与 `converters/interactions/` | 协议无关的参数规整集中在 shared (`getGoogleChatModelParams`); 两条协议线各自的转换器 (messages、params、tools、stream_events) 各取所需                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 生成类型   | `chat_models/api_types/`                                                           | 两份 OpenAPI 规格 (`src/openapi/generate-content-openapi.json` 与 `src/openapi/interactions-openapi.json`, 由 `typegen:fetch` 脚本拉取) 经 sparktype 生成 `GenContent` 与 `Interactions` 命名空间, 类型按协议归组                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 旧三线仍然存在, 并在 Changesets 的 `fixed` 分组里与 common/auth 包锁定同版发布: `@langchain/google-genai` 基于 `@google/generative-ai` SDK; `@langchain/google-vertexai` 与 `@langchain/google-vertexai-web` 分别基于 `@langchain/google-gauth` (本地/GCP 环境的服务账号) 与 `@langchain/google-webauth` (环境变量凭据, 面向无文件系统平台), 二者又都构建在认证无关的 `@langchain/google-common` 上。
 
@@ -329,7 +329,7 @@ Google 一线的统一包是 `@langchain/google`: 它不依赖 Google 官方 SDK
 
 ### ReactAgent 与三节点模型
 
-`createAgent` 有 14 个重载, 覆盖结构化输出格式的各种组合, 实现体只有一句 `return new ReactAgent(params)`。ReactAgent 的类注释描述了 ReAct 三节点模型:
+`createAgent` 有 13 个重载, 覆盖结构化输出格式的各种组合, 实现体只有一句 `return new ReactAgent(params)`。ReactAgent 的类注释描述了 ReAct 三节点模型:
 
 ```text
 model_request ──▶ 模型调用
@@ -363,7 +363,7 @@ ReactAgent 用一个类型配置包承载全部类型信息 (响应、状态、�
 
 ### createMiddleware 与钩子
 
-`createMiddleware` 是工厂函数, 接受名称、状态 schema (跨调用持久化)、上下文 schema (只读且不持久化)、附加工具、流转换器, 以及六个钩子 —— 两个包装钩子加四个生命周期钩子:
+`createMiddleware` 是工厂函数, 接受名称、状态 schema (跨调用持久化)、上下文 schema (只读且不持久化)、附加工具、流转换器、`tracePolicy` (只决定 `LangChainTracer` 向 LangSmith 上报该中间件钩子 run 的内容, 执行与回调仍见原始值), 以及六个钩子 —— 两个包装钩子加四个生命周期钩子:
 
 - `wrapModelCall`: 包装模型调用, 可改请求、重试或返回 Command 控制流向。
 - `wrapToolCall`: 包装工具执行, 用途包括改参数、错误处理与重试、结果后处理、缓存、日志、鉴权, 以及返回 Command 做高级控制。
@@ -375,28 +375,33 @@ ReactAgent 用一个类型配置包承载全部类型信息 (响应、状态、�
 - **状态解析彼此独立**: 每个包装层收到请求时, 用自己的 `stateSchema` 对节点原始状态做 `interopParse`, 上下文用 `contextSchema` 解析; 解析的对象是节点状态而非内层中间件改过的请求副本, 因此每个中间件看到的都是按自身 schema 稳定的状态视图。
 - **运行时对象冻结**: 每层拿到一个 `Object.freeze` 的 Runtime 投影, 字段为 context、store、configurable、writer、interrupt、signal。
 - **工具修改校验**: 在 `wrapModelCall` 里新增客户端工具必须有某个中间件提供 `wrapToolCall` 来执行它, 否则抛错; 替换已注册工具 (同名不同实例) 恒被拒绝, 以保住 ToolNode 的执行身份。
-- **错误归属**: 包装层内的异常统一经 `MiddlewareError.wrap` 打上当前中间件名, 便于定位是哪一层失败。
+- **错误归属**: 包装层内的异常统一经 `MiddlewareError.wrap` 打上当前中间件名, 便于定位是哪一层失败; 例外是 LangGraph 控制流异常 (`isGraphBubbleUp`) 与 `ModelRefusalError`, 二者原样透传。
 
 ### 内置中间件
 
-| 中间件                                        | 职责                                                                             |
-| --------------------------------------------- | -------------------------------------------------------------------------------- |
-| hitl                                          | 人工介入中断, 支持 batched 与 per_call 两种模式                                  |
-| summarization                                 | 上下文摘要压缩                                                                   |
-| dynamicSystemPrompt                           | 运行时动态系统提示词                                                             |
-| llmToolSelector                               | 用 LLM 预选工具子集                                                              |
-| pii / piiRedaction                            | PII 检测与脱敏, 内建 email、credit_card (Luhn 校验)、ip、mac_address、url 检测器 |
-| contextEditing                                | 上下文编辑, 含清除工具调用结果的编辑                                             |
-| toolCallLimit / modelCallLimit                | 工具调用与模型调用次数上限                                                       |
-| todoList                                      | 待办清单工具与系统提示词                                                         |
-| modelFallback / modelRetry                    | 模型降级与重试                                                                   |
-| toolRetry / toolError                         | 工具重试与错误处理                                                               |
-| toolEmulator                                  | 工具模拟执行                                                                     |
-| providerToolSearch                            | provider 侧工具搜索                                                              |
-| openAIModeration                              | OpenAI 内容审核                                                                  |
-| anthropicPromptCaching / bedrockPromptCaching | 提示词缓存                                                                       |
+| 中间件                                        | 职责                                                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| hitl                                          | 人工介入中断, 支持 batched 与 per_call 两种模式                                             |
+| summarization                                 | 上下文摘要压缩                                                                              |
+| dynamicSystemPrompt                           | 运行时动态系统提示词                                                                        |
+| llmToolSelector                               | 用 LLM 预选工具子集                                                                         |
+| pii / piiRedaction                            | PII 检测与脱敏, 内建 email、credit_card (Luhn 校验)、ip、mac_address、url 检测器            |
+| contextEditing                                | 上下文编辑, 含清除工具调用结果的编辑                                                        |
+| toolCallLimit / modelCallLimit                | 工具调用与模型调用次数上限                                                                  |
+| todoList                                      | 待办清单工具与系统提示词                                                                    |
+| modelFallback / modelRetry                    | 模型降级与重试                                                                              |
+| modelRefusal                                  | 模型响应含 `refusal` 内容块时抛 `ModelRefusalError` (标记为不可重试)                        |
+| autoMode                                      | 用判定模型 (decision model) 在执行前对指定工具调用做风险分类, 高风险调用直接返回错误 (beta) |
+| modelRouter                                   | 用判定模型的 `Choice` 答案在 agent run 开始时选定本 run 使用的模型 (beta)                   |
+| toolRetry / toolError                         | 工具重试与错误处理                                                                          |
+| toolEmulator                                  | 工具模拟执行                                                                                |
+| providerToolSearch                            | provider 侧工具搜索                                                                         |
+| openAIModeration                              | OpenAI 内容审核                                                                             |
+| anthropicPromptCaching / bedrockPromptCaching | 提示词缓存                                                                                  |
 
-provider 专属中间件 (OpenAI 内容审核、Anthropic 与 Bedrock 提示词缓存) 集中在 `agents/middleware/provider/` 下的 `openai`、`anthropic`、`aws` 三个子目录; 通用中间件平铺在 `agents/middleware/` 根。另有近似 token 计数工具函数 `countTokensApproximately` (`agents/middleware/contextEditing.ts`)。toolRetry 在重试分类之前会把 LangGraph 控制流异常 (`isGraphBubbleUp`, 含人机中断) 原样重新抛出, 保证 MCP elicitation 这类工具中断不会被当成普通工具错误吞掉。这套中间件把“生产环境常见横切关注点”从用户代码里剥离出来, 用户只需按需组合。
+provider 专属中间件 (OpenAI 内容审核、Anthropic 与 Bedrock 提示词缓存) 集中在 `agents/middleware/provider/` 下的 `openai`、`anthropic`、`aws` 三个子目录; 通用中间件平铺在 `agents/middleware/` 根。另有近似 token 计数工具函数 `countTokensApproximately` (`agents/middleware/utils.ts`)。toolRetry 在重试分类之前会把 LangGraph 控制流异常 (`isGraphBubbleUp`, 含人机中断) 原样重新抛出, 保证 MCP elicitation 这类工具中断不会被当成普通工具错误吞掉。这套中间件把“生产环境常见横切关注点”从用户代码里剥离出来, 用户只需按需组合。
+
+**判定模型基座。** autoMode 与 modelRouter 都依赖 core 新增的 `decisions` 子路径: `BaseDecisionModel` 把"向模型提结构化的判定问题"抽象成一个统一调用面, 问题类型是判别联合——`noul` (是/否, 可带 true/false 判据)、`choice` (至少一个选项的键值表)、`score` (至少两档有序等级) 与 `box` (要求模型给出坐标框)。`State` 可以是字符串、JSON 对象或 JSON 数组, 标准媒体块可出现在任意深度, provider 自行决定是否原生发送; 应答侧对应 `NoulAnswer`/`ChoiceAnswer`/`ScoreAnswer`/`BoxAnswer`。把问卷式判定从各家 provider 的临时 prompt 里抽出来, 是这两个中间件能保持 provider 无关的前提。
 
 ### HITL: batched 与 per_call 两种中断模式
 

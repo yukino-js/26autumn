@@ -1,7 +1,8 @@
 [
   "index",
   {
-    "type": "section-header",
+    "type": "dir",
+    "name": "hr",
     "label": "HR 面"
   }
 ]

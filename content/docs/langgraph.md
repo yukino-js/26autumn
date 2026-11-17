@@ -2,11 +2,11 @@
 title: "LangGraph.js: Pregel 超步引擎、通道状态模型与检查点持久化"
 description: "从 monorepo 包分层讲到 StateGraph 到 Pregel 的超步执行循环、channels 与 reducers 的状态更新语义、节点间状态与上下文传递、上下文压缩与 Store 长期记忆、checkpointer 持久化与恢复、interrupt/resume 人机协同与严格恢复、流式输出模式与 SDK/前端集成"
 local_path: "$HOME/Downloads/langgraphjs"
-local_commit: "caa5c53a65b0d0cce2a597167087f1bf9b170437"
+local_commit: "e58f0c6d21882af337bf4b7a652208e5c619b705"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/langgraphjs` 在 `caa5c53a65b0` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/langgraphjs` 在 `e58f0c6d218` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -31,7 +31,7 @@ LangGraph.js 是一个用 TypeScript 编写的低层 agent 编排 runtime。仓�
 
 ### 1.1 工程基座
 
-仓库使用 pnpm workspaces + turbo 组织, `package.json` 声明 node 引擎 `^22.11 || ^24 || >=26`, packageManager 为 pnpm 10.27.0。核心库 `@langchain/langgraph` (目录 `libs/langgraph-core`) 把 `@langchain/core` (`^1.1.48`) 与 zod (`^3.25.32 || ^4.2.0`) 声明为 peerDependency, 使版本冲突暴露在安装期而非运行期; 直接依赖包括 workspace 内的 checkpoint 与 sdk 包、`@langchain/protocol` (协议事件类型) 与 `@standard-schema/spec` (Standard Schema 互操作)。子路径导出划分为: `"."` (Node 全量入口)、`"./web"` (浏览器安全入口, 不含依赖 `node:async_hooks` 的部分)、`"./channels"`、`"./pregel"`、`"./prebuilt"`、`"./remote"`、`"./stream"`、`"./zod"` 与 `"./zod/schema"`。另有 `libs/langgraph` 提供无 scope 的 `langgraph` 包名, 源码为逐子路径的一行 re-export (每个子路径对应一个文件, 各自 re-export `@langchain/langgraph` 的对应导出)。
+仓库使用 pnpm workspaces + turbo 组织, `package.json` 声明 node 引擎 `^22.11 || ^24 || >=26`, packageManager 为 pnpm 10.27.0。核心库 `@langchain/langgraph` (目录 `libs/langgraph-core`) 把 `@langchain/core` (`^1.3.4`) 与 zod (`^3.25.32 || ^4.2.0`) 声明为 peerDependency, 使版本冲突暴露在安装期而非运行期; 直接依赖包括 workspace 内的 checkpoint 与 sdk 包、`@langchain/protocol` (协议事件类型) 与 `@standard-schema/spec` (Standard Schema 互操作)。子路径导出划分为: `"."` (Node 全量入口)、`"./web"` (浏览器安全入口, 不含依赖 `node:async_hooks` 的部分)、`"./channels"`、`"./pregel"`、`"./prebuilt"`、`"./remote"`、`"./stream"`、`"./zod"` 与 `"./zod/schema"`。另有 `libs/langgraph` 提供无 scope 的 `langgraph` 包名, 源码为逐子路径的一行 re-export (每个子路径对应一个文件, 各自 re-export `@langchain/langgraph` 的对应导出)。
 
 ### 1.2 核心执行与状态基座
 
@@ -215,6 +215,8 @@ export const MessagesZodState = z.object({
 - `InMemoryStore` 用 Map 实现, 命名空间以 `":"` 连接为键; `AsyncBatchedStore` 给任意 store 包一层自动批处理。
 
 生产后端: `PostgresStore` 基于 pgvector, 向量索引支持 HNSW (m=16, ef_construction=200) 与 IVFFlat (lists=100), 算子 `vector_cosine_ops`, 并支持 TTL 配置; Redis 与 MongoDB 亦有对应 store。图内通过 compile 时传入 `store`, 节点里从 `config.store` 或 `getStore()` 取用。
+
+MongoDB store 把语义检索的过滤拆成两段: 只有索引配置 `filters` 里声明过的字段进 `$vectorSearch.filter`, 其余条件落到检索之后的 `$match`; 后过滤会剔掉向量检索封顶窗口里的命中, 因此会逐步放大 `numCandidates` 与 `limit`, 直到取满一页或索引已无更多命中 (窗口上限 10000)。命名空间前缀另以 `namespacePath` 参与预过滤, 再按真实 namespace 数组逐段 `$match`, 消除 `["team/alice"]` 与 `["team", "alice"]` 写成同一路径的歧义。换句话说, `filters` 不只是索引提示, 它决定了过滤走哪条路径以及大集合上的召回完整性。
 
 ## 五、Pregel 超步执行循环
 
@@ -476,9 +478,20 @@ await workflow.invoke([1, 2, 3]); // [2, 3, 4]
 
 dev server 另有几处收紧: `GET /threads/:thread_id/runs/:run_id/stream` 只在该 run 存在且属于该线程时返回事件, 否则以 `Run not found` 结束; 每个 run 保留自己的事件日志, 各读者从各自位置读取 (`client.runs.joinStream({ lastEventId: "-1" })` 从头读), 已结束 run 的事件在内存保留两分钟以支撑 `Last-Event-ID` 重连; 协议命令改用发送该请求的 HTTP/WebSocket 连接的认证, 而非首次触碰线程时的认证。
 
-### 12.3 React 集成
+### 12.3 React 集成与跨框架 UI 层
 
-`@langchain/react` 的核心是 `useStream` hook: 管理一次 thread 运行的消息流、中断应答与重连水合, 配套 context provider、状态 selectors、suspense-stream 与媒体 hooks。SDK 内的 `StreamOrchestrator` (`src/ui/orchestrator.ts`) 承担跨框架的流编排逻辑。
+`@langchain/react` 的核心是 `useStream` hook: 管理一次 thread 运行的消息流、中断应答与重连水合, 配套 context provider、状态 selectors、suspense-stream 与媒体 hooks。
+
+hook 本身很薄, 真正的编排逻辑在 SDK 的 `src/ui/` 层 (`libs/sdk/src/ui/index.ts` 是其公共面), 与 React 解耦, 因此同一套逻辑也能驱动别的框架:
+
+- **流编排**: `StreamOrchestrator` 处理服务端流, `CustomStreamOrchestrator` 处理自带传输的实现, 二者都以 `StreamEngine` 为类型契约; `StreamManager` 把事件流落成可订阅的状态。
+- **消息装配**: `MessageTupleManager` 负责元组 ↔ 消息实例的转换 (`toMessageDict`/`toMessageClass`), 分支信息由 `getBranchContext`/`getMessagesMetadataMap` 提供, 对应时间旅行时需要的历史分支视图。
+- **中断规范化**: `extractInterrupts` 与 `normalizeInterruptForClient` 把服务端的多种 interrupt 形态收敛成 UI 可消费的一种; HITL 出入参另经 `normalizeHitlInterruptPayload`/`normalizeHitlResponseForServer` 处理, 使"审阅者看到的表单"与"回给服务端的 resume 值"分离。
+- **命名空间与子结构**: `SubagentManager` 依命名空间维护子 agent 树, `SubgraphDiscovery` 发现子图, 深度与父节点由 `calculateDepthFromNamespace`/`extractParentIdFromNamespace` 从命名空间反解——这正是第九章命名空间约定在客户端的兑现。
+- **工具调用视图**: `seedToolCallsFromMessages` 从消息回填工具调用, `AssembledToolCall` 与 `ToolCallStatus` 描述"已发出、已执行、无人应答"等状态。
+- **运行队列与乐观输入**: `PendingRunsTracker` 维护服务端排队中的 run, 乐观输入在确认前先上屏, 失败再回滚。
+
+在这一层之上, `StreamController` 的 `stateKeys` 选项 (`libs/sdk/src/stream/types.ts`) 让 UI 只声明自己要读的状态键, 客户端即只保留这些键 (外加 messages 键) 到根 store, 而不是把整个 `values` 拉进内存——大状态图的常见优化点。设置之后, 水合时的 `getState()` 也会带上 `select` (固定的水合字段加 `values.<key>`), 让服务端只返回这些键; 未设 `stateKeys` 则取完整状态、不带 `select` (`libs/sdk/src/stream/controller.ts`)。此外 `ToolCallStatus` (`libs/sdk/src/ui/tool-payload.ts`) 除已发出、已执行、无人应答外还有 `"incomplete"` 表示被截断的调用; `resolveSubagentNamespace()` 让 run 尚未启动子 agent 时也能解析命名空间——优先取工具消息 `artifact.checkpoint_ns`, 否则回查 checkpoint 历史, 并发查询共享一次查找。
 
 ### 12.4 langgraph-api 与 CLI
 

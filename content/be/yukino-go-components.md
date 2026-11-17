@@ -1,12 +1,12 @@
 ---
 title: "Yukino Go 分布式基础设施组件: 九个组件的设计原理、适用场景与边界"
-description: "面向 Go 后端与分布式系统读者的组件解析: 逐一讲清 redis_lock、consistent_hash、consistent_cache、red_mq、tcc、time_wheel、timer、lsm_tree、raft 九个组件解决的问题、关键数据结构与算法、设计取舍, 以及在什么场景下不该使用它们"
+description: "面向 Go 后端与分布式系统读者的组件解析: 逐一讲清 distributed_lock、consistent_hash、consistent_cache、red_mq、tcc、time_wheel、timer、lsm_tree、raft 九个组件解决的问题、关键数据结构与算法、设计取舍, 以及在什么场景下不该使用它们"
 local_path: "$HOME/github/yukino.go/components"
-local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
+local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `components`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `components`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -18,7 +18,7 @@ flowchart TB
     A --> D[消息与事务]
     A --> E[调度与存储]
     A --> F[共识]
-    B --> B1[redis_lock]
+    B --> B1[distributed_lock]
     C --> C1[consistent_hash]
     C --> C2[consistent_cache]
     D --> D1[red_mq]
@@ -42,32 +42,32 @@ flowchart TB
 
 | 组件             | 解决的问题                   | 核心机制                                             | 形态          |
 | ---------------- | ---------------------------- | ---------------------------------------------------- | ------------- |
-| redis_lock       | 跨进程互斥                   | token 所有权 + Lua 比较再执行 + 看门狗续期 + RedLock | 库            |
+| distributed_lock | 跨进程互斥                   | token 所有权 + Lua 比较再执行 + 看门狗续期 + RedLock | 库            |
 | consistent_hash  | 键到节点的稳定映射与数据搬迁 | 加权虚拟节点环 + 所有权索引 + 迁移 diff              | 库            |
 | consistent_cache | 缓存与数据库的读写一致       | 读路径禁写标记抑制回填                               | 库            |
 | red_mq           | 可靠消息投递                 | Redis Streams 消费者组 + 逐消息重试 + 死信           | 库            |
 | tcc              | 跨参与方事务的最终一致       | 日志先行的 Try/Confirm/Cancel + 监控恢复             | 库            |
-| time_wheel       | 海量延迟任务调度             | 槽位时间轮 (进程内) 与分钟分片 zset (分布式)         | 库            |
+| time_wheel       | 海量延迟任务调度             | 槽位时间轮 (进程内) 与单 zset + key 索引 (分布式)    | 库            |
 | timer            | 秒级定时任务平台             | cron 预展开 + 分片锁调度 + HTTP 回调                 | 可执行服务    |
 | lsm_tree         | 高写入吞吐的本地存储引擎     | WAL + 跳表 memtable + 块式 SSTable + 分级 compaction | 库            |
 | raft             | 多副本强一致复制             | 选举 + 日志复制 + ReadIndex + 成员变更               | 库 + 示例服务 |
 
-组件间的实际依赖只有两条, 都是对 redis_lock 的复用:
+组件间的实际依赖只有两条, 都是对 distributed_lock 的复用:
 
-- consistent_hash 的 Redis 环后端把环级互斥委托给 redis_lock, 保证拓扑变更 (增删节点、迁移) 不并发发生; 进程内跳表环后端则自带本地锁, 不依赖 Redis。
-- tcc 的参考实现 (example 目录) 用 redis_lock 实现多协调者之间的监控循环互斥, 事务日志落在 MySQL。
+- consistent_hash 的 Redis 环后端把环级互斥委托给 distributed_lock, 保证拓扑变更 (增删节点、迁移) 不并发发生; 进程内跳表环后端则自带本地锁, 不依赖 Redis。
+- tcc 的参考实现 (example 目录) 用 distributed_lock 实现多协调者之间的监控循环互斥, 事务日志落在 MySQL。
 
 timer 常被误认为是上述原语的组装, 但它实际上完全自包含: 不 import 其余八个组件, 自带基于 token 所有权的 Redis 分布式锁 (`pkg/redis.ReentrantDistributeLock`)、按天的布隆过滤器、有界工作池、包装 robfig/cron/v3 的解析器, 并基于 libs/yukino_http 提供 REST API (参见 [yukino-http](./yukino-http))。它与其余组件的关系是"同一类问题的另一种完整实现", 而非依赖关系。lsm_tree 与 raft 同样独立, 分别提供存储引擎与共识核心, 供需要本地日志或强一致决策序列的场景嵌入。
 
-## 二、redis_lock -- 所有权安全的分布式锁
+## 二、distributed_lock -- 所有权安全的分布式锁
 
 ### 2.1 要解决的问题
 
-分布式锁的最小错误是"释放了别人的锁"。典型事故链条是: 客户端 A 加锁后执行超时, 锁租约自动过期, 客户端 B 取到同一把锁, 此时 A 才执行释放, 却把 B 的锁删掉了。redis_lock 的设计目标是让这类错误在构造上不可能发生。
+分布式锁的最小错误是"释放了别人的锁"。典型事故链条是: 客户端 A 加锁后执行超时, 锁租约自动过期, 客户端 B 取到同一把锁, 此时 A 才执行释放, 却把 B 的锁删掉了。distributed_lock 的设计目标是让这类错误在构造上不可能发生。
 
 ### 2.2 用 token 表达所有权
 
-锁在 Redis 中是一个字符串键 (实际键名带 `REDIS_LOCK_PREFIX_` 前缀), 值为一个唯一 token, 由进程 ID 与 goroutine ID 拼成 (`pid_goroutineID`, 见 utils 包的 `GetProcessAndGoroutineIDStr`), 因此同一进程内不同 goroutine 得到的 token 也不同。所有会改变锁状态的操作都不是裸命令, 而是"先比较 token 再执行"的 Lua 脚本:
+锁在 Redis 中是一个字符串键 (实际键名 = `DistributedLockKeyPrefix` 常量 + 业务 key, 该常量值为 `DISTRIBUTED_LOCK_PREFIX_`), 值是一个 24 字节随机数 (见 `crypto/rand`) 经 hex 编码得到的 token, 每次 `Lock` 调用都重新生成并由锁实例保存在内存里 (`r.token`)。所有会改变锁状态的操作都不是裸命令, 而是"先比较 token 再执行"的 Lua 脚本:
 
 ```text
 Lock()   : SET key token NX EX ttl        (SetNEX)
@@ -75,19 +75,19 @@ Unlock() : Lua { if get(key) == token then del(key) }
 Renew()  : Lua { if get(key) == token then expire(key, ttl) }   (DelayExpire)
 ```
 
-比较与删除在同一段 Lua 内完成, 中间不会被其他客户端插入执行, 这是原子性的来源。获取失败返回包装了 `ErrLockAcquiredByOthers` 的错误, `IsRetryableErr` 用来区分"锁被占用, 稍后再试"和真实故障。
+比较与删除在同一段 Lua 内完成, 中间不会被其他客户端插入执行, 这是原子性的来源。获取失败返回包装了 `ErrLockAcquiredByOthers` 的错误, `IsRetryableErr` 用来区分"锁被占用, 稍后再试"和真实故障。加锁失败时, 实例会在脱离调用方取消的 2 秒清理 context (`context.WithoutCancel` + Timeout) 中再跑一次 compare-and-delete, 回收本次写入的 token。
 
 ### 2.3 看门狗与等待策略
 
-锁的租约是一个两难: 设短了业务没跑完就丢锁, 设长了持有者崩溃后等待太久。组件给出的答案是看门狗——如果调用方不显式指定 TTL (`WithExpireSeconds`), 就进入看门狗模式, 默认租约 30 秒 (`DefaultLockExpireSeconds`), 后台每 10 秒 (`WatchDogWorkStepSeconds`) 续期一次, 每次把寿命重设为 15 秒 (10+5, 多出的 5 秒用于容忍网络延迟)。续期脚本返回非 1 时说明锁已易主, 看门狗判定 `errLockLost` 并退出, 而不是无限重试去争夺一把不属于自己的锁。看门狗的 context 派生自加锁时的 context, 该 context 取消会终止续期; `Unlock` 无论成功失败都会停掉看门狗。
+锁的租约是一个两难: 设短了业务没跑完就丢锁, 设长了持有者崩溃后等待太久。组件给出的答案是看门狗——如果调用方不显式指定 TTL (`WithExpireSeconds`), 就进入看门狗模式, 默认租约 30 秒 (`DefaultLockExpireSeconds`), 后台每 10 秒 (`WatchDogWorkStepSeconds`) 续期一次, 每次把寿命重设为 15 秒 (10+5, 多出的 5 秒用于容忍网络延迟)。续期脚本返回非 1 时说明锁已易主, 看门狗判定 `errLockLost` 并退出, 而不是无限重试去争夺一把不属于自己的锁。看门狗的 context 由 `context.WithoutCancel` 从加锁时的 context 派生, 因此调用方取消不会中止续期, 续期一直持续到 `Unlock`; `Unlock` 无论成功失败都会停掉看门狗。锁实例内部用一个互斥量与 `held` 标志串行化 `Lock`/`Unlock`/`DelayExpire`, 未经 `Lock` 的 `DelayExpire` 直接返回 `errLockLost`。
 
 等待策略分两种: 默认非阻塞, 失败立即返回锁被占用; 以 `WithBlock` 开启阻塞模式后每 50 毫秒轮询一次, 直到获取成功或等待预算耗尽 (`WithBlockWaitingSeconds` 可调, 默认 5 秒)。
 
 ### 2.4 RedLock 与它的代价
 
-单 Redis 实例不可靠, 因此提供跨多实例的 RedLock: 强制要求至少 3 个独立节点, 逐节点加锁, 只有多数派 (`len>>1+1`) 成功才算成功, 且单节点加锁耗时必须在超时预算内 (`WithSingleNodesTimeout`, 默认 50 毫秒), 超时即不计入成功数。构造时若设置了过期时长, 还会校验"节点数 x 单节点超时 x 10 不超过锁的过期时长", 保证最坏情况下的累计超时也远小于租约, 否则直接报错拒绝创建。未达多数派时, 已拿下的节点会在 `context.WithoutCancel` 的新 context 中释放, 避免上游取消导致残留锁一直等到 TTL; 显式 `Unlock` 则遍历所有节点逐一释放。每个节点上的锁以 RedLock 的过期时长 (`WithRedLockExpireDuration`) 为 TTL, 若过期时长为 0 则回落到单锁的看门狗模式。
+单 Redis 实例不可靠, 因此提供跨多实例的 RedLock (`red_lock.go`): 强制要求至少 3 个节点, 且节点按 `network://address` 去重, 地址重复直接拒绝构造; 每个节点在构造时就用 `WithExpireSeconds(expireDuration)` 建好一把固定租约的 `RedisLock`。`Lock` 时所有节点并行加锁, 只有单节点耗时不超过 `WithSingleNodesTimeout` (默认 `DefaultSingleLockTimeout`, 50 毫秒) 的成功才算数, 达到多数派 (`len>>1+1`) 才算整体成功; 超出预算但已加上的节点会立刻释放, 释放失败的节点保留在 `held` 里交给 `Unlock`/`Close` 重试。构造时还会校验过期时长必须是正整数秒, 且"节点数 x 单节点超时 x 10 不超过锁的过期时长", 保证最坏情况下的累计超时也远小于租约, 否则直接报错拒绝创建。过期时长未设置时 `repairRedLock` 补成 30 秒 (`DefaultRedLockExpireSeconds`), 因此 RedLock 不走单锁的看门狗模式。释放使用 `context.WithoutCancel` + 单节点超时的新 context, 避免上游取消导致残留锁一直等到 TTL; `Close` 先 `Unlock` 再关闭所有底层客户端。
 
-一个容易被忽略的语义: 该锁不可重入。token 按 goroutine 隔离, 同一 goroutine 对同一 key 二次加锁会失败或阻塞。需要嵌套语义时, 应在锁之上再维护一层计数。
+一个容易被忽略的语义: 该锁不可重入, 且不可"换实例释放"。每个 `RedisLock` 实例只持有一个 token 和一个 `held` 标志, 同一实例二次 `Lock` 直接报 "already held"; 另一个实例即使在同一进程内也无法解开这把锁, 因为 token 不匹配。需要嵌套语义时, 应在锁之上再维护一层计数。
 
 ### 2.5 适用场景与边界
 
@@ -103,26 +103,26 @@ Renew()  : Lua { if get(key) == token then expire(key, ttl) }   (DelayExpire)
 
 ### 3.2 虚拟节点、权重与所有权索引
 
-环上的桶由虚拟节点构成。每个物理节点按权重贡献 `weight x replicas` 个虚拟节点, 权重被钳制在 1 到 10 之间 (≤0 取 1, ≥10 取 10), replicas 默认 5 (`WithReplicas`)。环级互斥的锁租约默认 15 秒 (`WithLockExpireSeconds`)。权重决定容量占比, replicas 决定环的平滑程度, 两个旋钮相互独立。
+环上的桶由虚拟节点构成。每个物理节点按权重贡献 `weight x replicas` 个虚拟节点, 权重被钳制在 1 到 10 之间 (≤0 取 1, ≥10 取 10), replicas 默认 5 (`WithReplicas`)。虚拟节点总数会做溢出检查, 并拒绝超过 `1<<20` 的配置。环级互斥的锁租约默认 15 秒 (`WithLockExpireSeconds`)。权重决定容量占比, replicas 决定环的平滑程度, 两个旋钮相互独立。
 
 环本身是存储无关的 `HashRing` 接口, 除了基础的刻度操作 (Add 加刻度、Floor 找前驱、Ceiling 找后继、Rem 删除刻度、Node 按分数读节点列表、Nodes 列节点) 与环级互斥 (Lock/Unlock), 还维护两套簿记: 节点到虚拟节点数 (`AddNodeToReplica`/`DeleteNodeToReplica`), 以及节点到数据键的所有权索引 (`DataKeys`/`AddNodeToDataKeys`/`DeleteNodeToDataKeys`)。所有权索引是关键——`GetNode` 解析键归属时 (`Ceiling` 找到不小于键分数的刻度, 取该刻度上的第一个节点), 会登记"这个数据键属于哪个节点", 于是迁移 diff 有了数据源, 不需要扫描全量数据就能算出应迁集合。
 
-哈希函数由 `Encryptor` 接口抽象, 内置实现 `FnvHasher` 是 FNV-1a 32 位后对 `math.MaxInt32` 取模, 把分数归一到环的有符号 32 位区间; 非测试代码中目前只提供这一种实现, 接口留出了替换空间。
+哈希函数由 `Encryptor` 接口抽象, 内置实现 `FnvHasher` 是 FNV-1a 32 位后对 `math.MaxInt32` 取模, 把分数归一到环的有符号 32 位区间; 非测试代码中目前只提供这一种实现, 接口留出了替换空间。所有对外的分数计算都经 `hashScore` 包一层, 结果必须落在 `[0, MaxInt32)` 内, 否则返回错误而不是让越界分数流进环。
 
 ### 3.3 增删节点与迁移算法
 
-`AddNode` 的顺序是: 先拿全局环锁, 查重; 登记节点副本数; 逐个虚拟节点计算分数并上环; 每上环一个虚拟节点就调用 `migrateIn` 计算迁入键集; 最后批量执行所有迁移任务。
+`AddNode` 的顺序是: 先拿全局环锁, 查重; 登记节点副本数; 逐个虚拟节点计算分数并上环; 每上环一个虚拟节点就调用 `migrateIn` 计算迁入键集, 得到一份迁移计划; 最后批量执行所有迁移任务。`AddNode`/`RemoveNode` 要求构造 `ConsistentHash` 时提供非 nil 的 `Migrator`, 否则直接返回 "node changes require a data migrator"。
 
-`migrateIn` 的核心是区间推导。对新虚拟节点, 先找它的环上前驱 (`Floor(score-1)`) 与后继 (`Ceiling(score+1)`), 其中 +1/-1 在 0 与 `MaxInt32-1` 之间显式回绕。落在左开右闭区间 (前驱分数, 本虚拟节点分数] 内的键才是应迁给新节点的, 这些键从后继节点的所有权索引里取出, 同步更新双方索引。当区间跨越分数区间的 0 点时, 代码用有符号 32 位算术把分数减去 `MaxInt32` 归一后再比较, 显式处理回绕, 而不是假设环是单调的。若该分数上已挂有多个节点, 则直接跳过迁移。
+`migrateIn` 的核心是区间推导。对新虚拟节点, 先找它的环上前驱 (`Floor(score-1)`) 与后继 (`Ceiling(score+1)`), 其中 +1/-1 在 0 与 `MaxInt32-1` 之间显式回绕。落在左开右闭区间 (前驱分数, 本虚拟节点分数] 内的键才是应迁给新节点的, 这些键从后继节点的所有权索引里取出。当区间跨越分数区间的 0 点时, 代码用有符号 32 位算术把分数减去 `MaxInt32` 归一后再比较, 显式处理回绕, 而不是假设环是单调的。若该分数上已挂有多个节点, 则直接跳过迁移。
 
 `migrateOut` 是镜像操作: 取本节点全部数据键, 选出落在自己弧段内的, 再找"下一个合法属主"。查找属主时跳过同节点的其他虚拟节点, 用已访问分数集合防止环上只剩同节点虚拟节点时无限递归; 若某分数上挂有多个节点, 直接交给同分数列表中的第二个。`RemoveNode` 对每个虚拟节点先算迁移目标, 再把该刻度从环上摘除, 全部计算完成后才执行迁移。
 
-所有迁移回调以独立 goroutine 并发执行并各自 recover, 单个迁移任务 panic 不会中断整批; `AddNode`/`RemoveNode` 通过 WaitGroup 等待全部迁移完成后才返回——迁移不是发射后不管的异步操作, 但对并发修改同一批键的其他调用方而言仍存在短暂的双写窗口, Migrator 必须幂等。
+迁移回调以独立 goroutine 并发执行并各自 recover, 单个迁移任务 panic 会被转成错误而不是中断整批; `AddNode`/`RemoveNode` 通过 WaitGroup 等待全部回调完成后, 才按迁移计划把所有权索引从 `from` 搬到 `to`——先从源节点索引删掉这批键, 再写入目标节点索引, 写目标失败时会把键集加回源节点做回滚。所有迁移错误最终用 `errors.Join` 聚合返回, 因此节点操作不会"静默成功"。迁移不是发射后不管的异步操作, 但对并发修改同一批键的其他调用方而言仍存在短暂的双写窗口, Migrator 必须幂等。
 
 ### 3.4 两种环后端与限流
 
-- 进程内跳表环 (`local.SkiplistHashRing`): 适合测试与单机。环状态由独立读写锁保护; 环锁是本地的带过期时间的互斥实体 (owner token + 到期自动释放), 与锁租约解耦, 不依赖 Redis。
-- Redis zset 环 (`redis.RedisHashRing`): 适合多实例共享。环用有序集合存储 (键形如 `redis:consistent_hash:ring:{key}`), 分数是虚拟节点分数, 成员是该分数上节点列表的 JSON; 环锁直接复用 redis_lock; 另有一个哈希键维护节点到副本数, 以及每节点一个字符串键存储数据键集合的 JSON。
+- 进程内跳表环 (`local.SkiplistHashRing`): 适合测试与单机。环状态由独立读写锁保护; 环锁是本地的带过期时间的互斥实体 (owner token + 到期自动释放), 加锁本身尊重传入 context, 过期秒数为 0 时表示不自动释放, 不依赖 Redis。
+- Redis zset 环 (`redis.RedisHashRing`): 适合多实例共享。环用有序集合存储 (键形如 `redis:consistent_hash:ring:{key}`), 分数是虚拟节点分数, 成员是该分数上节点列表的 JSON; 环锁直接复用 distributed_lock, 并把加锁得到的锁对象按"进程 + goroutine ID"记在环实例里, 解锁时取回同一个对象; 另有一个哈希键维护节点到副本数, 以及每节点一个字符串键存储数据键集合的 JSON (键名带环 key: `redis:consistent_hash:ring:{key}:node:data:{nodeID}`)。
 
 ### 3.5 适用场景与边界
 
@@ -147,7 +147,7 @@ write : db.Put -> cache.Del
 
 写路径 (`Service.Put`) 依次执行: 写禁写标记 (Redis 中是 `Enable_Lock_Key_{key}` 键, SET EX) → 删除旧缓存 → 落库 → 通过一个异步 goroutine 重新启用读路径。"重新启用"的实现不是等待, 而是对标记键执行 PEXPIRE, 把剩余寿命压缩到配置的启用延迟 (默认 1000 毫秒), 让标记在延迟后自然消失, 使所有在途读先落库, 避免刚释放标记就被慢读者污染。
 
-读路径 (`Service.Get`) 先查缓存: 命中且值为负缓存哨兵 (`NullData`, 常量值 `Err_Syntax_Null_Data`) 直接返回 `ErrorDataNotExist`; 命中则反序列化返回。未命中则回源数据库; 数据库也确实没有时写入哨兵防止穿透 (热 miss 不会反复打到数据库); 数据库命中则尝试回填。注意哨兵与正常值走的是同一条受控写入路径 `PutWhenEnable`, 即负缓存的写入同样受禁写标记抑制, 不存在绕过标记的旁路。
+读路径 (`Service.Get`) 先查缓存: 命中且值为负缓存哨兵 (`NullData`, 常量值 `Err_Syntax_Null_Data`) 直接返回 `ErrorDataNotExist`; 命中则反序列化返回。未命中则回源数据库; 数据库也确实没有时写入哨兵防止穿透 (热 miss 不会反复打到数据库); 数据库命中则尝试回填。注意哨兵与正常值走的是同一条受控写入路径 `PutWhenEnable`, 即负缓存的写入同样受禁写标记抑制, 不存在绕过标记的旁路。另有一个边界: 如果数据库里真实返回的字符串恰好等于哨兵, 回填时会追加一个 `\x00` 后缀, 读路径命中后先剥掉该后缀再交给 `Read`, 从而把"负缓存"与"值就是 `Err_Syntax_Null_Data`"区分开。
 
 禁写标记的检查与回填在一次 Lua 调用里原子完成 (`PutWhenEnable`): 先读标记键, 存在则返回 0, 否则 `SET key value EX ttl` 并返回 1。若拆成两条命令, 检查与写入之间就会被写路径插入。
 
@@ -173,11 +173,11 @@ Redis Streams 已经提供了可靠投递所需的原语: 追加写、消费者�
 
 生产者只做一件事: 把消息 XADD 到指定流, 附带一个最大长度以限制流的增长 (`WithMsgQueueLen`, 默认 500)。当前实现只设置了 MaxLen 而未启用近似截断, 因此是精确截断, 每次写入都会按上限裁剪。消费者创建时用 `XGROUP CREATE ... MKSTREAM` 以 "0-0" 起点建组建流, 组已存在 (BUSYGROUP) 时静默通过。
 
-消费者由 (流, 消费者组, 消费者) 三元组定位。主循环的每一轮: 若配置了被遗弃消息回收 (`WithAbandonedMessageRecovery`), 先 XAUTOCLAIM 认领空闲超时的遗留消息 (每轮最多 1 条, 认领游标跨轮推进); 再以 `>` 读取尚未投递给本组的新消息 (每次 1 条, 阻塞等待 receiveTimeout, 默认 2 秒); 处理完成后投递死信; 最后走一遍本消费者已分配但未确认的消息 (PEL, 从 "0-0" 起读)。回调成功则确认并清除该消息的失败计数; 失败则计数加一; 回调 panic 被 recover 后同样计为一次失败。接收出错时退避 1 秒再重试。
+消费者由 (流, 消费者组, 消费者) 三元组定位。主循环的每一轮: 若配置了被遗弃消息回收 (`WithAbandonedMessageRecovery`), 先 XAUTOCLAIM 认领空闲超时的遗留消息 (每轮最多 1 条, 认领游标跨轮推进); 再以 `>` 读取尚未投递给本组的新消息 (每次 1 条, 阻塞等待 receiveTimeout, 默认 2 秒); 处理完成后投递死信; 最后走一遍本消费者已分配但未确认的消息 (PEL, 从 "0-0" 起读), 并跳过本轮已经处理过的消息 ID, 避免同一条消息在一轮里被回调两次。回调成功则确认并清除该消息的失败计数; 失败则计数加一; 回调 panic 被 recover 后同样计为一次失败。接收出错时退避 1 秒再重试。
 
 ### 5.3 逐消息重试与死信
 
-失败计数是按消息维护的进程内 map。当某条消息的失败次数达到上限 (`WithMaxRetryLimit`, 默认 3 次), 它被交给可插拔的死信信箱 (`DeadLetterMailbox` 接口) 处理。这里有一个重要的顺序约定: 必须先成功投递到死信, 再确认原消息; 投递失败则消息保留在 PEL 中不确认, 下一轮继续重试死信投递, 保证毒消息不会静默消失。默认的死信实现 (`DeadLetterLogger`) 只打日志, 生产使用时通常会替换为"写入另一条流/落库/告警"。
+失败计数是按消息 ID 维护的进程内 map (`failureCounts`), 另有一张 ID 到消息体的表供死信投递使用。当某条消息的失败次数达到上限 (`WithMaxRetryLimit`, 默认 3 次), 它被交给可插拔的死信信箱 (`DeadLetterMailbox` 接口) 处理。这里有一个重要的顺序约定: 必须先成功投递到死信, 再确认原消息; 投递失败则消息保留在 PEL 中不确认, 下一轮继续重试死信投递, 保证毒消息不会静默消失。默认的死信实现 (`DeadLetterLogger`) 只打日志, 生产使用时通常会替换为"写入另一条流/落库/告警"。
 
 轮询、消息处理与死信投递各有独立的超时 (默认分别为 2 秒、1 秒、1 秒), 因此单个卡死的回调不会拖垮整个消费者。被遗弃消息回收的空闲阈值应设得大于回调超时, 避免抢走仍在活跃执行的消息。
 
@@ -195,9 +195,9 @@ TCC (Try-Confirm-Cancel) 把一次分布式事务拆成三阶段: Try 预留并�
 
 ### 6.2 契约与状态模型
 
-参与方实现 `TCCComponent` 接口: `ID` 标识自身; `Try` 接收事务请求并预留资源; `Confirm` 与 `Cancel` 都只接收事务 ID, 且必须幂等, 并返回带 ACK 标记的响应。组件需先注册进 `TXManager` 的注册中心, 重复 ID 会被拒绝。
+参与方实现 `TCCComponent` 接口: `ID` 标识自身; `Try` 接收事务请求并预留资源; `Confirm` 与 `Cancel` 都只接收事务 ID, 且必须幂等, 并返回带 ACK 标记的响应。组件需先注册进 `TXManager` 的注册中心, 重复 ID 会被拒绝 (空 ID 同样拒绝)。
 
-事务日志抽象为 `TXStore` 接口: CreateTX 创建事务、TXUpdate 逐组件更新 Try 结果、TXSubmit 提交终态、GetHangingTXs/GetTX 查询未完成事务、Lock/Unlock 一对锁方法供多协调者互斥。存储选型不被绑定, 仓库内的参考实现把日志落在 MySQL 的 tx_record 表 (status 加 component_try_statuses 两列, 组件 Try 状态以 JSON 存储), 锁用 redis_lock; 对记录的每次修改都包在 `SELECT ... FOR UPDATE` 行锁事务内, 组件 Try 状态只允许从 hanging 单向迁移到 successful/failure (同状态重复提交幂等返回), TXSubmit 的终态写入带互斥校验——已判定 failure 的事务不能再被提交为 successful, 反之亦然。
+事务日志抽象为 `TXStore` 接口: CreateTX 创建事务、TXUpdate 逐组件更新 Try 结果、TXSubmit 提交终态、GetHangingTXs/GetTX 查询未完成事务、Lock/Unlock 一对锁方法供多协调者互斥。存储选型不被绑定, 仓库内的参考实现把日志落在 MySQL 的 tx_record 表 (status 加 component_try_statuses 两列, 组件 Try 状态以 JSON 存储), 锁用 distributed_lock; 对记录的每次修改都包在 `SELECT ... FOR UPDATE` 行锁事务内, 组件 Try 状态只允许从 hanging 单向迁移到 successful/failure (同状态重复提交幂等返回), TXSubmit 的终态写入带互斥校验——已判定 failure 的事务不能再被提交为 successful, 反之亦然。
 
 事务的终态不是直接存储的, 而是从组件 Try 结果推导 (`getStatus`):
 
@@ -210,7 +210,7 @@ TCC (Try-Confirm-Cancel) 把一次分布式事务拆成三阶段: Try 预留并�
 
 `Transaction` 的执行是: 校验请求 (非空、组件不重复) → 创建日志 → 并发执行所有 Try (每个 Try 的结果立即 TXUpdate 落日志) → 主协程收到第一个失败就取消上下文通知其余 Try → 排空所有 Try 协程保证日志完整 → 在一个脱离原 context 的新 context (`context.WithoutCancel` + Timeout 超时) 中推进二阶段。二阶段的失败不回传给调用方 (调用方拿到的是 txID 与 Try 阶段是否全部成功的布尔值), 而是记日志交给监控循环兜底重试。
 
-监控循环每隔 MonitorTick (默认 10 秒) 扫描一次。它先尝试获取全局锁 (租约为 Timeout+1 秒), 拿不到就跳过且不视为错误 (多半是别的实例在干活); 拿到后拉取未完成事务, 用 8 个 worker 并发推进: 推导状态为 successful 则逐组件 Confirm, 否则逐组件 Cancel, 每个响应必须 ACK, 全部成功后 TXSubmit 提交终态; 释放锁用的是脱离监控 context 的新 context, 避免扫描超时的取消连带释放锁失败。单个事务出错不影响整批; 循环自身出错时下一轮周期从配置周期开始翻倍退避 (2 倍、4 倍……), 上限为配置周期的 8 倍, 成功后恢复配置周期。Timeout 默认 5 秒。
+监控循环每隔 MonitorTick (默认 10 秒) 扫描一次。它先尝试获取全局锁 (租约为 Timeout+1 秒), 拿不到就跳过且不视为错误 (多半是别的实例在干活); 拿到后拉取未完成事务, 用 8 个 worker 并发推进: 推导状态为 successful 则逐组件 Confirm, 否则逐组件 Cancel, 每个响应必须 ACK 且回带的 `ComponentID`/`TXID` 与请求一致 (不符同样判定失败), 全部成功后 TXSubmit 提交终态; 释放锁用的是脱离监控 context 的新 context, 避免扫描超时的取消连带释放锁失败。单个事务出错不影响整批; 循环自身出错时下一轮周期从配置周期开始翻倍退避 (2 倍、4 倍……), 上限为配置周期的 8 倍, 成功后恢复配置周期。Timeout 默认 5 秒。
 
 ### 6.4 适用场景与边界
 
@@ -226,27 +226,27 @@ TCC (Try-Confirm-Cancel) 把一次分布式事务拆成三阶段: Try 预留并�
 
 ### 7.2 进程内时间轮
 
-进程内实现 (`TimeWheel`) 是一个槽位数组 (默认 10 槽, tick 间隔默认 1 秒), 每个槽挂一条任务链表, 另有"key 到链表元素"的索引用于 O(1) 取消; 以相同 key 重复 AddTask 会先移除旧任务再挂入新任务, 天然支持重新调度。调度时把到期时刻转换成 (槽位, 圈数): 延迟除以 (槽数 x tick 间隔) 得整商作为圈数, 余下的 tick 数加上当前游标位置对槽数取模决定槽位; 游标每经过一圈把圈数减一, 归零才真正执行。这样一个小轮子也能承载任意远的未来任务。
+进程内实现 (`TimeWheel`) 是一个槽位数组 (默认 10 槽, tick 间隔默认 1 秒), 每个槽挂一条任务链表, 另有"key 到链表元素"的索引用于 O(1) 取消; 以相同 key 重复 AddTask 会先移除旧任务再挂入新任务, 天然支持重新调度。调度时把到期时刻与下一个 tick 比较换算成需要前进的 tick 数: 对槽数取模加上当前游标得到槽位, 整除槽数得到圈数; 游标每经过一圈把圈数减一, 归零才真正执行。这样一个小轮子也能承载任意远的未来任务。
 
-所有状态由单 goroutine 独占, 通过 select 串行处理 tick、新增、删除三类事件, 因此无需加锁。每个任务在独立 goroutine 中执行并 recover, 单个任务 panic 不会杀死轮体。停止操作由 sync.Once 保证幂等。
+所有状态由单 goroutine 独占, 通过 select 串行处理 tick、新增、删除三类事件, 因此无需加锁。每个任务在独立 goroutine 中执行并 recover, 单个任务 panic 不会杀死轮体。停止操作由 sync.Once 保证幂等, `Stop` 会先等 run 循环退出, 再等已在执行的任务结束。
 
 ### 7.3 分布式时间轮
 
-进程内时间轮无法跨实例。分布式实现 (`RTimeWheel`) 改用 Redis 的有序集合按分钟分片: 任务的执行时刻 Unix 秒作为分数, 任务体 (含 key、回调 URL、方法、请求体、请求头) 作为成员, 落到 `yukino_time_wheel_task_{分钟}` 键上。配套一个删除标记集合 `yukino_time_wheel_delete_set_{分钟}`, 取消任务时不是真的从有序集合中删, 而是打标记。
+进程内时间轮无法跨实例。分布式实现 (`RTimeWheel`) 改用 Redis 的一个有序集合加一个索引哈希: 有序集合固定为 `yukino_time_wheel_tasks:{wheel}`, 任务的执行时刻 Unix 秒作为分数, 任务体 (含 key、回调 URL、方法、请求体、请求头) 作为成员; 索引哈希 `yukino_time_wheel_task_index:{wheel}` 保存 key 到同一份任务 JSON 的映射, 加入与删除都以 key 为入口。
 
 关键操作全部是 Lua:
 
-- 加入任务时先 SREM 清除该 key 的删除标记, 再 ZADD 写入任务, 使重新调度同一 key 的任务自动撤销旧取消;
-- 取消任务时 SADD 写入删除标记, 并在标记集合大小首次变为 1 时设置 120 秒过期, 限制内存同时覆盖时钟偏差;
-- 弹出到期任务时, 在同一脚本内读取删除标记 (SMEMBERS)、按分数区间取出到期任务并从集合中移除 (ZRANGE BYSCORE + ZREMRANGEBYSCORE)。读取与移除原子完成, 这是它能在多实例下不重复触发的根本原因。
+- 加入任务时先按 key 从索引哈希取出旧任务并 `ZREM` 掉, 再 `HSET` 写新任务、`ZADD` 写有序集合, 使重新调度同一 key 的任务自动顶替旧条目;
+- 取消任务时从索引哈希取出任务 JSON, 取不到直接返回 0, 否则 `ZREM` 有序集合成员并 `HDEL` 索引——删除只认 key, 不再依赖执行时刻;
+- 弹出到期任务时按分数区间 `(-inf, 当前秒]` 取前 1000 条 (`ZRANGEBYSCORE ... LIMIT 0 1000`), 在脚本内逐条 `cjson.decode` 并校验 key 非空 (任何一条损坏都会让整次调用报错), 只有当索引哈希里该 key 的值与集合成员完全一致时才 `HDEL`, 随后 `ZREM`。解码、校验与移除原子完成, 这是它能在多实例下不重复触发的根本原因。
 
-运行循环每秒触发一次, 以"当前分钟起点到当前秒"为分数窗口取任务, 跳过已删除的, 交给 16 个 worker 并发发起 HTTP 回调, 单轮整体超时 30 秒。回调方法与地址在入队时就被校验 (只接受 GET、POST 两种方法和 http(s) 前缀), 执行前还会再校验一次。回调以 JSON 请求体发出, 响应状态码非 200 即判定该任务执行失败 (仅记日志, 不重试)。
+运行循环每秒触发一次, 每轮最多弹出 1000 条到期任务, 交给 16 个 worker 并发发起 HTTP 回调, 单轮整体超时 30 秒。回调方法与地址在入队时就被校验 (只接受 GET、POST 两种方法和 http(s) 前缀), 执行前还会再校验一次。回调以 JSON 请求体发出, 响应状态码非 200 即判定该任务执行失败 (仅记日志, 不重试)。
 
 ### 7.4 适用场景与边界
 
 适合: 进程内的高并发短延迟任务 (超时关闭、心跳、重试), 以及跨实例的秒级到分钟级延迟回调。
 
-不适合: 需要毫秒级精度的场景; 分布式实现依赖分钟分片, 因此取消时必须传入与加入时相同的执行时刻, 调用方需要自行保存该时刻。任务体是 HTTP 回调描述, 因此业务逻辑要暴露成可回调的接口。
+不适合: 需要毫秒级精度的场景; 分布式实现把全部任务放在同一个有序集合里, 单轮弹出量有 1000 条上限, 突发流量会把剩余任务推迟到下一轮, 且同一 key 在同一时刻只能存在一条任务。任务体是 HTTP 回调描述, 因此业务逻辑要暴露成可回调的接口。
 
 ## 八、timer -- 面向生产的秒级定时任务平台
 
@@ -267,7 +267,7 @@ timer 是一个多实例可水平扩展的定时任务服务, 完全自包含: �
 
 ### 8.2 预展开与分片加锁
 
-Migrator 每 MigrateStepMinutes (默认 60 分钟) tick 一次, 以当前小时为粒度抢锁 (锁键 `migrator_lock_{小时}`, 初始租约 20 分钟), 读取全部启用定时器, 对每个 cron 表达式展开下一个窗口 `(整点(now+步长), 整点(now+2x步长))` 内的触发时刻并批量写入任务行 (每个定时器之间 sleep 5 秒做节流), 最后把窗口内的任务写入 Redis 缓存。重新展开是幂等的 (任务行有 timer_id+run_timer 唯一键), 因而锁只是减少重复工作而非正确性前提; 成功后把锁续期为 120 分钟的持有租约。
+Migrator 每 MigrateStepMinutes (默认 60 分钟) tick 一次, 以当前小时为粒度抢锁 (锁键 `migrator_lock_{小时}`, 初始租约 20 分钟), 读取全部启用定时器, 对每个 cron 表达式展开下一个窗口 `(整点(now+步长), 整点(now+2x步长))` 内的触发时刻并批量写入任务行 (每个定时器之间 sleep 5 秒做节流), 最后把窗口内的任务写入 Redis 缓存。重新展开是幂等的 (任务行有 timer_id+run_timer 唯一键), 因而锁只是减少重复工作而非正确性前提; 成功后把锁续期为 120 分钟的持有租约, 迁移失败或续期失败时会主动释放锁, 让其他实例下一轮接手。
 
 Scheduler 每 TryLockGapMilliSeconds (默认 100 毫秒) 遍历固定数量的分片 (BucketsNum, 默认 10), 对当前分钟与上一分钟分别提交调度任务。每个 (分钟, 分片) 只有一个实例能抢到锁 (锁键 `time_bucket_lock_{分钟}_{分片}`); 锁租约分为两段: 抢占窗口 70 秒 (刚好覆盖一分钟处理窗口), 分片成功扫完后由 Trigger 回调 ack 把锁续期为 130 秒的持有租约, 使同一 (分钟, 分片) 在持有窗口内不会被本实例的下一轮调度或其他实例重复处理; 若扫描中途失败则不 ack, 锁在 70 秒后自然过期, 交由其他实例接手。
 
@@ -297,15 +297,15 @@ LSM-Tree 的思想是把随机写转换为顺序写: 写入先进内存缓冲与
 
 ### 9.2 写入路径与日志
 
-写操作先追加预写日志, 再写内存表。日志记录采用变长整数编码: 键长度、值长度、键、值, 文件以 O_APPEND 追加方式打开, 崩溃后重开不会覆盖已写内容; 日志文件按内存表世代命名为 `walfile/{世代}.wal`, 重放时逐条解析并灌回内存表。需要明确一个边界: 当前日志记录只有长度前缀与原始字节, 没有校验和字段, 也没有 fsync, 因此无法检测尾部截断之外的数据损坏, 进程崩溃前的写入也可能仍在页缓存中。这是教学实现的取舍, 生产存储必须补上校验与 fsync 策略。
+写操作先追加预写日志, 再写内存表。日志记录采用变长整数编码: 键长度、值长度、键、值, 文件以 O_APPEND 追加方式打开, 崩溃后重开不会覆盖已写内容; 日志文件按内存表世代命名为 `walfile/{世代}.wal`, 重放时逐条解析并灌回内存表。解析到不完整的尾记录时(长度前缀或键值本身被截断)停止并保留已解析部分, 同时把文件 `Truncate` 到最后一个完整记录的末尾, 因此崩溃留下的半条日志不会阻塞后续启动。写入侧每条记录写完后都会 `dest.Sync()` 刷盘。需要明确一个边界: 日志记录只有长度前缀与原始字节, 没有校验和字段, 因此无法检测"长度自洽但内容损坏"的情况, 也没有目录 fsync 与批量提交策略。这是教学实现的取舍, 生产存储必须补上校验与更完整的持久化策略。
 
 ### 9.3 内存表与磁盘表
 
 内存表由 `MemTable` 接口抽象 (Put/Get/All/Size/EntriesCnt), 默认实现是跳表, 提供有序遍历供落盘时顺序写出。当活跃内存表的估算大小上浮 25% 后仍超过单表预算 (SSTSize, 默认 1MB) 时, 它被转为只读并投入刷盘队列, 同时新建内存表与一个新世代的日志。并发模型上, 写入持有全局写锁 (写 WAL 与写内存表在同一临界区内), 读取持全局读锁先查内存表与只读内存表; 每个层级另有独立的读写锁, 读盘与合并时的表增删互不阻塞对方所在的层级。
 
-磁盘表文件命名为 `{层级}_{序号}.sst`, 由三类块加一个固定 32 字节的尾部组成: 数据块、每个数据块对应的布隆过滤器块、索引块。数据块内的记录做前缀压缩 (共享前缀长度、非共享键长、值长三个变长整数 + 键后缀 + 值), 每块目标大小 16KB (SSTDataBlockSize)。索引项保留一个分隔键 (`GetSeparatorBetween` 通常取前一块的最后一个键) 加该数据块的偏移与长度, 因此定位是二分而非扫描。尾部用四个变长整数记录数据区、过滤区与索引区的位置与长度, 这也是尾部大小固定的原因。
+磁盘表文件命名为 `{层级}_{序号}.sst`, 由三类块加一个固定大小的尾部组成: 数据块、每个数据块对应的布隆过滤器块、索引块。尾部大小由 `SSTFooterSize` 固定, `repair` 会把它抬到至少 40 字节; 写盘时用 O_TRUNC 打开、逐段 `writeFull` 写入并 `Sync`, 任一步失败则 `Close` 时删除半成品文件。数据块内的记录做前缀压缩 (共享前缀长度、非共享键长、值长三个变长整数 + 键后缀 + 值), 每块目标大小 16KB (SSTDataBlockSize)。索引项保留一个分隔键 (`GetSeparatorBetween` 通常取前一块的最后一个键) 加该数据块的偏移与长度, 因此定位是二分而非扫描。尾部用四个变长整数记录数据区、过滤区与索引区的位置与长度, 这也是尾部大小固定的原因; 读取时会校验三段偏移必须首尾相接并正好填满尾部之前的所有字节。
 
-单次读取的顺序是: 活跃内存表、只读内存表 (新者优先)、层级零的各个表 (新者优先)、层级一到层级 N 每层做一次层内二分 (层内键区间不重叠, 至多命中一个表)。命中候选表后, 先在索引上二分定位数据块, 用该数据块的布隆过滤器判断键"可能存在", 再读块逐条比对。布隆过滤器以 FNV-1a 为基础、旋转双哈希生成 k 个位 (k 按 `0.69 x m / 键数` 钳制在 1 到 30, m 默认 1024 位), 把不存在键的读取大幅减少。
+单次读取的顺序是: 活跃内存表、只读内存表 (新者优先)、层级零的各个表 (新者优先)、层级一到层级 N 每层做一次层内二分 (层内键区间不重叠, 至多命中一个表)。命中候选表后, 先在索引上二分定位数据块, 用该数据块的布隆过滤器判断键"可能存在", 再读块逐条比对。布隆过滤器以 FNV-1a 为基础、旋转双哈希生成 k 个位 (k 按 `0.69 x m / 键数` 钳制在 1 到 30, m 默认 1024 位), 把不存在键的读取大幅减少; 过滤器数据长度不符或 k 值越界时 `Exist` 直接按"可能存在"返回, 宁可多读一次也不误判成不存在。
 
 ### 9.4 合并策略
 
@@ -329,7 +329,7 @@ LSM-Tree 的思想是把随机写转换为顺序写: 写入先进内存缓冲与
 
 附带的 raftkv 示例分三层: 上层是 HTTP 键值服务 (端口 8091, PUT 把路径与请求体作为一个提议写入, POST `/{nodeID}` 提议一个加节点的成员变更); 中间是 raftProxy 驱动层 (每 100 毫秒 Tick 一次, 把提议通道接到 Node.Propose/ProposeConfChange, 消费 Ready 后调用 Advance); 底层是共识核心与内存存储。
 
-真正的驱动核心是 `Node` 的单 goroutine 运行循环: 通过 channel 串行处理 tick、本地提议、网络消息、成员变更; 共识核心的所有变化被打包成 Ready 批次 (软状态、硬状态、未持久化日志、已提交日志、待发消息、线性读结果) 交给上层。上层调用 Advance 后, 由 Node 循环自身完成硬状态持久化、日志追加到 Storage 与应用索引推进; 而发送消息与应用已提交条目则留给嵌入方处理。示例的 raftProxy 对 Ready 批次只做 Advance, 待发消息被直接丢弃, 已提交条目也没有写入 KV 状态机——这正是"传输层置空"的具体含义: 消息会被生成但不会真正跨进程发送, kvStore 监听的提交通道在示例中永远收不到数据。
+真正的驱动核心是 `Node` 的单 goroutine 运行循环: 通过 channel 串行处理 tick、本地提议、网络消息、成员变更; 共识核心的所有变化被打包成 Ready 批次 (软状态、硬状态、未持久化日志、已提交日志、待发消息、线性读结果) 交给上层。上层调用 Advance 后, 由 Node 循环自身完成日志追加到 Storage、硬状态持久化与应用索引推进; 而发送消息与应用已提交条目则留给嵌入方处理。除 `Propose`/`ReadIndex`/`ApplyConfChange` 外, Node 还提供 `Step(ctx, Message)` 供嵌入方把远端消息注入 `recvChan`: 它只接受 `MsgApp` 到 `MsgPreVoteResp` 区间的类型, 要求 `From` 非 `None`, 并在入队前深拷贝 `Entries` 与 `Context`, 因此调用方可以安全复用消息缓冲区。示例的 raftProxy 对 Ready 批次只做 Advance, 待发消息被直接丢弃, 已提交条目也没有写入 KV 状态机, 也没有使用 `Step`——这正是"传输层置空"的具体含义: 消息会被生成但不会真正跨进程发送, kvStore 监听的提交通道在示例中永远收不到数据。
 
 共识核心本身是纯状态机, 不含网络。每个角色用函数指针表达其 tick 与消息处理行为 (tickElection/tickHeartbeat, stepFollower/stepCandidate/stepLeader); 维护每个对等体的复制进度 (Match/Next)、投票记录、出站消息队列与线性读追踪。处理一条消息时先比较任期: 更高任期的消息会让本节点退位为追随者, 但 MsgPreVote 与被接受的 MsgPreVoteResp 除外, 这是预投票不打断集群的关键; 更低任期的消息直接忽略。
 
@@ -341,7 +341,7 @@ LSM-Tree 的思想是把随机写转换为顺序写: 写入先进内存缓冲与
 
 ### 10.4 存储抽象与示例的边界
 
-存储被抽象成接口: InitialState 提供初始状态、Entries 按区间取日志、Term 取任期、FirstIndex/LastIndex 取首尾索引、Append 追加、SetHardState 持久化硬状态。内置一份内存实现 (MemoryStorage), 因此可以直接嵌入使用。
+存储被抽象成接口: InitialState 提供初始状态、Entries 按区间取日志、Term 取任期、FirstIndex/LastIndex 取首尾索引、Append 追加、SetHardState 持久化硬状态。内置一份内存实现 (MemoryStorage), 因此可以直接嵌入使用; 它对写入做了校验: Append 要求条目索引连续、SetHardState 拒绝 `CommitIndex` 超过本地 `LastIndex`, Entries/Term 的越界请求分别返回 `ErrInvalidRange` 与 `ErrUnavailable`, 取出的条目也做深拷贝。
 
 必须强调示例服务的边界: 示例是单节点配置 (ID 为 1, peers 只有自己), ElectionTick 10、HeartbeatTick 1, 预投票未开启; 传输层置空, 存储默认在内存中; HTTP 层只接受 PUT (写提议) 与 POST `/{nodeID}` (加节点), 没有读接口——线性读能力存在于共识核心, 示例并未接线。因此它适合单进程验证状态机、驱动模型与日志语义, 不能用于真实多节点部署。若需要生产共识, 应使用成熟的 etcd/raft 实现。
 
@@ -351,7 +351,7 @@ LSM-Tree 的思想是把随机写转换为顺序写: 写入先进内存缓冲与
 
 | 你的问题                 | 优先选择              | 需要警惕                                     |
 | ------------------------ | --------------------- | -------------------------------------------- |
-| 跨进程互斥               | redis_lock            | 固定 TTL 短于业务耗时; 把它当选主共识用      |
+| 跨进程互斥               | distributed_lock      | 固定 TTL 短于业务耗时; 把它当选主共识用      |
 | 节点动态增减下的数据分片 | consistent_hash       | 迁移回调必须幂等, 存在短暂双写窗口           |
 | 缓存与库的最终一致       | consistent_cache      | 禁写标记 TTL 必须覆盖最慢写                  |
 | 可靠异步任务投递         | red_mq                | 进程内重试计数不跨重启, 需要业务侧唯一键兜底 |
@@ -366,7 +366,7 @@ LSM-Tree 的思想是把随机写转换为顺序写: 写入先进内存缓冲与
 
 ## 十二、小结
 
-九个组件共享一种克制的工程风格: 用尽可能少的原语表达清晰的所有权与幂等语义, 把正确性建立在显式的持久化状态与原子操作上, 而不是隐含的时序假设。redis_lock 用 token 表达所有权, consistent_hash 用所有权索引驱动迁移, consistent_cache 用标记抑制竞态, red_mq 用逐消息计数界定失败, tcc 用日志先行支撑崩溃恢复, time_wheel 用 Lua 原子弹出保证不重复触发, timer 用预展开压缩热路径, lsm_tree 用分级合并平衡读写放大, raft 用多数派与任期维持一致。理解每一条边界——尤其是那些"当前未做"的能力——比记住它们的 API 更重要。
+九个组件共享一种克制的工程风格: 用尽可能少的原语表达清晰的所有权与幂等语义, 把正确性建立在显式的持久化状态与原子操作上, 而不是隐含的时序假设。distributed_lock 用 token 表达所有权, consistent_hash 用所有权索引驱动迁移, consistent_cache 用标记抑制竞态, red_mq 用逐消息计数界定失败, tcc 用日志先行支撑崩溃恢复, time_wheel 用 Lua 原子弹出保证不重复触发, timer 用预展开压缩热路径, lsm_tree 用分级合并平衡读写放大, raft 用多数派与任期维持一致。理解每一条边界——尤其是那些"当前未做"的能力——比记住它们的 API 更重要。
 
 **延伸阅读**
 

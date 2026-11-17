@@ -2,11 +2,11 @@
 title: "yukino_orm 技术笔记"
 description: "yukino_orm 是构建在 MongoDB 官方驱动之上的 Knex 风格链式 Go ORM: 引擎与连接管理、链式查询构建、聚合分组、流式查询、事务与自增序列"
 local_path: "$HOME/github/yukino.go/libs/yukino_orm"
-local_commit: "facf5d6a86706f7b077ae3a19ec118cdaaec0b9d"
+local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_orm`）在 `facf5d6a8670` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_orm`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

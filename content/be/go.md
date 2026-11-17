@@ -1,10 +1,10 @@
 ---
 title: "Go 语言核心与底层原理"
-description: "面向工程师的 Go 语言笔记: 值语义与内置结构、方法集与接口、泛型与迭代器、GMP 调度与 channel、context 与 sync、内存分配与逃逸分析、GC, 以及测试、性能诊断与跨平台构建实践, 版本差异以 Go 1.26 系列的语言与标准库行为为基准"
+description: "面向工程师的 Go 语言笔记: 值语义与内置结构、方法集与接口、泛型与迭代器、GMP 调度与 channel、context 与 sync、内存分配与逃逸分析、GC, 以及测试、性能诊断与跨平台构建实践, 版本差异以 Go 1.27 系列的语言与标准库行为为基准"
 ---
 
 :::note 版本基线
-本文以本机实测工具链 `go1.26.4 darwin/arm64`（`go version` 输出）为基线, 标准库与运行时行为核对 `$GOROOT/src` 源码与 `go doc` 文档; **未标注版本的结论适用于 Go 1.26 系列**的语言与标准库行为, 与版本相关的特性会显式标注引入版本. 文中机制描述来源标注为「标准库 / 官方文档 / 本机实测」三类.
+本文以本机实测工具链 `go1.27.3 darwin/arm64`（`go version` 输出）为基线, 标准库与运行时行为核对 `$GOROOT/src` 源码与 `go doc` 文档; **未标注版本的结论适用于 Go 1.27 系列**的语言与标准库行为, 与版本相关的特性会显式标注引入版本. 文中机制描述来源标注为「标准库 / 官方文档 / 本机实测」三类.
 :::
 
 **主线一览**
@@ -19,7 +19,7 @@ flowchart TB
   E -.->|"gcflags、pprof、trace 回验"| D
 ```
 
-本文沿**语言语义**、类型系统与泛型、_并发原语_、<u>运行时</u>、工程实践五条主线展开, 对每个机制说明它为什么这样设计、关键数据结构是什么、控制流与并发时序如何走、边界与失败路径在哪里、有哪些可观测信号、代价与适用边界是什么. 适合已有 Go 编码经验、准备深入运行时原理或做性能与稳定性治理的工程师.
+本文沿**语言语义**、类型系统与泛型、_并发原语_、<u>运行时</u>、工程实践五条主线展开, 并在第 6 节补记 Go 1.27 的增量; 对每个机制说明它为什么这样设计、关键数据结构是什么、控制流与并发时序如何走、边界与失败路径在哪里、有哪些可观测信号、代价与适用边界是什么. 适合已有 Go 编码经验、准备深入运行时原理或做性能与稳定性治理的工程师.
 
 ## 1. 语言语义与类型系统
 
@@ -95,7 +95,7 @@ q := new(len("abc"))  // *int, 指向 3 (Go 1.26+)
 
 ### 1.6 空结构体与零长对象
 
-`unsafe.Sizeof(struct{}{})` 为 0. 零长对象的地址有一个必须分清的两层: 堆上通过运行时分配的零长对象 (如 `new(struct{})`、逃逸到堆上的零长值) 会被 `mallocgc` 统一返回同一个地址 `runtime.zerobase`; 但栈上的零长变量不受此约束, 编译器可以给它们不同的地址, 规范也只承诺"两个不同的零长变量可能拥有相同地址"而不保证. 实测在 Go 1.26 上, 逃逸到堆上的两次 `new(struct{})` 得到相同地址; 而不逃逸的 `new(struct{})` (栈上分配) 两次地址不同, 两个栈上 `struct{}{}` 局部变量的取址比较同样为假. 空结构体在工程里有三种典型用法:
+`unsafe.Sizeof(struct{}{})` 为 0. 零长对象的地址有一个必须分清的两层: 堆上通过运行时分配的零长对象 (如 `new(struct{})`、逃逸到堆上的零长值) 会被 `mallocgc` 统一返回同一个地址 `runtime.zerobase`; 但栈上的零长变量不受此约束, 编译器可以给它们不同的地址, 规范也只承诺"两个不同的零长变量可能拥有相同地址"而不保证. 实测在 Go 1.27 上, 逃逸到堆上的两次 `new(struct{})` 得到相同地址; 而不逃逸的 `new(struct{})` (栈上分配) 两次地址不同, 两个栈上 `struct{}{}` 局部变量的取址比较同样为假. 空结构体在工程里有三种典型用法:
 
 - 集合语义: `map[string]struct{}` 代替 `map[string]bool`, 值不占用额外内存;
 - 纯信号: `ch <- struct{}{}` 只传递事件不传数据, 零内存开销, 是 channel 限流的常见写法;
@@ -421,6 +421,74 @@ GOOS=windows GOARCH=arm64 go build -o app-win.exe .
 `go env GOOS GOARCH` 查看当前目标, `go tool dist list` 列出全部支持的平台. 常用变量: `CGO_ENABLED=0` 关闭 cgo 得到纯静态二进制 (容器镜像里最常用, 可放进 `scratch` 或 `distroless`); `-ldflags="-s -w"` 去掉符号表与调试信息以减小体积; `-trimpath` 去掉编译路径让构建可复现; `GOPRIVATE` 控制私有模块拉取.
 
 容器化实践: 多阶段构建, 第一阶段用完整 Go 镜像编译出静态二进制, 第二阶段只拷贝二进制到极小的运行镜像, 最终镜像可低至十几 MB. 注意 `CGO_ENABLED=1` 时二进制会动态链接 libc, 跨平台与最小镜像都更麻烦, 除非确需 cgo (如 SQLite、某些加密库), 否则保持关闭.
+
+---
+
+## 6. Go 1.27 的增量
+
+Go 1.27 (2026-08) 保持 Go 1 兼容性承诺, 变化集中在**泛型方法**、**更快的分配器**与**encoding/json/v2** 三处; 本节按语言、运行时、标准库、工具链四层记录, 结论均在本机 `go1.27.3` 上核对过.
+
+### 6.1 语言: 泛型方法与字面量键
+
+方法声明可以声明自己的类型参数, 这是 Go 1 以来泛型能力最实质的一次扩展:
+
+```go
+type Box[T any] struct{ v T }
+
+// 方法级类型参数, 与同名的泛型函数形成一一对应
+func (b Box[T]) Map[R any](f func(T) R) Box[R] { return Box[R]{f(b.v)} }
+```
+
+边界必须记清: **接口方法不能声明类型参数, 接口方法也不能由泛型方法实现** —— 泛型方法只存在于具体类型上, 这保住了接口方法集的可比较性. 标准库里 `math/rand/v2` 的 `(*Rand).N[Int intType](Int) Int` 就是这一形态.
+
+另外两处小改动: 结构体字面量的键可以是该结构体类型的任意合法字段选择器 (不再局限于顶层字段名); 泛型函数赋值或转换为匹配的函数类型时, 类型推断扩展到所有这些上下文, 不再需要显式写出类型参数.
+
+### 6.2 运行时: 按大小特化的分配与 goroutine 泄漏剖面
+
+- **按大小特化的内存分配**: 编译器为小对象生成特化分配调用, 小于 80 字节的分配开销最多降低 30%, 分配密集型程序整体约提升 1%, 代价是二进制体积增加约 60 KB; 可用 `GOEXPERIMENT=nosizespecializedmalloc` 关闭 (预计 1.28 移除).
+- **`goroutineleak` 剖面转正**: 1.26 的实验特性在 1.27 正式可用, 类型名为 `goroutineleak`, 入口是 `runtime/pprof` 与 `net/http/pprof` 的 `/debug/pprof/goroutineleak`. 判定依据是 GC 可达性: 阻塞在并发原语上、且该原语无法从任何可运行 goroutine 到达的 goroutine 视为泄漏. 局限同样要记住——通过全局变量或可运行 goroutine 的局部变量可达的原语, 其泄漏检测不到.
+- **回溯带 goroutine 标签**: `go` 指令 ≥ 1.27 时, 回溯头部包含 `runtime/pprof` 的 goroutine 标签, `GODEBUG=tracebacklabels=0` 可关闭.
+- **`asynctimerchan` 移除**: `time` 包创建的 channel 现在始终无缓冲, 依赖旧缓冲行为的代码会直接表现为同步语义.
+
+### 6.3 标准库: encoding/json/v2 与后量子签名
+
+`encoding/json/v2` 是 `encoding/json` 的重写, 配一个底层语法包 `encoding/json/jsontext`:
+
+```go
+import (
+  "encoding/json/v2"
+  "encoding/json/jsontext"
+)
+
+b, err := json.Marshal(v)                 // 也可用 MarshalWrite / MarshalEncode
+err = json.Unmarshal(data, &v)            // 也可用 UnmarshalRead / UnmarshalDecode
+// 两族函数都接受可变参数 Options, 例如 jsontext.WithIndent("  ")
+```
+
+默认更严格: 拒绝 JSON 字符串里的非法 UTF-8, 拒绝对象内的重复键名. 与实验期相比, `format`、`unknown` 两个 tag 选项与 `DiscardUnknownMembers`、`SkipFunc` 被移除, `inline` tag 选项改名为 `embed`. **v1 不需要迁移**: `encoding/json` 底层改由 v2 实现, API 与行为保持不变 (错误文案可能不同), 反序列化性能显著提升; `GOEXPERIMENT=nojsonv2` 可临时退回旧实现.
+
+其余值得记住的新增:
+
+| 包                          | 新增                                                                                         | 用途与边界                                                        |
+| --------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `crypto/mldsa`              | FIPS 204 的 ML-DSA 签名方案                                                                  | `crypto/x509` 支持其密钥与签名, TLS 1.3 新增 `MLDSA44/65/87`      |
+| `crypto/tls`                | `MLKEM1024` 密钥交换、`QUICConfig.ClientHelloInfoConn`、`ConnectionState.LocalCertificate`   | `Config.Rand` 废弃, 测试改用 `testing/cryptotest.SetGlobalRandom` |
+| `uuid`                      | 新的 UUID 生成与解析包                                                                       | 标准库内建, 不必再引第三方                                        |
+| `simd` / `simd/archsimd`    | 平台无关与架构相关的 SIMD (实验)                                                             | 需 `GOEXPERIMENT=simd`, API 未稳定, 不可移植                      |
+| `bytes` / `strings`         | `CutLast`                                                                                    | 从最后一次出现处切分, 返回 `before`、`after` 与 `found`           |
+| `net/http`                  | `Server.MaxHeaderValueCount`、HTTP/2 的 RFC 9218 优先级、HTTP/1 响应体关闭时自动排空未读内容 | 顺序小请求场景的连接复用明显变快                                  |
+| `math/big` / `math/rand/v2` | `Int.Divide` (支持四种舍入)、`(*Rand).N` 泛型方法                                            | 大整数除法不必再手写舍入                                          |
+| `testing/synctest`          | `Sleep`; `httptest.NewTestServer`                                                            | 内存假网络 + 虚拟时钟, 并发测试更快更稳                           |
+| `unicode`                   | Unicode 17.0.0                                                                               | 从 15 跳版, 字符表相关断言需要复核                                |
+
+### 6.4 工具链与移植
+
+- `go doc` 支持 `package@version` 语法 (`go doc example.com/pkg@v1.2.3`) 与 `-ex` (列出可执行示例).
+- `go test` 默认启用 `stdversion` vet 检查; `go test -json` 的 `"Action":"output"` 行新增 `"OutputType"` 字段.
+- `go fix` 换了一批 modernizer: 新增 `atomictypes`、`embedlit`、`slicesbackward`、`unsafefuncs`, 移除 `fmtappendf`, `waitgroup` 更名为 `waitgroupgo`.
+- `go mod tidy` 对 `go 1.27`+ 的模块自动把重复 require 块合并为直接依赖与间接依赖两块.
+- `go` 命令不再支持 `bzr`; `go tool trace -http=:6060` 只监听 localhost, 要监听全部地址必须显式写 `-http=0.0.0.0:6060`.
+- 移植: Darwin 目标要求 **macOS 13 Ventura 或更高**; `linux/ppc64` 生成的二进制改用 ELFv2 系统 ABI.
 
 ---
 

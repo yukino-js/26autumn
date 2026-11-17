@@ -1,24 +1,18 @@
 import path from "node:path";
-import { defineConfig, RspressPlugin } from "@rspress/core";
-import { pluginSitemap } from "@rspress/plugin-sitemap";
+import { defineConfig } from "@rspress/core";
 import mermaid from "rspress-plugin-mermaid";
-import * as yukinoSentry from "@yukino.js/sentry";
 
 const siteOrigin = "https://yukino-js.github.io";
-
-const yukinoSentryPlugin: RspressPlugin = {
-  name: "yukino-sentry",
-  globalStyles: "",
-};
+const siteBase = "/26autumn/";
 
 export default defineConfig({
   root: "content",
-  base: "/26autumn/",
+  base: siteBase,
   siteOrigin,
   lang: "zh",
   title: "技术学习笔记",
   description:
-    "技术知识整理、实习与工作期间的技术笔记、项目源码解析与 AI 全栈面试备考资料",
+    "技术知识整理、实习与工作期间的技术笔记、开源项目源码解析与求职面试备考资料",
   icon: "/favicon.svg",
   logo: "/favicon.svg",
   logoText: "技术学习笔记",
@@ -27,6 +21,9 @@ export default defineConfig({
     showLineNumbers: true,
   },
   llms: true,
+  sitemap: {
+    siteUrl: `${siteOrigin}${siteBase}`,
+  },
   themeConfig: {
     socialLinks: [
       {
@@ -41,5 +38,13 @@ export default defineConfig({
     },
     llmsUI: true,
   },
-  plugins: [mermaid(), pluginSitemap({ siteUrl: `${siteOrigin}/26autumn` })],
+  plugins: [
+    // Mermaid 12 换了默认布局与视觉；显式锁回 dagre + classic，保证既有图表渲染不变。
+    mermaid({
+      mermaidConfig: {
+        layout: "dagre",
+        look: "classic",
+      },
+    }),
+  ],
 });

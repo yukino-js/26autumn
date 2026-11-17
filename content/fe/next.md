@@ -4,7 +4,7 @@ description: "App Router 的组件边界、数据获取与请求瀑布消除、�
 ---
 
 :::note 版本基线
-文中行为以 **Next.js 16.2 App Router** 为准 (本机 `yukino-dev-agent` 检出实测 `next 16.2.9`, 配套 `react 19.2.4`): 服务端组件为默认边界, 缓存与重验证按当前语义描述; <u>不把</u> Pages Router 或旧版数据获取 API 写成现行用法.
+文中行为以 **Next.js 16.4 App Router** 为准 (npm 当前 `latest` 为 16.4.6); 本机 `yukino-dev-agent` 检出仍为 `next 16.2.9` + `react 19.2.4`, 因此 16.3 / 16.4 的增量在「Next 16 的基线要点」里单列, 不与 16.2 的机制叙述混写. 服务端组件为默认边界, 缓存与重验证按当前语义描述; <u>不把</u> Pages Router 或旧版数据获取 API 写成现行用法.
 :::
 
 **主线一览**
@@ -17,7 +17,7 @@ flowchart TB
     K --> A["失效: revalidateTag / updateTag / revalidatePath / router.refresh"]
 ```
 
-这份文档面向准备用 Next.js 16.2 App Router 构建生产应用的工程师. 它以"能力 + 机制 + 适用边界"为主线: 渲染策略怎么选, 服务端组件与客户端组件的边界划在哪里, 缓存有哪几层、各自的失效方式是什么, 请求瀑布如何消除, 以及 Next 16 的基线要点有哪些. 阅读前建议先了解 [React 19.2](react) 的渲染阶段与 Suspense 语义, 本文不再重复; 构建与打包机制见 [Vite](vite).
+这份文档面向准备用 Next.js 16.4 App Router 构建生产应用的工程师. 它以"能力 + 机制 + 适用边界"为主线: 渲染策略怎么选, 服务端组件与客户端组件的边界划在哪里, 缓存有哪几层、各自的失效方式是什么, 请求瀑布如何消除, 以及 Next 16 的基线要点有哪些. 阅读前建议先了解 [React 19.3](react) 的渲染阶段与 Suspense 语义, 本文不再重复; 构建与打包机制见 [Vite](vite).
 
 ## 渲染策略: CSR、SSR、SSG、ISR
 
@@ -541,6 +541,22 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
 | Lint 工具链           | 无内置 lint 命令, 直接使用 ESLint 或 Biome CLI                     | 插件默认使用扁平配置                          |
 | 输出目录分离          | dev 输出到 `.next/dev`, 与 build 独立                              | 可并行执行 dev 与 build                       |
 
+### 16.3 与 16.4 的增量
+
+16.3 (2026-06) 的主题是**瞬时导航**: 一套围绕 Partial Prefetching 的工具与更快 dev server/build 一起发布, 16.4 (2026-09) 把 Cache Components 抬成首选缓存模型, 并把 React 19.3 的能力带进框架.
+
+| 增量                          | 用法                                                                                  | 影响                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Cache Components 成为首选模型 | `cacheComponents: true` 与 `partialPrefetching: true` 同时开启                        | 新应用经 `create-next-app` 默认开启, 官方计划在 17 中设为默认         |
+| `ensureStatic`                | 页面/布局导出 `export const ensureStatic = "navigation" \| "prefetch" \| "shell"`     | 强制路由的导航/预取/壳静态化; 含动态内容时构建直接失败                |
+| `navigation()` / `prefetch()` | 从 `next/cache` 导入并 `await`                                                        | 把内容排除出预取或壳, 延迟到真实导航、显式 `<Link prefetch>` 时再渲染 |
+| Instant Navigations           | 由 `partialPrefetching` 驱动的预取 + 客户端状态复用                                   | 服务端为中心的路由获得接近 SPA 的切换体感                             |
+| Turbopack 体积与缓存          | 磁盘缓存引入 Zstandard 压缩, 运行时合并为跨路由共享 chunk                             | 磁盘缓存体积下降 20–25%, 下载量与缓存命中同时改善                     |
+| Agent 升级流程                | `npx next upgrade --agent`、`experimental.agentUpgrade`、`experimental.agentFeedback` | `agentUpgrade` 默认只提醒安全版本, 可设为 `"latest"` 或关闭           |
+| Rust React Compiler (实验)    | `reactCompiler: true` + `experimental.turbopackRustReactCompiler: true`               | 官方称内存降低约 30%、编译时间减少约 15%                              |
+
+取舍上要认清一件事: Cache Components 取代的是旧 App Router 的**隐式缓存**, 一旦开启, 缓存必须显式声明; 而 `ensureStatic` 是"用构建失败换确定性"的开关, 适合已经确认可以静态化的入口路由, 不适合先开再逐个修.
+
 ## 常见性能问题与处理
 
 | 现象                   | 根因                                           | 处理                                              |
@@ -579,7 +595,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
 
 **延伸阅读**
 
-- [react](react): React 19.2 渲染阶段、Suspense 边界与 Actions 的底层调度模型.
+- [react](react): React 19.3 渲染阶段、Suspense 边界与 Actions 的底层调度模型.
 - [tanstack](tanstack): 客户端数据缓存的 staleTime/gcTime、失效与写后同步, 与服务端缓存的职责划分.
 - [vite](vite): Turbopack 之外的通用构建链路、依赖预构建与 HMR 原理对照.
 - [fetchpriority-swr](fetchpriority-swr): HTTP 层 stale-while-revalidate 语义与 Next 缓存档位的对应关系.

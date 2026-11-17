@@ -538,7 +538,7 @@ CSS 的知识可以按"决定层"来组织, 复习与排查时按这个顺序思
 **延伸阅读**
 
 - [fe](fe): JavaScript 类型语义、DOM 事件模型、渲染流水线与浏览器存储.
-- [react](react): React 19.2 组件模型与 CSS Modules / 内联样式的集成位置.
-- [next](next): Next.js 16.2 App Router 下的样式加载、字体优化与静态导出约束.
+- [react](react): React 19.3 组件模型与 CSS Modules / 内联样式的集成位置.
+- [next](next): Next.js 16.4 App Router 下的样式加载、字体优化与静态导出约束.
 - [vite](vite): PostCSS/Lightning CSS 处理链、CSS 代码分割与产物缓存策略.
 - [fetchpriority-swr](fetchpriority-swr): 样式表与字体资源在加载队列中的优先级调度.

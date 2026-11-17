@@ -2,11 +2,11 @@
 title: "ReAct and Agent Loop"
 description: "ReAct 范式与 Agent 主循环: Agent.run() 是 AsyncGenerator<AgentEvent>, 每轮经 abort / 预算检查, reminder 注入, 上下文压缩, LLM 流消费, 错误自愈, max_tokens 恢复与分批工具执行; 覆盖退出条件, Steering, partitionToolCalls 与 StreamingExecutor, Plan Mode 约束"
 local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "7b9add587b16444631dd5ab4e2a317c9679eaf63"
+local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/agent`、`src/llm`、`src/compact`、`src/prompt`、`src/permissions`）在 `7b9add587b16` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/agent`、`src/llm`、`src/compact`、`src/prompt`、`src/permissions`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 ReAct (Reasoning + Acting) 是 Yukino agent loop 遵循的范式: 推理与行动交替进行, 每一步行动都建立在对上一步结果的观察之上。本页讲清这个范式如何落成代码 — `Agent.run()` 事件循环的每一轮做什么、何时退出、出错如何自愈, 以及工具如何分批执行。

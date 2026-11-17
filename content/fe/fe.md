@@ -812,7 +812,7 @@ TypeScript 编译器本质是带类型擦除的转译器, 从源码到产物经�
 
 顶层 await 与类私有字段已进入稳定标准; `Object.hasOwn`、`Array.prototype.at`、`findLast` 等补齐了常用操作; 正则的 `d` 标志提供捕获组下标, `v` 标志引入字符集运算; ES2024 落地了 `Object.groupBy`/`Map.groupBy`、`Promise.withResolvers` 与 `v` 标志; ES2025 定稿了 Set 集合方法 (union/intersection/difference 等)、Iterator Helpers、`Promise.try`、`RegExp.escape`、`Float16Array` 与 import attributes. `structuredClone` 需要特别注意: 它是 HTML 标准的 Web API 而非 ECMAScript 特性, 因此不受语言版本约束.
 
-提案方向上需要区分"已成标准"与"仍在推进": Temporal 仍处于标准推进阶段, 引擎支持有限, 生产使用前务必做特性检测或引入 polyfill; 装饰器已由 TypeScript 5 起按标准形式实现; 浏览器端的 JavaScript Signals 提案 (Signal. State、Signal. Computed、Signal.subtle. Watcher) 仍处于早期阶段, 其定位是把各框架的响应式核心语义收敛为语言级原语, 以便框架互操作与工具支持, 目前仍需 polyfill 或框架自带实现; 它容易与 `AbortSignal` 混淆, 后者是已广泛落地的取消机制. 模式匹配、值类型 (原 Record & Tuple 方向) 等仍在提案阶段, 不应在产品代码中依赖.
+提案方向上需要区分"已成标准"与"仍在推进": Temporal 已于 2026 年 3 月到达 TC39 Stage 4 (进入年度 ECMAScript 规范), Chrome/Edge 144+、Firefox 139+ 与 Node.js 26+ 已原生支持, 但 Safari 稳定版仍未提供, 因此在 Safari 份额不可忽略时必须做特性检测或引入 `@js-temporal/polyfill`; 装饰器已由 TypeScript 5 起按标准形式实现; 浏览器端的 JavaScript Signals 提案 (Signal. State、Signal. Computed、Signal.subtle. Watcher) 仍处于早期阶段, 其定位是把各框架的响应式核心语义收敛为语言级原语, 以便框架互操作与工具支持, 目前仍需 polyfill 或框架自带实现; 它容易与 `AbortSignal` 混淆, 后者是已广泛落地的取消机制. 模式匹配、值类型 (原 Record & Tuple 方向) 等仍在提案阶段, 不应在产品代码中依赖.
 
 ## 手写实现专题
 
@@ -853,8 +853,8 @@ TypeScript 编译器本质是带类型擦除的转译器, 从源码到产物经�
 **延伸阅读**
 
 - [css](css): 选择器与层叠、盒模型与格式化上下文、Flex/Grid 布局与现代 CSS 特性.
-- [react](react): React 19.2 渲染生命周期、Fiber 协调、Hooks 链表与 Lanes 调度模型.
-- [next](next): Next.js 16.2 App Router 的组件边界、缓存重验证与流式渲染.
+- [react](react): React 19.3 渲染生命周期、Fiber 协调、Hooks 链表与 Lanes 调度模型.
+- [next](next): Next.js 16.4 App Router 的组件边界、缓存重验证与流式渲染.
 - [vite](vite): Vite 8 dev server、依赖预构建、HMR 原理与 Rolldown/Oxc/Lightning CSS 工具链.
 - [fetchpriority-swr](fetchpriority-swr): 资源优先级提示与两层 SWR 缓存语义.
 - [../docs/data](../docs/data): 前端监控、资源竞态分析与手写 SWR 请求方案的工程实践.

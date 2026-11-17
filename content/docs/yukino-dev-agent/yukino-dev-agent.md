@@ -2,11 +2,11 @@
 title: "Yukino Dev Agent 技术笔记"
 description: "Next.js 16 App Router + Vercel AI SDK 的 OnCall/DevFlow 双产品面应用: Milvus 混合检索 RAG、ReAct 与 SSE 流式 Plan-Execute-Replan 编排、A2UI 交互界面、多源告警聚合、MCP 工具体系、Langfuse 可观测性与 Prometheus 指标桥"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "ea0fd1957f83d4a676714cad5fa054b351a3deb2"
+local_commit: "e36d16bacb9ba400d904ece0542c4467f8ef049d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/`、`components/`、`hooks/`）在 `ea0fd1957f83` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/`、`components/`、`hooks/`）在 `e36d16bacb9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 本文讲解 Yukino Dev Agent 这一 Node.js/TypeScript AI 应用的技术实现:它用 Next.js 16 App Router 把前端页面与后端 API 收进同一个进程,同时承载两个产品面——面向值班运维的 AI OnCall 助手(根路径),以及面向 GitHub 协作场景的 DevFlow 工程副驾(`/dev-flow`). 文档围绕产品定位、分层架构、端到端数据流、检索与编排实现、模型抽象、数据模型、前端状态、可观测性、配置体系、部署形态与性能成本取舍逐层展开,适合需要在既有 AI 应用上做二次开发,或正在设计 RAG + Agent 编排系统的工程师阅读. 所有机制描述均以当前源码为准,Milvus 是唯一向量后端. 两个产品面的入门视角另有姊妹篇 [Yukino Dev Agent](./agent) 与 [DevFlow](./dev-flow).
@@ -34,7 +34,7 @@ DevFlow 表面(`/dev-flow` 页面组,`/api/dev-flow/*` 接口组)把同一个技
 - 仓库接入:同步 GitHub 仓库的 issue、PR、CI 运行与评论;也支持本地托管检出(managed checkout),把仓库文件落到 Node 进程磁盘,供文件工具与项目文档索引使用;支持 webhook 增量触发与周期后台重同步.
 - 结构化分析:issue 分类/优先级/复杂度评估与负责人建议、PR 审查(敏感文件识别、测试覆盖识别、风险发现、合并建议)、CI 失败调试;分析结果可归档为记录,并可对相似历史问题做检索.
 - 会话与知识:每仓库独立的知识库(上传文档与会话产出)与项目文档索引,检索走同一套 Milvus 混合检索,只是用标量过滤把范围圈到本仓库;问答带答案门禁与抽取式兜底.
-- 代码理解:从托管检出中用正则抽取符号与关系,构建跨文件引用图,支持符号检索与影响面(impact)遍历;另有把 issue/PR/文档/人/决策串起来的跨实体知识图谱.
+- 代码理解:在托管检出上用 CodeGraph 原生 AST 引擎建立符号图(索引落在检出自己的 `.codegraph/codegraph.db`),支持符号检索与影响面(impact)多跳遍历;另有把 issue/PR/文档/人/决策串起来的跨实体知识图谱.
 - 记忆:会话级结构化记忆与仓库级线程记忆,支持从记忆候选人工审核后沉淀为知识文档.
 - 安全写操作:任何对 GitHub 的写操作(评论、建 issue、打标签、关闭)都落到 ActionDraft 草稿闸门,人工确认后才执行.
 - 反馈闭环:回答可点赞/点踩,负反馈进入审核视图并可经通知通道触达维护者与回溯链接.
@@ -179,7 +179,7 @@ providerOptions = {
 
 ### Embedding 与 Rerank
 
-Embedding 只有唯一合法 provider(OpenAI 兼容 `/v1/embeddings`),换服务只需改 baseURL、apiKey、model 三个环境变量. 批量嵌入按固定条数分片(每批 10 条):OpenAI 兼容端点对单请求输入条数有上限,而 SDK 默认一次发 2048 条,大文档会报 "batch size is invalid",因此上层调用对分片完全透明. 批量接口的顺序保证也被依赖:返回的向量顺序与输入严格对应,索引器据此做对位.
+Embedding 只有唯一合法 provider(OpenAI 兼容 `/v1/embeddings`),换服务只需改 baseURL、apiKey、model 三个环境变量. 批量嵌入按固定条数分片(每批 10 条):OpenAI 兼容端点对单请求输入条数有上限,而 SDK 默认一次发 2048 条,大文档会报 "batch size is invalid",因此上层调用对分片完全透明. 批量接口的顺序保证也被依赖:返回的向量顺序与输入严格对应,索引器据此做对位. 默认模型是 `qwen3.7-text-embedding-flash`(`OPENAI_EMBEDDING_MODEL` 可覆盖). 若未配置 `OPENAI_EMBEDDING_API_KEY` 或远端调用失败,`lib/ai/embedder.ts` 会把这个进程标记为不可用并只告警一次,此后 `embedText` / `embedTexts` 返回 1024 维均匀占位向量,检索侧据 `embeddingFallbackActive()` 改走纯 BM25(`retrieveDense` 返回空),引用中只剩 BM25 阶段名次——这是"没有向量模型也能查到东西"的降级路径,代价是失去语义召回.
 
 Rerank 是可选的第二阶段精排,指向 DashScope 风格的文本重排端点. 它是 fail-open 设计:未配置 API Key 时直接跳过;配置了但服务抖动时,包装函数捕获异常并返回 null,检索退回融合顺序——精排是质量增强,不稳定的上游不应该拖垮 RAG 对话. 响应校验也很严格:索引必须唯一且在范围内、分数必须有限且落在 [0,1],违反即判为无效响应;重试只针对限流与 5xx/传输层错误,用指数退避.
 
@@ -195,7 +195,7 @@ pdf/docx 的文本抽取有完整护栏:PDF 限制文件字节数(12MB)、页数
 
 ### 检索侧链路
 
-检索入口在共享集合上做稠密 + 原生 BM25 混合检索,由 Milvus 服务端完成 RRF 融合(k=60),随后可选精排,最后截断到 topK. 默认 topK 为 5. 候选宽度计算考虑了两个后处理阶段:当需要排除 DevFlow 来源或启用精排时,候选池取"topK 的 4 倍与精排候选下限(20)的较大者",并封顶 50,给排除与重排留出余量. 若调用方未传过滤表达式,视为 OnCall 视图,融合结果中所有 `dev_flow:` 前缀来源的块在进程内被剔除——这里刻意不用 Milvus 的取反 LIKE 表达式,以摆脱对过滤表达式语法支持的依赖,牺牲的是一点点候选宽度. DevFlow 调用方则传入显式过滤圈定仓库范围.
+检索入口在共享集合上做稠密 + 原生 BM25 混合检索,由 Milvus 服务端完成 RRF 融合(k=60),随后可选精排,最后截断到 topK. 默认 topK 为 5. 候选宽度计算考虑了两个后处理阶段:当需要排除 DevFlow 来源或启用精排时,候选池取"topK 的 4 倍与精排候选下限(20)的较大者",并封顶 50,给排除与重排留出余量. 若调用方未传过滤表达式,视为 OnCall 视图,融合结果中所有 `dev_flow:` 前缀来源的块在进程内被剔除——这里刻意不用 Milvus 的取反 LIKE 表达式,以摆脱对过滤表达式语法支持的依赖,牺牲的是一点点候选宽度. DevFlow 调用方则传入显式过滤圈定仓库范围. 当 embedding 不可用时这条链路整体退化为纯 BM25(`bm25Only`):只发一路 BM25 查询,仍做来源剔除、rerank 与 topK 截断,`retrieveRaw` 的 hybrid/dense 也回落到 BM25,`retrieveDense` 直接返回空数组.
 
 检索器为每次调用并行发出三路查询——混合、纯稠密、纯 BM25——并把后两路的名次信息附在命中文档的 stages 字段里(`vectorRank` / `vectorScore` / `bm25Rank` / `bm25Score`,精排后再补 `rerankRank` / `rerankScore`). 这份"每个阶段各排第几"的观测数据随引用一起下发,是诊断"为什么这条文档排上来/掉下去"的直接依据. 检索器还暴露了原始候选入口(不精排、不截断,可选稠密/稀疏/混合三路),供 DevFlow 自己的去重、精排与扩展链使用,以及纯稠密入口专供需要绝对分数阈值的场景.
 
@@ -428,7 +428,7 @@ AI Ops 报告另有一处界面化后处理:收尾节点用 think 模型可选�
 | DevFlow 分析       | AnalysisResult / ActionDraft                                                                                  | 分析结果归档;写操作草稿闸门                                               |
 | DevFlow 知识       | KnowledgeDocument / KnowledgeDocumentBody / ProjectIndex / KnowledgeBaseConfig / RetrievalTestRun             | 知识文档注册与正文侧表、项目索引状态、每仓库检索配置、检索测试记录        |
 | DevFlow 会话与记忆 | Conversation / ChatMessage / ChatFeedback / ConversationMemory / ThreadMemory / MemoryCandidate / RecallEvent | 会话、消息、反馈、会话级记忆、仓库级线程记忆、记忆候选、记忆召回审计      |
-| DevFlow 图与协作   | CodeSymbol / CodeRelation / KnowledgeGraphEdge / Workspace / TeamMember / User / AuditLog                     | 代码符号与关系、知识图谱边、多仓分组、团队成员、用户与审计                |
+| DevFlow 图与协作   | KnowledgeGraphEdge / Workspace / TeamMember / User / AuditLog                                                 | 知识图谱边、多仓分组、团队成员、用户与审计(代码图节点/边不在 PostgreSQL)  |
 | DevFlow 多 agent   | AgentWorkflowRun / AgentTaskRun                                                                               | 工作流与其任务级执行记录                                                  |
 
 几个模型设计细节值得说明:知识文档的正文放在 1:1 的侧表里,使文档列表查询永远不会拖出可能很大的正文,同时让"索引失败后可重试而无需重新上传"成为可能;仓库连接的分支与提交指纹落在项目索引行上,只有检出变化时才重建索引;团队的 GitHub Token 以 AES-256-GCM 加密后存库(密钥由环境变量经 scrypt 派生),因此数据库泄露不等于凭据泄露;审计日志对仓库是松散引用而非外键,保证审计轨迹在仓库被删除后仍然存活.
@@ -487,7 +487,7 @@ issue 与 PR 的分析是"确定性引擎 + LLM 增强"的混合结构:确定性
 
 ### 会话 agent 与韧性层
 
-DevFlow 聊天 agent 用原生工具调用对单仓库的已同步数据作答:22 个工具覆盖查询 issue/PR/CI、检索本仓库知识、读取托管检出文件、词法搜索代码、检索项目文档、生成安全动作草稿等,步数上限 12. agent 另有一套 DevFlow 技能注册表(`data/dev-flow-skills/` 下 6 个 SKILL.md 工程剧本:issue 分诊、PR 审查、CI 调试、项目调查、安全草稿、周报),轻量目录常驻 system prompt,显式点名或触发词命中(每轮至多自动激活 3 个)再把完整工作流指令注入(渐进式披露),注册表加载或激活失败只降级为无技能继续对话. 它的韧性层值得单独说明,因为这是长会话里最容易被忽视的部分:
+DevFlow 聊天 agent 用原生工具调用对单仓库的已同步数据作答:24 个工具覆盖查询 issue/PR/CI、检索本仓库知识、用 CodeGraph 索引检索符号/依赖、读取托管检出文件、词法搜索代码、检索项目文档、生成安全动作草稿等,步数上限 12. agent 另有一套 DevFlow 技能注册表(`data/dev-flow-skills/` 下 6 个 SKILL.md 工程剧本:issue 分诊、PR 审查、CI 调试、项目调查、安全草稿、周报),轻量目录常驻 system prompt,显式点名或触发词命中(每轮至多自动激活 3 个)再把完整工作流指令注入(渐进式披露),注册表加载或激活失败只降级为无技能继续对话. 它的韧性层值得单独说明,因为这是长会话里最容易被忽视的部分:
 
 - 重复调用断路器:同一轮内相同"工具名 + 规范化参数指纹"的调用超过阈值(2 次)即短路,回填一条观测告诉模型"这已经调过了,用现有结果回答或换个路径",避免模型陷入重复调用.
 - 错误分类与单次重试:把工具错误分为八类(超时、限流、瞬时网络、权限、数据缺失、模型输出非法、运行时错误等),只对瞬时类别自动重试一次,其余直接作为结构化观测回填.
@@ -502,7 +502,7 @@ DevFlow 的知识库复用 OnCall 的混合检索,但用来源前缀过滤圈定
 
 托管检出是 DevFlow 的差异化能力:服务端把仓库浅克隆(`git clone --depth 1`,也支持指向本地目录的本地模式)到检出目录,所有 git 命令禁用交互(`GIT_TERMINAL_PROMPT=0`),凭据在日志与错误信息中脱敏;文件工具(列目录、读文件、词法搜索)以 execFile 参数数组执行(不经 shell)并受路径守卫与大小上限约束,只读操作这些文件. 项目索引在此基础上发现仓库的文档与清单文件,按检出指纹(分支与提交)判断是否需要重建,切块后以独立来源前缀写入同一个 Milvus 集合,并生成项目摘要(技术栈、顶层目录、来源覆盖等).
 
-代码理解用正则抽取符号(函数/类/变量等)与关系(导入、调用、定义三种),构建跨文件图,支持按名/路径检索符号与从符号出发的影响面遍历(改动文件至多 50 个,关系读取上限 1000 条);它在 PR 快照范围内也可运行,使"这个改动会影响谁"能落到具体符号. 知识图谱则跨实体连接 issue、PR、文档、人和决策,提供子图遍历.
+代码理解改由外部引擎承担:每个检出的索引是 `@colbymchenry/codegraph` 1.6.2 原生 AST 抽取并解析过的符号图,落在该检出自己的 `.codegraph/codegraph.db`,PostgreSQL 不再保存图行(`CodeSymbol` / `CodeRelation` 已删). 引擎在独立 Node 子进程里跑(`scripts/codegraph-worker.mjs`,由 `lib/dev-flow/codegraph-client.ts` 拉起),作业按检出串行化,索引 300s、查询 120s 超时,输出上限 8 MiB;检索支持名称/路径与 kind、language 过滤,impact 沿已解析的反向边做 1–3 跳遍历(默认 2 跳,改动文件至多 50 个,依赖边上限 1000 条). 索引状态带 `initialized` / `state` / `stale`,过期或不完整的索引不会进入 PR/CI 分析证据;PR/CI 分析以改动文件路径查询当前检出的索引,使"这个改动会影响谁"能落到具体符号. 知识图谱则跨实体连接 issue、PR、文档、人和决策,提供子图遍历.
 
 ### 草稿闸门、记忆与反馈
 
@@ -591,9 +591,9 @@ LLM 调用的错误与传统 API 不同:错误信息常常不在 `message` 里,�
 
 应用是单个 Next.js 进程,通过服务启动钩子(`instrumentation.ts` 的 register)完成三件按序的事情:初始化可观测性;把知识库目录下所有受支持文档重建索引(单文件失败只记日志并跳过,目录不存在只告警,绝不阻塞启动);启动 DevFlow 的周期重同步循环(未显式开启则 no-op). 启动即自检自愈的模式与集合维度自检组合,使"换 Embedding 模型"或"改知识库文件"都能在重启后自动收敛.
 
-外部依赖由部署侧编排:PostgreSQL(关系数据)、Milvus Standalone(向量)、Prometheus(告警与抓取指标)、可选的 MCP 服务与 Langfuse. 知识库文件、DevFlow 托管检出都保存在本地目录,意味着多实例部署时文件与索引会出现不一致,且托管检出需要可写的持久磁盘(serverless 环境应避免),演进时文件应迁到对象存储. 构建配置上,`next.config.ts` 关闭 reactStrictMode(A2UI 协议处理器需要有状态挂载)、把 redis 与 knex 标为 serverExternalPackages、允许本地开发回环源,并用 next-intl 插件接管文案加载.
+外部依赖由部署侧编排:PostgreSQL(关系数据)、Milvus Standalone(向量)、Prometheus(告警与抓取指标)、可选的 MCP 服务与 Langfuse. 知识库文件、DevFlow 托管检出都保存在本地目录,意味着多实例部署时文件与索引会出现不一致,且托管检出需要可写的持久磁盘(serverless 环境应避免),演进时文件应迁到对象存储. 构建配置上,`next.config.ts` 关闭 reactStrictMode(A2UI 协议处理器需要有状态挂载)、用 `outputFileTracingIncludes` 把 `generated/codegraph-runtime` 打进 `/api/dev-flow/**` 的构建产物、允许本地开发回环源,并用 next-intl 插件接管文案加载. 构建脚本是 `pnpm db:generate && pnpm codegraph:prepare && next build`:后者把 CodeGraph SDK、匹配 `platform-arch` 的原生包与 zod v4 复制进 `generated/codegraph-runtime`,让生产 worker 不依赖 pnpm 符号链接或用户级缓存;`engines` 要求 Node ≥ 22.13.0,索引本身还需要 `git` 在 PATH 上. 已有库升级时用 `pnpm codegraph:migrate` 逐仓重建并校验索引完整,全部成功后才在一个事务里 drop 旧的 `CodeSymbol` / `CodeRelation`;任一份检出缺失或索引失败则保留旧表并报告失败,旧的正则图数据直接丢弃而不转换.
 
-仓库自带一组脚本级离线冒烟验证(通过 `npx tsx` 直接运行,共 23 个),覆盖编排图结构与事件 schema、Milvus 真实链路、A2UI、文档切分与抽取、国际化、指标桥、OnCall 对话与运维协议,以及 DevFlow 的分析、图、记忆、工作流、工作区、技能、内容索引等. 这些脚本用真实依赖或注入假件验证关键机制,是仓库当前的主要自动化保障;其中需要真实模型的部分要用环境变量显式开启(如 `AI_OPS_SMOKE_LIVE=1`),并可用一个更便宜的查询控制成本. 此外还存在一个静态断言:递归上限必须大于业务迭代预算.
+仓库自带一组脚本级离线冒烟验证(通过 `npx tsx` 直接运行,共 25 个),覆盖编排图结构与事件 schema、Milvus 真实链路、A2UI、文档切分与抽取、国际化、指标桥、OnCall 对话与运维协议,以及 DevFlow 的分析、图、记忆、工作流、工作区、技能、内容索引等. 这些脚本用真实依赖或注入假件验证关键机制,是仓库当前的主要自动化保障;其中需要真实模型的部分要用环境变量显式开启(如 `AI_OPS_SMOKE_LIVE=1`),并可用一个更便宜的查询控制成本. 此外还存在一个静态断言:递归上限必须大于业务迭代预算.
 
 ## 十五、性能与成本取舍
 

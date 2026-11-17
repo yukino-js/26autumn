@@ -1,10 +1,10 @@
 ---
-title: "React 19.2 核心与运行时原理"
-description: "从一次更新的完整生命周期讲到 Fiber 协调、Hooks 链表、Lanes 优先级与批处理, 并覆盖 React 19.2 的 Actions、use、ref 作为 prop、useEffectEvent、Activity 等稳定 API, 以及性能优化的有效条件"
+title: "React 19.3 核心与运行时原理"
+description: "从一次更新的完整生命周期讲到 Fiber 协调、Hooks 链表、Lanes 优先级与批处理, 并覆盖 Actions、use、ref 作为 prop、useEffectEvent、Activity、ViewTransition 与 Fragment ref 等 19.x 稳定 API, 以及性能优化的有效条件"
 ---
 
 :::note 版本基线
-文中机制与 API 以 **React 19.2** 为准 (本机实测: `yukino-code` 检出中 `react 19.2.7`、`yukino-dev-agent` 检出中 `react 19.2.4`). Actions、`use`、`ref` 作为 prop、ref 回调清理函数、`useEffectEvent`、`<Activity />` 属于当前稳定能力; `<ViewTransition />`、`addTransitionType` 与 Fragment ref 仍在 canary 通道 (Fragment ref 随 19.3 转正), 本文只作边界说明、不作为 19.2 稳定 API 叙述; <u>不引入</u> legacy 模式、旧版生命周期或已移除的 Hooks 作为现行写法.
+文中机制与 API 以 **React 19.3** (2026-09-09 发布, 当前 npm `latest` 为 19.3.1) 为准; 本机检出仍停在 19.2.x (`yukino-code` 中 `react 19.2.7`、`yukino-dev-agent` 中 `react 19.2.4`), 因此 19.3 的增量能力单独标注, 不与 19.2 已稳定的部分混写. Actions、`use`、`ref` 作为 prop、ref 回调清理函数、`useEffectEvent`、`<Activity />` 属 19.2 稳定的能力; `<ViewTransition />`、`addTransitionType`、Fragment ref、`browser()` 与 Trusted Types 支持随 19.3 转正; <u>不引入</u> legacy 模式、旧版生命周期或已移除的 Hooks 作为现行写法.
 :::
 
 **主线一览**
@@ -431,7 +431,7 @@ function Comments({ commentsPromise }) {
 - 读取 Promise 时, 未就绪会挂起最近的 Suspense 边界; 读取 Context 时等价于 `useContext`.
 - 传入的 Promise 必须来自组件外部 (上层组件创建后传入或由服务端创建). 在渲染函数里新建 Promise, 每次渲染都是新引用, 会不断挂起, 永远无法完成.
 
-`react-dom` 还导出一个 `browser()` 资源函数, 配合 `use` 使用可以让子树退出服务端渲染: 服务端渲染时触发最近的 fallback, 客户端水合后不再挂起, 组件正常渲染. 它遵循 `use` 的调用规则.
+`react-dom` 还导出一个 `browser()` 资源函数 (19.3 稳定), 配合 `use(browser())` 可以让子树退出服务端渲染: 服务端渲染时触发最近的 fallback, 客户端水合后不再挂起, 组件正常渲染. 它遵循 `use` 的调用规则, 因此可以放在条件分支或 early return 之后调用, 用于按 prop 决定是否退出 SSR; 典型场景是依赖 `localStorage`、本地时区这类纯浏览器 API 的组件, 或让不带 `initialData` 的 `useQuery` 不再参与预渲染.
 
 ### ref 作为 prop 与清理函数
 
@@ -471,11 +471,13 @@ ref 回调用法的另一处变化是允许返回清理函数:
 
 ### 其他能力与通道状态
 
-- `useEffectEvent` (React 19.2 稳定): 把"读取最新 props/state 但不应成为依赖"的回调从 effect 中抽离, 是闭包陷阱的官方解法. 返回的函数只能在 effect 内调用, 不写进依赖数组, 且身份每次渲染变化.
-- `<Activity />` (React 19.2 稳定): 以 `mode="visible" | "hidden"` 控制子树, hidden 时保留 DOM 与状态、清理 effect 并推迟更新, 适合频繁切换但重建代价高的面板与标签页.
-- Fragment ref: 给 `<Fragment ref={...}>` 传入 ref 会得到一个 Fragment 实例, 可以成组地操作该 Fragment 的一级子 DOM 而不改变结构. 能力包括事件订阅与派发、`focus`/`focusLast`/`blur`、对接 IntersectionObserver 与 ResizeObserver 的 `observeUsing`/`unobserveUsing`, 以及 `getClientRects`、`getRootNode`、`scrollIntoView`. 注意该能力随 React 19.3 转正, 在 19.2 产物中属于 canary 通道, 稳定基线内不应作为可用 API 依赖; 其定位是替代 `findDOMNode()`, 把一组兄弟节点当成一个整体处理焦点或观察尺寸.
-- 服务端组件中直接渲染 Context Provider: 从客户端模块导入的 Context 可以在服务端组件里直接作为 Provider 使用, 不必再额外导出一个只做包装的客户端组件.
-- `<ViewTransition />` 与 `addTransitionType`: 目前只在 React canary 通道提供, 稳定 19.2 产物中不可直接导入; 其定位是在被 transition 标记的更新引起挂载、卸载或样式变化时, 借助浏览器 View Transition API 播放动画, 产品代码不应在稳定基线中依赖该组件.
+- `useEffectEvent` (19.2 稳定): 把"读取最新 props/state 但不应成为依赖"的回调从 effect 中抽离, 是闭包陷阱的官方解法. 返回的函数只能在 effect 内调用, 不写进依赖数组, 且身份每次渲染变化.
+- `<Activity />` (19.2 稳定): 以 `mode="visible" | "hidden"` 控制子树, hidden 时保留 DOM 与状态、清理 effect 并推迟更新, 适合频繁切换但重建代价高的面板与标签页.
+- `<ViewTransition />` (19.3 稳定): 用浏览器 View Transition API 给子树的进入、退出、移动与共享元素做动画, 四种类型分别是 `enter`、`exit`、`update`、`share`. **只有被标记为 Transition 的更新才会触发动画** (`startTransition`、`<Suspense>` 揭示、`useDeferredValue`), 普通 `setState` 不会; 动画要么交给 View Transition Class + CSS, 要么用 `onEnter` / `onExit` / `onUpdate` / `onShare` 事件配合 Web Animations API 自定义. 包住 `<Suspense>` 时, fallback 到最终内容会得到一次 `update` 动画; 官方推荐的默认配置是 `<ViewTransition update="auto" default="none">`.
+- `addTransitionType()` (19.3 新增): 在同一次 `startTransition` 内给更新打上"原因"标签, 让同一个 `<ViewTransition>` 对不同操作播放不同动画 (`enter={{ next: "from-right" }}`); React 同时把类型写入浏览器的 `:active-view-transition-type(...)`, 便于用 CSS 作用域收口.
+- Fragment ref (19.3 稳定): 给 `<Fragment ref={...}>` 传入 ref 会得到一个 Fragment 实例, 可以成组地操作该 Fragment 的一级子 DOM 而不改变结构. 能力包括事件订阅与派发 (`addEventListener` / `removeEventListener` / `dispatchEvent`)、焦点 (`focus` / `focusLast` / `blur`)、对接 IntersectionObserver 与 ResizeObserver 的 `observeUsing` / `unobserveUsing`, 以及 `getClientRects`、`getRootNode`、`compareDocumentPosition`、`scrollIntoView`; 其定位是替代 `findDOMNode()`, 把一组兄弟节点当成一个整体处理焦点或观察尺寸.
+- 服务端组件中直接渲染 Context Provider: 从客户端模块导入的 Context 可以在服务端组件里直接作为 Provider 使用, 不必再额外导出一个只做包装的客户端组件; 但服务端组件仍**不能创建** Context.
+- Trusted Types (19.3 新增): 站点在 CSP 里声明 `require-trusted-types-for 'script'` 时, React 不再把注入值强制字符串化, 而是原样透传 `TrustedHTML` / `TrustedScript` / `TrustedScriptURL`, 让自定义净化策略真正生效, 以缓解 DOM 型 XSS.
 
 ## 错误边界与错误处理
 
@@ -591,7 +593,7 @@ Suspense 处理的是"还没准备好", 错误边界处理的是"出错了", 两
 
 **延伸阅读**
 
-- [next](next): Next.js 16.2 App Router 对 Server Component、流式水合与 Actions 的落地约束.
+- [next](next): Next.js 16.4 App Router 对 Server Component、流式水合与 Actions 的落地约束.
 - [tanstack](tanstack): 服务端状态的缓存、失效与写后同步, 与 effect 内手写取数的职责边界.
 - [vite](vite): React Refresh 的 HMR 边界、产物分割与构建期编译优化.
 - [fe](fe): 事件循环、微任务与浏览器渲染流水线等底层运行时模型.

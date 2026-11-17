@@ -2,11 +2,11 @@
 title: "DevFlow"
 description: "DevFlow 视角入门: GitHub 同步与调度、确定性优先的分析 Agent、ActionDraft 安全草稿、每仓 RAG 与答案门禁、对话 Agent 韧性与记忆系统、多 Agent workflow、代码工作区/代码图/知识图"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "ea0fd1957f83d4a676714cad5fa054b351a3deb2"
+local_commit: "e36d16bacb9ba400d904ece0542c4467f8ef049d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/dev-flow/`、`app/api/dev-flow/`、`lib/dev-flow/`）在 `ea0fd1957f83` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/dev-flow/`、`app/api/dev-flow/`、`lib/dev-flow/`）在 `e36d16bacb9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 DevFlow 是 yukino-dev-agent 的第二个产品面: 一个 GitHub 工程副驾, UI 在 `/dev-flow`, REST 在 `/api/dev-flow/*`. 它连接 GitHub 仓库, 把 issues / pull requests / CI runs 同步进 PostgreSQL, 跑「确定性优先」的 AI 分析 Agent, 维护每仓 RAG 知识库, 并提供对话、记忆、代码工作区、代码图、知识图、多 Agent workflow 编排和多仓 workspace.
@@ -25,7 +25,7 @@ DevFlow 是 yukino-dev-agent 的第二个产品面: 一个 GitHub 工程副驾, 
 - **长对话和记忆** (memory): 理解长上下文, 支持自动记忆、长期记忆和候选审批
 - **自动周报与沉淀** (report): 自动生成周报, 写回知识库
 - **安全草稿** (safety draft): 关闭 issue 等写操作只生成草稿供人工确认, 不擅自执行高风险动作
-- **代码工作区 / 代码图 / 知识图**: 只读浏览仓库代码, 抽取符号依赖和实体关系
+- **代码工作区 / 代码图 / 知识图**: 只读浏览仓库代码, 用 CodeGraph AST 引擎检索符号与已解析依赖, 并抽取跨实体知识图谱
 
 ## 数据流
 
@@ -98,7 +98,7 @@ flowchart TD
 
 `generateStructured()` 在首次响应未通过 schema 校验时, 会用更严格的「只输出 JSON」提醒重试一次 (部分 OpenAI 兼容网关会把 JSON 包在散文里).
 
-输入有统一裁剪预算: issue body 6000 字符 (`BODY_CHARS`)、每文件 patch 4000 / 总 patch 40000 (`PATCH_CHARS_PER_FILE` / `PATCH_CHARS_TOTAL`)、CI 日志 40000 (`LOG_CHARS`)、相似 issue 上限 20 (`SIMILAR_ISSUES`). PR review 与 CI debug 的上下文还会收到 `impactForFiles` 的一跳依赖摘要 (代码图未就绪时诚实地为 null).
+输入有统一裁剪预算: issue body 6000 字符 (`BODY_CHARS`)、每文件 patch 4000 / 总 patch 40000 (`PATCH_CHARS_PER_FILE` / `PATCH_CHARS_TOTAL`)、CI 日志 40000 (`LOG_CHARS`)、相似 issue 上限 20 (`SIMILAR_ISSUES`). PR review 与 CI debug 的上下文还会收到 `impactForFiles` 的依赖摘要 (代码图未初始化或索引过期时诚实地为 null).
 
 负责人 allow-list 由 `TeamMember` 表 (每仓成员, `/api/dev-flow/repos/:id/team-members`) 提供: assignees ∪ 历史 authors ∪ team logins ∪ issue 作者; LLM 推荐的负责人若不在 allow-list, 校验结果标为 replaced 并回退.
 
@@ -117,7 +117,7 @@ flowchart TD
 
 - 文档 SHA-256 `contentHash` 去重 (同内容不重复 embed) -> 结构感知分块 (`chunk_strategy = structure_aware_v1`, chunk 800 字符 / overlap 100 字符) -> embed -> 存进共享 Milvus collection (`config.milvus.collection`, 默认 `yukino_knowledge`), `source = "dev_flow:kb:<repoId>:<docId>"`, 检索时用 `source like` 过滤限定到单仓
 - 接受 `TEXT_EXTENSIONS` 里的 text/markdown/code/JSON/CSV/log/YAML/XML/HTML 以及 PDF/DOCX (`lib/ai/doc-extract.ts`)
-- 检索方法 hybrid/dense/bm25, 每仓可配 (`KnowledgeBaseConfig`, 缺省回退: hybrid、rerank 开、topK 5、scoreThreshold 0.5)
+- 检索方法 hybrid/dense/bm25, 每仓可配 (`KnowledgeBaseConfig`, 缺省回退: hybrid、rerank 开、topK 5、scoreThreshold 0.5); embedding 不可用 (未配置 `OPENAI_EMBEDDING_API_KEY` 或远端调用失败) 时共享检索器整体降级为纯 BM25, 写入改用 1024 维占位向量, 稠密检索返回空
 - `askKnowledge()` 做证据支撑的问答, 带编号引用, 拒绝伪造; 输出结论四选一: answer / insufficient_evidence / conflict / ask_clarification. **答案门控**: 问题的强信号 (标识符类 token、`#123` 引用、3 位以上数字, 由 `STRONG_SIGNAL_RE` 提取) 若一个都没出现在证据里则拒答, 模糊指代则要求澄清
 - 周报 (`agents/report.ts` 的 `generateWeeklyReport`) 经 `addKnowledgeDocument` (sourceType `weekly_report`) 写进这里, 失败时回退 `deterministicWeeklyReport`; 建索引失败不会丢弃已生成的报告
 
@@ -146,7 +146,7 @@ flowchart TD
 - 失败的轮次也持久化为 assistant 消息, 保证反馈锚点不丢
 - 工具结果截断上限 12000 字符 (`MAX_TOOL_RESULT_CHARS`); citations 最多 12 条 (`MAX_CITATIONS`), 持久化进消息 meta 并在 `done` 帧推送
 
-仓库范围工具 (22 个):
+仓库范围工具 (24 个):
 
 | 类别       | 工具                                                                              |
 | ---------- | --------------------------------------------------------------------------------- |
@@ -155,6 +155,7 @@ flowchart TD
 | 触发分析   | `analyze_issue` `analyze_pull` `analyze_ci_run`                                   |
 | 报告/健康  | `generate_weekly_report` `repo_health`                                            |
 | 写草稿     | `create_action_draft`                                                             |
+| 代码图     | `codegraph_search` `codegraph_impact`                                             |
 | 代码工作区 | `workspace_list_files` `workspace_read_file` `workspace_search_code`              |
 | 记忆       | `memory_recall` `memory_propose` `search_evidence` `read_conversation_transcript` |
 | 编排       | `run_engineering_workflow`                                                        |
@@ -189,11 +190,11 @@ GitHub 内容索引 (`lib/dev-flow/content-index.ts`) 把同步的 issues / PRs 
 
 ## 代码工作区 / 代码图 / 知识图
 
-**代码工作区** (`lib/dev-flow/workspace.ts`): 每仓一个服务端浅克隆 (`git clone --depth 1`, 或 `fetch` + `checkout` + `pull --ff-only` 刷新), 通过 `execFile` 的 argv 数组执行 (无 shell, repo/branch/token 无法注入命令), 落在 `config.devFlow.workspace.checkoutDir` (env `DEV_FLOW_REPO_CHECKOUT_DIR`, 默认 `./data/workspaces`), 路径为 `<repoId>-<owner>__<name>`. 守卫参数: git 超时 180s、单文件上限 300000 字节、单次扫描上限 2000 文件. 暴露路径守卫的只读文件工具 (`listFiles` / `readCodeFile` / `searchCode` 打分词法扫描), 拒绝路径穿越、VCS/构建目录 (`SKIP_DIRS`) 和密钥文件 (`SECRET_FILENAMES`: `.env`、`.npmrc` 等). UI: `/dev-flow/code`.
+**代码工作区** (`lib/dev-flow/workspace.ts`): 每仓一个服务端浅克隆 (`git clone --depth 1`, 或 `fetch` + `checkout` + `pull --ff-only` 刷新), 通过 `execFile` 的 argv 数组执行 (无 shell, repo/branch/token 无法注入命令), 落在 `config.devFlow.workspace.checkoutDir` (env `DEV_FLOW_REPO_CHECKOUT_DIR`, 默认 `./data/workspaces`), 路径为 `<repoId>-<owner>__<name>`. 守卫参数: git 超时 180s、单文件上限 300000 字节、单次扫描上限 2000 文件. 暴露路径守卫的只读文件工具 (`listFiles` / `readCodeFile` / `searchCode` 打分词法扫描), 拒绝路径穿越、VCS/构建目录 (`SKIP_DIRS`, 含 `.codegraph`) 和密钥文件 (`SECRET_FILENAMES`、`.env.*`); 路径在 `realpath` 之后复核, 指向密钥文件或构建目录的符号链接同样被拒. UI: `/dev-flow/code`.
 
 **项目索引** (`lib/dev-flow/project-index.ts`): `discoverProjectDocs` 发现仓库文档/清单 (README、package.json 等 manifest、docs/ 目录、CI 配置), 按 1800/180 分块 + embed 进 Milvus (source 前缀 `dev_flow:project:`, 文档键为 `dev_flow:project:<repoId>:<sha256(相对路径)[0:16]>`), 用 `ProjectIndex` 行跟踪状态/指纹/摘要/陈旧度. 对应工具 `search_project_docs`.
 
-**代码图** (`lib/dev-flow/code-graph.ts`): 在托管 checkout 上用正则抽取符号/关系 (关系: imports / calls / defines; 符号族覆盖 TS/JS/Py/Go/Rust/Java/SQL/shell) 进 `CodeSymbol` / `CodeRelation`. `POST /api/dev-flow/repos/:id/code-graph` 重建, GET 符号搜索, `impact` 返回改动文件的一跳依赖方 (`IMPACT_MAX_FILES = 50`, 列表上限 1000); PR review 和 CI debug 的上下文会收到 impact 摘要. UI: `/dev-flow/code-graph`.
+**代码图** (`lib/dev-flow/code-graph.ts` / `lib/dev-flow/codegraph-client.ts`): 符号与关系由 `@colbymchenry/codegraph` 1.6.2 的原生 AST 引擎抽取并解析, 每个检出的索引写在自己的 `.codegraph/codegraph.db`, PostgreSQL 不再存图行 (`CodeSymbol` / `CodeRelation` 已由 migration `20261116000000_codegraph` drop). 引擎跑在独立 Node 子进程 `scripts/codegraph-worker.mjs` (JSON 走 stdin/stdout, stderr 不回传), `runCodeGraph` 按检出真实路径串行化作业: 同一检出并发请求返回 409, 全局同时超过 2 个作业返回 503, 索引 300s / 查询 120s 超时, 输出上限 8 MiB. `POST /api/dev-flow/repos/:id/code-graph` 带 `{action:"rebuild"|"sync"}` 做整库重建或增量同步 (索引不完整/过期时 sync 自动改走整库重建); `GET` 支持 `query` (≤200 字符)/`kind`/`language`/`path` (≤400)/`limit` (1..200, 默认 50), 返回 `{status, nodes, edges, excerpts, truncated}`, 摘录最多 20 条并屏蔽 `.env*`/`.codegraph*`/`node_modules`; `impact` 从改动文件沿已解析的反向边做 1..3 跳 BFS (`depth` 默认 2, 文件 1..50 个, 依赖边上限 1000), 每条带 `sameFile`/`depth`. 状态对象含 `engine:"codegraph"`/`version`/`initialized`/`state` (complete/partial/failed/indexing)/`stale`/`lastIndexedAt` 与文件/节点/边计数; 索引前会遍历检出拒绝逃出仓库的符号链接, 索引文件本身也不允许是符号链接. PR review 和 CI debug 的上下文会收到 impact 摘要, 仅在索引已初始化且非 stale 时注入. UI: `/dev-flow/code-graph`.
 
 **知识图** (`lib/dev-flow/knowledge-graph.ts`): 从同步数据派生关系边 (`#N` 引用 references、closing-keyword 解决 resolves、assigned_to / authored_by、周报文档 documents、会话决策 decides, 带置信度) 进 `KnowledgeGraphEdge`; 节点类型 issue / pull_request / team_member / github_user / knowledge_document / conversation; 每次同步后重建 (`rebuildGraph`). `graphSummary` 限 500 节点, `subgraph` 端点做 BFS ≤2 跳 / 72 节点上限 (`GRAPH_NODE_LIMIT`), 最近边限 20 条. UI: `/dev-flow/graph`.
 
@@ -218,7 +219,9 @@ GitHub 内容索引 (`lib/dev-flow/content-index.ts`) 把同步的 issues / PRs 
 
 DevFlow 相关的 Prisma 表 (`prisma/schema.prisma`):
 
-`Repository` `Issue` `PullRequest` `PrFile` `PrReviewComment` `WorkflowRun` `AnalysisResult` `ActionDraft` `KnowledgeDocument` `KnowledgeDocumentBody` `KnowledgeBaseConfig` `RetrievalTestRun` `ProjectIndex` `Conversation` `ChatMessage` `ChatFeedback` `ConversationMemory` `ThreadMemory` `MemoryCandidate` `RecallEvent` `AgentWorkflowRun` `AgentTaskRun` `CodeSymbol` `CodeRelation` `KnowledgeGraphEdge` `Workspace` `TeamMember` `User` `AuditLog`
+`Repository` `Issue` `PullRequest` `PrFile` `PrReviewComment` `WorkflowRun` `AnalysisResult` `ActionDraft` `KnowledgeDocument` `KnowledgeDocumentBody` `KnowledgeBaseConfig` `RetrievalTestRun` `ProjectIndex` `Conversation` `ChatMessage` `ChatFeedback` `ConversationMemory` `ThreadMemory` `MemoryCandidate` `RecallEvent` `AgentWorkflowRun` `AgentTaskRun` `KnowledgeGraphEdge` `Workspace` `TeamMember` `User` `AuditLog`
+
+代码图的节点与边不在 PostgreSQL: 每个检出由 CodeGraph 引擎维护自己的 `.codegraph/codegraph.db`, 旧的 `CodeSymbol` / `CodeRelation` 表已删除, 历史正则图数据直接丢弃而不迁移.
 
 Milvus 侧用 source 前缀隔离三类内容: `dev_flow:kb:` (知识库文档)、`dev_flow:project:` (项目索引)、`dev_flow:item:` (GitHub 内容索引); 仓库删除时按这三个前缀清理 (`repoMilvusCleanupPrefixes`).
 
@@ -232,7 +235,7 @@ REST 路由 (`app/api/dev-flow/`): repos (+ 子资源 issues/pulls/runs/sync/rei
 
 ## 离线验证
 
-`npx tsx tests/*.smoke.ts` 系列覆盖各子系统: `dev-flow-analysis` (分析 Agent)、`dev-flow-skills` (技能注册)、`dev-flow-workflow` (编排)、`dev-flow-memory` (记忆)、`dev-flow-code-graph`、`dev-flow-graph` (知识图)、`dev-flow-content-index`、`dev-flow-context-compression`、`dev-flow-chat-resilience`、`dev-flow-workspaces`、`dev-flow-github-schemas`、`dev-flow-defects`、`dev-flow-b` (工作区发现/分类/分块, 无需 embedding)、`chunking`、`doc-extract`.
+`npx tsx tests/*.smoke.ts` 系列覆盖各子系统: `dev-flow-analysis` (分析 Agent)、`dev-flow-skills` (技能注册)、`dev-flow-workflow` (编排)、`dev-flow-memory` (记忆)、`dev-flow-code-graph` (CodeGraph 引擎链路)、`codegraph-runtime` (打包后的 worker 运行时)、`dev-flow-graph` (知识图)、`dev-flow-content-index`、`dev-flow-context-compression`、`dev-flow-chat-resilience`、`dev-flow-workspaces`、`workspace-boundary` (路径/符号链接边界)、`dev-flow-github-schemas`、`dev-flow-defects`、`dev-flow-b` (工作区发现/分类/分块, 无需 embedding)、`chunking`、`doc-extract`.
 
 ---
 

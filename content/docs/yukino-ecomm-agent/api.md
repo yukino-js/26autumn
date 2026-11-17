@@ -2,11 +2,11 @@
 title: "HTTP API 和管理台"
 description: "HTTP API 和管理台: API 服务拓扑与启动顺序、server/main.js 离线任务入口、统一错误约定, 对话 / 知识库 / 数据飞轮与评测 / 管理各端点的请求响应契约、job runner, 以及 Lit 前端控制台的路由与架构要点"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
+local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/api/`、`server/src/core/`、`client/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/api/`、`server/src/core/`、`client/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 yukino-ecomm-agent 的对外表面分三块: API 服务 (Hono)、两个 MCP 服务 (见 [MCP 和 Skill](./mcp)) 和前端控制台. API 服务是唯一连接 <u>agent 图</u>、知识库、数据飞轮和管理页面的入口, 所有路由都挂在 `server/src/server.ts` 的 `createApp()` 里.

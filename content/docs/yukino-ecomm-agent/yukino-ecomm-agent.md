@@ -2,11 +2,11 @@
 title: "Yukino Ecomm Agent: 电商客服 Agent 的检索、编排、工具与持久化组织方式"
 description: "从 server 与 client 源码事实出发, 讲清客服 Agent 如何把 Hono HTTP 层、LangGraph 会话图、四策略检索与两道置信度门禁、可选 Milvus 向量路径、MCP 工具执行、分层记忆与上下文预算组织成一次可中断、可审计的对话"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
+local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/`、`client/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/`、`client/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

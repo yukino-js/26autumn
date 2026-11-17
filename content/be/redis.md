@@ -4,7 +4,7 @@ description: "覆盖 Redis 8.x 的数据结构与底层编码、单线程与 IO 
 ---
 
 :::note 版本基线
-内容以 **Redis 8.x** 行为为准; 编码阈值、淘汰参数与持久化默认值核对 8.0 官方 `redis.conf` 与源码常量（官方文档 / 源码）, 实例化结论需以本机 `CONFIG GET` 实测为准. AOF 采用*多部分文件*结构: 一个 manifest 记录文件清单, 数据集由全量 base 文件与增量 incr 文件组成, <u>混合持久化</u>把 RDB 格式的 base 与 AOF 文本格式的 incr 拼在同一数据集内.
+内容以 **Redis 8.x** 行为为准 (Redis Open Source 当前最新为 8.10); 编码阈值、淘汰参数与持久化默认值核对 8.0 官方 `redis.conf` 与源码常量（官方文档 / 源码）, 实例化结论需以本机 `CONFIG GET` 实测为准. AOF 采用*多部分文件*结构: 一个 manifest 记录文件清单, 数据集由全量 base 文件与增量 incr 文件组成, <u>混合持久化</u>把 RDB 格式的 base 与 AOF 文本格式的 incr 拼在同一数据集内.
 :::
 
 **主线一览**

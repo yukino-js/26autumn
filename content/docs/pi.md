@@ -2,11 +2,11 @@
 title: "Pi Agent Harness: 极简内核、树形会话与 durable 运行时"
 description: "拆解 Pi 的设计与实现: 极简内核与扩展机制的边界、entry 树会话模型、TypeScript SDK 的进程内嵌入、durable 运行时的持久化不变量与执行环境抽象、pi-env 的远程执行协议、chord 应用组合运行时与遥测落库、codemode 的沙箱化脚本执行、统一 provider 面与容器化、五种接口形态与 TUI 渲染工程"
 local_path: "$HOME/Downloads/pi"
-local_commit: "26293e74f664c2cfb731b22a653cccf852830e00"
+local_commit: "1f6f319bb28992a40b99c147fffb23b65a23129d"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/pi` 在 `26293e74f664` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/pi` 在 `1f6f319bb28` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -35,7 +35,7 @@ Pi 是终端里的极简、可扩展编码 Agent harness。它的设计立场非
 
 这条哲学的直接后果是: sub-agent、plan mode 这类能力刻意不放进内核。内核提供强力默认, 同时给用户两条路——指挥 Pi 自己生成所需能力, 或安装现成的 Pi package。扩展不只是插件系统, 它是内核主动让位的结果。
 
-内核的自我描述是最小集 (read、write、edit、bash 加会话管理), 但实际工具面更宽: 还包括 find、grep、ls 与 powershell。所有文件变更经专门的队列串行化, 扩展自己的文件写操作也可以挂进同一队列, 避免并发工具调用互相踩踏。
+内核的工具面是 read、write、edit、bash 四个核心工具, 另有 find、grep、ls 与 powershell (packages/coding-agent/src/core/tools/)。edit 与 write 的文件变更经 `withFileMutationQueue` 按解析后的真实路径串行化, 该函数由 `tools/index.ts` 导出, 扩展自己的文件写操作也可以挂进同一队列, 避免并发工具调用互相踩踏。
 
 ### 1.2 资源阶梯七层
 
@@ -74,6 +74,7 @@ Pi 是终端里的极简、可扩展编码 Agent harness。它的设计立场非
 - 键位不许硬编码, 必须进默认键位表以保持可配置; 生成的模型数据文件不许手改, 必须改生成脚本后重新生成。
 - 多会话并发开发有明确纪律: 同一工作目录可能同时跑多个会话, git 只允许 stage 显式路径, 禁止 `git add -A`、`reset --hard`、`checkout .` 之类会波及其他会话的操作。
 - 供应链加固成体系: `.npmrc` 设 `save-exact=true` 且 `min-release-age=2` (拒绝发布不足两天的包, 缩小投毒窗口); 安装锁文件由脚本生成并对依赖的 lifecycle script 做显式 allowlist; CI 以忽略脚本的方式安装; 改 lockfile 需要显式设置 `PI_ALLOW_LOCKFILE_CHANGE=1`。
+- 包安装与更新的子进程输出也受约束: 交互 TUI 下 git 与 npm 走 capture 模式, 强制 `GIT_TERMINAL_PROMPT=0` 与 ssh `BatchMode=yes` 以免子进程在终端上等输入, 失败时把输出末尾约 8000 字符附进错误并提示改用凭据 helper 或 ssh agent; 其余模式仍 inherit 实时输出。否则 `/reload`、`/new`、`/resume` 时刷新的安装输出会画花交互界面。
 
 这些约束与内核最小化是同一取向: 把可变性与不确定性挤到边缘。
 
@@ -91,9 +92,12 @@ Pi 是终端里的极简、可扩展编码 Agent harness。它的设计立场非
 | packages/chord        | @earendil-works/chord           | 类型化宿主运行时: 契约、复制状态、热重载、JSON 链路上的 RPC 与 SQLite 遥测    |
 | packages/env          | @earendil-works/pi-env          | 远程执行环境: SSH 部署的 Rust 守护程序及其 ExecutionEnv 客户端                |
 | packages/telemetry    | @earendil-works/pi-telemetry    | 厂商中立的遥测契约、参考实现与类型化 schema                                   |
+| packages/schema       | @earendil-works/pi-schema       | 无 eval 的 JSON Schema 校验: draft 2020-12 与 7, 编译为闭包, 无运行依赖       |
 | packages/evals        | @earendil-works/pi-evals        | 私有评测套件, 不发布                                                          |
 
-依赖方向很说明问题: coding-agent 依赖 agent-core、ai、codemode、mcp、tui 与 diff, 但**不依赖** durable、chord 与 env; durable 依赖 chord、ai、codemode、telemetry 以及 photon (图像处理)、diff 与 typebox; env 依赖 durable (取 ExecutionEnv 接口) 与 chord; chord 依赖 typebox 与 pi-telemetry; agent-core 依赖 pi-ai 与 typebox; telemetry 无运行依赖。工具参数与消息结构校验统一使用 `typebox` 1.3.27。CLI 线与 durable 线共享 ai 和 codemode, 其余互不依赖——durable 是独立的库级产品面, 不是 CLI 的子系统。coding-agent 的 `AgentSession` 构建在 pi-agent-core 之上: 通用循环、消息/工具事件序列、`transformContext` 变换与工具并行/串行执行都来自 agent 包, coding-agent 在其上叠加会话树、资源加载与工具实现。
+依赖方向很说明问题: coding-agent 依赖 agent-core、ai、codemode、mcp、tui 与 diff, 但**不依赖** durable、chord 与 env; durable 依赖 chord、ai、codemode、telemetry、pi-schema 以及 photon (图像处理) 与 diff; env 依赖 durable (取 ExecutionEnv 接口) 与 chord; chord 依赖 pi-schema、pi-telemetry 与 esbuild/react/ws (子宿主进程、UI 面与链路传输, 三者都是 peer 依赖, 只在对应入口导入); agent-core 依赖 pi-ai 与 pi-schema; ai 依赖 pi-schema 与 pi-telemetry; schema 与 telemetry 无运行依赖。工具参数与配置结构的校验统一构建在 `@earendil-works/pi-schema` 上 (JSON Schema, 编译成闭包, 不生成代码也不 eval); coding-agent 侧的工具仍用 `typebox` 1.3.27 的 builder 声明参数, pi-ai 接受任意 JSON Schema (pi-schema builder、TypeBox 或手写对象)。CLI 线与 durable 线共享 ai 和 codemode, 其余互不依赖——durable 是独立的库级产品面, 不是 CLI 的子系统。coding-agent 的 `AgentSession` 构建在 pi-agent-core 之上: 通用循环、消息/工具事件序列、`transformContext` 变换与工具并行/串行执行都来自 agent 包, coding-agent 在其上叠加会话树、资源加载与工具实现。
+
+`packages/` 之外还有 `apps/`, 三个都标 private 不发布, 但它们是 chord 的真实使用者: `p2` 是自托管的 Pi Durable UI (即 Pi Mobile, 由独立 chord 插件拼成, 属主拥有该服务器与其 worker 上的完整 agent 和 shell 控制权, TUI facet 在访客机器的受限 worker 里跑), 它的 README 开头就用醒目警告声明这是**原型、很快会被替换**, 数据格式与 API 会无通知变动, 不要基于它构建; 侧栏按项目分组会话, 最近又加了 transcript 旁的 tree panel、Projects 的新建项目入口与按设备/平台区分的手势提示。`p2-mac` 是它的原生 macOS spike, `p3` 则是 "p2 在 Chord v2 上的后继" ——按切片推进, README 明说目前还没有跑起来的东西, `docs/` 里维护 overview、names、workflow、decisions 与逐切片 brief (过时的文档移入 `archive/`), 已经把 Windows 列为目标平台并定下 45 MiB 的 worker 内存预算。换句话说, chord 不是只服务于 durable 的内部库, 它的设计在上层应用里被直接检验。
 
 ## 二、树形会话模型
 
@@ -159,6 +163,8 @@ Pi 还会把会话身份注入它启动的 shell: `PI_SESSION_ID`、`PI_SESSION_
 
 事件订阅区分层次: `message_update` 提供增量文本 (含 assistant 消息事件), `message_end` 是权威的完整消息, `agent_end` 表示一次底层 run 结束 (后面可能还有自动恢复或排队工作), `agent_settled` 表示 Pi 确定不再自动继续。把"run 结束"与"彻底空闲"分开, 是编排者能正确判断下一步的前提。
 
+会话级事件的时序同样被收紧: 只有宿主真正 `bindExtensions()` 过, `reload()` 才会重发 `session_start` (`reason: "reload"`); RPC 会话替换只发一次, 旧 runner 上仍在跑的处理器不会把错误报进新会话的 UI; print/JSON/RPC 模式都在绑定之前订阅, 因此 `session_start` 处理器追加的 entry 也会进入输出流。扩展自己的 `pi.events` 处理器抛错不再由事件总线 `console.error` 直接写终端 (会盖住交互 TUI), 而是转成 `ExtensionError` 走扩展错误通道。运行时的诊断由 `takeUnreportedDiagnostics()` 按「类型 + 消息」去重, 会话替换后不重复播报同一条设置警告; 模型回退提示则在 `/resume` 与 `/fork` 之后仍作为 warning 上报。
+
 ### 3.5 内置扩展与 MCP 启动时序
 
 CLI 会把注册面里的内置扩展默认加载 (codemode、tool-search、MCP 与提供本地模型的 llama.cpp), SDK 会话一个都不加载; 要让 SDK 会话拿到前三者的能力, 需把对应扩展工厂 (`createCodemodeExtension`、`createToolSearchExtension`、`createMcpExtension`) 加进 DefaultResourceLoader 的 `extensionFactories`, 并对会话 `bindExtensions()`。其中 codemode 与 tool-search 注册为非活跃, 通过默认工具设置或 MCP server 的暴露策略激活; codemode 调用不依赖当时的活跃工具集, 因此在树导航、恢复与分叉后仍然可用; tool-search 加载的工具会记录进 transcript, 在该分支上保持声明。
@@ -176,13 +182,13 @@ durable 是一个实验性的持久化 agent harness, 构建在 pi-ai (模型访
 配套的八条不变量值得逐条看:
 
 1. 一次 Session 提交对所有记录与文档写入是原子的。
-2. 文档更新只在存储提交成功后发布。
-3. 所有可见进度都是持久的——唯一的例外是 deferred 提交窗口 (见下)。
+2. 提交在 Storage 使其持久之后才发布, 按变更线顺序; 即使那次存储调用随后失败也照常发布, 而在持久之前失败的提交不发布任何内容。
+3. 所有可见进度都是持久的——唯一的例外是 deferred 提交窗口 (见下), 且只有仅改动已存在的 latest、initial-fork 会话文档的提交才能标为 deferred。
 4. 外部副作用不在提交事务内运行。
 5. entry 与 ID 不可变, 提交后不复用。
 6. 草稿在事务回调结束时被同步准备或中止, 写入草稿的值按值拷贝且必须是严格 JSON。
-7. 变更线在存储结算与已提交状态采纳期间保持持有; 提交与关闭观察者同步运行只为捕获不可变状态。
-8. 存储错误对打开的 Session 是致命的: 它不发布任何内容, 必须重新打开。
+7. 变更线一次只跑一个提交回调 (存储可以重叠, 走 group commit), 回调看不到未发布提交写下的值; 提交与关闭观察者同步运行只为捕获不可变状态。
+8. 存储错误对打开的 Session 是致命的: 失败的那个提交不发布 (除非 Storage 已先给出持久回执), Session 必须重新打开。
 
 第 3 条的例外是显式的提交选项: 提交可以带 `{ persistence: { kind: "deferred", withinMs } }`, 此时状态先对观察者可见, 存储必须在 `withinMs` 窗口内把它持久化。这是整套系统里唯一允许"观察先于落盘"的路径, 其余一切仍是先提交再展示。
 
@@ -213,11 +219,13 @@ entry 记录 (`EntryRecord`) 把"面向模型的消息"与"面向应用的数据
 | JSONL                     | 单目录追加文件, 可配置每次提交 fsync; 全部历史留在内存, 长跑 agent 应选 SQLite                      |
 | Cloudflare Durable Object | 单个 SQLite 型 Durable Object 的存储, 一次提交即其存储事务                                          |
 
-一个存储同一时刻只被一个进程拥有, 没有跨进程锁; 提交采纳 (`adopt(seq)`) 是同步发布。SQLite 存储可用前缀给表与索引命名空间化 (如 `{ prefix: "pi_" }`), 便于共享数据库; 多个 Pi 存储共用一个 Cloudflare 存储对象时自动共享操作队列。可移植的 SQLite 与 JSONL 核心不依赖 Node API, 只要给定异步的数据库 facade 或文件系统, 就能跑在 Bun 或 Cloudflare Durable Objects 之类的运行时上。自定义后端与自定义执行环境可以分别跑 `registerStorageConformance()`/`registerEnvConformance()` 的一致性测试套件。工具参数与数据结构校验统一使用 `typebox` 1.3.27 (packages/durable/src/tools/bash.ts 等), 以类型化 schema 描述参数并导出 JSON Schema 供模型侧消费。
+一个存储同一时刻只被一个进程拥有, 没有跨进程锁; 提交采纳 (`adopt(seq)`) 是同步发布。SQLite 存储可用前缀给表与索引命名空间化 (如 `{ prefix: "pi_" }`), 便于共享数据库; 多个 Pi 存储共用一个 Cloudflare 存储对象时自动共享操作队列。可移植的 SQLite 与 JSONL 核心不依赖 Node API, 只要给定异步的数据库 facade 或文件系统, 就能跑在 Bun 或 Cloudflare Durable Objects 之类的运行时上。自定义后端与自定义执行环境可以分别跑 `registerStorageConformance()`/`registerEnvConformance()` 的一致性测试套件。工具参数与数据结构校验统一用 `@earendil-works/pi-schema` 的 builder (packages/durable/src/tools/bash.ts 等), 以 JSON Schema 描述参数并供模型侧消费。
 
 ### 4.4 重启限制与睡眠
 
-任务的重启次数有预算: `restartLimit` 默认 5, 超限的任务被 park (原因记为 `restart_limit`), 不再自动续跑; `retryTask()` 可以显式复活。任务还可以声明睡眠: `sleepUntil` 把它放进 sleeping 阶段, 到点经 `onWake`/`wake()` 唤醒——在 Cloudflare Durable Objects 上这就是 alarm 的接入点。这两个机制让"长跑、可暂停、可恢复"成为运行时的一等状态而不是宿主自造的轮询。
+任务的重启次数有预算: `restartLimit` 默认 5 (`DEFAULT_RESTART_LIMIT`, 可设 `Infinity` 永不以重启结束任务), 计数在任务每次提交新状态时清零。达到上限后任务不再重跑, 而是直接终结: 内建任务自带处理 (工具调用得到 `restart_limit` 错误结果, 压缩落成 `compactionFailure`, run 以 `runFailure` 原因 `restart_limit` 结束), 自定义任务终结为 `faulted` 并以原因 `restart_limit` 上报 `task_faulted`。进程死亡时所有在跑的任务都会被计一次重启, 不只肇事者。
+
+任务还可以在阶段之间声明睡眠: `runtime.sleepUntil(until, checkpoint, ctx)` 返回 `{ status: "sleeping", checkpoint, until }`, 到点后由宿主唤醒 (`HarnessOptions.onWake`, 或显式调用 `harness.wake()`); `waiting` 状态则是等一组子任务进入终态。在 Cloudflare Durable Objects 上, 定时唤醒就是 alarm 的接入点。这两个机制让"长跑、可暂停、可恢复"成为运行时的一等状态而不是宿主自造的轮询。
 
 ### 4.5 compaction 与 overflow
 
@@ -227,7 +235,7 @@ entry 记录 (`EntryRecord`) 把"面向模型的消息"与"面向应用的数据
 
 ### 4.6 工具面与执行环境
 
-工具用 `defineTool` 注册: typebox schema 描述参数, 可声明 `replay: "safe"` (允许跨重启重放)、`structuredOutput`、`abandonOnRestart`、`callers`、`modelTools`、`deferred` (配合内置 tool-search 按需加载)。工具实现拿到的 api 支持嵌套调用 (`api.executeTool`, 以 key 在重启后把调用重新接上)。内置工具是 read、write、edit、bash 加一组 CodingTools; durable 侧 bash 的结构化结果是 `{ output, truncated, fullOutputPath?, exitCode }` (camelCase, 与 coding-agent 里 codemode 沙箱的 snake_case 结果区分)。图像处理经 Photon: `createNodePhotonImages` 起一个 worker 线程做缩放/转码 (空闲 30 秒回收), 默认上限 2000x2000、4.5 MB。
+工具用 `defineTool` 注册: pi-schema 的 builder 描述参数 (TypeBox 的常见构造也接受), 可声明 `replay: "safe"` (允许跨重启重放, 默认 `unsafe`)、`structuredOutputSchema`、`callers` (`["model"]`、`["tools"]` 或两者, 决定谁能调它)、`deferred` (默认不交给模型, 直到本会话的 `modelTools` 点名, 由 tool-search 一类工具写入, 配合内置 tool-search 按需加载) 与 `outputLimits`; 任务侧另有 `TaskOptions.abandonOnRestart` 决定重启后是否放弃未完成的工作。工具实现拿到的 api 支持嵌套调用 (`api.executeTool`, 以 key 在重启后把调用重新接上)。内置工具是 read、write、edit、bash 加一组 CodingTools; durable 侧 bash 的结构化结果是 `{ output, truncated, fullOutputPath?, exitCode }` (camelCase, 与 coding-agent 里 codemode 沙箱的 snake_case 结果区分)。图像处理经 Photon: `createNodePhotonImages` 起一个 worker 线程做缩放/转码 (空闲 30 秒回收, worker 起不来则退回调用线程), 默认上限 2000x2000、4.5 MB。
 
 "工具在哪台机器上跑"抽象成 ExecutionEnv (文件系统与 shell 两个接口的合集)。`HarnessOptions.env` 是一个构建器: 每次工具调用、段落渲染与显式取环境时, 以目标 conversation 的当前 cwd 与已提交读权限现场构建, 可以异步, 永不跑在 Session 变更线上; 没有配置环境时内置工具以错误结果失败, 构建器抛错则成为该调用的错误结果。环境对象本身便宜, 每次调用新建也无妨——edit 与 write 按"环境 id + 规范路径"串行化对同一文件的变更, 因此同 id 环境必须看到同一文件系统; 自定义环境要设好 id, 比如一个容器一个 id。于是"这个会话的工具进容器、那个会话进远程机"成为配置而非改码。
 
@@ -237,13 +245,13 @@ entry 记录 (`EntryRecord`) 把"面向模型的消息"与"面向应用的数据
 
 durable 的可见状态组织成五类内置文档: `pi.agent` (会话的 agent 配置: 模型、思考级别、扩展与工具选择、指令、工作目录, 存为可回退历史的文档, 任务拥有的会话复制 owner 的配置)、`pi.provider` (provider 侧身份)、`pi.live` (进行中的 run 与工具槽位, 含 codemode 嵌套调用展示)、`pi.inbox` (输入受理队列)、`pi.usage` (用量)。
 
-观察接口是 watch: `harness.watch()`/文档 watch 返回 `{ value, ops, retired }`——`value` 是当前视图, `ops` 是 chord 的精确操作而非要求消费者自己 reduce 的快照, `retired` 标记文档被退役; 待投递操作积压超阈值时折叠为一次根替换 `[["r", view]]`。会话、任务图与单个文档各有 `observeConversation`/`observeTaskGraph`/`observeDoc`。另有实验性的 `watchEvents`, 把 agent 事件流以 watch 形式重放, 待投递批次积压超过订阅的 100 个待投递值上限时退化为快照。
+观察接口是 watch: `harness.watch()`/文档 watch 返回 `{ value, ops, retired }`——`value` 是当前视图, `ops` 是 chord 的精确操作而非要求消费者自己 reduce 的快照, `retired` 标记文档被退役; 待投递操作积压超阈值时折叠为一次根替换 `[["r", view]]`。会话、任务图与单个文档各有 `observeConversation`/`observeTaskGraph`/`observeDoc`, 提交线本身则用 `Session.observeCommits()` 拿到每次 `CommitPublication`。
 
 ### 4.8 文档定义与 task graph
 
 应用文档用 `defineDoc` 定义: 历史语义选 `latest` (只跟最新值) 或 `rewindable` (可回退), 分叉行为选 `initial`、`current` 或 `asOf`, `checkpointWhen` 决定何时写完整检查点而非操作。
 
-task graph 视图把每个活任务挂成可观察状态或 watch, 状态机为 pending/running/waiting/sleeping/completing, 含 owner 边、已提交状态、后台与中止标记、拥有的会话; 重启后 running 落回 pending 再被调度。子代理就是任务所有权的组合: 新 conversation 的 owner 记为 `{ kind: "task", taskId }`, 加 `background: true` 即后台跑。任务的上报 (`onReport`) 有固定类型集, 失败 run 之后由 `afterFailedRun` (keep/continue/withdraw, 默认 keep) 决定排队中的输入是留在队列、交给下一次 run 还是按未回答结算。生命周期一致性也有约束: 任务运行时的时间与上报接口在其调用结束后拒绝使用; 文档迁移后的第一次写总会写入当前版本的新基底, 即使 JSON 深相等。
+task graph 视图把每个活任务挂成可观察状态或 watch, 状态机为 pending/running/waiting/sleeping/completing 加终态 terminal, 含 owner 边、已提交状态、后台与中止标记、拥有的会话; 重开存储时 surviving 的 running 任务被改回 pending 再被调度 (checkpoint 与中止标记保留)。子代理就是任务所有权的组合: 新 conversation 的 owner 记为 `{ kind: "task", taskId }`, 加 `background: true` 即后台跑。任务的上报 (`onReport`) 有固定类型集, 失败 run 之后由 `afterFailedRun` (keep/continue/withdraw, 默认 keep) 决定排队中的输入是留在队列、交给下一次 run 还是按未回答结算。生命周期一致性也有约束: 任务运行时的时间与上报接口在其调用结束后拒绝使用; 文档迁移后的第一次写总会写入当前版本的新基底, 即使 JSON 深相等。
 
 ### 4.9 provider 会话身份
 
@@ -287,53 +295,71 @@ SSH 侧做了硬化: BatchMode、对应用自持 known_hosts 的严格主机密�
 
 chord 是一个独立的类型化宿主运行时, 用于构建由**对象**组成的应用——这些对象可以分布在多个进程 (server、worker、浏览器标签页) 里, 并且能在运行中**热重载**:
 
-- 对象是地址上的状态加代码, 按需创建, 有人引用就存活。
+- 对象是地址上的状态加代码, 按需创建; 寿命由契约种类与参数决定 (见下)。
 - 所有人拿到的都是**引用**, 从不直接拿到对象; 引用在本地与跨进程行为一致, 且能活过重载。
 - 每个对象知道自己的 **principal**: 属主与访客拿到的是不同对象、不同方法集 (variant)。
 - **状态**是可观察的 JSON: 远端观察者先收到快照, 之后是增量。
 - **热重载**在运行中换代码: 在飞的工作用它启动时的代码跑完, 状态保留, 不兼容的变更在安全点迁移。
 
-生命周期规则很具体: 引用有明确的属主类别 (对象声明、调用期 `ctx.get`、连接、宿主、UI); 激活按地址合并, 全部请求者离开则丢弃结果; 属主侧可在 `serve(…, { linger })` 声明最后引用释放后再保留对象 (默认 `0` 即立即处置), 消费侧对远端绑定另有按类型配置的 linger 缓存, 其条数上限 `cap` 默认 4, 超出后最久未用的绑定先被释放——中止任务、移除监听、按注册反序关闭资源、级联释放引用; 强制处置分波进行, 引用者先于被引用者, 让资源的 close 还能用到对象的引用。
+生命周期规则很具体: 一个身份只有一个对象, 首个 `get` 跑工厂, 之后的 `get` 共享同一实例。寿命由契约种类与参数决定——`local` 且参数为空的对象与宿主同寿 (宿主启动即开始, 不因引用归零而结束), 其余 `local` 与所有 `remote` 对象随引用存活, `serve(…, { linger })` 让它在最后一个引用释放后再保留一小段 (默认 `0` 即立即处置)。每次激活都是一次全新尝试, 受 `readyTimeout` 约束; 工厂声明的依赖 (`self.get`、`self.registry`、keyed pin) 未就绪时尝试停在 parked, 对象对外显示 `loading` 或 `failed { waiting }`, 期间的调用在准入闸门前等待。结束流程也定死了顺序: 新调用立刻拒绝、在飞调用的调用方拿到 `released`、处理器在已中止的上下文里继续跑到自身的 promise 结算 (受 `closeTimeout` 兜底), native 按打开的逆序关闭, 文档丢弃, 引用最后释放——这样 close 时还能用到引用。
 
 ### 6.2 契约、facet 与宿主
 
-契约是运行时值, 用 typebox schema 描述: 名字、输入 (对象地址)、成员, 分 local 与 remote 两类; 放置用 `hostNamed` (单一宿主) 或 host family 声明, 调用方从不指名宿主; 适配器经 covers/accepts 匹配, 不匹配报 `contract_mismatch`。方法、状态 (带 version/migrate)、派生、资源、监听与任务都在工厂里经 `self` 声明; 工厂可以同步返回, 也可以异步激活 (默认 60 秒 ready 超时)。
+契约是运行时值, 用 pi-schema 的 builder 描述: 名字、参数 schema 与成员, 分 `local` (一张扁平的成员表) 与 `remote` (按 principal 分 variant 的状态、方法、事件) 两类; `remote` 还必须声明 `hostAddress(params) => Address`, 把对象参数映射到某台 host 的地址 (host 种类由 `hostKind(name, params)` 定义), 调用方从不指名宿主; 可选的 `admission` 声明 provider 在跑工厂前能读到的调用方数据。适配器经 `accepts` 表匹配旧版本, 不匹配报 `contract_mismatch`。方法 (`method(...)`)、状态 (schema)、事件 (`event(...)`) 与 keyed 状态在契约里声明, 契约自身带 `version` 与逐版本的 variant 历史; 依赖 (`self.get`、`self.registry`、keyed pin)、派生、资源、监听与任务在工厂里经 `self` 声明; 工厂可以同步返回, 也可以异步激活 (默认 60 秒 ready 超时)。
 
-**facet** 是插件对一种宿主的代码 (server、worker、浏览器各一份), 经 `host.serve()` 注册类型工厂; 工厂拿到的 FacetApi 提供 serve、root、registry 与一个在本轮安装失效时中止的 signal——root 与 registry 让非 Chord 方法的代码 (durable 的工具与 hook、原生库回调) 也能访问自己所在的宿主, 因此插件永远不需要进程级全局宿主。宿主之间经 link 交换 JSON 帧; 路由与 relay 把对远端宿主的 hold 按契约声明的位置解析并转发, 授权在解析前与解析后各查一次。
+**facet** 是插件对一种宿主的代码 (server、worker、浏览器各一份), 经 `defineFacet((host, self) => …)` 注册: `host.serve(Type, factory, { accepts?, linger?, admit?, untraced? })` 提供类型, `host.serve(Registry, provider)` 提供注册表, `host.references(Type)` 暴露该宿主上某类型的引用集, `self.contribute(Registry, value)` 向注册表投稿。facet 的 setup 只做声明 (类型、注册表、投稿与 presence), 没有文档、例程与 native, 因此 `load` 之后不会再失败; 这取代了进程级全局宿主, 插件不需要自己找宿主。宿主之间经 link 交换编码后的 JSON 帧; 路由与 relay 把对远端宿主的 hold 按契约声明的地址解析并转发, 授权在解析前与解析后各查一次。
 
-注册表 (defineRegistry) 是按代码版本划分的不可变表, 顺序取首次注册序, 替换保留; 宿主管理器 (createHostManager/forkDriver/childControl/processLock) 负责子宿主进程的启动、停止、替换与存活探测。
+注册表 (`defineRegistry(name, { version })`) 是按代码版本划分的不可变表; 子宿主进程由 `@earendil-works/chord/workers` 提供 (`createWorkers` 按地址按需 fork, 空闲即停, 插件由 server 下发), `@earendil-works/chord/app` 则是 server 与 worker 的启动套件。
 
 ### 6.3 复制状态与 delta
 
-chord/delta 是独立的事务性 JSON 跟踪器: `track()` 建立跟踪, `beginChange()` 开草稿, `prepare()` 产出不可变准备值, `adopt()` 校验并交换根指针; `applyImmutable(base, ops)` 在副本上重建状态。准备不改变权威; 采纳验证准备。写入草稿的值立即按值拷贝, 非严格 JSON (undefined 数组元素、非有限数、函数、symbol、稀疏数组等) 在赋值处就抛错; 未变更子树可以在版本间共享。跟踪器信任不可变所有权, 不做防御性拷贝或冻结——发布的值不冻结, 进程内消费者不得原地修改, 可变信任边界要自行克隆或序列化。
+chord/delta 是独立的事务性 JSON 跟踪器: `track()` 建立跟踪, `beginChange()` 开草稿, `prepare()` 产出不可变准备值 (整体替换用 `prepareReplace()`), `adopt()` 校验并交换根指针; `applyImmutable(base, ops)` 在副本上重建状态。准备不改变权威; 采纳验证准备。写入草稿的值立即按值拷贝, 非严格 JSON (undefined 数组元素、非有限数、函数、symbol、稀疏数组等) 在赋值处就抛错; 未变更子树可以在版本间共享。跟踪器信任不可变所有权, 不做防御性拷贝或冻结——发布的值不冻结, 进程内消费者不得原地修改, 可变信任边界要自行克隆或序列化。
 
-`replicatedState(initial)` 是同一模型的回调式封装, 独立于宿主: 一次成功的 `change()` 恰好发布一个原子修订, 回调抛错则原值与序号不变, 草稿在回调返回后即失效。公共订阅有明确的背压: 每个订阅至多保留 100 个待投递的完整值, 溢出只留最新 (未开始的初次 hydration 例外); 取消订阅立即丢弃待投递工作, 不中止也不等待正在跑的回调。
-
-watch 是统一的观察接口 (`WatchHandle<T>`): `watch.value` 是获取时的值, `start(listener)` 安装唯一异步监听, 之后每次变更以 `(change, context)` 逐一到达, `change` 为 `{ value, ops, retired }`; 监听器运行期间累积的变更折叠成一次调用 (最新值、折叠后的操作、最新的 context), 待投递操作积压超阈值时改为一次根替换 `[["r", newest]]`。`retired` 表示所跟随的文档被退役但不结束 watch。结束原因 (`WatchEnd`) 五种: stopped、cancelled、ended、listener_error、failed。源侧用 `Watch<T>` 实现 (advance/end/endAfterDelivery/observeCancellation), `NativeWatch<T>` 是纯进程内版本——无 ops, 待投递值超过 100 个折叠成一个。
+watch 是统一的观察接口 (`WatchHandle<T>`): `watch.value` 是获取时的值, `start(listener)` 安装唯一异步监听, 之后每次变更以 `(change, context)` 逐一到达, `change` 为 `{ value, ops, retired }`; 监听器运行期间累积的变更折叠成一次调用 (最新值、折叠后的操作、最新的 context), 待投递操作积压超阈值时改为一次根替换 `[["r", newest]]`。`retired` 表示所跟随的文档被退役但不结束 watch。结束原因 (`WatchEnd`) 五种: stopped、aborted、ended、listener_error、failed; 源侧用 `Watch<T>` 实现 (advance/end/endAfterDelivery/observeCancellation), `NativeWatch<T>` 是纯进程内版本——无 ops, 待投递值超过 100 个折叠成一个。
 
 durable 的文档正是建立在这套模型上: Session 提交直接发布 chord 操作, 消费者拿到的是精确操作而非需要自己 reduce 的快照。
 
 ### 6.4 链路与热重载
 
-链路有三种: 内存对 (测试)、Node IPC (子进程) 与 WebSocket (服务端 ws、浏览器 WebSocket)。线帧是 JSON: hello/bye、hold/release (跨链路的引用)、shape、call/result/cancel、sub/unsub/resync 与 state、gone、root_end、retire、invalidate、ping/pong、ack, 以及重载控制帧 prepare/vote/commit/abort。流控是双向的: 两端在 hello 里声明 ack 窗口并累积确认, 未确认帧超过窗口 (默认 256 KiB JSON 文本) 时状态在发送端排队, 按成员流槽位按创建顺序冲刷; 等待中的操作有上限 (默认四个窗口), 超出后最老的流转为当前值的 reset; 并发调用数也有 maxCalls 上限。协议版本写在 hello 里 (`PROTOCOL_VERSION = 4`, 见 `packages/chord/src/wire.ts`), 版本不匹配的双方不协商, 直接关链路。
+链路有三种: 内存对 (`memoryLinkPair`, 测试)、Node IPC (`ipcLink`, 子进程) 与 WebSocket (`webSocketLink`, 服务端 `ws` 与浏览器 WebSocket); 帧按链路选 codec, 默认 `binaryCodec`, 调试可用 `textCodec` (两端必须一致, 不做协商)。线消息是同一个标注联合: `hello` (协议版本、incarnation 与可选的并发调用窗口)、`hold`/`release` (跨链路的引用)、`call`/`result`/`error`/`abort` (`call` 带 `old` 标记时表示重载的旧工作)、`bound`/`state`/`ack` (绑定、状态与累积确认)、`event` (fire-and-forget 的成员事件, 单独 ack)、`closed`、`ping`/`pong`、`revoke`、`failed`/`loading`/`retry` (失败退避与重试) 与 `gone`。部件 (part) 在链路上是不透明 JSON, 超过 16 KiB (`COMPRESS_ABOVE`) 且压缩后更小才会在源端 deflate, 只在拥有它的宿主上解析; 未信任链路单部件上限 16 MiB、解压后 64 MiB。
 
-热重载分四步: **prepare** 在每个受影响宿主上用新工厂以记录模式跑一遍现存对象 (可读现有 cell、写则抛错, 监听/任务/注册只记录不启动, 新资源以候选身份打开), 任何失败即整体放弃; **gate** 对版本抬升或独占资源变更的对象做准入切割——旧代码版本的新 root 拿可重试的 `upgrade_conflict`, 已持有激活租约的 root 被豁免, 等待截止 (默认 5 秒) 未到就整体中止重来; **commit** 每个宿主以一个同步步骤安装迁移后的 cell 值、把实现换为新代码版本、重启任务、推送 shape/reset; **retire** 遵循两版本规则——宿主至多保留 current 与 previous, previous 的 root 全部结束 (或任务停止截止 5 秒到期中止) 后才释放。兼容变更 (无状态版本抬升、无独占资源变更) 跳过 gate, 无需等待。状态兼容规则是刚性的: 版本抬升必须配 migrate, schema 变更不抬版本直接拒绝重载。
+流控按 origin 分开: `hello` 的 `calls` 是同一 origin 的并发调用窗口, 未信任链路默认 10,000 (`HostOptions.callWindow`), 信任链路既不检查消息 schema 也不声明窗口; 本端自己的 `bound`/`state` 消息在链路上至多 2 条未确认 (`WINDOW = 2`, `packages/chord/src/remote/provider.ts`), 满窗时后续改动折进该 hold 的待发操作队列 (积压超过 10,000 条只保留一次 `[["r", value]]`), 收到 `ack` 腾出槽位后作为一条 `state` 发出; 事件另有一个窗口 (`eventWindow` 默认 32 条未确认, 满窗即丢弃该次 flush 的事件, 不影响状态)。协议版本写在 hello 里 (`PROTOCOL_VERSION = 1`, 见 `packages/chord/src/data/errors.ts`), 版本不匹配的双方不协商, 直接关链路。
+
+热重载分四步: **load** 收下宿主的完整新插件集合 (传入同一个 facet 对象即视为未变, 缺失的即删除); **staging** 把每个插件的 setup 声明写进暂存表, 并对每个受影响对象用新工厂对记录型 `self` 预演一遍 (只记录文档、表、任务、请求与声明版本, 不激活、不绑定、不打开), 同时跑与真实尝试一致的无副作用检查 (含每个 provider 的 `accepts` 表与注册表 provider 的形状); **commit** 一批完成: 宿主原子切到新代码, 被删插件提供的类型与注册表下线, 注册表在下次读取时 (被监听时则在改变它的那一批里) 重新 `compose`; 之后每个对象**按预演结果取自己的结局**——类型被删的结束, 失败/parked/激活中的在新代码上重试, live 的重启 (旧尝试继续服务在飞工作, 直到排空且继任者的请求就绪, 受 `reloadDrainTimeout` 5 秒兜底; 之后封印、native 以 `reload` 关闭、继任者跑工厂并激活, 文档保留并由继任者按其版本迁移), 继任者请求失败的变为 parked 并上报原因。
+
+重载按插件结算而非全有全无: 新代码在构建、评测、setup、工厂预演或声明检查里失败的插件保留旧代码, 并在报告的 `failed` 里列出, staging 去掉它再跑一遍; 闭包规则把录制请求依赖这些旧代码的消费者一起保留。版本兼容靠 provider 的 `accepts` 表显式声明 (成员、参数与结果的逐版本映射), 没声明的旧版本绑不上, hold 停在 `waiting`; 契约以 name、version 与 fingerprint 绑定, 同一版本改 schema 会换掉指纹, 于是旧指纹的 hold 找不到可绑的版本。`admission` 的指纹单独比对。
 
 ### 6.5 入口、遥测与 SQLite
 
-| 导入                                    | 内容                                                                                          | 运行环境           |
-| --------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------ |
-| @earendil-works/chord                   | 契约、声明、宿主、链路、错误, 以及 Context/JsonValue/Draft/replicatedState、Watch 等共享基础  | Node 与浏览器      |
-| @earendil-works/chord/node              | 子宿主进程: createHostManager、forkDriver、childControl、processLock; facet 加载器 nodeLoader | Node               |
-| @earendil-works/chord/context           | 显式取消、遥测与调用值: BACKGROUND_CONTEXT、withCancel、withTelemetry、traceIn 等             | Node 与浏览器      |
-| @earendil-works/chord/delta             | 事务性跟踪器、结构差分、不可变应用与操作批的编解码                                            | Node 与浏览器      |
-| @earendil-works/chord/output            | 有界输出流 OutputBuffer 与按尺寸节流的 Progress                                               | Node 与浏览器      |
-| @earendil-works/chord/telemetry-sqlite  | createSqliteTelemetry: 缓冲记录与后端无关的 TelemetryStore 查询                               | 任意 SQLite 适配器 |
-| @earendil-works/chord/sqlite            | 可移植 SqliteDatabase/SqliteExecutor 与原子迁移                                               | 任意 SQLite 适配器 |
-| @earendil-works/chord/sqlite/node       | NodeSqliteDatabase 与打开函数                                                                 | Node               |
-| @earendil-works/chord/sqlite/cloudflare | DurableObjectSqliteDatabase                                                                   | Cloudflare DO      |
+chord 的公共面按运行环境切成子路径, 靠前的几个只在 Node 或只在浏览器可用:
 
-`Context` 现在总是携带一个遥测 span (与 abortSignal 并列), `BACKGROUND_CONTEXT` 用共享的 no-op span; `withTelemetry`/`traceIn` 派生带遥测的子上下文, 不修改父上下文。SQLite 遥测适配器 `createSqliteTelemetry(db, { retentionMs?, maxQueuedSpans? })` 不持有连接、记录时不做 SQL: 定时器默认 10 秒 (`intervalMs = 10_000`) 把已结算 span 与完成的指标区间在一个事务里落库并顺带清理保留期 (默认 7 天); 待提交 span 上限默认 10,000, 溢出计入丢弃计数; 指标按 name/kind/unit/属性序列保留 count/sum/min/max, 不存原始样本; 写失败永久停止记录, 后续 flush/close 以原始错误拒绝。适配器实现 `TelemetryStore` (`findTraces`/`getTrace`/`findMetrics`), 关闭适配器后只要数据库还开着仍可查询; 表为 `telemetry_spans`、`telemetry_metrics`、`telemetry_schema`。
+| 导入                                    | 内容                                                                                                                                                                | 运行环境           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| @earendil-works/chord                   | 契约、错误、宿主与 facet、文档 (`defineState`)、派生与 native、routines 与 jobs、链路、注册表、store (`openStore`/`defineTable`)、客户端公共外观 (主题、消息、语言) | Node 与浏览器      |
+| @earendil-works/chord/http              | `createHttp`: 由插件投稿的路由、wrap 与 socket 组成的 fetch 处理器, 认证器, 默认开启的安全基线, Node 监听器与 `nodeRequest`                                         | Node               |
+| @earendil-works/chord/workers           | 子宿主进程: `createWorkers`、`workerMain` 与 `processLock`                                                                                                          | Node               |
+| @earendil-works/chord/compression       | `nodeCompression`: `createHost({ compression })` 接受的同步压缩器, 让超过 16 KiB 的 JSON 部件走 raw deflate                                                         | Node               |
+| @earendil-works/chord/workers/child     | worker 侧入口: `workerMain` 与 `processLock`, 不带 esbuild                                                                                                          | Node               |
+| @earendil-works/chord/plugins           | 插件发现、`buildFacet` 构建、求值、监听、逐插件发布与装载、`installPlugin`/`testPlugin`                                                                             | Node               |
+| @earendil-works/chord/plugins/runtime   | `createPluginRuntime`: 不带 esbuild 装载已构建插件                                                                                                                  | Node               |
+| @earendil-works/chord/app               | 应用套件: `startServer`、`startWorker`、启动数据对象、会话与属主登录、设备配对、文件、按地址导出导入、可选插件                                                      | Node               |
+| @earendil-works/chord/surfaces          | 客户端外观的服务端: `webSurface` (基础包、插件脚本、页面) 与 `tuiSurface`                                                                                           | Node               |
+| @earendil-works/chord/web               | 页面的浏览器侧: `startPage`、`followThemes`、`followLanguage`                                                                                                       | 浏览器             |
+| @earendil-works/chord/react             | 可选 React 绑定: `HostProvider`、`useHold`、`useWatch`、`useVariant`、`useRegistry`、`useMessages` 等                                                               | 浏览器             |
+| @earendil-works/chord/tui               | 终端的沙箱侧: `startTerminalRuntime`、`BridgeTerminal`、`TerminalTheme`、`TuiScope`                                                                                 | Node (沙箱内)      |
+| @earendil-works/chord/tui/launcher      | 终端启动器 (可信侧): `startTerminal`、`requireSandboxNode`                                                                                                          | Node               |
+| @earendil-works/chord/context           | 显式取消、遥测与调用值: `BACKGROUND_CONTEXT`、`withCancel`、`withTelemetry`、`traceIn` 等                                                                           | Node 与浏览器      |
+| @earendil-works/chord/delta             | 事务性跟踪器、结构差分、不可变应用与操作批的编解码                                                                                                                  | Node 与浏览器      |
+| @earendil-works/chord/json              | `JsonValue`、`JsonRepresentation`、`copyJson`、`isJsonValue`                                                                                                        | Node 与浏览器      |
+| @earendil-works/chord/watch             | watch 类型 (`Watchable`/`WatchHandle`/`WatchEnd` 等) 与 `Watch`/`NativeWatch` 两个实现                                                                              | Node 与浏览器      |
+| @earendil-works/chord/output            | 有界输出流 `OutputBuffer` 与按尺寸节流的 `Progress`                                                                                                                 | Node 与浏览器      |
+| @earendil-works/chord/telemetry-sqlite  | `createSqliteTelemetry`: 缓冲记录与后端无关的 TelemetryStore 查询                                                                                                   | 任意 SQLite 适配器 |
+| @earendil-works/chord/sqlite            | 可移植 SqliteDatabase/SqliteExecutor 与原子迁移                                                                                                                     | 任意 SQLite 适配器 |
+| @earendil-works/chord/sqlite/node       | NodeSqliteDatabase 与打开函数                                                                                                                                       | Node               |
+| @earendil-works/chord/sqlite/cloudflare | DurableObjectSqliteDatabase                                                                                                                                         | Cloudflare DO      |
+| @earendil-works/chord/sync              | 实验性: store 的 outbox 提交经 `uploadSession`/`pullSession`/`foldSession` 同步到远端副本, 另有 `FlushScheduler`                                                    | Node 与浏览器      |
+
+`Context` 现在总是携带一个遥测 span (与 abortSignal 并列), `BACKGROUND_CONTEXT` 用共享的 no-op span; `withTelemetry`/`traceIn` 派生带遥测的子上下文, 不修改父上下文。SQLite 遥测适配器 `createSqliteTelemetry(db, { retentionMs?, maxQueuedSpans? })` 不持有连接、记录时不做 SQL: 内部每秒触发一次 flush, 把已结算 span 与已完成的十秒指标区间在一个事务里落库并顺带清理保留期 (默认 7 天); 待提交 span 上限默认 10,000, 溢出计入丢弃计数; 指标按 name/kind/unit/属性序列保留 count/sum/min/max, 不存原始样本; 写失败永久停止记录, 后续 flush/close 以原始错误拒绝。适配器实现 `TelemetryStore` (`findTraces`/`getTrace`/`findMetrics`), 关闭适配器后只要数据库还开着仍可查询; 表为 `telemetry_spans`、`telemetry_metrics`、`telemetry_schema`。
 
 仓库内的使用者: durable 是最大的消费方——文档是 chord 跟踪的状态, Context 贯穿每一个异步调用 (BACKGROUND_CONTEXT 永不取消; 取消一个等待只取消该等待, 从不取消工作), OutputBuffer 与 Progress 用于工具输出与进度的节流提交; env 用 chord 的 Context。除此之外 chord 仍定位为独立的应用组合运行时。
 
@@ -355,7 +381,7 @@ SDK          进程内直接创建与控制会话
 
 ### 7.2 pi-tui 的渲染工程
 
-`packages/tui` 是一个差分渲染的终端 UI 库, 主屏 (TuiMainScreen) 与备屏 (TuiAltScreen) 两个渲染器实现同一接口, 用 CSI 2026 同步输出消除闪烁。工程深度体现在源码清单里: 布局 (layout)、模糊匹配 (fuzzy)、emacs 风格编辑原语 (kill-ring、undo-stack、word-navigation)、LaTeX 渲染 (latex)、Oklab/OKHSL 色彩空间 (oklab)、终端色彩探测 (terminal-colors)、原生修饰键检测与输入缓冲 (native-modifiers、stdin-buffer)、滚轮滚动与备屏搜索 (wheel-scroll、alt-screen-search)、键位系统 (keybindings)。组件模型的要求很具体: 组件为可用宽度渲染行数组, 每行必须适配宽度 (按可见列而非字符串长度测量, 因为 ANSI 转义、宽字符、emoji、组合字符都会改变显示宽度), 状态变化后要让受影响组件失效并请求重渲染; 可聚焦组件以 CURSOR_MARKER 标注光标位置。
+`packages/tui` 是一个差分渲染的终端 UI 库, 主屏 (TuiMainScreen) 与备屏 (TuiAltScreen) 两个渲染器实现同一接口, 用 CSI 2026 同步输出消除闪烁。工程深度体现在源码清单里: 布局 (layout)、模糊匹配 (fuzzy)、emacs 风格编辑原语 (kill-ring、undo-stack、word-navigation)、LaTeX 渲染 (latex)、Oklab/OKHSL 色彩空间 (oklab)、终端色彩探测 (terminal-colors)、原生修饰键检测与输入缓冲 (native-modifiers、stdin-buffer)、滚轮滚动与备屏搜索 (wheel-scroll、alt-screen-search)、键位系统 (keybindings)。组件模型的要求很具体: 组件为可用宽度渲染行数组, 每行必须适配宽度 (按可见列而非字符串长度测量, 因为 ANSI 转义、宽字符、emoji、组合字符都会改变显示宽度), 状态变化后要让受影响组件失效并请求重渲染; 可聚焦组件以 CURSOR_MARKER 标注光标位置。`render()` 的返回值是 `readonly string[]`: Container、Box、Text、Markdown 在内容未变时复用同一个缓存数组, 要改必须先拷贝 (`[...super.render(width)]`) 否则会污染后续帧, 输出变化时必须返回新数组好让父组件据引用重读。全屏滚动帧也改成复用上一帧输出、只重算视口内的行 (长会话里每次滚轮或按键不再重渲染整份 transcript), Container 不再逐帧复制每一行, 无组合字符的 ASCII 列切片走快路径。
 
 TUI 文档给出的集成点建议也是分层的: 优先用扩展上下文里的选择、确认、输入、编辑器、通知、状态、组件替换等 API; 只有在需要自己的渲染、键盘或鼠标输入、焦点、布局或生命周期时才自建组件; 不要在扩展里再建一套终端渲染器。调试有 `PI_TUI_WRITE_LOG` 记录写入序列。
 
@@ -369,9 +395,11 @@ TUI 文档给出的集成点建议也是分层的: 优先用扩展上下文里�
 
 ### 8.1 统一 provider 面
 
-`packages/ai` 是统一的多供应商 LLM API, 52 个 provider 模块 (`packages/ai/src/providers/*.ts`, 不含同名 `.models.ts` 数据文件) 各配一份模型数据, 覆盖面从主流闭源与开源通道到国内厂商及其区域变体, 另含若干网关与订阅通道。测试替身 faux provider 被用于全部测试套件, 使 CI 不接触真实 API 与付费 token。
+`packages/ai` 是统一的多供应商 LLM API, `packages/ai/src/providers/` 下每个 provider 一个模块 (外加同名 `.models.ts` 模型数据文件), 覆盖面从主流闭源与开源通道到国内厂商及其区域变体, 另含若干网关与订阅通道。测试替身 faux provider 被用于全部测试套件, 使 CI 不接触真实 API 与付费 token。
 
-模型目录是生成物而非手写文件: `models.generated.ts` 由生成脚本产出, 贡献指南允许提交重新生成带来的无关上游模型元数据差异, 但禁止手改。采样参数支持按思考级别覆盖: 模型可以携带以 Pi 思考级别为键的采样参数, 解析时先按模型支持的级别钳制, 再按 `{ ...model.samplingParams, ...thinkingLevelParams, ...requestParams }` 的顺序逐键合并; 只有 OpenAI 兼容适配器应用这套参数, 其余 API 忽略。
+模型目录是生成物而非手写文件: `models.generated.ts` 由生成脚本产出, 贡献指南允许提交重新生成带来的无关上游模型元数据差异, 但禁止手改。采样参数支持按思考级别覆盖: 模型可以携带以 Pi 思考级别为键的采样参数, 解析时先按模型支持的级别钳制, 再按 `{ ...model.samplingParams, ...thinkingLevelParams, ...requestParams }` 的顺序逐键合并; 只有 OpenAI 兼容适配器应用这套参数, 其余 API 忽略。模型配置另有 `supportsStrictMode` (默认 false), 没有该能力的模型不再收到 schema 约束的 strict 工具定义——例如 Mistral 大模型此前会因严格工具卡住数分钟。
+
+长连接生命周期也归 provider 面管: OpenAI Codex Responses 的 WebSocket 会被服务端在 60 分钟后关闭, 即使在响应中途也会丢掉在飞的响应, 因此缓存连接超过 45 分钟就不再复用, 留出 15 分钟给长响应; `websocket_connection_limit_reached` 被列为可重试错误, 命中后换新连接重跑该轮。
 
 ### 8.2 认证模型
 
@@ -383,7 +411,7 @@ TUI 文档给出的集成点建议也是分层的: 优先用扩展上下文里�
 
 MCP 客户端是独立包 (pi-mcp): 传输无关的客户端核心、stdio 与 Streamable HTTP 传输 (SSE 传输被明确拒绝)、内存测试传输与 OAuth 子集, 不依赖官方 MCP SDK。coding-agent 里的 MCP 支持是可替换内置扩展, 也可以用 `registerMcpServer()` 编程注册。
 
-接入模型有几层策略: server 级暴露默认 `codemode` (工具只对脚本可见, 由脚本编排), 可改为 `deferred` (经 tool search 按需加载)、`direct` (直接进上下文) 或 `hidden`, 还可以用 `toolExposure` 逐工具覆盖; 工具命名统一为 `mcp__<server>__<tool>`。MCP 资源面也接了进来: 内置 `list_mcp_resources`、`list_mcp_resource_templates`、`read_mcp_resource` 三个资源工具; 连接的 server 会出现在 `mcp_servers` 系统提示段里。文本结果超过 20 KiB (`MCP_OUTPUT_MAX_BYTES = 20 * 1024`, `packages/coding-agent/src/extensions/mcp/tools.ts`) 会截断并把全文落到临时文件给出路径; HTTP server 连接阶段对瞬时错误 (408、429、≥500 且非 501, 以及网络 `TypeError`) 按 `CONNECT_RETRY_DELAYS_MS = [250ms, 1000ms]` 两次退避重试。项目级 MCP 配置里不带连接信息的条目只覆盖同名全局 server 的启用、暴露与工具暴露策略, 便于在受信任项目里开关全局 server。
+接入模型有几层策略: server 级暴露默认 `codemode` (工具只对脚本可见, 由脚本编排), 可改为 `deferred` (经 tool search 按需加载)、`direct` (直接进上下文) 或 `hidden`, 还可以用 `toolExposure` 逐工具覆盖; 工具命名统一为 `mcp__<server>__<tool>`。MCP 资源面也接了进来: 内置 `list_mcp_resources`、`list_mcp_resource_templates`、`read_mcp_resource` 三个资源工具; 连接的 server 会出现在 `mcp_servers` 系统提示段里。文本结果超过 20 KiB (`MCP_OUTPUT_MAX_BYTES = 20 * 1024`, `packages/mcp/src/output-limit.ts`) 会保留首尾、裁掉中段并把全文落到临时文件给出路径; HTTP server 连接阶段对瞬时错误 (408、429、≥500 且非 501, 以及网络 `TypeError`) 按 `CONNECT_RETRY_DELAYS_MS = [250ms, 1000ms]` 两次退避重试。项目级 MCP 配置里不带连接信息的条目只覆盖同名全局 server 的启用、暴露与工具暴露策略, 便于在受信任项目里开关全局 server。
 
 ### 8.4 内置工具与 codemode
 
@@ -399,7 +427,7 @@ codemode 是最特别的内置扩展, 其沙箱内核已抽成独立包 pi-codem
 | Cloudflare Workers/DO       | RemoteCodemodeSandbox | 另一部署 Worker 里的 Durable Object |
 | 其他运行时 (或可阻塞调用方) | InlineCodemodeSandbox | 调用线程                            |
 
-coding-agent 对沙箱的约束: VM 堆上限 256 MB (`CODEMODE_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024`, `packages/coding-agent/src/extensions/codemode/execute.ts`); 一个 pi 进程内所有会话合计最多 `MAX_CONCURRENT_CODEMODE_WORKERS = 2` 个 codemode worker 存活 (共享计数, 不是环境变量配置项); 满额时 `acquireWorker` 直接抛错 `Codemode worker limit reached … Retry after they exit`——容量不足是立即失败而不是排队等待。等待永不落定 promise 的脚本 (没有挂起工具调用且 VM 无定时器) 会立即失败而不是挂死。Cloudflare 侧另有中断预算 (`DEFAULT_INTERRUPT_BUDGET = 100_000`, `packages/codemode/src/runtime/inline.ts`) 兜底失控循环。
+coding-agent 对沙箱的约束: VM 堆上限 256 MB (`CODEMODE_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024`, `packages/coding-agent/src/extensions/codemode/execute.ts`); 一个 pi 进程内所有会话合计最多 `DEFAULT_MAX_CODEMODE_WORKERS = 2` 个 codemode worker 存活 (共享计数, 可用环境变量 `PI_CODEMODE_MAX_WORKERS` 覆盖); 满额时脚本按到达顺序排队等空闲槽位, 至多等 60 秒 (`CODEMODE_WORKER_WAIT_MS`), 之后才失败。等待永不落定 promise 的脚本 (没有挂起工具调用且 VM 无定时器) 会立即失败而不是挂死。Cloudflare 侧另有中断预算 (`DEFAULT_INTERRUPT_BUDGET = 100_000`, `packages/codemode/src/runtime/inline.ts`) 兜底失控循环。
 
 脚本首行可写 `// @options:` 注释调整行为 (不在首行直接失败): `max_output_tokens` 是软预算 (默认 10000), 超预算时保留首尾、把完整文本落到临时文件并在结果里给出路径; `timeout_ms` 是整个脚本的硬截止。硬上限则是失败线——文本加 base64 图像数据超过 16,777,216 字符, 或 text()/image()/console 调用超过 100,000 次, 脚本直接失败, 打印循环无法耗尽宿主内存。
 

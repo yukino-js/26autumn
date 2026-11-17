@@ -1,7 +1,7 @@
 ---
 title: "前端"
 overview: true
-description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布局, React 19/Next.js 16/Vite 8/TanStack Query v5 的运行时原理与工程化机制, Priority Hints 与 SWR 的资源调度和缓存语义, 以及 Yukino 前端与 Agent 系列"
+description: "前端栏目: JavaScript/DOM/浏览器与网络、CSS 与现代布局, React 19.3/Next.js 16.4/Vite 8/TanStack Query v5 的运行时原理与工程化机制, Priority Hints 与 SWR 的资源调度和缓存语义, 以及 Yukino 前端与 Agent 系列"
 ---
 
 前端方向的系统性技术笔记, 按主题分为三部分, 共 13 个页面 (含本落地页).

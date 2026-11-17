@@ -2,11 +2,11 @@
 title: "会话上下文"
 description: "会话上下文管理: 三层记忆结构 (层 1 原文 / 层 2 规则压缩 / 摘要层)、token 估算、上下文预算分账与启动自检、层降级与异步摘要的轮末结算, 以及模型上下文注入方式和 LangGraph state 字段清单"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "c90c8433796f34ede75145e544e34280c1d54e4e"
+local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/graph/`、`server/src/core/`）在 `c90c8433796f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/graph/`、`server/src/core/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
