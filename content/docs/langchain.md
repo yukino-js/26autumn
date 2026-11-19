@@ -2,11 +2,11 @@
 title: "LangChain.js 1.x: Monorepo、Runnable 内核与 createAgent 中间件体系"
 description: "拆解 LangChain.js 1.x 的 monorepo 包布局、langchain-core 的 Runnable 与消息/工具抽象、provider 集成模式、langchain 主包的 createAgent 与中间件体系, 以及构建、测试与发布设施。"
 local_path: "$HOME/Downloads/langchainjs"
-local_commit: "7704471213953c590c50deaa0ae8e9a34b66003d"
+local_commit: "7309848b94f1c9940197e3ebfc9a63bf508b3f15"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/langchainjs` 在 `77044712139` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/langchainjs` 在 `7309848b94f` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -308,12 +308,13 @@ Google 一线的统一包是 `@langchain/google`: 它不依赖 Google 官方 SDK
 - **模型能力画像新增 `fileMimeTypes`**。core 的 `ModelProfile` (位于 `language_models/profile.ts`) 增加可选 `fileMimeTypes` 字段, 声明模型接受的通用文件类型。OpenAI 集成把 Responses API 接受的输入文件类型清单写进静态画像, 再在实例的 profile getter 里用 `profileForApi(profile, usesResponsesApi)` 按需收窄: 只有走 Responses API 且画像声明 `pdfInputs` (PDF 与通用文件走同一 input_file 通道, 故以它作代表) 的实例保留清单, 否则剥离; 同时 Chat Completions 路径会把 `midConversationTools` 关闭 —— 只有 Responses API 才有 `additional_tools` 顶层输入项。
 - **系统消息上的工具变更支持**。OpenAI 侧, 非 assistant 消息内容中的 `additional_tools`、`configuration_update`、`mcp_approval_response` 块会被 `HOISTED_INPUT_ITEMS` 提升为 Responses API 的顶层输入项, 插入在该消息之前 (经 core `non_standard` 包裹的块先解包; assistant 消息是模型输出的回放, 恒不提升); Chat Completions 路径的 system/developer/assistant/tool 消息只保留 text 块。Anthropic 侧, 系统消息可携带 `tool_addition`/`tool_removal` 块; 请求构造时按转换结果选 beta 头 —— 内联工具定义用 `inline-tools-2026-09-15`, 按引用变更用 `mid-conversation-tool-changes-2026-07-01`; 系统内容被收窄为 Anthropic 接受的闭集 (text 块保留 `cache_control` 与 `citations`), 其余块被丢弃。
 - **Bedrock thinking tokens 计入用量明细**。Claude 在 Bedrock 上开启 thinking 时, Converse 的 `usage` 只把 thinking tokens 合在 `outputTokens` 里。`ChatBedrockConverse` 提供 `additionalModelResponseFieldPaths` 参数, 传 `["/usage"]` 即可让 Converse 在 `additionalModelResponseFields` 里带回原生 usage; 流式路径从 `messageStop.additionalModelResponseFields` 读取。`getReasoningTokensFromAdditionalFields` 取出 `usage.output_tokens_details.thinking_tokens`, 写入 `usage_metadata.output_token_details.reasoning`, 与 OpenAI、Google 集成的行为对齐。
+- **Google Decisions API 的分类模型**。core 新增 `decisions` 子域 (`BaseDecisionModel`, 问题分 `noul` / `choice` / `score` / `box` 四类), `@langchain/google` 据此提供实验性的 `GoogleClassifier` 与 `BaseGoogleClassifier`, 当前覆盖前三类; 输入可以是文本、结构化 JSON、`BaseMessage` 会话或多模态 `ContentBlock`, 请求按名映射问题表, 应答分组到 `nouls` / `choices` / `scores` 并保留原始 `answers`, 安全拒答抛 `PromptRefusedError`。该支持先在 AI Studio 落地, Vertex 侧等平台实现; 同一批改动还从 Interactions API 移除了 Retrieval 工具, 并给 `gemini-4-neon` 补上画像 (1M 输入、65,536 输出、支持 reasoning 输出) 与 `xhigh` 思考级别。
 
 ### initChatModel 与 ConfigurableModel
 
 主包 `chat_models/universal.ts` 提供运行时按名称实例化模型的能力。它维护一张静态表 `MODEL_PROVIDER_CONFIG` 把 provider 键映射到 npm 包与类名, 完整集合是: openai、anthropic、azure_openai、langsmith (走 LangSmith LLM Gateway, 复用 OpenAI 包的 `ChatOpenAI` 与 Responses API)、cohere、google (新包 `@langchain/google` 的 `ChatGoogle`)、google-vertexai、google-vertexai-web、google-genai、ollama、mistralai、mistral、groq、bedrock、aws、deepseek、xai、cerebras (外部包 `@langchain/cerebras`)、fireworks、together (标记 `hasCircularDependency`)、perplexity。其中 google-vertexai 与 google-vertexai-web 类名同为 `ChatVertexAI`, 取类时需要按 provider 键直查以避免类名碰撞。
 
-`initChatModel` 支持 `provider:model` 字符串写法: 以冒号切分后, 若第一段命中 provider 表则视为 provider, 剩余部分为模型名。可配置字段控制哪些参数能在运行时经配置覆盖 (默认是 model 与 modelProvider), 多模型共存时可加前缀。返回值是 `ConfigurableModel`, 一个延迟绑定真实模型类的 Runnable 包装。
+`initChatModel` 支持 `provider:model` 字符串写法: 以冒号切分后, 若第一段命中 provider 表则视为 provider, 剩余部分为模型名。可配置字段 (`configurableFields`) 控制哪些参数能在运行时经配置覆盖, 多模型共存时可加前缀; 缺省值与是否显式给了模型有关——显式给出模型时不放开任何字段, 运行时的 `configurable.model` / `configurable.modelProvider` 改不动它, 只有不给模型、完全靠运行时指定时才默认放开这两个字段。这条差别是安全边界: 部署后的图不会让调用方拿服务端的 key 换到别的模型或 provider; 直接 `new ConfigurableModel(...)` 想保留运行时换模型的行为, 必须自己传 `["model", "modelProvider"]`。返回值是 `ConfigurableModel`, 一个延迟绑定真实模型类的 Runnable 包装。
 
 这解释了主包的依赖为何如此精简: 只有 `@langchain/langgraph`、`@langchain/langgraph-checkpoint`、`langsmith` 与 `zod`; provider 全部按需动态导入, 不进静态依赖。
 
@@ -419,6 +420,8 @@ new Command({ resume: { [interrupt.id]: decision } });
 LangGraph 会先把每个应答按对应中断的 `responseSchema` 校验再保存: 非法应答抛出 `ZodError` 且不会被保存, 同一个中断可以重新应答; 若一起发送的多个应答中有一个非法, 其他应答对应的工具可能已经执行, 重新应答会导致重复执行, 因此应先按 `responseSchema` 校验再一起发送, 或逐个发送 (见 [LangGraph](langgraph) 第八章)。per_call 的 edit 语义更严: `edited_action.name` 在 schema 层钉死为原工具, `args` 按工具的 zod v4 对象 schema 校验; `editNotice` 默认 `DEFAULT_EDIT_NOTICE` 会在被编辑调用的结果前追加一段提示文本, 告诉模型执行的是审阅者改过的版本, 传 `null` 关闭。respond 不执行工具, 把审阅者的 message 作为成功结果; reject 产出 error 状态的 ToolMessage。
 
 约束: per_call 模式要求 `createAgent` 的 `version` 为 `"v2"` (默认值), `"v1"` 下所有工具调用跑在同一个任务里、中断会共享 ID, 因此构建期直接抛错; `when` 谓词在恢复时会重跑, 若此时返回 `false`, 工具直接执行、审阅应答被忽略; HITL 应排在重试/错误处理类中间件之前, 使它能包住这些中间件。
+
+reject 与 respond 生成的 ToolMessage 会带来源标记: `additional_kwargs` 里写入 `lc_source: "hitl_interrupt_decision"` 与 `lc_data: { decision }`, 由 core 的 `addNotificationMetadata` 统一写入 (该函数现在也接受 ToolMessage, 写入前先清掉旧的 `lc_source`/`lc_data`)。前端据此把"中间件给出的审阅结果"与"工具真实输出"分开渲染, 不必再靠文本内容猜。
 
 ### 上下文压缩策略
 
@@ -539,7 +542,7 @@ createAgent 支持跨会话的长期记忆, 载体是 store 参数, 与只记录
 | importMapPlugin       | 导入映射文件 (默认 `src/load/import_map.ts`)  | 为所有入口生成带命名空间别名的再导出, 别名用双下划线 (如 `tools__sql`) |
 | cjsCompatPlugin       | 各入口的 cjs 与类型 barrel                    | 双格式包的模块解析兼容                                                 |
 
-导入映射支持 `nodeOnly`、`importsOptionalDependencies`、`omitFromImportMap` 过滤与自定义额外条目, 别名由若干部分以 `__` 连接而成。
+导入映射支持 `nodeOnly`、`importsOptionalDependencies`、`omitFromImportMap` 过滤与自定义额外条目, 别名由若干部分以 `__` 连接而成。`cjsCompatPlugin` 写各入口的临时 `package.json` 后做原子替换, 在 Windows 上会对 `EPERM`/`EACCES`/`EBUSY` 做有限次退避重试 (最多 5 次), 避免文件被占用时构建偶发失败。
 
 ### 测试矩阵
 

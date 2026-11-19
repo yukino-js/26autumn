@@ -1,12 +1,12 @@
 ---
 title: "Skill: 写给 AI 的 SOP, 三层目录扫描与渐进式披露"
 description: "Skill 是带 YAML frontmatter 的 SKILL.md SOP, 支持 inline / fork 两种执行模式; 覆盖三层目录扫描与优先级, 渐进式披露两阶段加载, LoadSkill / InstallSkill 工具, $ARGUMENTS 替换, 热加载三层机制, 自动注册为 Slash Command 与目录型 skill 资产"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino` 在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 skill 是写给 AI 的 SOP（Standard Operation Procedure）: 一个带 YAML frontmatter 的 SKILL.md, 描述一类任务该怎么一步步做。相比硬编码在代码里的 prompt, skill 可（热）更新、可复用、可移植; 可以显式指定（`/skill-name` 或让 LLM 调用 LoadSkill）提高准确率; 可以携带资产（API reference、docs、example、scripts）; 有 inline / fork 两种执行模式; 支持参数占位符 `$ARGUMENTS`。

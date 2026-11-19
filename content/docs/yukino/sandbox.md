@@ -1,12 +1,12 @@
 ---
 title: "OS 级沙箱: macOS seatbelt 与 Linux bubblewrap 的命令隔离"
 description: "OS 级沙箱把 Bash 命令放进 macOS seatbelt / Linux bubblewrap 隔离执行, 文件系统写入收敛到允许目录, 网络可整体关闭; 覆盖 sandbox 配置与 /sandbox 切换, Sandbox 接口, SBPL profile 生成与注入防护, bwrap 挂载顺序, BashTool 集成, worktree 联动与 auto_allow 免确认"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino` 在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 OS 级沙箱: 把 Bash 命令放进操作系统提供的隔离环境执行, 文件系统写入被收敛到允许的目录内, 网络可以整体关闭。

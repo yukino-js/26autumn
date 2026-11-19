@@ -1,12 +1,12 @@
 ---
 title: "A2A"
 description: "A2A (Agent2Agent) 互通协议: `--a2a` 模式下 Yukino 作为 A2A 1.0 服务器运行 (默认监听 127.0.0.1:18890), 基于 `@a2a-js/sdk` 提供 Agent Card 发现、JSON-RPC 与 REST 双绑定、artifact 流式助手文本与 input-required 权限握手扩展, 供其他 agent 或编排器发现、派发任务并消费流式更新"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/a2a`、`src/remote`、`src/permission`、`src/session`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/a2a`、`src/remote`、`src/permission`、`src/session`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 A2A (Agent2Agent) 是一个开放的 agent 互通协议: 一个 agent 以标准化服务的形式对外暴露能力, 其他 agent 或编排器可以发现它、给它派发任务、消费它的流式状态更新
@@ -100,7 +100,7 @@ Agent Card 是 A2A 的服务发现文档, 描述这个 agent 是谁、能做什�
     "extensions": [
       {
         // 权限握手扩展, 见「权限请求」一节
-        "uri": "https://github.com/hangtiancheng/yukino-code/blob/main/apps/yukino/README.md#yukino-a2a-permissions-v1",
+        "uri": "https://github.com/hangtiancheng/yukino-code/blob/main/packages/yukino/README.md#yukino-a2a-permissions-v1",
         "description": "Yukino permission handshake v1: ...",
         "required": false,
         "params": {

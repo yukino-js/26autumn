@@ -23,7 +23,7 @@ flowchart TB
 ClickHouse 的**高频小批量写入**会制造大量小 part, 迫使后台频繁合并并放大写放大; *批量攒批*是 Kafka Engine 消费链路的首要约束, 不要用单条 insert 压测或上线.
 :::
 
-这份文档面向使用 ClickHouse 做分析存储、使用 Kafka 做消息与流处理管道的后端工程师, 按存储引擎、查询优化、Kafka 架构与存储、Kafka 高级特性、联合架构、综合方案设计的顺序展开. ClickHouse 部分从列式存储的物理布局出发, 依次说明 MergeTree 的存储结构与合并流程、稀疏索引、MergeTree 家族引擎的合并策略、分区与分片、副本同步、向量化执行、物化视图与 TTL, 再进入 ORDER BY 键设计、JOIN 实现、Mutation 代价与 OLAP 性能对比; Kafka 部分从整体架构与消息存储出发, 覆盖 ISR 与 Leader 选举、Producer 发送流程与幂等/事务、Consumer Group Rebalance、端到端不丢失与 exactly-once, 并延伸到消息顺序性、零拷贝、KRaft 元数据管理、Offset 管理与日志清理; 最后一部分讨论 ClickHouse 与 Kafka 联合的实时数仓分层、Kafka Engine 消费、写入与分布式查询优化, 以及实时用户行为分析系统、消费积压排查、集群扩容三类综合方案. ClickHouse 行为以 25.x 系列为准, Kafka 行为以 4.x 系列为准. 缓存与分布式锁主题见 [Redis 技术手册](./redis), 关系型存储的对照见 [MySQL 与 InnoDB 技术手册](./mysql).
+这份文档面向使用 ClickHouse 做分析存储、使用 Kafka 做消息与流处理管道的后端工程师, 按存储引擎、查询优化、Kafka 架构与存储、Kafka 高级特性、联合架构、综合方案设计的顺序展开. ClickHouse 部分从列式存储的物理布局出发, 依次说明 MergeTree 的存储结构与合并流程、稀疏索引、MergeTree 家族引擎的合并策略、分区与分片、副本同步、向量化执行、物化视图与 TTL, 再进入 ORDER BY 键设计、JOIN 实现、Mutation 代价与 OLAP 性能对比; Kafka 部分从整体架构与消息存储出发, 覆盖 ISR 与 Leader 选举、Producer 发送流程与幂等/事务、Consumer Group Rebalance、端到端不丢失与 exactly-once, 并延伸到消息顺序性、零拷贝、KRaft 元数据管理、Offset 管理与日志清理; 最后一部分讨论 ClickHouse 与 Kafka 联合的实时数仓分层、Kafka Engine 消费、写入与分布式查询优化, 以及实时用户行为分析系统、消费积压排查、集群扩容三类综合方案. ClickHouse 行为以 25.x 系列为准, Kafka 行为以 4.x 系列为准.
 
 ## 一、ClickHouse 存储引擎
 
@@ -1052,7 +1052,4 @@ kafka-consumer-groups.sh --bootstrap-server broker:9092 \
 
 **延伸阅读**
 
-- [Redis 8.x 核心原理与工程实践](./redis): 热点 key 本地缓存、消息队列替代方案与 Stream 消费组的边界.
-- [MySQL 8.4 核心原理](./mysql): CDC binlog 作为 ODS 数据源、行列存选型对照与事务语义差异.
 - [中间件与基础设施](./middleware): Kafka 之外的 etcd 协调、gRPC 服务通信与 Prometheus 监控在数仓链路中的配套作用.
-- [Go 语言核心与底层原理](./go): 消费侧 goroutine 并发、批量攒批与背压控制的应用层实现.

@@ -2,11 +2,11 @@
 title: "Yukino Dev Agent 技术笔记"
 description: "Next.js 16 App Router + Vercel AI SDK 的 OnCall/DevFlow 双产品面应用: Milvus 混合检索 RAG、ReAct 与 SSE 流式 Plan-Execute-Replan 编排、A2UI 交互界面、多源告警聚合、MCP 工具体系、Langfuse 可观测性与 Prometheus 指标桥"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "e36d16bacb9ba400d904ece0542c4467f8ef049d"
+local_commit: "537f207ec1d491d5f8a7664ee9cf103f28e5376a"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/`、`components/`、`hooks/`）在 `e36d16bacb9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/`、`components/`、`hooks/`）在 `537f207ec1d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 本文讲解 Yukino Dev Agent 这一 Node.js/TypeScript AI 应用的技术实现:它用 Next.js 16 App Router 把前端页面与后端 API 收进同一个进程,同时承载两个产品面——面向值班运维的 AI OnCall 助手(根路径),以及面向 GitHub 协作场景的 DevFlow 工程副驾(`/dev-flow`). 文档围绕产品定位、分层架构、端到端数据流、检索与编排实现、模型抽象、数据模型、前端状态、可观测性、配置体系、部署形态与性能成本取舍逐层展开,适合需要在既有 AI 应用上做二次开发,或正在设计 RAG + Agent 编排系统的工程师阅读. 所有机制描述均以当前源码为准,Milvus 是唯一向量后端. 两个产品面的入门视角另有姊妹篇 [Yukino Dev Agent](./agent) 与 [DevFlow](./dev-flow).
@@ -651,4 +651,4 @@ zod 边界:凡数据跨越信任边界(HTTP 请求体、API 响应、localStorag
 - 姊妹项目 [Yukino Ecomm Agent](../yukino-ecomm-agent/yukino-ecomm-agent): 同一技术路线的电商客服 Agent,用 Hono + LangGraph + Prisma 实现,可作为向量检索、数据飞轮与 LangGraph 会话图的实现对照
 - 本仓库分册: [OnCall 视角](./agent)、[DevFlow 工程副驾](./dev-flow)
 - 编排与协议专题: [LangGraph](../langgraph)、[A2UI](../a2ui)、[MCP Apps](../mcp-app)
-- 框架层特性: [Next.js](../../fe/next)、[React](../../fe/react)、[Vite](../../fe/vite)、[TanStack Query](../../fe/tanstack);观测与中间件参见 [中间件与可观测性](../../be/middleware)
+- 框架层特性: Next.js、React、Vite、[TanStack Query](../../fe/tanstack);观测与中间件参见 [中间件与可观测性](../../be/middleware)

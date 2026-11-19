@@ -1,12 +1,12 @@
 ---
 title: "MCP"
 description: "MCP 接入: JSON-RPC 2.0 协议与 stdio / streamable http / sse 传输, MCPClient / MCPManager 生命周期, 用户级与项目级配置与环境变量展开, mcp__ 命名与权限匹配, eager / native / dispatch 三种延迟加载模式, ToolSearch / McpCall, server instructions 公告与 remote 模式的 MCP Apps"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/mcp`、`src/tools`、`src/config`、`src/permissions`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/mcp`、`src/tools`、`src/config`、`src/permissions`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -380,7 +380,7 @@ MCP Apps 让 Server 的工具返回可交互的 HTML UI, 只在 remote (浏览�
 ### 浏览器渲染 (McpAppView)
 
 - 经 `read_resource` 请求拉取 resourceUri 对应的 HTML (mimeType 必须匹配), 清洗: 移除 `<base>` 元素, 注入由 `_meta.ui.csp` 构造的 CSP meta
-- 以 `sandbox="allow-scripts"` 的 iframe + srcdoc 加载, 通过 `@modelcontextprotocol/ext-apps/app-bridge` 的 AppBridge (postMessage 传输) 握手, 有初始化超时; 握手成功后把工具输入和 result 推送给 app
+- 以 `sandbox="allow-scripts"` 的 iframe + srcdoc 加载, 通过 `@modelcontextprotocol/ext-packages/app-bridge` 的 AppBridge (postMessage 传输) 握手, 有初始化超时; 握手成功后把工具输入和 result 推送给 app
 - app 的回调经浏览器转发: oncalltool / onreadresource → `mcp_app_request` WS 消息; onmessage → 文本直接作为用户消息发送 (`user_message` WS 消息); onopenlink 只放行 http/https 并在新窗口打开; sizechange 事件在上下限之间调整 iframe 高度
 
 ### 服务端网关 (RemoteMcpApps)

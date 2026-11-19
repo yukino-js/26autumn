@@ -888,7 +888,7 @@ Redis 是内存 KV 数据库, 是离数据库最近的一层缓存:
 | MySQL      | 行式 OLTP | 配置、元数据、业务数据 | 低频写, 点查, 事务 | 毫秒级     |
 | Redis      | 内存 KV   | 热点查询结果           | 高频读, 低频写     | 亚毫秒级   |
 
-选型逻辑可以概括为: 流量入口要能扛洪峰、能解耦、能重放, 用 Kafka; 全量历史要存得起、算得动, 用 Hive; 在线聚合要快, 用 ClickHouse; 小而精的关系型数据要事务与点查, 用 MySQL; 热点读流量要挡在数据库前面, 用 Redis。分层之后每一层只处理自己擅长的负载, 任何一层的压力变化 (上报量翻倍、查询 QPS 翻倍) 都可以独立扩容, 不会互相拖垮。各存储的引擎细节、查询优化与生产调优见 [ClickHouse 与 Kafka 技术手册](../be/clickhouse-kafka)、[Redis 技术手册](../be/redis) 与 [MySQL 与 InnoDB 技术手册](../be/mysql)。
+选型逻辑可以概括为: 流量入口要能扛洪峰、能解耦、能重放, 用 Kafka; 全量历史要存得起、算得动, 用 Hive; 在线聚合要快, 用 ClickHouse; 小而精的关系型数据要事务与点查, 用 MySQL; 热点读流量要挡在数据库前面, 用 Redis。分层之后每一层只处理自己擅长的负载, 任何一层的压力变化 (上报量翻倍、查询 QPS 翻倍) 都可以独立扩容, 不会互相拖垮。各存储的引擎细节、查询优化与生产调优见 [ClickHouse 与 Kafka 技术手册](../be/clickhouse-kafka)。
 
 ## RPC: 让远程调用像本地调用
 
@@ -1108,7 +1108,5 @@ function onMeasure(index: number, realHeight: number) {
 **延伸阅读**
 
 - [ClickHouse 与 Kafka 技术手册](../be/clickhouse-kafka): 本文 §数据链路 中批量写入、part 合并、消费积压与回放的存储侧细节。
-- [MySQL 与 InnoDB 技术手册](../be/mysql): 本地消息表、唯一索引 upsert、慢查询与锁等待排查的关系库侧依据。
-- [Redis 技术手册](../be/redis): 热点结果缓存、NX 去重预筛与缓存失效策略。
 - [@tanstack/react-virtual](../fe/tanstack): 成熟虚拟滚动库对不定高测量、动态缓冲与定位的现成实现。
 - [前端监控与数据请求工程实践](./data): 设备侧错误/性能采集、去重聚合与上报链路的前端 SDK 视角对照。

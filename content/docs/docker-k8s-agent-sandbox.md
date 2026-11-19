@@ -19,7 +19,7 @@ flowchart TB
 > 环境现状: 本机已装 Docker Engine 29.8.2 与 kubectl v1.36.1, cgroup v2, 无集群 context, 如需实操可启动 Docker Desktop 并开启其内置 Kubernetes。
 
 :::note 版本基线
-Docker/K8s 知识体系按当前稳定版本撰写: Docker Engine 29.x (Engine API 与 containerd shim 链路)、Kubernetes 当前稳定 minor (v1.36 线); 文中涉及的 ClickHouse 按 25.x、Kafka 按 4.x 口径。第五部分沙箱实现对照本地仓库 `~/github/yukino-codegen/server` @ `da904a235056bb7e42e7917b461bcf7e07b539e2` 核验, 源码路径标注于对应小节; K8s Job + Docker Agent 部分为目标架构设计方案, 不是该仓库现有实现。
+Docker/K8s 知识体系按当前稳定版本撰写: Docker Engine 29.x (Engine API 与 containerd shim 链路)、Kubernetes 当前稳定 minor (v1.36 线); 文中涉及的 ClickHouse 按 25.x、Kafka 按 4.x 口径。第五部分沙箱实现对照本地仓库 `~/github/yukino-codegen/server` @ `329c8a0cf7670ee320a0298ffc25c7357a4439dd` 核验, 源码路径标注于对应小节; K8s Job + Docker Agent 部分为目标架构设计方案, 不是该仓库现有实现。
 :::
 
 ---
@@ -788,7 +788,7 @@ Pod 是牲口: 重建/漂移后 IP 必变, 直接依赖 Pod IP 的调用方会�
 
 ## 第五部分 实战方案: 前端 JSError 自动修复云沙箱 (K8s + Docker Agent)
 
-> 场景: 前端 SDK (Sentry / 自研如 [@yukino.js/sentry](../fe/yukino-sentry)) 上报 jserror → 后端聚合 → AI Agent 自动定位、修复、验证、提 MR。
+> 场景: 前端 SDK (Sentry / 自研如 @yukino.js/sentry) 上报 jserror → 后端聚合 → AI Agent 自动定位、修复、验证、提 MR。
 > Agent 会执行任意代码 (clone、npm install、build、跑测试), **必须在隔离沙箱中运行**——这就是 K8s + Docker 的用武之地, 也是前四部分知识点的综合应用。
 
 ### 0. 方案一句话
@@ -1243,7 +1243,6 @@ spec:
 **延伸阅读**
 
 - [yukino-codegen](../fe/yukino-codegen): 本文 §8.0 对照的内部代码生成 Agent, 含工作区沙箱、Git 快照与 MCP 接入的完整实现。
-- [@yukino.js/sentry](../fe/yukino-sentry): 第五部分上游监控 SDK, JSError 模型、录屏现场还原与 sourcemap 反解的落地形态。
 - [前端监控与数据请求工程实践](./data): 错误上报、聚合指纹与复现素材 (breadcrumbs/录屏) 的采集口径。
 - [Yukino MCP 集成](./yukino/mcp): 沙箱 Agent 接入外部工具服务的 MCP 传输与权限实践。
 - [Yukino 沙箱](./yukino/sandbox): 进程级隔离与命令执行边界的内部方案对照。

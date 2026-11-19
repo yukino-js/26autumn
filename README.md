@@ -21,12 +21,12 @@ Built with [Rspress](https://rspress.rs/), deployed to GitHub Pages at
 `26autumn` is a static documentation site that collects technical notes written during
 study, internships, and work. It covers four broad areas:
 
-- **Frontend** (`content/fe`) — JavaScript/DOM/browser fundamentals, CSS, React,
-  Next.js, Vite, TanStack Query, Priority Hints and SWR, plus five Yukino source
-  analyses: `yukino-codegen`, `yukino-mcp`, `yukino-chatbot`, `yukino-chat`,
-  `yukino-sentry`.
-- **Backend** (`content/be`) — Go, MySQL, Redis, ClickHouse, Kafka, backend
-  middleware, `generic-pool` and WANProxy source analyses, and the Yukino Go series
+- **Frontend** (`content/fe`) — TanStack Query server-state caching, Priority Hints and
+  the two meanings of SWR, plus four Yukino source analyses: `yukino-codegen`,
+  `yukino-mcp`, `yukino-chatbot`, `yukino-chat`.
+- **Backend** (`content/be`) — the ClickHouse/Kafka manual, backend middleware and
+  infrastructure (etcd, groupcache, gRPC, Prometheus/Grafana, OpenTelemetry),
+  `generic-pool` and WANProxy source analyses, and the Yukino Go series
   (`yukino_http`, `yukino_rpc`, `yukino_orm`, `yukino_cache`, `agent`, `agent_proxy`,
   infrastructure components, `task_flow`).
 - **Work notes & research** (`content/docs`) — TikTok/IEG/data engineering retrospectives,
@@ -81,6 +81,9 @@ pnpm dev       # dev server with HMR (http://localhost:3000/26autumn/)
 
 ## Content conventions
 
+- This site complements the `h` knowledge base (`~/github/h/docs`): fundamentals already
+  covered there (CSS/JS, network, Go, MySQL/Redis, React/Next/Vite, Sentry) are not
+  duplicated here. Only supplementary topics and source-analysis notes are kept.
 - Frontend/full-stack/agent notes live under `content/fe`.
 - Backend notes live under `content/be`.
 - Work notes and open-source research live under `content/docs`.

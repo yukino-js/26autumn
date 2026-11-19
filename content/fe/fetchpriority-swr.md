@@ -488,7 +488,4 @@ await fetch("/api/selector-options", { priority: "low" });
 **延伸阅读**
 
 - [tanstack](tanstack): 查询缓存的 staleTime / gcTime、失效与写后同步, 前端层 SWR 的完整工程化对照.
-- [next](next): 服务端缓存档位 (`cacheLife` / `revalidateTag`) 与 HTTP SWR 窗口的语义对应.
-- [fe](fe): HTTP 缓存指令语义、浏览器事件循环与资源加载调度的底层机制.
-- [vite](vite): 产物长缓存与内容哈希策略, 与接口数据缓存是两个层面的问题.
 - [../docs/data](../docs/data): 手写预加载、在途去重与 SWR 数据方案的完整实现与选型权衡.

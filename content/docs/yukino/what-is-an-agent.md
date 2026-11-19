@@ -1,12 +1,12 @@
 ---
 title: "What is an Agent: 概念拆解与 Yukino 的形态"
 description: "agent 的概念拆解与 Yukino 的形态: provider 配置与三协议客户端、核心循环、五层架构、四种运行模式、内置工具分组, 以及 plan 文件、任务清单、持久目标三类一等公民制品"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino` 在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

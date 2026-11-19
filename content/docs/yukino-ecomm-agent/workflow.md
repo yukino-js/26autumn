@@ -2,11 +2,11 @@
 title: "workflow"
 description: "LangGraph 会话图的完整编排: 12 个节点、9 意图 5 出口的确定性分流、知识检索与置信度闸、退款确定性子流程、ReAct 主力循环与人工确认中断, 以及 Postgres checkpointer 与 SSE 流式运行时"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
+local_commit: "a31e2f791e23c28b679482196a000b3703f13df0"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/graph/`、`server/src/api/`、`client/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/graph/`、`server/src/api/`、`client/`）在 `a31e2f791e2` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 一次对话轮次不是「一个模型从头答到尾」, 而是穿过一张预先编排好的状态图: 能写死的步骤 (指代消解、意图分类、知识检索、兜底话术) 用确定性的 workflow 节点串起来, 真正需要模型自主决定「下一步调什么工具」的部分才交给 ReAct agent loop. 整张图用 LangGraph 的 `StateGraph` 声明, 编排代码集中在 `server/src/graph/` 的五个文件:

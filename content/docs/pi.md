@@ -2,11 +2,11 @@
 title: "Pi Agent Harness: 极简内核、树形会话与 durable 运行时"
 description: "拆解 Pi 的设计与实现: 极简内核与扩展机制的边界、entry 树会话模型、TypeScript SDK 的进程内嵌入、durable 运行时的持久化不变量与执行环境抽象、pi-env 的远程执行协议、chord 应用组合运行时与遥测落库、codemode 的沙箱化脚本执行、统一 provider 面与容器化、五种接口形态与 TUI 渲染工程"
 local_path: "$HOME/Downloads/pi"
-local_commit: "1f6f319bb28992a40b99c147fffb23b65a23129d"
+local_commit: "5a14e69c067d40dfbff4f2fff7d3b34c897e2dc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/pi` 在 `1f6f319bb28` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/pi` 在 `5a14e69c067` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -97,7 +97,7 @@ Pi 是终端里的极简、可扩展编码 Agent harness。它的设计立场非
 
 依赖方向很说明问题: coding-agent 依赖 agent-core、ai、codemode、mcp、tui 与 diff, 但**不依赖** durable、chord 与 env; durable 依赖 chord、ai、codemode、telemetry、pi-schema 以及 photon (图像处理) 与 diff; env 依赖 durable (取 ExecutionEnv 接口) 与 chord; chord 依赖 pi-schema、pi-telemetry 与 esbuild/react/ws (子宿主进程、UI 面与链路传输, 三者都是 peer 依赖, 只在对应入口导入); agent-core 依赖 pi-ai 与 pi-schema; ai 依赖 pi-schema 与 pi-telemetry; schema 与 telemetry 无运行依赖。工具参数与配置结构的校验统一构建在 `@earendil-works/pi-schema` 上 (JSON Schema, 编译成闭包, 不生成代码也不 eval); coding-agent 侧的工具仍用 `typebox` 1.3.27 的 builder 声明参数, pi-ai 接受任意 JSON Schema (pi-schema builder、TypeBox 或手写对象)。CLI 线与 durable 线共享 ai 和 codemode, 其余互不依赖——durable 是独立的库级产品面, 不是 CLI 的子系统。coding-agent 的 `AgentSession` 构建在 pi-agent-core 之上: 通用循环、消息/工具事件序列、`transformContext` 变换与工具并行/串行执行都来自 agent 包, coding-agent 在其上叠加会话树、资源加载与工具实现。
 
-`packages/` 之外还有 `apps/`, 三个都标 private 不发布, 但它们是 chord 的真实使用者: `p2` 是自托管的 Pi Durable UI (即 Pi Mobile, 由独立 chord 插件拼成, 属主拥有该服务器与其 worker 上的完整 agent 和 shell 控制权, TUI facet 在访客机器的受限 worker 里跑), 它的 README 开头就用醒目警告声明这是**原型、很快会被替换**, 数据格式与 API 会无通知变动, 不要基于它构建; 侧栏按项目分组会话, 最近又加了 transcript 旁的 tree panel、Projects 的新建项目入口与按设备/平台区分的手势提示。`p2-mac` 是它的原生 macOS spike, `p3` 则是 "p2 在 Chord v2 上的后继" ——按切片推进, README 明说目前还没有跑起来的东西, `docs/` 里维护 overview、names、workflow、decisions 与逐切片 brief (过时的文档移入 `archive/`), 已经把 Windows 列为目标平台并定下 45 MiB 的 worker 内存预算。换句话说, chord 不是只服务于 durable 的内部库, 它的设计在上层应用里被直接检验。
+`packages/` 之外还有 `apps/`, 三个都标 private 不发布, 但它们是 chord 的真实使用者: `p2` 是自托管的 Pi Durable UI (即 Pi Mobile, 由独立 chord 插件拼成, 属主拥有该服务器与其 worker 上的完整 agent 和 shell 控制权, TUI facet 在访客机器的受限 worker 里跑), 它的 README 开头就用醒目警告声明这是**原型、很快会被替换**, 数据格式与 API 会无通知变动, 不要基于它构建; 侧栏已重做成按项目分组的条目 (状态、名称、详情三段, 项目组由属主定义), 项目位置换成新的选择器, 状态点跟着主会话走。`p2-mac` 是它的原生 macOS spike, nightly 打包现在同时带 p2 与 Node, 经 Sparkle 更新。`p3` 则是 "p2 在 Chord v2 上的后继" ——按切片推进, README 说它目前仍是 headless (还没有页面, 第 27 个切片开始搭终端客户端), 但最低 Node 已抬到 **26.3.1** 并写进 `engines`, 从 checkout 运行与跑测试是同一门槛, 终端沙箱则固定携带自带的一份 Node; 命令面是 `p3` 加 `server`/`status`/`stop`/`restart`/`list` 五个子命令, 一个 Pi 就是一个数据目录 (默认 `~/.pi/p3`, 端口 8789), 后台服务由 supervisor 托管、输出落到 `logs/server.log`, 属主链接十分钟内有效且每次打印新的; `src/bootstrap/` 只放 `bin`、`server`、`worker`、`supervisor` 四个进程入口, 其余都是插件。`docs/` 里维护 overview、names、workflow、decisions 与逐切片 brief (过时的文档移入 `archive/`), 已经把 Windows 列为目标平台、把 worker 内存预算定为 55 MiB 且对每个受支持 Node 用同一数值 (Node 26 的 worker 稳定值比 Node 24 高约 7 MiB; Node 26 的 V8 内存回收器在工作后 30 秒才启动、Node 24 是 8 秒, 因此统一显式设成 8 秒), 并用 `--managed-zone-memory` 让 V8 自己管编译器的 zone 内存、少向 glibc 要; 分发上仍倾向 Node 单文件可执行程序 (SEA) 而非 npm 包。换句话说, chord 不是只服务于 durable 的内部库, 它的设计在上层应用里被直接检验。
 
 ## 二、树形会话模型
 
@@ -387,7 +387,7 @@ TUI 文档给出的集成点建议也是分层的: 优先用扩展上下文里�
 
 ### 7.3 fullscreen 默认、主题与终端兼容
 
-交互模式的默认 TUI 形态是全屏 (设置 `tuiMode` 默认 `"fullscreen"`), 走备屏渲染器 (应用持有滚动视口, 停止时恢复主缓冲并打印完整最终文档), 可用参数或设置切回常规模式。配套设置包括退出时输出内容 (全文或仅续跑提示)、滚动条、选中即复制、滚轮每次滚动行数。
+交互模式的默认 TUI 形态是全屏 (设置 `tuiMode` 默认 `"fullscreen"`), 走备屏渲染器 (应用持有滚动视口, 停止时恢复主缓冲并打印完整最终文档), 可用参数或设置切回常规模式。配套设置包括退出时输出内容 (全文或仅续跑提示)、滚动条、选中即复制、滚轮每次滚动行数; 续跑命令单独占一行而非跟在提示语后面, 以便三击选中整条命令。
 
 主题系统接受五种颜色形式: RGB 十六进制、OKLCH、OKHSL (饱和度相对该色相/亮度下 sRGB 色域的最大值, 因此等饱和看起来等鲜艳)、256 色索引与变量引用; 变量可链式解析, 缺失或成环使主题非法。有 truecolor 时用真彩, OKLCH 做色域映射落到 sRGB, 256 色终端取近似; HTML 导出把 OKHSL 转十六进制 (CSS 不支持)。终端兼容细节也有记录: Pi 启用增强按键上报, Apple Terminal 仍对 `Shift+Enter` 发普通回车时, 用本地 macOS 修饰键回退识别。
 

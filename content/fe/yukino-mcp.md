@@ -1,12 +1,12 @@
 ---
 title: "Yukino 官方 MCP: 一个进程内的工具集合服务器"
 description: "把本地 RAG 文档检索、MCP Apps 交互式 UI、gh CLI 与 PostgreSQL/MySQL/ClickHouse/Redis/MongoDB/Prometheus/Grafana/MinIO/etcd/Milvus/Kafka 十一类数据后端收敛成 15 个 MCP 工具, 用 stdio 与无状态 Streamable HTTP 双传输对外暴露, 并以进程级单例承载向量索引与连接生命周期。"
-local_path: "$HOME/github/yukino-code/apps/mcp"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/mcp"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/mcp` 在 `a60e5efccef` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/mcp` 在 `1dd1d45e981` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -341,4 +341,3 @@ Milvus 的 RESTful API v2 与 gRPC 共用同一端口(默认 19530), 所以 `MIL
 - [Yukino Codegen: 编码 Agent 的沙箱迭代与预览桥](./yukino-codegen)
 - [Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent](./yukino-chat)
 - [Yukino Chatbot: Koa 3 服务端与 React 19 分层客户端](./yukino-chatbot)
-- [Yukino Sentry: 前端与 Node 错误采集 SDK](./yukino-sentry)

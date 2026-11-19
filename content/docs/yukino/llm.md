@@ -1,12 +1,12 @@
 ---
 title: "LLM"
 description: "LLM 接入层 (src/llm/): 把对话历史翻译成 Anthropic / OpenAI Responses / OpenAI Chat Completions 三种协议的 API 请求, 把 SSE 流统一映射成 StreamEvent; 覆盖思考强度映射, token 计费与 prompt cache 打点, 消息构建与配对修复, 错误分类重试, 模型发现与 ConversationManager"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/llm`、`src/conversation`、`src/config`、`src/mcp`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/llm`、`src/conversation`、`src/config`、`src/mcp`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

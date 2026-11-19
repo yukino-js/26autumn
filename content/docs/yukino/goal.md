@@ -1,12 +1,12 @@
 ---
 title: "Goal"
 description: "持久目标 (Persistent Goal): GoalManager 状态机、/goal 命令与 Goal 工具三件套, 让 agent 跨轮次、跨用户消息朝一个目标自动推进 — 循环退出前先问是否续跑, 直到完成、受阻或预算耗尽"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/goal`、`src/tools`、`src/agent`、`src/subagent`、`src/session`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/goal`、`src/tools`、`src/agent`、`src/subagent`、`src/session`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 持久目标 (Persistent Goal): 让 agent 跨轮次、跨用户消息地朝一个目标自动推进, 直到完成、受阻或预算耗尽

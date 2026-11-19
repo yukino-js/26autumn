@@ -6,7 +6,7 @@ local_commit: "13332f3cd4028b61bf7a5b43ddf972d4864e8853"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-chatbot` 在 `13332f3cd402` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-chatbot` 在 `13332f3cd40` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -38,7 +38,7 @@ flowchart TB
 
 | 维度     | 选型                                                                    |
 | -------- | ----------------------------------------------------------------------- |
-| 前端     | [React](react) 19 + TypeScript + [Vite](vite) 8                         |
+| 前端     | React 19 + TypeScript + Vite 8                                          |
 | 状态管理 | Jotai(客户端状态) + [TanStack Query](tanstack) v5(服务端状态)           |
 | 表单     | TanStack Form + zod 校验                                                |
 | UI       | Base UI(headless 原语) + Tailwind CSS 4 + shadcn/ui 模式                |
@@ -504,6 +504,4 @@ rAF 方案胜出的三个理由: 帧对齐让渲染只发生在浏览器即将�
 - [Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent](./yukino-chat)
 - [Yukino Codegen: 编码 Agent 的沙箱迭代与预览桥](./yukino-codegen)
 - [Yukino MCP: 工具注册、向量索引与连接生命周期](./yukino-mcp)
-- [Yukino Sentry: 前端与 Node 错误采集 SDK](./yukino-sentry)
-- [React 19 客户端状态与数据获取模式](./react)
 - [TanStack Query 服务端状态管理](./tanstack)

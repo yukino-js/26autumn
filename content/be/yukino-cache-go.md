@@ -2,11 +2,11 @@
 title: "yukino_cache 分布式缓存技术笔记"
 description: "yukino_cache Go 分布式缓存: groupcache 风格 read-through Group、字节预算双层 LRU、singleflight 去重、一致性哈希分片、gRPC peer 通信与 etcd 服务发现"
 local_path: "$HOME/github/yukino.go/libs/yukino_cache"
-local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
+local_commit: "28867b2e827940c5cf7f0a1c89f4784d641fa59e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_cache`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_cache`）在 `28867b2e827` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

@@ -2,11 +2,11 @@
 title: "yukino_http 技术笔记"
 description: "yukino_http Go HTTP 框架: Koa 风格洋葱模型中间件与延迟响应、TakeOver 响应接管、按段 Trie 路由、分组 Router、SSE 与 RFC 6455 WebSocket 的实现机制与适用场景"
 local_path: "$HOME/github/yukino.go/libs/yukino_http"
-local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
+local_commit: "28867b2e827940c5cf7f0a1c89f4784d641fa59e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_http`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_http`）在 `28867b2e827` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -400,4 +400,4 @@ SSE 侧则没有自动重连 ID 管理 (不读取 `Last-Event-ID`)、订阅广�
 
 **延伸阅读**
 
-框架的内置能力已被同仓库多个模块直接复用 —— [yukino_cache](./yukino-cache-go) 的实时仪表盘就是一个挂载在本框架上的 WebSocket 端点, 用 `ctx.Upgrade` 完成握手、用 `WSConn` 的 30 秒心跳与 `WriteJSON` 推送缓存快照; [yukino_taskflow](./yukino-task-flow) 用本框架组装 API 路由与中间件链; [yukino_agent_proxy](./yukino-agent-proxy) 用 `New()` 加 `Recovery()` 搭建本地控制面, 借助 `ctx.TakeOver()` 按 transport 参数二选一挂载 MCP SDK 官方的 Streamable HTTP (`/mcp`) 或 HTTP+SSE (`/sse`) 传输端点, 并把 `Application` 作为 `http.Handler` 挂到自带超时配置的外部 `http.Server` 上。接口、方法集与并发原语等语言层基础见 [Go 语言核心](./go)。
+框架的内置能力已被同仓库多个模块直接复用 —— [yukino_cache](./yukino-cache-go) 的实时仪表盘就是一个挂载在本框架上的 WebSocket 端点, 用 `ctx.Upgrade` 完成握手、用 `WSConn` 的 30 秒心跳与 `WriteJSON` 推送缓存快照; [yukino_taskflow](./yukino-task-flow) 用本框架组装 API 路由与中间件链; [yukino_agent_proxy](./yukino-agent-proxy) 用 `New()` 加 `Recovery()` 搭建本地控制面, 借助 `ctx.TakeOver()` 按 transport 参数二选一挂载 MCP SDK 官方的 Streamable HTTP (`/mcp`) 或 HTTP+SSE (`/sse`) 传输端点, 并把 `Application` 作为 `http.Handler` 挂到自带超时配置的外部 `http.Server` 上。

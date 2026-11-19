@@ -2,11 +2,11 @@
 title: "yukino_rpc 技术笔记"
 description: "yukino_rpc 自研 Go RPC 框架: 二进制线协议、单连接多路复用、Future 异步模型、服务端流式 RPC、熔断限流负载均衡与 etcd 服务发现"
 local_path: "$HOME/github/yukino.go/libs/yukino_rpc"
-local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
+local_commit: "28867b2e827940c5cf7f0a1c89f4784d641fa59e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_rpc`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `libs/yukino_rpc`）在 `28867b2e827` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -389,4 +389,3 @@ Closed 状态累计成功与失败计数, 窗口满 (`success + failure >= 10`) 
 - [yukino_http](./yukino-http): 同仓库 Go HTTP 框架, 洋葱模型中间件与流式接管机制。
 - [yukino_cache](./yukino-cache-go): 同仓库缓存库, 其 gRPC peer 通信可与本框架的服务端流式模型对照阅读。
 - [中间件与可观测性](./middleware): 熔断、限流、负载均衡等通用治理模式的横切视角。
-- [Go 语言核心](./go): 反射、并发原语与连接池等语言层基础。

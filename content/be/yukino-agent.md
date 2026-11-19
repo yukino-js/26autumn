@@ -2,11 +2,11 @@
 title: "yukino_agent: 基于 Eino 的 RAG 运维 Agent 后端"
 description: "yukino_agent Go 后端: 以 CloudWeGo Eino 编排 RAG 对话、Plan-Execute-Replan 告警分析与文档索引三条流水线, 打通 Milvus 向量知识库、MCP/Prometheus/MySQL 工具集, 并把浏览器 SDK 上报转换为 Prometheus 指标形成告警闭环"
 local_path: "$HOME/github/yukino.go/apps/agent"
-local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
+local_commit: "28867b2e827940c5cf7f0a1c89f4784d641fa59e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `apps/agent`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `apps/agent`）在 `28867b2e827` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -227,7 +227,7 @@ collection 的 schema 由 `Fields(dim)` 定义, 四个字段与 `internal/consts
 
 ## 监控桥: 浏览器可观测性到 Prometheus
 
-`sentry_metrics_handler.go` 是一个独立的子系统, 把 `@yukino.js/sentry` 浏览器 SDK (见 [yukino-sentry](../fe/yukino-sentry)) 的上报转成 Prometheus 指标。它维护一个私有 registry (`sentryRegistry`), 与全局默认 registry 隔离, 在 `init()` 里注册三类东西:
+`sentry_metrics_handler.go` 是一个独立的子系统, 把 `@yukino.js/sentry` 浏览器 SDK 的上报转成 Prometheus 指标。它维护一个私有 registry (`sentryRegistry`), 与全局默认 registry 隔离, 在 `init()` 里注册三类东西:
 
 1. Go 运行时指标: 用 `collectors.NewGoCollector` 并显式开启 `runtime/metrics` 的 GC/内存/调度器规则组, 外加 `/cpu/classes/*`、`/sync/*`、`/cgo/*` 三条正则规则。默认的 GoCollector 只暴露 `go_memstats_*` 等少量指标, 这里补上了排查 Go 服务真正需要的调度延迟、GC 暂停、各状态 goroutine 数、互斥锁竞争等; 采集规则只包含这些显式枚举的组, `/godebug/*` 等恒为零的序列不会被引入。还注册了进程指标、构建信息, 以及两个自定义 GaugeFunc: `yukino_go_memory_limit_bytes` (GOMEMLIMIT, 读 `/gc/gomemlimit:bytes`, 未设时为 0) 与 `yukino_go_heap_used_ratio` (存活堆 `/gc/heap/live:bytes` 除以 GOMEMLIMIT, 未设 GOMEMLIMIT 时报 0 而非臆造一个)。
 2. 一批 `yukino_sentry_*` 指标: 覆盖 SDK 的几乎每种上报类型 (唯独不含只携带 rrweb 不透明 blob 的 ScreenRecord)。

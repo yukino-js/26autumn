@@ -2,11 +2,11 @@
 title: "MCP 和 Skill"
 description: "MCP 和 Skill: 物流/售后两个演示 MCP 服务器 (Hono + 官方 SDK, 确定性 Mock)、主服务 mcp-client 接入与 registry 合并注册、formatResult 状态码翻译、执行引擎、写前人工确认与审计, 以及测试与验收"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
+local_commit: "a31e2f791e23c28b679482196a000b3703f13df0"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/mcp-servers/`、`server/src/tools/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/mcp-servers/`、`server/src/tools/`）在 `a31e2f791e2` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

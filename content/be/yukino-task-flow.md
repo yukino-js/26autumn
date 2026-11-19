@@ -1,12 +1,12 @@
 ---
 title: "yukino_taskflow: 条件与定时 AI 任务的分布式执行引擎"
-description: "taskflow 单体分布式后端: cron 物化 + 分布式时间轮触发、MySQL 触发器 CDC + outbox 中继、四层幂等防线、TCC 派发事务、openai-go 工具代理与结构化报告、LSM/Raft 本地审计与 MySQL→Redis 状态同步; 并附组件教程: 从分布式难点入门, 逐一拆解 red_mq、time_wheel、distributed_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft 十个分布式组件的问题域、实现入口与开发坑, 给出源码阅读路线与故障实验"
+description: "taskflow 单体分布式后端: cron 物化 + 分布式时间轮触发、MySQL 触发器 CDC + outbox 中继、四层幂等防线、TCC 派发事务、openai-go 工具代理与结构化报告、LSM/Raft 本地审计与 MySQL→Redis 状态同步; 并附组件教程: 从分布式难点入门, 逐一拆解 redis_mq、time_wheel、redis_lock、consistent_hash、cache_aside、yukino_cache、tcc、scheduled_task、lsm_tree、raft 十个分布式组件的问题域、实现入口与开发坑, 给出源码阅读路线与故障实验"
 local_path: "$HOME/github/yukino.go/apps/task_flow"
-local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
+local_commit: "28867b2e827940c5cf7f0a1c89f4784d641fa59e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `apps/task_flow`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `apps/task_flow`）在 `28867b2e827` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -32,7 +32,7 @@ stateDiagram-v2
 状态流转由**四层幂等防线**兜底: 同一 fire key 的重复触发会命中去重或被状态机拒绝, 因此 <u>触发源不可靠</u> (时钟漂移、消息重投) 不会造成重复执行。
 :::
 
-taskflow 是一个用 Go 编写的单体分布式任务执行服务, 定位是把两类 "AI 任务" 变成可重复、可审计、绝不重复触发的工程对象: 一类是按 cron 表达式周期执行的定时任务, 一类是由业务表插入事件驱动的条件任务。任务定义只包含一段提示词 (prompt) 与可选的模型名, 真正的工作交给一个基于 openai-go 的工具调用代理: 模型按预设提示词多轮调用 `mysql_tool` / `redis_tool` 采集事实数据, 最终产出一份带 YAML frontmatter 的结构化 Markdown 报告。本文分两部分: 第一部分聚焦 `apps/task_flow/server` 这个 Go 服务本身, 说明它的仓库布局、执行状态机、四层幂等防线、定时物化与分布式时间轮、事务内 CDC 捕获与 outbox 中继、TCC 派发事务、LLM 工具沙箱、报告缓存、集群单例角色协调、状态同步与本地审计账本, 以及它的能力边界; 第二部分是一份面向分布式系统新手的组件教程, 从单机并发与分布式难点讲起, 逐一拆解 `server/go.mod` 本地 `replace` 引入的组件: 十个分布式组件 (red_mq、time_wheel、distributed_lock、consistent_hash、consistent_cache、yukino_cache、tcc、timer、lsm_tree、raft) 逐一讲解, 而 `libs/yukino_http` 作为 HTTP 框架已在第一部分覆盖, 说明它们的问题域、实现入口与开发坑, 并给出源码阅读路线与故障实验。前端 `client/` 是一个 Lit 3 + Tailwind CSS 4 + Vite 的工作台, 只消费本文描述的 HTTP API, 不在此展开。
+taskflow 是一个用 Go 编写的单体分布式任务执行服务, 定位是把两类 "AI 任务" 变成可重复、可审计、绝不重复触发的工程对象: 一类是按 cron 表达式周期执行的定时任务, 一类是由业务表插入事件驱动的条件任务。任务定义只包含一段提示词 (prompt) 与可选的模型名, 真正的工作交给一个基于 openai-go 的工具调用代理: 模型按预设提示词多轮调用 `mysql_tool` / `redis_tool` 采集事实数据, 最终产出一份带 YAML frontmatter 的结构化 Markdown 报告。本文分两部分: 第一部分聚焦 `apps/task_flow/server` 这个 Go 服务本身, 说明它的仓库布局、执行状态机、四层幂等防线、定时物化与分布式时间轮、事务内 CDC 捕获与 outbox 中继、TCC 派发事务、LLM 工具沙箱、报告缓存、集群单例角色协调、状态同步与本地审计账本, 以及它的能力边界; 第二部分是一份面向分布式系统新手的组件教程, 从单机并发与分布式难点讲起, 逐一拆解 `server/go.mod` 本地 `replace` 引入的组件: 十个分布式组件 (redis_mq、time_wheel、redis_lock、consistent_hash、cache_aside、yukino_cache、tcc、scheduled_task、lsm_tree、raft) 逐一讲解, 而 `libs/yukino_http` 作为 HTTP 框架已在第一部分覆盖, 说明它们的问题域、实现入口与开发坑, 并给出源码阅读路线与故障实验。前端 `client/` 是一个 Lit 3 + Tailwind CSS 4 + Vite 的工作台, 只消费本文描述的 HTTP API, 不在此展开。
 
 # 第一部分: 执行引擎深度解析
 
@@ -89,21 +89,21 @@ apps/task_flow/
 
 `server/go.mod` (module `github.com/hangtiancheng/yukino.go/apps/task_flow/server`, go 1.26.0) 用 11 条 `replace` 把全部基础组件指向仓库内源码; 其中十个分布式组件是第二部分教程的对象, `libs/yukino_http` 作为 HTTP 框架已在第一部分覆盖:
 
-| replace 模块                  | 在 taskflow 中的角色                          |
-| ----------------------------- | --------------------------------------------- |
-| `components/red_mq`           | exec/cond 两个 Redis Streams 主题             |
-| `components/time_wheel`       | 分布式时间轮 (单 ZSET + key 索引 + HTTP 回调) |
-| `components/distributed_lock` | migrator/monitor/tccstore/哈希环的锁          |
-| `components/consistent_hash`  | 单例角色 (migrator/monitor) 归属              |
-| `components/consistent_cache` | 任务定义缓存                                  |
-| `components/tcc`              | 派发事务框架                                  |
-| `components/timer`            | cron 解析、Bloom、worker 池、Murmur3          |
-| `components/lsm_tree`         | 节点本地审计 journal                          |
-| `components/raft`             | 节点本地诊断 ledger                           |
-| `libs/yukino_cache`           | 报告分组缓存 (可带 etcd/gRPC peers)           |
-| `libs/yukino_http`            | HTTP 路由与中间件                             |
+| replace 模块                 | 在 taskflow 中的角色                          |
+| ---------------------------- | --------------------------------------------- |
+| `components/redis_mq`        | exec/cond 两个 Redis Streams 主题             |
+| `components/time_wheel`      | 分布式时间轮 (单 ZSET + key 索引 + HTTP 回调) |
+| `components/redis_lock`      | migrator/monitor/tccstore/哈希环的锁          |
+| `components/consistent_hash` | 单例角色 (migrator/monitor) 归属              |
+| `components/cache_aside`     | 任务定义缓存                                  |
+| `components/tcc`             | 派发事务框架                                  |
+| `apps/scheduled_task`        | cron 解析、Bloom、worker 池、Murmur3          |
+| `components/lsm_tree`        | 节点本地审计 journal                          |
+| `components/raft`            | 节点本地诊断 ledger                           |
+| `libs/yukino_cache`          | 报告分组缓存 (可带 etcd/gRPC peers)           |
+| `libs/yukino_http`           | HTTP 路由与中间件                             |
 
-关键三方依赖: `openai-go v1.12.0`、`go-redis v9.23.0`、`sentry-go v0.50.0`、`gorm`、`robfig/cron v3` (经 timer 间接引入)、`twmb/murmur3`、etcd client v3 (经 yukino_cache 间接引入)。
+关键三方依赖: `openai-go v1.12.0`、`go-redis v9.23.0`、`sentry-go v0.50.0`、`gorm`、`robfig/cron v3` (经 scheduled_task 间接引入)、`twmb/murmur3`、etcd client v3 (经 yukino_cache 间接引入)。
 
 `main.go` 的装配顺序就是一条依赖链, 读懂它等于读懂整个服务:
 
@@ -117,8 +117,8 @@ apps/task_flow/
 8. `llm.NewAgent` 构造 openai-go 客户端与工具运行时。
 9. `journal.Open` (lsm_tree, 目录为空串则禁用)、`consensus.NewLedger` (单成员 raft)。
 10. `engine.OpenReportPeers`: 配置了 `etcd_endpoints` 才启动 yukino_cache gRPC server + ClientPicker; `yukino_cache.NewGroup` 注册报告分组; 有 peers 时 `RegisterPeers`。
-11. 两份 `consistent_cache.Service` (sched/cond 定义缓存) + MySQL DAO 适配 + Redis 缓存。
-12. distributed_lock client、red_mq producer (`WithMsgQueueLen`)、`time_wheel.NewRTimeWheel`。
+11. 两份 `cache_aside.Service` (sched/cond 定义缓存) + MySQL DAO 适配 + Redis 缓存。
+12. redis_lock client、redis_mq producer (`WithMsgQueueLen`)、`time_wheel.NewRTimeWheel`。
 13. `chredis.NewRedisHashRing("task_flow:nodes", ...)` + `consistent_hash.NewConsistentHash` (FNV 哈希器 + `engine.RingMigrator`); `SingletonRegistry.Register` 心跳并把自己加入环。
 14. `engine.NewTXStore` + `tcc.NewTXManager(WithTimeout(30s), WithMonitorTick(5s))`; `NewDispatcher`、`NewReportStore`、`NewDeadLetterMailbox`; 注册两个 TCC 参与者 `execution_reserve` 与 `mq_dispatch`。
 15. `NewExecutor`、`NewConditionPipeline`、`cdc.NewRelay`、`NewMonitor`、`NewMigrator`; `seedDemoTasks` (OnConflict DoNothing)。
@@ -137,7 +137,7 @@ apps/task_flow/
 | `condition_tasks`   | `table_name`、`event_type` (默认 `mysql_insert`)、`prompt`、`model`、`enabled`                                                                                                                                             |
 | `executions`        | 状态机主表, 见下                                                                                                                                                                                                           |
 | `risk_records`      | 演示业务表, 条件任务的示例数据源                                                                                                                                                                                           |
-| `mq_dead_letters`   | red_mq 死信信箱落库                                                                                                                                                                                                        |
+| `mq_dead_letters`   | redis_mq 死信信箱落库                                                                                                                                                                                                      |
 | `tcc_tx_records`    | TCC 事务记录: `status` (索引)、`component_try_statuses` (text JSON)                                                                                                                                                        |
 | `task_flow_changes` | CDC 事件: `event_key` (64, unique, 触发器内 `UUID()`)、`table_name` + `occurred_at` 复合索引、`operation`、`record_json` (JSON)、`processed_at` (索引), `occurred_at` 为 `datetime(6)`                                     |
 | `task_flow_outbox`  | 待发布意图: `event_key` (191, unique)、`payload` (mediumtext)、`published_at` (索引)                                                                                                                                       |
@@ -192,7 +192,7 @@ fire key 是 "逻辑执行" 的身份, 全部确定性生成, 重试不产生新
 
 ### Migrator: 把 cron 展开成执行行
 
-Migrator 是单例角色 (见后文集群协调), 每 `migrate_tick_seconds` (默认 30s) 一个 tick, tick 的 context 超时也是这个值。拿到角色后还要抢 distributed_lock `task_flow:lock:migrator` (租期 = tick 秒数 x 2), 双重互斥。
+Migrator 是单例角色 (见后文集群协调), 每 `migrate_tick_seconds` (默认 30s) 一个 tick, tick 的 context 超时也是这个值。拿到角色后还要抢 redis_lock `task_flow:lock:migrator` (租期 = tick 秒数 x 2), 双重互斥。
 
 物化窗口是 `[now - overdue_recover_minutes, now + migrate_step_minutes]` (默认向前回看 2 分钟、向后展开 60 分钟), 对每个 enabled 的定时任务:
 
@@ -265,7 +265,7 @@ Migrator 是单例角色 (见后文集群协调), 每 `migrate_tick_seconds` (�
 
 **`mq_dispatch`**: Try 直接把 `ExecCommand{execution_id, tx_id, fire_key, trace_carrier}` (JSON) 以 fire key 为消息 key `XADD` 到 exec 主题, `trace_carrier` 由 `telemetry.Inject` 生成; Confirm/Cancel 都是空操作 ACK — 消息一旦入流不可撤回, 去重交给 Executor 的门控。
 
-组件的 Try 状态汇总到 `tcc_tx_records`: `engine.TXStore` 用 MySQL 实现 `tcc.TXStore` 接口 — `CreateTX` 建一行 (所有参与者 hanging, txID 即记录 ID 字符串); `TXUpdate` 在 SQL 事务里 `FOR UPDATE` 读行、解析 `component_try_statuses` JSON、拒绝给非 hanging 分支重复定论、相同状态幂等返回; `TXSubmit` 以 CAS 把 hanging 改成 successful/failure; `GetHangingTXs` 一次最多 200 行; 整个恢复过程用 distributed_lock `task_flow:tcc:txstore:lock` 互斥。
+组件的 Try 状态汇总到 `tcc_tx_records`: `engine.TXStore` 用 MySQL 实现 `tcc.TXStore` 接口 — `CreateTX` 建一行 (所有参与者 hanging, txID 即记录 ID 字符串); `TXUpdate` 在 SQL 事务里 `FOR UPDATE` 读行、解析 `component_try_statuses` JSON、拒绝给非 hanging 分支重复定论、相同状态幂等返回; `TXSubmit` 以 CAS 把 hanging 改成 successful/failure; `GetHangingTXs` 一次最多 200 行; 整个恢复过程用 redis_lock `task_flow:tcc:txstore:lock` 互斥。
 
 `tcc.TXManager` 的运行模型:
 
@@ -319,7 +319,7 @@ Executor 启动 `cfg.Executor.Workers` (默认 4, 夹紧到 1..64) 个消费者 
 
 缓存读路径 `ReportStore.Load`: 先查 yukino_cache 分组 (`task-flow.reports`, key `exec:{id}`), miss 回落到 `executions.report_body`。`Warm` 在终态 CAS 成功后把报告写进分组。分组在 main 里注册: `yukino_cache.NewGroup(cfg.Cache.ReportGroup, report_cache_bytes_mib<<20, getter, WithExpiration(report_expire_seconds))`, getter 解析 `exec:%d` 从 SQL 读 `report_body`。配置了 `etcd_endpoints` + `cache_server_addr` 时, `OpenReportPeers` 启动 gRPC 缓存服务 (服务名 `task-flow.reports`) 并注册 ClientPicker, Set/Delete 会异步同步给 key 的 peer owner (见第二部分第 10 章)。
 
-任务定义缓存走 `consistent_cache`: 两个 `Service` 分别对应前缀 `task_flow:def:sched:` 与 `task_flow:def:cond:`, 选项 `WithCacheExpireSeconds(def_cache_expire_seconds, 默认 60)` + `WithCacheExpireRandomMode` (TTL 变 60..120s 抖动, 防同时失效) + `WithDisableExpireSeconds(1)`。写路径 (`UpdateScheduledTask` 等) 先 Disable (写 1 秒过期的禁回填标记) → Del 缓存 → SQL 更新, 标记靠 TTL 自然过期, 不做显式 Enable; 读路径 miss 时回填, 且回填受 Lua 门禁保护 (见第二部分第 9 章)。`SyncDrift` (monitor 每轮调用) 对比缓存 JSON 与 `obj.Write()` 的最新值, 不一致就 Disable + Del 并计数, 是对账兜底。
+任务定义缓存走 `cache_aside`: 两个 `Service` 分别对应前缀 `task_flow:def:sched:` 与 `task_flow:def:cond:`, 选项 `WithCacheExpireSeconds(def_cache_expire_seconds, 默认 60)` + `WithCacheExpireRandomMode` (TTL 变 60..120s 抖动, 防同时失效) + `WithDisableExpireSeconds(1)`。写路径 (`UpdateScheduledTask` 等) 先 Disable (写 1 秒过期的禁回填标记) → Del 缓存 → SQL 更新, 标记靠 TTL 自然过期, 不做显式 Enable; 读路径 miss 时回填, 且回填受 Lua 门禁保护 (见第二部分第 9 章)。`SyncDrift` (monitor 每轮调用) 对比缓存 JSON 与 `obj.Write()` 的最新值, 不一致就 Disable + Del 并计数, 是对账兜底。
 
 ## 集群协调: 心跳、哈希环与单例角色
 
@@ -329,13 +329,13 @@ Executor 启动 `cfg.Executor.Workers` (默认 4, 夹紧到 1..64) 个消费者 
 - **注册/退出**: 启动时 `consistent_hash.AddNode(nodeID, weight=1)` 把自己挂上环; `Deregister` 停循环、`RemoveNode`、删心跳键。
 - **驱逐**: 心跳循环里顺带检查环上其他节点的心跳键是否存在, 不存在即 `RemoveNode` 驱逐。
 
-角色归属用 `IsOwner(ctx, roleKey)`: 对 roleKey (`task_flow:singleton:migrator` / `task_flow:singleton:monitor`) 调 `ring.GetNode`, 结果等于本节点才是 owner; **环查询出错时 fail-open 返回 true**, 宁可两个节点都尝试 (后面还有 distributed_lock 兜底), 不可无人干活。`Members` 汇总自身 ID、两个角色的当前 owner、环上节点的 weight 与存活状态, 供 `/monitor/nodes` 展示。`RingMigrator` 回调只打日志 — taskflow 的角色没有需要搬迁的数据。
+角色归属用 `IsOwner(ctx, roleKey)`: 对 roleKey (`task_flow:singleton:migrator` / `task_flow:singleton:monitor`) 调 `ring.GetNode`, 结果等于本节点才是 owner; **环查询出错时 fail-open 返回 true**, 宁可两个节点都尝试 (后面还有 redis_lock 兜底), 不可无人干活。`Members` 汇总自身 ID、两个角色的当前 owner、环上节点的 weight 与存活状态, 供 `/monitor/nodes` 展示。`RingMigrator` 回调只打日志 — taskflow 的角色没有需要搬迁的数据。
 
-Redis 哈希环的具体表示见第二部分第 8 章; 这里只需记住环的 key 是 `task_flow:nodes`, 哈希器是 FNV-1a (`int32 = fnv32a % MaxInt32`), 环的增删查都先拿 `redis:consistent_hash:ring:lock:task_flow:nodes` 上的 distributed_lock。
+Redis 哈希环的具体表示见第二部分第 8 章; 这里只需记住环的 key 是 `task_flow:nodes`, 哈希器是 FNV-1a (`int32 = fnv32a % MaxInt32`), 环的增删查都先拿 `redis:consistent_hash:ring:lock:task_flow:nodes` 上的 redis_lock。
 
 ## Monitor 清扫与状态同步
 
-Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱动, 键 "monitor-sweep", 每 30s 一轮; sweep 的 context 50s; 通过 `IsOwner(SingletonMonitor)` 后抢 distributed_lock `task_flow:lock:monitor` (租期 55s)。并发子任务跑在 `pool.NewGoWorkerPool(recover_workers)` (默认 8) 上, 每个任务带 panic recovery。一轮 sweep 依次做五件事:
+Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱动, 键 "monitor-sweep", 每 30s 一轮; sweep 的 context 50s; 通过 `IsOwner(SingletonMonitor)` 后抢 redis_lock `task_flow:lock:monitor` (租期 55s)。并发子任务跑在 `pool.NewGoWorkerPool(recover_workers)` (默认 8) 上, 每个任务带 panic recovery。一轮 sweep 依次做五件事:
 
 1. **failStuckRunning**: `updated_at` 早于 `now - stuck_running_minutes` (默认 30) 的 running 执行, `Transition(running → failed)` 写 error "execution timed out (node crashed or LLM call hung); marked failed by monitor" 与 `finished_at`, 并 CaptureError。注意是标 failed 而非重新排队 — 工具副作用可能已经发生, 自动重跑有重复风险。
 2. **redispatchOverdue**: `fire_at` 早于 `now - overdue_recover_minutes` (默认 2) 的 pending 执行 (limit 200), 逐个 `Dispatch`。这是时间轮丢条目/回调失败时的补偿路径。
@@ -432,7 +432,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 
 把各层的语义边界集中说清楚, 便于判断适用场景:
 
-- **投递**: red_mq 是 at-least-once (pending/claim/重试都可能重复投递); **执行**是 at-most-once claim (queued → running CAS 只成功一次)。业务含义: 同一条命令可能被多个消费者看到, 但模型至多跑一次; 代价是 running 崩溃后当前实现标记 failed, 需要人工分析或显式用新的 manual key 重跑。
+- **投递**: redis_mq 是 at-least-once (pending/claim/重试都可能重复投递); **执行**是 at-most-once claim (queued → running CAS 只成功一次)。业务含义: 同一条命令可能被多个消费者看到, 但模型至多跑一次; 代价是 running 崩溃后当前实现标记 failed, 需要人工分析或显式用新的 manual key 重跑。
 - **外部副作用**: exactly-once 只成立于平台内部状态。模型经工具写出的数据 (尤其打开 `allow_sql_writes` 后) 不受事务保护, 平台不提供通用 fencing。
 - **CDC 捕获**: 只有 INSERT/DELETE 触发器, 没有 UPDATE 捕获; 触发器安装前的历史变化没有 baseline; `enabled` 在 relay fanout 时判断, 不是事件发生时刻的订阅快照; TRUNCATE 不产生行级事件。
 - **时间轮**: 分布式轮只用一个全局 ZSET + key 索引, 每轮最多弹 1000 条到期任务; 回调依赖节点间网络可达 (BaseURL 必须配置成集群内可达地址)。
@@ -445,41 +445,41 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 
 # 第二部分: 组件教程 — 十个分布式组件
 
-这一部分假设读者刚接触分布式系统。每一章先讲问题域, 再读实现入口, 最后给开发坑与动手练习。非测试 Go 代码行数 (供评估阅读成本): red_mq 978、time_wheel 714、distributed_lock 807、consistent_hash 1747、consistent_cache 769、yukino_cache 2301 (不含生成的 protobuf 代码)、tcc 1610、timer 4400、lsm_tree 1963、raft 1865。
+这一部分假设读者刚接触分布式系统。每一章先讲问题域, 再读实现入口, 最后给开发坑与动手练习。非测试 Go 代码行数 (供评估阅读成本): redis_mq 978、time_wheel 714、redis_lock 807、consistent_hash 1747、cache_aside 769、yukino_cache 2301 (不含生成的 protobuf 代码)、tcc 1610、scheduled_task 4400、lsm_tree 1963、raft 1865。
 
 ## 1. 分布式问题入门 [#chapter-1]
 
 先建立贯穿全文的几个概念, 每个都给出 taskflow 中的实例:
 
-| 概念               | 一句话解释                            | taskflow 实例                              |
-| ------------------ | ------------------------------------- | ------------------------------------------ |
-| 部分失败           | 一次操作可能 "做了一半", 必须设计补救 | XADD 成功但 outbox 事务提交失败            |
-| 权威来源           | 冲突时以哪份数据为准                  | 执行状态以 MySQL 为准, Redis 只做加速      |
-| 幂等               | 同一逻辑操作重试不产生额外效果        | 相同 fire key 复用同一 execution 行        |
-| CAS                | 仅当旧值符合预期才更新                | `WHERE status='queued' AND tx_id=?`        |
-| 租约               | 带过期时间的临时授权                  | migrator 的 distributed_lock, 心跳 TTL 45s |
-| at-least-once      | 消息可能重复投递                      | Streams pending/claim/重试                 |
-| at-most-once claim | 一次逻辑执行只允许一次成功抢占        | queued → running 的 TransitionOwned        |
-| outbox             | 与业务同事务落库的待发布意图          | `task_flow_outbox`                         |
-| singleflight       | 同 key 并发 miss 只加载一次           | yukino_cache 的 SingleFlightGroup          |
-| 对账 reconcile     | 用权威数据周期性修复派生数据          | SQL → Redis 执行镜像                       |
+| 概念               | 一句话解释                            | taskflow 实例                         |
+| ------------------ | ------------------------------------- | ------------------------------------- |
+| 部分失败           | 一次操作可能 "做了一半", 必须设计补救 | XADD 成功但 outbox 事务提交失败       |
+| 权威来源           | 冲突时以哪份数据为准                  | 执行状态以 MySQL 为准, Redis 只做加速 |
+| 幂等               | 同一逻辑操作重试不产生额外效果        | 相同 fire key 复用同一 execution 行   |
+| CAS                | 仅当旧值符合预期才更新                | `WHERE status='queued' AND tx_id=?`   |
+| 租约               | 带过期时间的临时授权                  | migrator 的 redis_lock, 心跳 TTL 45s  |
+| at-least-once      | 消息可能重复投递                      | Streams pending/claim/重试            |
+| at-most-once claim | 一次逻辑执行只允许一次成功抢占        | queued → running 的 TransitionOwned   |
+| outbox             | 与业务同事务落库的待发布意图          | `task_flow_outbox`                    |
+| singleflight       | 同 key 并发 miss 只加载一次           | yukino_cache 的 SingleFlightGroup     |
+| 对账 reconcile     | 用权威数据周期性修复派生数据          | SQL → Redis 执行镜像                  |
 
 单机 Go 并发是这些问题的微缩版: 两个 goroutine 同时 `map[k]++` 会丢更新, 分布式下只是把 goroutine 换成进程、把内存换成网络。读组件源码时, 始终追问三件事: **并发写怎么互斥? 失败后谁负责补救? 补救动作本身是否幂等?**
 
 ## 2. replace 组件清单与阅读策略 [#chapter-2]
 
-| 组件             | 问题域                   | taskflow 用法                    | 建议入口文件                                                                           |
-| ---------------- | ------------------------ | -------------------------------- | -------------------------------------------------------------------------------------- |
-| red_mq           | 消息队列                 | exec/cond 两个主题               | `consumer.go`, `producer.go`, `redis/redis.go`                                         |
-| time_wheel       | 延迟任务调度             | 定时触发回调; monitor 本地轮     | `time_wheel.go`, `redis_time_wheel.go`, `time_wheel_lua.go`                            |
-| distributed_lock | 分布式锁                 | 四处互斥                         | `lock.go`, `red_lock.go`, `lua.go`, `option.go`                                        |
-| consistent_hash  | 分片/角色归属            | migrator/monitor 单例            | `consistent_hash.go`, `redis/hash_ring.go`                                             |
-| consistent_cache | 缓存一致性               | 任务定义缓存                     | `service.go`, `redis/cache.go`, `redis/lua.go`                                         |
-| yukino_cache     | 带预算的分组缓存         | 报告缓存                         | `group.go`, `lru.go`, `single_flight.go`, `peers.go`                                   |
-| tcc              | 分布式事务               | 派发事务                         | `txmanager.go`, `model.go`, `txstore.go`                                               |
-| timer            | 工具集 (cron/bloom/pool) | cron 解析、Bloom、清扫 worker 池 | `pkg/cron/parser.go`, `pkg/bloom/filter.go`, `pkg/pool/pool.go`, `pkg/hash/murmur3.go` |
-| lsm_tree         | 本地持久 KV              | 节点审计 journal                 | `tree.go`, `tree_restore.go`, `wal/writer.go`, `tree_compact.go`                       |
-| raft             | 共识日志机               | 节点诊断 ledger                  | `raft/node.go`, `raft/raft.go`, `raft/storage.go` + `internal/consensus/ledger.go`     |
+| 组件            | 问题域                   | taskflow 用法                    | 建议入口文件                                                                           |
+| --------------- | ------------------------ | -------------------------------- | -------------------------------------------------------------------------------------- |
+| redis_mq        | 消息队列                 | exec/cond 两个主题               | `consumer.go`, `producer.go`, `redis/redis.go`                                         |
+| time_wheel      | 延迟任务调度             | 定时触发回调; monitor 本地轮     | `time_wheel.go`, `redis_time_wheel.go`, `time_wheel_lua.go`                            |
+| redis_lock      | 分布式锁                 | 四处互斥                         | `lock.go`, `red_lock.go`, `lua.go`, `option.go`                                        |
+| consistent_hash | 分片/角色归属            | migrator/monitor 单例            | `consistent_hash.go`, `redis/hash_ring.go`                                             |
+| cache_aside     | 缓存一致性               | 任务定义缓存                     | `service.go`, `redis/cache.go`, `redis/lua.go`                                         |
+| yukino_cache    | 带预算的分组缓存         | 报告缓存                         | `group.go`, `lru.go`, `single_flight.go`, `peers.go`                                   |
+| tcc             | 分布式事务               | 派发事务                         | `txmanager.go`, `model.go`, `txstore.go`                                               |
+| timer           | 工具集 (cron/bloom/pool) | cron 解析、Bloom、清扫 worker 池 | `pkg/cron/parser.go`, `pkg/bloom/filter.go`, `pkg/pool/pool.go`, `pkg/hash/murmur3.go` |
+| lsm_tree        | 本地持久 KV              | 节点审计 journal                 | `tree.go`, `tree_restore.go`, `wal/writer.go`, `tree_compact.go`                       |
+| raft            | 共识日志机               | 节点诊断 ledger                  | `raft/node.go`, `raft/raft.go`, `raft/storage.go` + `internal/consensus/ledger.go`     |
 
 阅读策略: 不要从 README 顺序读。先在第一部分里跟一条执行的路径 (下一章), 遇到组件调用再跳进对应组件, 只读被用到的那条链路。相关组件的更完整教程可参考 [yukino-go-components](./yukino-go-components), yukino_cache 的独立文档在 [yukino-cache-go](./yukino-cache-go)。
 
@@ -509,7 +509,7 @@ Monitor 是另一个单例角色: 本地 `time_wheel.NewTimeWheel(32, 5s)` 驱�
 | 消费者处理中崩溃   | XAUTOCLAIM 由其他消费者认领; running 卡死由 failStuckRunning 标 failed |
 | 重试次数耗尽       | 死信信箱落 `mq_dead_letters`                                           |
 
-## 4. red_mq: Redis Streams 消费组 [#chapter-4]
+## 4. redis_mq: Redis Streams 消费组 [#chapter-4]
 
 **问题域**: 多消费者可靠投递 — 消息不能丢, 处理失败要重试, 反复失败要隔离, 消费者崩溃后未确认的消息要能被别人接管。Redis Streams 的 consumer group + PEL (Pending Entries List) 正好提供原语。
 
@@ -568,7 +568,7 @@ loop:
 - 时间轮只决定 "何时尝试触发", 不知道逻辑事件是否已执行 — 去重必须另靠 SQL 唯一索引。
 - 回调地址必须可达: loopback 指向当前进程的网络命名空间, A 节点注册的 `127.0.0.1:端口` 在 A 宕机后无人监听, 与 B 是否存活无关。
 
-## 7. distributed_lock: 一把最小正确的分布式锁 [#chapter-7]
+## 7. redis_lock: 一把最小正确的分布式锁 [#chapter-7]
 
 **问题域**: 多进程互斥一段操作。陷阱全在细节: 锁要有租约 (持有者崩溃要能释放), 释放要验证持有者 (不能解别人的锁), 续约要原子。
 
@@ -592,7 +592,7 @@ loop:
 
 **问题域**: N 个节点分摊 M 个 key, 节点增减时尽量少搬数据; 分布式场景还要解决 "环本身存哪、并发改环怎么互斥"。
 
-**数据结构 (redis 实现)**: 环本身是一个 ZSET `redis:consistent_hash:ring:{key}`, score = 虚拟节点的哈希值, member = **同一 score 的节点 key JSON 数组** (哈希碰撞的节点共存于一个 score); 另有 HASH `redis:consistent_hash:ring:node:replica:{key}` (节点 → 虚拟节点数) 与 STRING `redis:consistent_hash:ring:{key}:node:data:{nodeID}` (该节点当前负责的 dataKey 集合, 供迁移用)。所有环操作先拿环锁 (distributed_lock)。
+**数据结构 (redis 实现)**: 环本身是一个 ZSET `redis:consistent_hash:ring:{key}`, score = 虚拟节点的哈希值, member = **同一 score 的节点 key JSON 数组** (哈希碰撞的节点共存于一个 score); 另有 HASH `redis:consistent_hash:ring:node:replica:{key}` (节点 → 虚拟节点数) 与 STRING `redis:consistent_hash:ring:{key}:node:data:{nodeID}` (该节点当前负责的 dataKey 集合, 供迁移用)。所有环操作先拿环锁 (redis_lock)。
 
 **核心操作 (`consistent_hash.go`)**:
 
@@ -608,7 +608,7 @@ taskflow 的 `RingMigrator` 只打日志 (角色归属没有实体数据要搬);
 - 心跳驱逐依赖 "别人替我删" — 每个存活节点都在心跳循环里检查并驱逐死节点; Redis 被整体清空后, 环不会因心跳存在而自动重建, 需要重新 AddNode。
 - 虚拟节点默认 5 个/单位权重, 节点很少时分布偏差可观; 组件另有 local 内存环实现可对比阅读。
 
-## 9. consistent_cache: 带写禁窗口的 cache-aside [#chapter-9]
+## 9. cache_aside: 带写禁窗口的 cache-aside [#chapter-9]
 
 **问题域**: 缓存与 DB 并发更新时的经典竞态 — "先删缓存再写库" 会被慢读者回填旧值; "先写库再删缓存" 仍有窗口。组件的答案: 给每个 key 一个短暂的**禁回填标记**。
 
@@ -662,7 +662,7 @@ miss → loader.Do(key, fn)          // singleflight: sync.Map + WaitGroup, pani
 
 **TXManager (`txmanager.go`)**: 选项默认 Timeout 5s、MonitorTick 10s (taskflow 30s / 5s)。`Transaction`: 建事务 (TXStore.CreateTX) → `twoPhaseCommit` 并行 Try (每个分支 Try 完立即 `TXUpdate` 记账; 首个错误触发 cancel) → 无论成败立刻用 `WithoutCancel` 上下文执行 `advanceProgressByTXID` (Confirm/Cancel + `TXSubmit`), 所以正常情况下二阶段不等恢复循环。恢复循环每 tick: 抢 TXStore 锁 → `GetHangingTXs` (≤200) → 8 个 worker 并行 `advanceProgress` → 解锁; 出错时 tick 翻倍退避, 上限 `MonitorTick << 3`。
 
-**TXStore 接口** 由使用方实现。taskflow 的 `engine.TXStore`: MySQL 表 `tcc_tx_records` + distributed_lock; `TXUpdate` 在 SQL 事务里 `FOR UPDATE` 读行、JSON 合并分支状态, 拒绝给非 hanging 分支改状态, 相同状态幂等; `TXSubmit` CAS hanging → 终态; 锁的 Unlock 用 `WithoutCancel` + 3s 清理 context, 保证释放动作不受调用方取消影响。
+**TXStore 接口** 由使用方实现。taskflow 的 `engine.TXStore`: MySQL 表 `tcc_tx_records` + redis_lock; `TXUpdate` 在 SQL 事务里 `FOR UPDATE` 读行、JSON 合并分支状态, 拒绝给非 hanging 分支改状态, 相同状态幂等; `TXSubmit` CAS hanging → 终态; 锁的 Unlock 用 `WithoutCancel` + 3s 清理 context, 保证释放动作不受调用方取消影响。
 
 **开发坑**:
 
@@ -720,7 +720,7 @@ timer 是 taskflow 的工具箱, 四个子包各解决一个小问题。
 
 **模式 4: SKIP LOCKED 分队。** Relay 的 fanout 与 publish 都用 `SELECT ... FOR UPDATE SKIP LOCKED` 取一行, 多实例天然分工, 不需要额外的任务分配器; 注意 SKIP LOCKED 取的是 "当前未被锁住的行", 不是严格 FIFO。
 
-**模式 5: 租约 + 接管。** 认领 (SETNX + TTL) 与锁 (distributed_lock) 都是租约; 接管必须带条件判断 (Dispatcher 的 5 分钟 stuck 判断、XAUTOCLAIM 的 min-idle), 不能仅凭租约过期就行动。
+**模式 5: 租约 + 接管。** 认领 (SETNX + TTL) 与锁 (redis_lock) 都是租约; 接管必须带条件判断 (Dispatcher 的 5 分钟 stuck 判断、XAUTOCLAIM 的 min-idle), 不能仅凭租约过期就行动。
 
 **模式 6: 快照而非引用。** 执行行存 `prompt_snapshot`/`model_snapshot`, change 行存 `record_json` — 事件语义以发生时刻的快照为准, 后续定义修改不影响已物化的执行 (取消与校验是显式产品决策, 见 Dispatcher 的定义校验)。
 
@@ -728,7 +728,7 @@ timer 是 taskflow 的工具箱, 四个子包各解决一个小问题。
 
 集群里没有主节点, 协调全靠三样东西: 心跳、哈希环、清扫器。
 
-**成员生命周期**: Register (心跳 + AddNode) → 15s 心跳循环 (顺带驱逐死节点) → Deregister (停循环 + RemoveNode + 删心跳)。IsOwner fail-open 保证环故障时角色不真空, distributed_lock 保证同一时刻实际只有一个节点在跑 migrator/monitor 的临界区。
+**成员生命周期**: Register (心跳 + AddNode) → 15s 心跳循环 (顺带驱逐死节点) → Deregister (停循环 + RemoveNode + 删心跳)。IsOwner fail-open 保证环故障时角色不真空, redis_lock 保证同一时刻实际只有一个节点在跑 migrator/monitor 的临界区。
 
 **执行镜像的对账算法** (值得逐行读 `storage/mirror.go`): 固定窗口轮扫而非增量 binlog 订阅 — 因为旧行也会更新。每轮: 读游标 → 首扫确定 `max_id` → `id > last_id AND id <= max_id ASC LIMIT 500` → Lua 版本化写入 (拒绝旧 updated_at) → Hash 续期 7 天 → 扫满或到尾归零游标 → HSCAN prune 过期终态条目 (compare-and-HDEL) → 持久化游标。`TestMirrorReconcilesBeyondFirstPage` 验证了两点: 601 行分两轮 (每轮 500) 全部同步, 以及最旧行的后续状态变更仍会被扫到。
 

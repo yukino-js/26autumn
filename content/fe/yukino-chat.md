@@ -2,11 +2,11 @@
 title: "Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent"
 description: "自托管即时通讯平台的技术拆解: Hono 服务端、WebSocket 消息枢纽与投递语义、WebRTC 信令、分块断点续传、Redis 缓存双实现降级、前后端分离的 Nginx 边缘部署与移动端适配, 以及为每个用户进程内嵌入的只读 Yukino coding agent 与它的 JSON-RPC 桥。"
 local_path: "$HOME/github/yukino-chat"
-local_commit: "555f62572a3abf905e0cbe1f52dce2088ad76452"
+local_commit: "d57fef0be3db9efb5aa82125d49dd217c086b177"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-chat` 在 `555f62572a3a` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-chat` 在 `d57fef0be3d` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -414,7 +414,7 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 ### PWA 与可观测性
 
 - PWA 采用自动更新策略, workbox 预缓存脚本、样式、文档、图片与字体, 并对两个外部字体域走缓存优先策略。manifest 名称为 Yukino Chat, scope 与 start_url 固定为根路径, 并声明 `display_override` 与社交/通讯类目, 主题色与背景色对齐设计令牌。
-- [浏览器监控 SDK](./yukino-sentry)仅在开发环境初始化(projectId `yukino-chat`, dsn 指向 `/api/log`), 并启用性能采集与录屏两个插件, 配合构建插件的本地 mock 上报端点闭环调试; 登录主体变化时同步用户 id 给 SDK。服务端另备一个轻量摄入端点供生产启用 SDK 时使用: `POST /log`(公开)把每批上报事件按一行 JSONL 追加进 `<SENTRY_LOG_DIR>/<YYYY-MM>/sentry.jsonl`, `HEAD /log` 供 SDK 探测服务恢复; 经 Nginx 边缘时 dsn 的 `/api` 前缀被代理剥掉, 高吞吐部署则应把 dsn 指向独立的 `@yukino.js/sentry` 摄入服务。生产构建使用隐藏式 source map(`sourcemap: "hidden"`), 并用自定义插件把映射文件挪出发布产物目录, 兼顾可反解与源码不外泄; 另有插件给样式与模块脚本注入高优先级抓取提示(`fetchpriority="high"`)。
+- 浏览器监控 SDK 仅在开发环境初始化(projectId `yukino-chat`, dsn 指向 `/api/log`), 并启用性能采集与录屏两个插件, 配合构建插件的本地 mock 上报端点闭环调试; 登录主体变化时同步用户 id 给 SDK。服务端另备一个轻量摄入端点供生产启用 SDK 时使用: `POST /log`(公开)把每批上报事件按一行 JSONL 追加进 `<SENTRY_LOG_DIR>/<YYYY-MM>/sentry.jsonl`, `HEAD /log` 供 SDK 探测服务恢复; 经 Nginx 边缘时 dsn 的 `/api` 前缀被代理剥掉, 高吞吐部署则应把 dsn 指向独立的 `@yukino.js/sentry` 摄入服务。生产构建使用隐藏式 source map(`sourcemap: "hidden"`), 并用自定义插件把映射文件挪出发布产物目录, 兼顾可反解与源码不外泄; 另有插件给样式与模块脚本注入高优先级抓取提示(`fetchpriority="high"`)。
 - 错误边界分两级: 根级组件边界(监控 SDK 的 React 边界)包裹整个应用, 路由级边界展示路由错误。
 
 ## 管理端与缓存看板
@@ -475,6 +475,3 @@ RPC 桥使用 JSON-RPC 2.0 词汇。方向约定是不对称的: 服务器只推
 - [Yukino Chatbot: Koa 3 服务端与 React 19 分层客户端](./yukino-chatbot)
 - [Yukino Codegen: 编码 Agent 的沙箱迭代与预览桥](./yukino-codegen)
 - [Yukino MCP: 工具注册、向量索引与连接生命周期](./yukino-mcp)
-- [Yukino Sentry: 前端与 Node 错误采集 SDK](./yukino-sentry)
-- [React 19 客户端状态与数据获取模式](./react)
-- [Vite 8 构建与 PWA 工程化](./vite)

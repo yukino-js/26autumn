@@ -3,11 +3,11 @@ title: "Yukino Dev Agent"
 overview: true
 description: "yukino-dev-agent 栏目: Next.js 16 + AI SDK 全栈 AI 应用的深度技术笔记, 覆盖 OnCall 值班助手与 DevFlow 工程副驾两个产品面的 RAG 检索、Agent 编排、A2UI 交互界面、MCP 工具体系与可观测性"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "e36d16bacb9ba400d904ece0542c4467f8ef049d"
+local_commit: "537f207ec1d491d5f8a7664ee9cf103f28e5376a"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent` 在 `e36d16bacb9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent` 在 `537f207ec1d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

@@ -2,11 +2,11 @@
 title: "A2UI 声明式 UI 协议"
 description: "A2UI 声明式 UI 协议的机制与工程实现: 消息信封与 Catalog 契约、数据绑定与事件回传语义、v1.0 当前版与 v0.9.1 上一版的差异、basic/MCP/VegaChart 三份官方 catalog、多语言 SDK 与渲染器能力面、A2A 集成, 以及仓库内示例链路。"
 local_path: "$HOME/Downloads/a2ui"
-local_commit: "1cbef31b115c854bb98048cdda2fbce6b7db9d0f"
+local_commit: "b4f91c26fcf62abc0720c21a65840220941d0a3f"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/a2ui` 在 `1cbef31b115` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/a2ui` 在 `b4f91c26fcf` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -132,11 +132,11 @@ v1.0 已是 `specification/versions.json` 与规范自述中的 current 版本, 
 
 **5. 去 theme 化与命名规范。** catalog 与 `createSurface` 上的 `theme` (含 `primaryColor`) 被整体移除, 视觉品牌交给目标框架的原生主题; v0.9.1 中承载 Agent 身份归属的 `iconUrl` / `agentDisplayName` 也随之离开协议层。所有 catalog 实体名 (组件名、函数名、参数键) 必须符合 Unicode UAX #31 标识符规则; `ComponentCommon`、`createSurface`、catalog 的 `ComponentDefinition` 与 `action` 支持扩展元数据 (`$defs/Extensions`, UAX #31 键, 保留 `a2ui_` 命名空间)。术语全局改名: client → renderer、server → agent, schema 文件随之更名 (`agent_to_renderer.json` / `renderer_to_agent.json` / `renderer_capabilities.json` / `agent_capabilities.json` / `renderer_data_model.json` 及对应的 list / list wrapper 文件)。
 
-**6. 其余语义收紧。** `updateDataModel` 的 `value` 变为必填, 删除键要显式写 `null` (v0.9 族的 "省略 value 即删除" 不再合法); `CheckRule` 支持函数或数据绑定直接返回动态 `ValidationResult` 对象 (`valid` / `code` / `message` / `severity`, 允许附加自定义扩展键), 布尔值会被强制为 `ValidationResult`, 反向地 `DynamicBoolean` 把 `ValidationResult` 强制为其 `valid` 布尔; 标准校验函数 (`required` / `regex` / `length` / `numeric` / `email`) 的 returnType 从 boolean 改为 `validationResult`, `CheckRule.message` 退化为可选兜底文案; catalog 的 `functions` 定型为函数名到定义的对象映射, catalog 对象允许携带标准 JSON Schema 元数据 (`$schema` / `$id` / `title` / `description`); `ComponentCommon` 通过 `@accessibility` 统一挂载 `AccessibilityAttributes` (WAI-ARIA `label` / `description` / `live` 区域 `"off"|"polite"|"assertive"` / `hidden`), 组件校验列表写成 `@checks`, 并要求 catalog 与渲染器实现贯通无障碍属性; basic catalog 增补 `Video.posterUrl`、`TextField.placeholder` (同时移除 `TextField.validationRegexp`, 改用 `regex` 校验函数)、`Slider.steps` 等可选属性, 对标准类型的 `$ref` 改为不带版本号的相对路径 (`common_types.json#/$defs/...`)。
+**6. 其余语义收紧。** `updateDataModel` 的 `value` 变为必填, 删除键要显式写 `null` (v0.9 族的 "省略 value 即删除" 不再合法); `CheckRule` 支持函数或数据绑定直接返回动态 `ValidationResult` 对象 (`valid` / `code` / `message` / `severity`, 允许附加自定义扩展键), 布尔值会被强制为 `ValidationResult`, 反向地 `DynamicBoolean` 把 `ValidationResult` 强制为其 `valid` 布尔; 标准校验函数 (`required` / `regex` / `length` / `numeric` / `email`) 的 returnType 从 boolean 改为 `validationResult`, `CheckRule.message` 退化为可选兜底文案; catalog 的 `functions` 定型为函数名到定义的对象映射, catalog 对象允许携带标准 JSON Schema 元数据 (`$schema` / `$id` / `title` / `description`); `ComponentCommon` 通过 `@accessibility` 统一挂载 `AccessibilityAttributes` (WAI-ARIA `label` / `description` / `live` 区域 `"off"|"polite"|"assertive"` / `hidden`), 组件校验列表写成 `@checks`, 并要求 catalog 与渲染器实现贯通无障碍属性; basic catalog 增补 `Video.posterUrl`、`TextField.placeholder` (同时移除 `TextField.validationRegexp`, 改用 `regex` 校验函数)、`Slider.steps` 等可选属性, `Text.variant` 的枚举从 `h1`–`h5`、`caption`、`body` 收窄为 `caption` 与 `body` (标题改为在 `Text.text` 里写 Markdown `#` 标记), 对标准类型的 `$ref` 改为不带版本号的相对路径 (`common_types.json#/$defs/...`)。
 
 **7. 函数调用的多态执行与 userMessage。** 组件属性绑定、校验规则与 action 里的函数调用语法完全一致, 渲染器按 catalog 解析结果决定本地执行还是发出 `callAgentFunction` 走远程; `action.event` 新增可选 `userMessage` (`DynamicString`, 由渲染器解析后放进出站 `action` 消息, 描述用户做了什么), 出站 `action` 还可携带 `metadata.extensions`。
 
-迁移时最危险的坑是 "全局替换 `path` → `@path`": evolution guide 明确警告, 只有处于 DynamicValue 位置的绑定与调用才加前缀, ChildList 模板、`updateDataModel` 信封参数、以及普通数据里恰好叫 `call` 的键 (如 basic catalog `Icon` 的名字枚举) 都必须原样保留。
+迁移时最危险的坑是 "全局替换 `path` → `@path`": evolution guide 明确警告, 只有处于 DynamicValue 位置的绑定与调用才加前缀, ChildList 模板、`updateDataModel` 信封参数、以及普通数据里恰好叫 `call` 的键 (如 basic catalog `Icon` 的名字枚举) 都必须原样保留。另一个容易漏掉的是 `Text.variant`: `h1`–`h5` 在 v1.0 已不是合法值, 迁移时要把标题改写成 `Text.text` 开头处对应的 Markdown `#`–`#####`, 数据绑定的文本则用 `formatString` 把标记前置。
 
 ### 一个最小消息序列
 
@@ -207,7 +207,7 @@ catalogs/
     └── v1/              # v1.0 形态
 ```
 
-v1.0 之前的 basic catalog 留在各自规范目录 (`specification/v0_9/catalogs/basic` 与 `specification/v0_9_1/catalogs/basic`; 两者共用同一 `catalogId`, 但文件已有差异, v0.9 的 `List` 多一个 `listStyle` 属性)。
+v1.0 之前的 basic catalog 按版本集中在 `catalogs/basic/v0_9` 与 `catalogs/basic/v0_9_1` (两者共用同一 `catalogId`, 但文件已有差异, v0.9 的 `List` 多一个 `listStyle` 属性); `catalogId` 仍是 URI 形态的 `https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json`, 与磁盘上的文件位置彻底解耦——它只是两端约定的标识符, 不要求可下载。
 
 **Basic catalog** 提供 18 个通用组件与 14 个函数, 刻意保持精简以便各渲染器实现:
 
@@ -383,15 +383,15 @@ Core SDK 提供协议的语言原生表示: 强类型的 Catalog 声明 (`Catalo
 
 落地程度各语言不一:
 
-- **Dart** 已实现蓝图全部 API。注册的 catalog 可跨版本, 每个 processor 与渲染器协商出双方共有 catalog 的最新协议版本; `resolveCatalogs` 支持无能力请求 (取 null 时激活全部注册 catalog)。v1.0 下 `createSurface` 内嵌组件与数据模型、绑定写作 `@path` / `@call`、组件与函数调用可各自点名 catalog; agent 侧会按 catalog 的 `allowedCallers` 与用户激活要求预检, 经 `a2ui_core` 的 `MessageProcessor.forAgent` (只校验不执行的专用构造) 检查, 渲染器会拒绝的调用在响应解析与流式读取 (`openStream` / `feed`) 阶段就不会发出。
+- **Dart** 已实现蓝图全部 API, 所有 Dart 包统一要求 Dart 3.13 以上 (`>=3.13.0 <4.0.0`), Flutter 相关包与示例另要求 Flutter 3.47 以上。注册的 catalog 可跨版本, 每个 processor 与渲染器协商出双方共有 catalog 的最新协议版本; `resolveCatalogs` 支持无能力请求 (取 null 时激活全部注册 catalog)。v1.0 下 `createSurface` 内嵌组件与数据模型、绑定写作 `@path` / `@call`、组件与函数调用可各自点名 catalog; agent 侧会按 catalog 的 `allowedCallers` 与用户激活要求预检, 经 `a2ui_core` 的 `MessageProcessor.forAgent` (只校验不执行的专用构造) 检查, 渲染器会拒绝的调用在响应解析与流式读取 (`openStream` / `feed`) 阶段就不会发出。
 - **TypeScript** `@a2ui/agent` 支持 v1.0 / v0.9 / v0.9.1 (v0.9.1 共享 v0.9 schema), 实现 Direct JSON 与 Express; 对整段就是 JSON 的模型输出 (如 `DirectJsonFormatFactory` 配合模型的 JSON-only 模式), `parseResponse` 与 `openStream` 可传 `wrapped: false` 跳过 `<a2ui>` 标签包裹直接解析。`KNOWN_GAPS.md` 记录 v0.8 与 Elemental / Atom 格式仍在范围外, 以及 Express 流式解析的已知边界: `openStream` 在 `wrapped: true` 模式下无法恢复丢失 `<a2ui>` 开标签的块, 而该块在整段 `parseResponse` 中可被识别。`parseResponse` 解析失败时抛 `A2uiError` 并以 `partialResults` 返回失败块之前的部分; `RendererState` 区分 chat (每轮独立 Surface) 与 canvas (跨轮更新同一批 Surface) 两种校验模式, `validatePayload` 可独立校验单个 payload (如工具调用参数)。
 - **Python** `a2ui_agent` 提供同款 facade (`A2uiGenerator` / `A2uiRequestProcessor`, 位于 `a2ui/processor/`), 缺省格式工厂是 `ExpressFormatFactory`; `create_processor` 要求渲染器能力 (缺能力时报 `A2uiCatalogError`), `resolve_catalogs` 按版本键读取能力对象 (v0.8 兼容裸形态), 内联 catalog 无论是否被接受都会被解析——格式非法即报错。
 
 Core 侧的关键设计:
 
-- **TypeScript Core** (`@a2ui/web_core` 0.15.0) 按版本子路径并存 (`./v0_8` / `./v0_9` / `./v1_0`), 另有 `./catalog` / `./state` / `./processing` / `./resolution` / `./validation` / `./reactivity` / `./expressions` / `./adapters` / `./rpc` / `./errors` / `./events` / `./semver` 等模块入口; `./universal` 子路径提供框架无关的 Lit custom element 渲染层 (`A2uiLitElement` / `registerUniversalElement`), 其 basic catalog 组件按每组件的 API 联合类型同时覆盖 v0.9 与 v1 catalog API (如 `ButtonSupportedApis = typeof v0_9.ButtonApi | typeof v1.ButtonApi`); `./catalogs/basic/v1` 提供 v1 basic catalog 的类型安全 API。依赖内置 zod v3 与 `@preact/signals-core`。
+- **TypeScript Core** (`@a2ui/web_core` 0.16.0) 按版本子路径并存 (`./v0_8` / `./v0_9` / `./v1_0`), 另有 `./catalog` / `./state` / `./processing` / `./resolution` / `./validation` / `./reactivity` / `./expressions` / `./adapters` / `./rpc` / `./errors` / `./events` / `./semver` 等模块入口; `./universal` 子路径提供框架无关的 Lit custom element 渲染层 (`A2uiLitElement` / `registerUniversalElement`), 其 basic catalog 组件按每组件的 API 联合类型同时覆盖 v0.9 与 v1 catalog API (如 `ButtonSupportedApis = typeof v0_9.ButtonApi | typeof v1.ButtonApi`); `./catalogs/basic/v1` 提供 v1 basic catalog 的类型安全 API。依赖内置 zod v3 与 `@preact/signals-core`。
 - **渲染器版本入口不一**: `@a2ui/react` 只开放 `./v0_8` / `./v0_9` 入口; `@a2ui/lit` 开放 `./0.8` / `./ui` / `./v0_8` / `./v0_9`, basic catalog 组件复用 web_core 的 universal 实现; `@a2ui/angular` 自带 v1.0 basic catalog 的 universal 实现 (`src/basic-catalog.ts`, 基于 `@a2ui/web_core/catalogs/basic/v1`, 缺省 `useUniversalComponents: true`), README 另文档化 `@a2ui/angular/v0_9` 入口; `@a2ui/markdown-it` 提供 Text 组件的 Markdown 渲染支持。
-- **Python Core** 用版本适配器工厂消化协议差异 (见 "版本族" 一节), 同时是 wire schema 的生成源: `a2ui.core.schema` 的 Pydantic 模型重建 specification 目录下 v0.8 / v0.9 / v0.9.1 的 `server_to_client.json` 与 v1.0 的 `agent_to_renderer.json`, conformance 套件 (`core/agent_to_renderer.yaml`) 断言各版本重建结果与已发布 spec 文件完全一致。catalog 侧由 `core/catalog.yaml` 覆盖四个入口点: `from_json` (已发布 catalog 必须与 SDK 自带 basic catalog 实现等价)、`to_json` (与已发布文件整体比对)、round-trip (往返不变)、`validation_schema` (原 `catalogSchema` 的继任者, allOf 展平、组件补 id 信封、公共类型内联)。
+- **Python Core** 用版本适配器工厂消化协议差异 (见 "版本族" 一节), 同时是 wire schema 的生成源: `a2ui.core.schema` 的 Pydantic 模型重建 specification 目录下 v0.8 / v0.9 / v0.9.1 的 `server_to_client.json` 与 v1.0 的 `agent_to_renderer.json`, conformance 套件 (`core/agent_to_renderer.yaml`) 断言各版本重建结果与已发布 spec 文件完全一致。catalog 侧由 `core/catalog.yaml` 覆盖四个入口点: `from_json` (已发布 catalog 必须与 SDK 自带 basic catalog 实现等价)、`to_json` (与已发布文件整体比对)、round-trip (往返不变)、`validation_schema` (原 `catalogSchema` 的继任者, allOf 展平、组件补 id 信封、公共类型内联)。Pydantic 模型生成器还有一条主题归属规则: 小写 `$defs.theme` 被 `Catalog.from_json` 固定读作 catalog 主题, 只由 `styles.py` 拥有; 组件、函数或其它 `$defs` 条目引用它时生成器直接抛错, 大写 `Theme` 且无人引用才交给 `styles.py`, 同名叶别名也会被消歧; 生成的 `_basic_catalog_id` 则按 `ver_dir` 归一化裸版本号。
 - **Swift Core** 分三个 SPM target: `A2UIJSON` (JSON Schema 2020-12 数据结构与 `$ref` 解析, 支持 v0.9.1 与 v1.0 schema)、`A2UICore` (`SurfaceGroupModel`、带自动创建的 `DataModel`、双向 RPC 的 `RPCHandler`、action 分发)、`BasicCatalog` (v0.9 / v0.9.1 / v1.0 三个版本的 schema API 与 `formatString`、`@index` 等函数实现)。
 - **一致性套件** (`conformance/`) 是语言无关的 YAML 用例, 分 core / agent / extensions 三类: core 覆盖 catalog 四入口、wire schema 重建、三个版本的 validator (重复 ID、缺 root、悬空引用、环、可达性、嵌套深度上限、非法路径、多 Surface、增量更新)、数据模型指针与删除语义、节点解析、表达式解析、函数求值、`@index`、RPC 函数、多 catalog、组合约束、无障碍、保留键等; agent 按格式分目录 (direct_json 与 express 各自拥有 prompt 生成、编译、反编译、响应解析断言与 scaling 套件, 两种格式各有 `response_streaming.yaml` 流式解析套件, TypeScript 侧对应 `ExpressParser.openStream` 与 `express/response-stream.ts` 的 `feed`)。模型与 spec 文件互相钉住, 不会单边漂移。
 

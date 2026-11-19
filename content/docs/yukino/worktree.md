@@ -1,12 +1,12 @@
 ---
 title: "Worktree: git worktree 隔离子系统"
 description: "worktree 子系统: 用 git worktree 给每个并发工作单元一份独立检出, 覆盖路径与分支格式、创建与 HEAD 读取、创建后准备、进入/退出、变更检测与删除安全闸, 以及运行时所有权登记"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/worktree/`、`src/permissions/`、`src/tools/enter-worktree.ts`、`src/tools/exit-worktree.ts`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/worktree/`、`src/permissions/`、`src/tools/enter-worktree.ts`、`src/tools/exit-worktree.ts`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

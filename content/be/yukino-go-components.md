@@ -1,12 +1,12 @@
 ---
-title: "Yukino Go 分布式基础设施组件: 九个组件的设计原理、适用场景与边界"
-description: "面向 Go 后端与分布式系统读者的组件解析: 逐一讲清 distributed_lock、consistent_hash、consistent_cache、red_mq、tcc、time_wheel、timer、lsm_tree、raft 九个组件解决的问题、关键数据结构与算法、设计取舍, 以及在什么场景下不该使用它们"
-local_path: "$HOME/github/yukino.go/components"
-local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
+title: "Yukino Go 分布式基础设施模块: 八个组件与一个定时任务应用的设计原理、适用场景与边界"
+description: "面向 Go 后端与分布式系统读者的组件解析: 逐一讲清 redis_lock、consistent_hash、cache_aside、redis_mq、tcc、time_wheel、scheduled_task、lsm_tree、raft 九个模块解决的问题、关键数据结构与算法、设计取舍, 以及在什么场景下不该使用它们"
+local_path: "$HOME/github/yukino.go"
+local_commit: "28867b2e827940c5cf7f0a1c89f4784d641fa59e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `components`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go` 在 `28867b2e827` 的源码事实撰写；重点在 `components/`, 另涉 `apps/scheduled_task` 与 `apps/raft_kv`; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -18,52 +18,52 @@ flowchart TB
     A --> D[消息与事务]
     A --> E[调度与存储]
     A --> F[共识]
-    B --> B1[distributed_lock]
+    B --> B1[redis_lock]
     C --> C1[consistent_hash]
-    C --> C2[consistent_cache]
-    D --> D1[red_mq]
+    C --> C2[cache_aside]
+    D --> D1[redis_mq]
     D --> D2[tcc]
-    E --> E1[time_wheel 与 timer]
+    E --> E1[time_wheel 与 scheduled_task]
     E --> E2[lsm_tree]
     F --> F1[raft]
 ```
 
 :::tip 读图要点
-九个组件按**问题层次**分为五类; 它们都是 `go.work` 下的独立 Go module, 可单独引用。正文对每个组件都给出*适用边界*与 <u>不该使用的场景</u>, 组合前先确认前提。
+九个模块按**问题层次**分为五类; 它们都是 `go.work` 下的独立 Go module, 可单独引用。正文对每个组件都给出*适用边界*与 <u>不该使用的场景</u>, 组合前先确认前提。
 :::
 
-本文讨论的是一组用 Go 实现的分布式基础设施组件, 覆盖互斥、路由、缓存一致性、消息投递、分布式事务、延迟调度与共识等主题。九个组件都注册在仓库根部的 `go.work` 工作区中: 当前 `go.work` 声明 `go 1.26.0`, `use` 列表共 16 个模块——3 个应用 (`apps/agent/server`、`apps/agent_proxy`、`apps/task_flow/server`)、`components/` 下 9 个组件与 `libs/` 下 4 个库, 全部以相对路径纳入同一工作区。每个组件是独立的 Go module (`components/*/go.mod` 声明 `go 1.26.0`, `lsm_tree` 与 `raft` 为 `go 1.26`), 可单独引用; 其中 timer 与 raft 另含可执行示例 (cmd/timer、cmd/raftkv)。
+本文讨论的是一组用 Go 实现的分布式基础设施模块, 覆盖互斥、路由、缓存一致性、消息投递、分布式事务、延迟调度与共识等主题。它们都注册在仓库根部的 `go.work` 工作区中: 当前 `go.work` 声明 `go 1.26.0`, `use` 列表共 20 个模块——6 个应用 (`apps/agent/server`、`apps/agent_proxy`、`apps/cloud_storage`、`apps/raft_kv`、`apps/scheduled_task`、`apps/task_flow/server`)、`components/` 下 8 个组件与 `libs/` 下 6 个库 (`yukino_cache`、`yukino_http`、`yukino_log`、`yukino_orm`、`yukino_rpc`、`yukino_skiplist`), 全部以相对路径纳入同一工作区。每个模块是独立的 Go module (`components/*/go.mod` 声明 `go 1.26.0`, `lsm_tree` 与 `raft` 为 `go 1.26`), 可单独引用; 其中 `scheduled_task` 是 `apps/scheduled_task` 下的独立应用 (可执行文件 `cmd/scheduled_task`), `raft` 的 KV 示例在 `apps/raft_kv/cmd/{clerk,kvserver}`; `apps/task_flow/server/go.mod` 的本地 `replace` 直接指向 `components/` 与 `libs/` 的这些模块。
 
 本文不以 API 手册或目录清单组织内容, 而是围绕每个组件的功能目标、实现思路、适用场景与局限展开, 重点回答三个问题: 它为什么这样设计, 边界在哪里, 什么时候不该用它。读者需要具备基本的 Go 并发编程与分布式系统背景; 对 Redis、MySQL、LSM 存储或 Raft 没有前置要求, 相关机制在正文中都会解释。
 
 ## 一、组件地图与组合方式
 
-九个组件可以按"解决的问题层次"分为四类, 这种划分也决定了它们通常如何被组合。
+九个模块可以按"解决的问题层次"分为四类, 这种划分也决定了它们通常如何被组合。
 
-| 组件             | 解决的问题                   | 核心机制                                             | 形态          |
-| ---------------- | ---------------------------- | ---------------------------------------------------- | ------------- |
-| distributed_lock | 跨进程互斥                   | token 所有权 + Lua 比较再执行 + 看门狗续期 + RedLock | 库            |
-| consistent_hash  | 键到节点的稳定映射与数据搬迁 | 加权虚拟节点环 + 所有权索引 + 迁移 diff              | 库            |
-| consistent_cache | 缓存与数据库的读写一致       | 读路径禁写标记抑制回填                               | 库            |
-| red_mq           | 可靠消息投递                 | Redis Streams 消费者组 + 逐消息重试 + 死信           | 库            |
-| tcc              | 跨参与方事务的最终一致       | 日志先行的 Try/Confirm/Cancel + 监控恢复             | 库            |
-| time_wheel       | 海量延迟任务调度             | 槽位时间轮 (进程内) 与单 zset + key 索引 (分布式)    | 库            |
-| timer            | 秒级定时任务平台             | cron 预展开 + 分片锁调度 + HTTP 回调                 | 可执行服务    |
-| lsm_tree         | 高写入吞吐的本地存储引擎     | WAL + 跳表 memtable + 块式 SSTable + 分级 compaction | 库            |
-| raft             | 多副本强一致复制             | 选举 + 日志复制 + ReadIndex + 成员变更               | 库 + 示例服务 |
+| 组件            | 解决的问题                   | 核心机制                                             | 形态          |
+| --------------- | ---------------------------- | ---------------------------------------------------- | ------------- |
+| redis_lock      | 跨进程互斥                   | token 所有权 + Lua 比较再执行 + 看门狗续期 + RedLock | 库            |
+| consistent_hash | 键到节点的稳定映射与数据搬迁 | 加权虚拟节点环 + 所有权索引 + 迁移 diff              | 库            |
+| cache_aside     | 缓存与数据库的读写一致       | 读路径禁写标记抑制回填                               | 库            |
+| redis_mq        | 可靠消息投递                 | Redis Streams 消费者组 + 逐消息重试 + 死信           | 库            |
+| tcc             | 跨参与方事务的最终一致       | 日志先行的 Try/Confirm/Cancel + 监控恢复             | 库            |
+| time_wheel      | 海量延迟任务调度             | 槽位时间轮 (进程内) 与单 zset + key 索引 (分布式)    | 库            |
+| scheduled_task  | 秒级定时任务平台             | cron 预展开 + 分片锁调度 + HTTP 回调                 | 可执行服务    |
+| lsm_tree        | 高写入吞吐的本地存储引擎     | WAL + 跳表 memtable + 块式 SSTable + 分级 compaction | 库            |
+| raft            | 多副本强一致复制             | 选举 + 日志复制 + ReadIndex + 成员变更               | 库 + 示例服务 |
 
-组件间的实际依赖只有两条, 都是对 distributed_lock 的复用:
+组件间的实际依赖只有两条, 都是对 redis_lock 的复用:
 
-- consistent_hash 的 Redis 环后端把环级互斥委托给 distributed_lock, 保证拓扑变更 (增删节点、迁移) 不并发发生; 进程内跳表环后端则自带本地锁, 不依赖 Redis。
-- tcc 的参考实现 (example 目录) 用 distributed_lock 实现多协调者之间的监控循环互斥, 事务日志落在 MySQL。
+- consistent_hash 的 Redis 环后端把环级互斥委托给 redis_lock, 保证拓扑变更 (增删节点、迁移) 不并发发生; 进程内跳表环后端则自带本地锁, 不依赖 Redis。
+- tcc 的参考实现 (example 目录) 用 redis_lock 实现多协调者之间的监控循环互斥, 事务日志落在 MySQL。
 
-timer 常被误认为是上述原语的组装, 但它实际上完全自包含: 不 import 其余八个组件, 自带基于 token 所有权的 Redis 分布式锁 (`pkg/redis.ReentrantDistributeLock`)、按天的布隆过滤器、有界工作池、包装 robfig/cron/v3 的解析器, 并基于 libs/yukino_http 提供 REST API (参见 [yukino-http](./yukino-http))。它与其余组件的关系是"同一类问题的另一种完整实现", 而非依赖关系。lsm_tree 与 raft 同样独立, 分别提供存储引擎与共识核心, 供需要本地日志或强一致决策序列的场景嵌入。
+scheduled_task 常被误认为是上述原语的组装, 但它实际上完全自包含: 不 import 其余八个组件, 自带基于 token 所有权的 Redis 分布式锁 (`pkg/redis.ReentrantDistributeLock`)、按天的布隆过滤器、有界工作池、包装 robfig/cron/v3 的解析器, 并基于 libs/yukino_http 提供 REST API (参见 [yukino-http](./yukino-http))。它与其余组件的关系是"同一类问题的另一种完整实现", 而非依赖关系。lsm_tree 与 raft 同样独立, 分别提供存储引擎与共识核心, 供需要本地日志或强一致决策序列的场景嵌入。
 
-## 二、distributed_lock -- 所有权安全的分布式锁
+## 二、redis_lock -- 所有权安全的分布式锁
 
 ### 2.1 要解决的问题
 
-分布式锁的最小错误是"释放了别人的锁"。典型事故链条是: 客户端 A 加锁后执行超时, 锁租约自动过期, 客户端 B 取到同一把锁, 此时 A 才执行释放, 却把 B 的锁删掉了。distributed_lock 的设计目标是让这类错误在构造上不可能发生。
+分布式锁的最小错误是"释放了别人的锁"。典型事故链条是: 客户端 A 加锁后执行超时, 锁租约自动过期, 客户端 B 取到同一把锁, 此时 A 才执行释放, 却把 B 的锁删掉了。redis_lock 的设计目标是让这类错误在构造上不可能发生。
 
 ### 2.2 用 token 表达所有权
 
@@ -122,7 +122,7 @@ Renew()  : Lua { if get(key) == token then expire(key, ttl) }   (DelayExpire)
 ### 3.4 两种环后端与限流
 
 - 进程内跳表环 (`local.SkiplistHashRing`): 适合测试与单机。环状态由独立读写锁保护; 环锁是本地的带过期时间的互斥实体 (owner token + 到期自动释放), 加锁本身尊重传入 context, 过期秒数为 0 时表示不自动释放, 不依赖 Redis。
-- Redis zset 环 (`redis.RedisHashRing`): 适合多实例共享。环用有序集合存储 (键形如 `redis:consistent_hash:ring:{key}`), 分数是虚拟节点分数, 成员是该分数上节点列表的 JSON; 环锁直接复用 distributed_lock, 并把加锁得到的锁对象按"进程 + goroutine ID"记在环实例里, 解锁时取回同一个对象; 另有一个哈希键维护节点到副本数, 以及每节点一个字符串键存储数据键集合的 JSON (键名带环 key: `redis:consistent_hash:ring:{key}:node:data:{nodeID}`)。
+- Redis zset 环 (`redis.RedisHashRing`): 适合多实例共享。环用有序集合存储 (键形如 `redis:consistent_hash:ring:{key}`), 分数是虚拟节点分数, 成员是该分数上节点列表的 JSON; 环锁直接复用 redis_lock, 并把加锁得到的锁对象按"进程 + goroutine ID"记在环实例里, 解锁时取回同一个对象; 另有一个哈希键维护节点到副本数, 以及每节点一个字符串键存储数据键集合的 JSON (键名带环 key: `redis:consistent_hash:ring:{key}:node:data:{nodeID}`)。
 
 ### 3.5 适用场景与边界
 
@@ -130,7 +130,7 @@ Renew()  : Lua { if get(key) == token then expire(key, ttl) }   (DelayExpire)
 
 不适合: 键空间极小或节点基本不动时, 直接取模更简单; 需要严格一致的分片归属 (例如基于它做存储分区) 时, 环的最终一致语义意味着迁移窗口内同一键可能被并发读写, 调用方必须让 Migrator 幂等。
 
-## 四、consistent_cache -- 用抑制而非加锁解决缓存竞态
+## 四、cache_aside -- 用抑制而非加锁解决缓存竞态
 
 ### 4.1 要解决的问题
 
@@ -163,11 +163,11 @@ write : db.Put -> cache.Del
 
 不适合: 需要强一致读的场景 (该方案只保证"最终不会有旧值"而不是"读一定最新")。关键约束是禁写标记的 TTL 必须覆盖最慢的一次写: 如果标记先于写完成而过期, 读路径会提前重新开放, 旧值窗口重新出现。默认的 10 秒标记加 1 秒延迟对多数负载足够保守, 但慢写业务需要调大。
 
-## 五、red_mq -- Redis Streams 之上的重试与死信
+## 五、redis_mq -- Redis Streams 之上的重试与死信
 
 ### 5.1 要解决的问题
 
-Redis Streams 已经提供了可靠投递所需的原语: 追加写、消费者组、每消费者的待确认列表 (PEL)、显式确认。缺的是策略层: 一条消息失败几次算失败, 毒消息去哪里, 消费者崩溃后遗留的消息由谁接手。red_mq 就是在这些原语上补齐策略。
+Redis Streams 已经提供了可靠投递所需的原语: 追加写、消费者组、每消费者的待确认列表 (PEL)、显式确认。缺的是策略层: 一条消息失败几次算失败, 毒消息去哪里, 消费者崩溃后遗留的消息由谁接手。redis_mq 就是在这些原语上补齐策略。
 
 ### 5.2 生产者与消费者
 
@@ -197,7 +197,7 @@ TCC (Try-Confirm-Cancel) 把一次分布式事务拆成三阶段: Try 预留并�
 
 参与方实现 `TCCComponent` 接口: `ID` 标识自身; `Try` 接收事务请求并预留资源; `Confirm` 与 `Cancel` 都只接收事务 ID, 且必须幂等, 并返回带 ACK 标记的响应。组件需先注册进 `TXManager` 的注册中心, 重复 ID 会被拒绝 (空 ID 同样拒绝)。
 
-事务日志抽象为 `TXStore` 接口: CreateTX 创建事务、TXUpdate 逐组件更新 Try 结果、TXSubmit 提交终态、GetHangingTXs/GetTX 查询未完成事务、Lock/Unlock 一对锁方法供多协调者互斥。存储选型不被绑定, 仓库内的参考实现把日志落在 MySQL 的 tx_record 表 (status 加 component_try_statuses 两列, 组件 Try 状态以 JSON 存储), 锁用 distributed_lock; 对记录的每次修改都包在 `SELECT ... FOR UPDATE` 行锁事务内, 组件 Try 状态只允许从 hanging 单向迁移到 successful/failure (同状态重复提交幂等返回), TXSubmit 的终态写入带互斥校验——已判定 failure 的事务不能再被提交为 successful, 反之亦然。
+事务日志抽象为 `TXStore` 接口: CreateTX 创建事务、TXUpdate 逐组件更新 Try 结果、TXSubmit 提交终态、GetHangingTXs/GetTX 查询未完成事务、Lock/Unlock 一对锁方法供多协调者互斥。存储选型不被绑定, 仓库内的参考实现把日志落在 MySQL 的 tx_record 表 (status 加 component_try_statuses 两列, 组件 Try 状态以 JSON 存储), 锁用 redis_lock; 对记录的每次修改都包在 `SELECT ... FOR UPDATE` 行锁事务内, 组件 Try 状态只允许从 hanging 单向迁移到 successful/failure (同状态重复提交幂等返回), TXSubmit 的终态写入带互斥校验——已判定 failure 的事务不能再被提交为 successful, 反之亦然。
 
 事务的终态不是直接存储的, 而是从组件 Try 结果推导 (`getStatus`):
 
@@ -248,11 +248,11 @@ TCC (Try-Confirm-Cancel) 把一次分布式事务拆成三阶段: Try 预留并�
 
 不适合: 需要毫秒级精度的场景; 分布式实现把全部任务放在同一个有序集合里, 单轮弹出量有 1000 条上限, 突发流量会把剩余任务推迟到下一轮, 且同一 key 在同一时刻只能存在一条任务。任务体是 HTTP 回调描述, 因此业务逻辑要暴露成可回调的接口。
 
-## 八、timer -- 面向生产的秒级定时任务平台
+## 八、scheduled_task -- 面向生产的秒级定时任务平台
 
 ### 8.1 定位与进程结构
 
-timer 是一个多实例可水平扩展的定时任务服务, 完全自包含: 自带基于 token 所有权的 Redis 分布式锁、布隆过滤器、有界工作池、cron 解析器 (包装 robfig/cron/v3) 与 JSON HTTP 客户端, 依赖注入用 dig 组装。进程启动时拉起四个应用, 另起一个 pprof 服务 (端口 9999), 收到 SIGINT 后退出:
+scheduled_task 是一个多实例可水平扩展的定时任务服务, 完全自包含: 自带基于 token 所有权的 Redis 分布式锁、布隆过滤器、有界工作池、cron 解析器 (包装 robfig/cron/v3) 与 JSON HTTP 客户端, 依赖注入用 dig 组装。进程启动时拉起四个应用, 另起一个 pprof 服务 (端口 9999), 收到 SIGINT 后退出:
 
 | 角色         | 职责                                                              |
 | ------------ | ----------------------------------------------------------------- |
@@ -351,10 +351,10 @@ LSM-Tree 的思想是把随机写转换为顺序写: 写入先进内存缓冲与
 
 | 你的问题                 | 优先选择              | 需要警惕                                     |
 | ------------------------ | --------------------- | -------------------------------------------- |
-| 跨进程互斥               | distributed_lock      | 固定 TTL 短于业务耗时; 把它当选主共识用      |
+| 跨进程互斥               | redis_lock            | 固定 TTL 短于业务耗时; 把它当选主共识用      |
 | 节点动态增减下的数据分片 | consistent_hash       | 迁移回调必须幂等, 存在短暂双写窗口           |
-| 缓存与库的最终一致       | consistent_cache      | 禁写标记 TTL 必须覆盖最慢写                  |
-| 可靠异步任务投递         | red_mq                | 进程内重试计数不跨重启, 需要业务侧唯一键兜底 |
+| 缓存与库的最终一致       | cache_aside           | 禁写标记 TTL 必须覆盖最慢写                  |
+| 可靠异步任务投递         | redis_mq              | 进程内重试计数不跨重启, 需要业务侧唯一键兜底 |
 | 跨服务最终一致           | tcc                   | 参与方必须能预留资源且 Confirm/Cancel 幂等   |
 | 海量延迟任务 (内存)      | time_wheel 的进程内轮 | 精度受 tick 限制                             |
 | 跨实例延迟回调           | time_wheel 的分布式轮 | 取消必须携带原执行时刻                       |
@@ -366,10 +366,9 @@ LSM-Tree 的思想是把随机写转换为顺序写: 写入先进内存缓冲与
 
 ## 十二、小结
 
-九个组件共享一种克制的工程风格: 用尽可能少的原语表达清晰的所有权与幂等语义, 把正确性建立在显式的持久化状态与原子操作上, 而不是隐含的时序假设。distributed_lock 用 token 表达所有权, consistent_hash 用所有权索引驱动迁移, consistent_cache 用标记抑制竞态, red_mq 用逐消息计数界定失败, tcc 用日志先行支撑崩溃恢复, time_wheel 用 Lua 原子弹出保证不重复触发, timer 用预展开压缩热路径, lsm_tree 用分级合并平衡读写放大, raft 用多数派与任期维持一致。理解每一条边界——尤其是那些"当前未做"的能力——比记住它们的 API 更重要。
+九个模块共享一种克制的工程风格: 用尽可能少的原语表达清晰的所有权与幂等语义, 把正确性建立在显式的持久化状态与原子操作上, 而不是隐含的时序假设。redis_lock 用 token 表达所有权, consistent_hash 用所有权索引驱动迁移, cache_aside 用标记抑制竞态, redis_mq 用逐消息计数界定失败, tcc 用日志先行支撑崩溃恢复, time_wheel 用 Lua 原子弹出保证不重复触发, scheduled_task 用预展开压缩热路径, lsm_tree 用分级合并平衡读写放大, raft 用多数派与任期维持一致。理解每一条边界——尤其是那些"当前未做"的能力——比记住它们的 API 更重要。
 
 **延伸阅读**
 
-- [Redis](./redis)、[MySQL](./mysql): 各组件所依赖的底层存储机制。
 - [yukino-task-flow](./yukino-task-flow): 这些组件同族思想被组装进真实调度与审计系统的完整案例。
 - [yukino-agent](./yukino-agent): 同仓库另一类组装形态，对照理解组件与应用层的边界。

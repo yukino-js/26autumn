@@ -1,12 +1,12 @@
 ---
 title: "Hook"
 description: "Hook: 在生命周期事件上挂载自动化动作 (事件/条件/动作三要素) — 写文件后自动 format、危险命令执行前拦截、会话开始时注入项目约定; 配置只来自 `~/.yukino/config.yaml` 顶层 hooks 数组"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/hooks`、`src/config`、`src/agent`、`src/remote`、`src/ui`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/hooks`、`src/config`、`src/agent`、`src/remote`、`src/ui`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

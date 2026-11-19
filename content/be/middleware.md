@@ -870,9 +870,6 @@ OpenTelemetry 与 Prometheus 并不互斥: 可以用 OTel 指标 SDK 产生指�
 
 **延伸阅读**
 
-- [Redis 8.x 核心原理与工程实践](./redis): Pub/Sub 与 Streams 的语义边界、内存模型与淘汰策略, 对比 etcd Watch 与 Kafka.
-- [MySQL 8.4 核心原理](./mysql): 服务发现元数据落库、连接池与事务边界, 与 etcd 强一致协调的分工.
 - [ClickHouse 与 Kafka 技术手册](./clickhouse-kafka): Kafka 分区、ISR、幂等与事务在数仓链路中的完整落地.
-- [Go 语言核心与底层原理](./go): gRPC 拦截器上下文传播、goroutine 生命周期、Prometheus 客户端指标埋点的应用层实现.
 - [Go RPC 框架原理](./yukino-rpc): 服务注册发现、负载均衡、超时重试与 gRPC 机制在工程框架中的封装.
 - [Go 缓存库实践](./yukino-cache-go): singleflight、本地缓存与一致性哈希在应用侧的落地对照.

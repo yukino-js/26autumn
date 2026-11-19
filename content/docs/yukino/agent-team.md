@@ -1,12 +1,12 @@
 ---
 title: "Agent Team"
 description: "Agent Team 网状多代理协作: 多个 team 可并存, 协作工具经 team_name 选择目标 team; 每个 teammate 是有独立上下文窗口的 agent 实例, 协调建立在共享任务板 (tasks.json) 与文件邮箱 (inboxes/) 之上, 邮件以文件加轮询投递, 突破 subagent 星型拓扑不能互通的限制; 覆盖团队解析与隔离、SendMessage/TodoWrite/TaskStop、plan 审批与 Coordinator 模式"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/teams`、`src/subagent`、`src/config`、`src/tools`、`src/permissions`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/teams`、`src/subagent`、`src/config`、`src/tools`、`src/permissions`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

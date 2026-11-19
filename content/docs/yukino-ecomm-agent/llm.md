@@ -2,11 +2,11 @@
 title: "LLM 接入、表设计与工具设计"
 description: "模型槽位如何接 OpenAI 兼容的 Chat Completions 上游, structured() 与系统提示词如何稳定产出 JSON; PostgreSQL/Prisma 的会话、业务、飞轮与审计表如何组织; 工具注册与执行引擎如何做参数校验、超时、重试与审计"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
+local_commit: "a31e2f791e23c28b679482196a000b3703f13df0"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/core/`、`server/src/tools/`、`server/prisma/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/core/`、`server/src/tools/`、`server/prisma/`）在 `a31e2f791e2` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

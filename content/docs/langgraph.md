@@ -2,11 +2,11 @@
 title: "LangGraph.js: Pregel 超步引擎、通道状态模型与检查点持久化"
 description: "从 monorepo 包分层讲到 StateGraph 到 Pregel 的超步执行循环、channels 与 reducers 的状态更新语义、节点间状态与上下文传递、上下文压缩与 Store 长期记忆、checkpointer 持久化与恢复、interrupt/resume 人机协同与严格恢复、流式输出模式与 SDK/前端集成"
 local_path: "$HOME/Downloads/langgraphjs"
-local_commit: "e58f0c6d21882af337bf4b7a652208e5c619b705"
+local_commit: "7257a24f7106ca8b8f5e14da6d1d72197077d6a7"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/langgraphjs` 在 `e58f0c6d218` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/langgraphjs` 在 `7257a24f710` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -495,7 +495,7 @@ hook 本身很薄, 真正的编排逻辑在 SDK 的 `src/ui/` 层 (`libs/sdk/src
 
 ### 12.4 langgraph-api 与 CLI
 
-`@langchain/langgraph-api` 用 hono 实现 LangGraph Protocol 服务端。一个值得记住的协议约束在 `run.start` 的处理里: 当线程存在多于一个待处理 interrupt 且新输入没有按 interrupt_id 键控时, 返回 `invalid_argument`——多中断场景必须用 `input.respond` 逐个应答, 服务端把 `{ interrupt_id, response }` 组装成以 interrupt id 为键的 resume 映射交给引擎 (对应 8.1 的 `CONFIG_KEY_RESUME_MAP`)。`@langchain/langgraph-cli` (bin: `langgraphjs`) 提供 `new`、`dev`、`build`、`up`、`dockerfile`、`deploy`、`list`、`revisions`、`logs`、`delete`、`sysinfo` 命令, 覆盖从脚手架到部署运维的链路。
+`@langchain/langgraph-api` 用 hono 实现 LangGraph Protocol 服务端。协议状态的归一化还会把消息里的 `additional_kwargs` 原样带回客户端 (图常用它承载应用元数据, 例如已提交的附件), 与 `GET /threads/:id/state` 的返回对齐。另一个值得记住的协议约束在 `run.start` 的处理里: 当线程存在多于一个待处理 interrupt 且新输入没有按 interrupt_id 键控时, 返回 `invalid_argument`——多中断场景必须用 `input.respond` 逐个应答, 服务端把 `{ interrupt_id, response }` 组装成以 interrupt id 为键的 resume 映射交给引擎 (对应 8.1 的 `CONFIG_KEY_RESUME_MAP`)。`@langchain/langgraph-cli` (bin: `langgraphjs`) 提供 `new`、`dev`、`build`、`up`、`dockerfile`、`deploy`、`list`、`revisions`、`logs`、`delete`、`sysinfo` 命令, 覆盖从脚手架到部署运维的链路。
 
 ## 十三、适用场景与边界
 

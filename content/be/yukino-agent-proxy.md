@@ -2,11 +2,11 @@
 title: "Yukino Agent Proxy：单二进制双编码 Agent 的协议网关"
 description: "一个二进制以 --agent 代理 Claude Code 或 Codex，在 Anthropic Messages、OpenAI Responses、Chat Completions 三种协议之间双向桥接，并负责 provider 选择、客户端配置注入与备份、常驻进程管理、MCP 控制面、滚动发布与凭据卫生。"
 local_path: "$HOME/github/yukino.go/apps/agent_proxy"
-local_commit: "ed19fb21b9579cacfdcdb58e2e173f3da63c4018"
+local_commit: "28867b2e827940c5cf7f0a1c89f4784d641fa59e"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino.go`（子路径 `apps/agent_proxy`）在 `ed19fb21b95` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino.go`（子路径 `apps/agent_proxy`）在 `28867b2e827` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 :::note 阅读路径

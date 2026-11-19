@@ -2,11 +2,11 @@
 title: "Yukino Codegen: 从自然语言需求到可运行 Web 应用"
 description: "AI 全栈代码生成平台的技术解析: 服务端用 Yukino 编码 Agent 在真实磁盘上迭代产出 Vite 工程, 再在 OS 沙箱内完成依赖安装与生产构建, 以能力 URL 形式的静态预览发布 dist, 经 WebSocket 事件溯源与预览桥闭合生成/运行/修复回路"
 local_path: "$HOME/github/yukino-codegen"
-local_commit: "da904a235056bb7e42e7917b461bcf7e07b539e2"
+local_commit: "329c8a0cf7670ee320a0298ffc25c7357a4439dd"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-codegen` 在 `da904a235056` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-codegen` 在 `329c8a0cf76` 的源码事实撰写; 文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**
@@ -432,7 +432,7 @@ Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked`(g
 
 ### 8.2 请求上下文与前端监控
 
-中间件为每个请求注入请求标识与日志上下文(`createRequestContextMiddleware`), 日志级别可配(`LOG_LEVEL`)。前端接入了 [yukino-sentry](./yukino-sentry) 监控 SDK: `main.tsx` 里 `init` 后启用 `PerformancePlugin`/`ScreenRecordPlugin`/`ExposurePlugin`, 并用 `ReactErrorBoundary` 包裹根组件; `vite.config.ts` 用 `sentryPlugin` 做 dev 态 source map 解析。预览运行时错误经 `reportRuntimeIssue` 一并上报, 使"用户看到白屏"与"哪个预览错误导致白屏"能在同一处关联。
+中间件为每个请求注入请求标识与日志上下文(`createRequestContextMiddleware`), 日志级别可配(`LOG_LEVEL`)。前端接入了 yukino-sentry 监控 SDK: `main.tsx` 里 `init` 后启用 `PerformancePlugin`/`ScreenRecordPlugin`/`ExposurePlugin`, 并用 `ReactErrorBoundary` 包裹根组件; `vite.config.ts` 用 `sentryPlugin` 做 dev 态 source map 解析。预览运行时错误经 `reportRuntimeIssue` 一并上报, 使"用户看到白屏"与"哪个预览错误导致白屏"能在同一处关联。
 
 一个诚实的边界: SDK 的 `beforeSend` 在生产构建里返回 `false`, 即**生产环境实际上不外发上报**(DSN 也仍是占位符); 前端监控当前主要在开发态生效。`reportRuntimeIssue` 本身只是 `console.error("[release-safety]", ...)` 的薄封装(四种问题类型), 是一个不依赖外部服务的兜底记录点。
 
@@ -473,6 +473,3 @@ Agent 回复的 Markdown 在渲染前经 `renderSafeMarkdown` 消毒: `marked`(g
 - [Yukino Chat: 自托管 IM 平台的实时后端与内嵌 Agent](./yukino-chat)
 - [Yukino Chatbot: Koa 3 服务端与 React 19 分层客户端](./yukino-chatbot)
 - [Yukino MCP: 工具注册、向量索引与连接生命周期](./yukino-mcp)
-- [Yukino Sentry: 前端与 Node 错误采集 SDK](./yukino-sentry)
-- [React 19 客户端状态与数据获取模式](./react)
-- [Vite 8 构建与 PWA 工程化](./vite)

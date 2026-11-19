@@ -2,15 +2,8 @@
   "index",
   {
     "type": "section-header",
-    "label": "语言基础"
-  },
-  "go",
-  {
-    "type": "section-header",
     "label": "存储与中间件"
   },
-  "mysql",
-  "redis",
   "clickhouse-kafka",
   "middleware",
   "node-pool",

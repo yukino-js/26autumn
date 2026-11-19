@@ -6,7 +6,7 @@ local_commit: "ee5db9ddb54ce3a142fde3500116b393d4f2f755"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/Downloads/node-pool` 在 `ee5db9ddb54c` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/Downloads/node-pool` 在 `ee5db9ddb54` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 ```mermaid

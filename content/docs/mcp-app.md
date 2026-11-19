@@ -4,7 +4,7 @@ description: "MCP Apps 扩展的协议契约、UI 资源与工具声明、宿主
 ---
 
 :::note 版本基线
-本文描述 MCP 协议的 Apps 扩展 (tool + `ui://` 资源 + iframe postMessage 方言), 不绑定单一代码仓库。可对照本地工作区 `~/github/yukino-code/apps/mcp` 的 `create_app` 工具实现核验: 依赖声明为 `@modelcontextprotocol/ext-apps ^2.0.3`、`@modelcontextprotocol/client|core|server ^2.3.1` (实际解析版本以 lockfile 为准); 扩展能力标识 `io.modelcontextprotocol/ui`, UI 资源 MIME `text/html;profile=mcp-app`。MCP Apps 属核心规范之外的可选扩展, 协议仍在活跃演进, 文中 SDK 导出名、消息方法与选项以所引 SDK 版本为准; 未在本地源码核实的条目已降级为定性描述。
+本文描述 MCP 协议的 Apps 扩展 (tool + `ui://` 资源 + iframe postMessage 方言), 不绑定单一代码仓库。可对照本地工作区 `~/github/yukino-code/packages/mcp` 的 `create_app` 工具实现核验: 依赖声明为 `@modelcontextprotocol/ext-apps ^2.0.3`、`@modelcontextprotocol/client|core|server ^2.3.1` (实际解析版本以 lockfile 为准); 扩展能力标识 `io.modelcontextprotocol/ui`, UI 资源 MIME `text/html;profile=mcp-app`。MCP Apps 属核心规范之外的可选扩展, 协议仍在活跃演进, 文中 SDK 导出名、消息方法与选项以所引 SDK 版本为准; 未在本地源码核实的条目已降级为定性描述。
 :::
 
 **主线一览**
@@ -358,7 +358,7 @@ MCP Apps 是核心 MCP 规范之外的扩展, 宿主支持可选。定位上最�
 - Claude Artifacts: 体验相似, 但 Artifacts 是宿主内建功能、无法由第三方 Server 提供; MCP Apps 把这个能力开放给了整个 MCP 生态;
 - OpenAI Apps SDK: 同为"工具返回 UI", MCP Apps 走开放规范路线, 社区已有从专有 API 迁移到 MCP Apps 的路径。
 
-生态件包括宿主侧渲染组件、SDK 内置的 AppBridge(自建宿主用, 与 App 类共享同一套协议实现), 以及一批官方示例与模板; 配套工具覆盖从零脚手架、从其他 Apps 方案迁移、给已有 MCP server 的工具补 UI、把存量 web 应用改造成混合形态等场景(具体命令名随 SDK 版本调整)。本地工作区 `apps/mcp` 的依赖声明为 `@modelcontextprotocol/ext-apps ^2.0.3`、`@modelcontextprotocol/client|core|server ^2.3.1`, 实际解析版本以 pnpm lockfile 为准; 扩展协议仍在活跃演进, 版本协商见 §2.3 与 §3.2。
+生态件包括宿主侧渲染组件、SDK 内置的 AppBridge(自建宿主用, 与 App 类共享同一套协议实现), 以及一批官方示例与模板; 配套工具覆盖从零脚手架、从其他 Apps 方案迁移、给已有 MCP server 的工具补 UI、把存量 web 应用改造成混合形态等场景(具体命令名随 SDK 版本调整)。本地工作区 `packages/mcp` 的依赖声明为 `@modelcontextprotocol/ext-apps ^2.0.3`、`@modelcontextprotocol/client|core|server ^2.3.1`, 实际解析版本以 pnpm lockfile 为准; 扩展协议仍在活跃演进, 版本协商见 §2.3 与 §3.2。
 
 ## 七、与 A2UI 的对比
 

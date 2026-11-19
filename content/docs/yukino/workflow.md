@@ -1,12 +1,12 @@
 ---
 title: "Workflow"
 description: "Workflow 子系统: 用确定性 JavaScript 脚本编排多个 subagent, 覆盖脚本模型与注入原语、并发上限、journal 持久化与重放、生命周期回流与 /workflows 监控"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/workflow/`、`src/ui/workflows-dialog.tsx`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/workflow/`、`src/ui/workflows-dialog.tsx`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 Workflow (`src/workflow/`) 用一段确定性的 JavaScript 脚本编排多个 subagent, 在后台并发跑完一整套「拆解 → 执行 → 验证」流程, 最终结果经任务通知回流主 agent。

@@ -2,11 +2,11 @@
 title: "RAG"
 description: "RAG 检索: Markdown 文档切割 (标题分节 / 表格按行 / 句子级 overlap)、embedding 策略、关系库与向量库双写状态位、可选 Milvus 与进程内 BM25/稠密检索, 以及召回 → RRF 粗排 → rerank 精排管线与置信度闸"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
+local_commit: "a31e2f791e23c28b679482196a000b3703f13df0"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/kb/`、`server/data/kb/`）在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent`（子路径 `server/src/kb/`、`server/data/kb/`）在 `a31e2f791e2` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

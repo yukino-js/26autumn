@@ -1,12 +1,12 @@
 ---
 title: "Code Review"
 description: "Code Review: 收敛为一条 `/review` slash command 加一个内置 `review` subagent 角色, 审查 agent 用 gh CLI 拉取 PR 详情与 diff、用常规只读工具读代码与项目指令, 发现以文字直接返回当前会话供主 agent 继续动作"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/commands`、`src/subagent`、`src/ui`、`src/remote`、`src/session`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/commands`、`src/subagent`、`src/ui`、`src/remote`、`src/session`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 Code Review 在 Yukino 中不是独立子系统: 一条 `/review` slash command + 一个内置的 `review` subagent 角色。审查 agent 用 `gh` CLI 拉取 PR 详情和 diff, 用常规只读工具读代码和项目指令, 最后把发现以文字形式直接返回当前会话, 主 agent 下一轮可以基于发现继续动作 (比如直接按发现修复)

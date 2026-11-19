@@ -3,11 +3,11 @@ title: "电商客服 Agent"
 overview: true
 description: "yukino-ecomm-agent 栏目: Node.js/TypeScript 电商客服 Agent (Yukino Select) 的系统性技术笔记, 覆盖 Hono + LangGraph 服务端与 Lit 控制台的总体组织、会话上下文分层、LLM 接入与表设计、MCP 工具、可观测性与数据飞轮、RAG 检索、图编排 workflow 与 HTTP API"
 local_path: "$HOME/github/yukino-ecomm-agent"
-local_commit: "13693cdc531d2b94d4336f248a8e58dff0d89405"
+local_commit: "a31e2f791e23c28b679482196a000b3703f13df0"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-ecomm-agent` 在 `13693cdc531` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-ecomm-agent` 在 `a31e2f791e2` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 **主线一览**

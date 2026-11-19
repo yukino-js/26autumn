@@ -618,6 +618,4 @@ groups:
 
 - [后端中间件与基础设施](../be/middleware): Prometheus、Grafana、OpenTelemetry 在服务端的中间件侧机制与选型对照。
 - [Node 连接池与线程池](../be/node-pool): 池化参数模型、工厂生命周期与异常驱逐的服务端视角补充。
-- [React 组件与 Hooks 实践](../fe/react): 类组件向函数组件迁移时的 effect 依赖、闭包过期值与清理函数规范。
-- [@yukino.js/sentry](../fe/yukino-sentry): 前端 SDK 的错误上报、栈符号化与现场回放形态, 与本文 Sentry Node 侧对照。
 - [插桩与抓栈的理论与方法](./tiktok): 采样/插桩范式、CPU profiling 火焰图归因与跨运行域对齐的完整方法论。

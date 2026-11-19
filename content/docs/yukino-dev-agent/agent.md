@@ -2,11 +2,11 @@
 title: "Yukino Dev Agent"
 description: "OnCall 视角入门: 技术栈与双档模型、RAG 建库与在线问答、Milvus 混合检索流程、ReAct 对话 Agent、Plan-Execute-Replan 运维 Agent 与报告护栏、Tool/MCP、A2UI、知识库管理与自监控"
 local_path: "$HOME/github/yukino-dev-agent"
-local_commit: "e36d16bacb9ba400d904ece0542c4467f8ef049d"
+local_commit: "537f207ec1d491d5f8a7664ee9cf103f28e5376a"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/ai/`、`components/`）在 `e36d16bacb9` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-dev-agent`（子路径 `app/`、`lib/ai/`、`components/`）在 `537f207ec1d` 的源码事实撰写；文中的路径、常量与 API 名称均可在该检出中定位。
 :::
 
 yukino-dev-agent 是一个 AI 智能运维 (OnCall) 助手, 把两个产品面合并进单一 Next.js 16 + AI SDK 应用:

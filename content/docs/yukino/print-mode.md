@@ -1,12 +1,12 @@
 ---
 title: "Print Mode"
 description: "Print 模式 (-p): 非交互一次性执行, 自组装完整运行时并消费 agent.run() 事件流; 覆盖旗标解析, slash command 特判, 与交互模式的差异 (bypassPermissions, 无 hook/skill), 工具集装配, text / stream-json 输出, 退出码与清理, SyntheticOutput 结构化交付"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino`（子路径 `src/print-mode.ts`、`src/cli.ts`、`src/bootstrap`、`src/workflow`、`src/goal`）在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino`（子路径 `src/print-mode.ts`、`src/cli.ts`、`src/bootstrap`、`src/workflow`、`src/goal`）在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 Print 模式是非交互的执行模式: 一条命令进去, agent 循环跑完, 结果打印到 stdout, 进程退出; 用于脚本、CI 流水线和「把 Yukino 当 Unix 工具用」的组合场景

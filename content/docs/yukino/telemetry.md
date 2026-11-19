@@ -1,12 +1,12 @@
 ---
 title: "Telemetry: 三后端遥测、观测点与隐私洗消"
 description: "遥测子系统: OpenTelemetry/Langfuse/Sentry 三后端的启用条件与装配、agent/LLM/tool 三层观测点与指标、隐私洗消规则, 以及生命周期与环境变量参考"
-local_path: "$HOME/github/yukino-code/apps/yukino"
-local_commit: "a60e5efccefb19fc2d8b9352832a11305a9ed7b3"
+local_path: "$HOME/github/yukino-code/packages/yukino"
+local_commit: "1dd1d45e98146d198c482482947313726927bfc9"
 ---
 
 :::note 事实基线
-本文依据 `$HOME/github/yukino-code/apps/yukino` 在 `a60e5efccef` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
+本文依据 `$HOME/github/yukino-code/packages/yukino` 在 `1dd1d45e981` 的源码事实撰写；文中路径、常量与 API 名称均可在该检出中定位。
 :::
 
 遥测回答的问题: 每个 agent 会话消耗了多少 token? 哪些工具调用最慢? 首 token 延迟是多少? 哪些请求失败了、为什么失败?

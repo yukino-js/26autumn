@@ -429,8 +429,5 @@ TanStack Query 只负责服务端状态, 与相邻库的边界可以用一张表
 
 **延伸阅读**
 
-- [next](next): 服务端组件直取与查询缓存的分工, 以及水合注入在 SSR 场景下的衔接方式.
-- [react](react): Hooks 链表、effect 与观察者订阅的底层模型, 理解 query hook 如何随组件挂载/卸载管理观察实例.
 - [fetchpriority-swr](fetchpriority-swr): HTTP 层 stale-while-revalidate 语义与查询缓存 staleTime 的对应和边界.
-- [vite](vite): 产物缓存与依赖预构建策略, 与查询数据缓存是两个层面的问题.
 - [../docs/data](../docs/data): 手写预加载、去重与 SWR 数据方案的工程取舍对照.
