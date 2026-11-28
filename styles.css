@@ -1,0 +1,225 @@
+:root {
+  --rp-c-brand: #0052d9;
+  --rp-c-brand-light: #366ef4;
+  --rp-c-brand-lighter: #b5c7ff;
+  --rp-c-brand-dark: #0034b5;
+  --rp-c-brand-darker: #001f8f;
+  --rp-c-brand-tint: rgba(0, 82, 217, 0.12);
+  --rp-font-family-base:
+    "Yukino", "Maple Mono", Menlo, "Cascadia Code", "Sarasa Gothic SC",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  --rp-font-family-mono:
+    "Yukino", "Maple Mono", Menlo, "Cascadia Code", "Sarasa Gothic SC",
+    "PingFang SC", "Microsoft YaHei", monospace;
+  --rp-radius-sm: 6px;
+  --rp-radius-md: 10px;
+  --rp-radius-lg: 14px;
+}
+
+.dark {
+  --rp-c-brand: #5e83fb;
+  --rp-c-brand-light: #8ba6ff;
+  --rp-c-brand-lighter: #b5c7ff;
+  --rp-c-brand-dark: #366ef4;
+  --rp-c-brand-darker: #0052d9;
+  --rp-c-brand-tint: rgba(94, 131, 251, 0.16);
+}
+
+/* ---------- 首页 Hero / 背景：去除 rspress 默认蓝紫渐变，统一腾讯蓝 ----------
+   rspress 默认在 :where(html:not(.rp-dark)) / :where(html.rp-dark) 上定义：
+   - --rp-home-background-bg：#537dff / #7e69ff 蓝紫径向光斑
+   - --rp-home-hero-title-bg：brand-dark → #a673ff 紫色文字渐变，被 .rp-button--brand 与 badge 复用
+   - --rp-home-feature-bg：白→浅灰 135° 渐变
+   :where() 特异性为 0，:root(0,1,0) 覆盖即可在亮 / 暗双模式生效，且值引用
+   var(--rp-c-brand) 会随暗色模式的品牌色变量自动适配。 */
+:root {
+  --rp-home-background-bg: var(--rp-c-bg);
+  --rp-home-hero-title-bg: var(--rp-c-brand);
+  --rp-home-hero-secondary-color: var(--rp-c-brand-light);
+  --rp-home-feature-bg: var(--rp-c-bg-soft);
+}
+
+html {
+  scrollbar-gutter: stable;
+  scroll-behavior: smooth;
+}
+
+::selection {
+  background: var(--rp-c-brand-tint);
+  color: var(--rp-c-text-1);
+}
+
+:focus-visible {
+  outline: 2px solid var(--rp-c-brand);
+  outline-offset: 3px;
+}
+
+/* ---------- Document typography ---------- */
+
+.rspress-doc h1,
+.rspress-doc h2,
+.rspress-doc h3,
+.rspress-doc h4 {
+  scroll-margin-top: calc(var(--rp-nav-height, 64px) + 16px);
+  letter-spacing: 0.01em;
+}
+
+.rspress-doc h2 {
+  border-bottom: 1px solid var(--rp-c-divider-light);
+  padding-bottom: 0.45rem;
+}
+
+.rspress-doc a {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.rspress-doc a:hover {
+  text-decoration-color: var(--rp-c-brand);
+}
+
+.rspress-doc :not(pre) > code {
+  border: 1px solid var(--rp-c-text-code-border);
+  border-radius: var(--rp-radius-sm);
+  padding: 0.12em 0.38em;
+}
+
+.rspress-doc blockquote {
+  border-left: 3px solid var(--rp-c-brand);
+  border-radius: 0 var(--rp-radius-sm) var(--rp-radius-sm) 0;
+  background: var(--rp-c-bg-soft);
+  padding: 0.6rem 1rem;
+}
+
+.rspress-doc hr {
+  border: 0;
+  height: 1px;
+  background: var(--rp-c-divider-light);
+}
+
+.rspress-doc u {
+  text-decoration-color: var(--rp-c-brand);
+  text-underline-offset: 3px;
+}
+
+/* ---------- Tables ---------- */
+
+.rspress-doc .rp-table-scroll-container {
+  border: 1px solid var(--rp-c-divider-light);
+  border-radius: var(--rp-radius-md);
+  overflow: hidden;
+}
+
+.rspress-doc table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.rspress-doc thead th {
+  background: var(--rp-c-bg-soft);
+  color: var(--rp-c-text-1);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rspress-doc tbody tr:nth-child(even) {
+  background: var(--rp-c-bg-soft);
+}
+
+.rspress-doc tbody tr:hover {
+  background: var(--rp-c-brand-tint);
+}
+
+.rspress-doc th,
+.rspress-doc td {
+  border-bottom: 1px solid var(--rp-c-divider-light);
+  padding: 0.6rem 0.85rem;
+  vertical-align: top;
+}
+
+/* ---------- Callouts ---------- */
+
+.rspress-doc .rp-callout {
+  border-left: 3px solid var(--rp-c-brand);
+  border-radius: var(--rp-radius-md);
+  margin: 1.25rem 0;
+  overflow: hidden;
+}
+
+.rspress-doc .rp-callout__title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.rspress-doc .rp-callout--tip {
+  border-left-color: var(--rp-container-tip-border);
+}
+
+.rspress-doc .rp-callout--note,
+.rspress-doc .rp-callout--info {
+  border-left-color: var(--rp-container-note-border);
+}
+
+.rspress-doc .rp-callout--warning,
+.rspress-doc .rp-callout--important {
+  border-left-color: var(--rp-container-warning-border);
+}
+
+.rspress-doc .rp-callout--danger {
+  border-left-color: var(--rp-container-danger-border);
+}
+
+.rspress-doc .rp-callout__content > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- Code blocks and code groups ---------- */
+
+.rspress-doc .rp-codeblock {
+  border: 1px solid var(--rp-code-block-border);
+  border-radius: var(--rp-radius-md);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.dark .rspress-doc .rp-codeblock {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.rspress-doc .rp-codeblock + .rp-codeblock {
+  margin-top: 0.75rem;
+}
+
+/* ---------- Mermaid diagrams ---------- */
+
+/* rspress-plugin-mermaid 2 在客户端把 SVG 注入一个无类名的 div, 旧的 `.mermaid` 选择器已失效. */
+.rspress-doc div:has(> svg[aria-roledescription]) {
+  background: var(--rp-c-bg-soft);
+  border: 1px solid var(--rp-c-divider-light);
+  border-radius: var(--rp-radius-lg);
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  text-align: center;
+  overflow-x: auto;
+}
+
+.rspress-doc div:has(> svg[aria-roledescription]) svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.dark .rspress-doc div:has(> svg[aria-roledescription]) {
+  background: var(--rp-c-bg-alt);
+}
+
+/* ---------- Collapsible details ---------- */
+
+.rspress-doc details {
+  border: 1px solid var(--rp-c-divider-light);
+  border-radius: var(--rp-radius-md);
+  padding: 0.5rem 1rem;
+}
+
+.rspress-doc summary {
+  cursor: pointer;
+  font-weight: 600;
+}

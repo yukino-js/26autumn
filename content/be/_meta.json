@@ -1,0 +1,47 @@
+[
+  "index",
+  {
+    "type": "section-header",
+    "label": "存储与中间件"
+  },
+  "clickhouse",
+  "kafka",
+  "etcd",
+  "groupcache",
+  "grpc",
+  "prometheus",
+  "opentelemetry",
+  "node-pool",
+  "wanproxy",
+  {
+    "type": "section-header",
+    "label": "Yukino Go 组件"
+  },
+  "yukino-redis-lock",
+  "yukino-consistent-hash",
+  "yukino-cache-aside",
+  "yukino-redis-mq",
+  "yukino-tcc",
+  "yukino-time-wheel",
+  "yukino-lsm-tree",
+  "yukino-raft",
+  {
+    "type": "section-header",
+    "label": "Yukino Go 应用"
+  },
+  "yukino-agent-proxy",
+  "yukino-cloud-storage",
+  "yukino-raft-kv",
+  "yukino-scheduled-task",
+  "yukino-task-flow",
+  {
+    "type": "section-header",
+    "label": "Yukino Go 库"
+  },
+  "yukino-cache",
+  "yukino-http",
+  "yukino-log",
+  "yukino-orm",
+  "yukino-rpc",
+  "yukino-skiplist"
+]
